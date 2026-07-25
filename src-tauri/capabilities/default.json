@@ -1,0 +1,27 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Minimal capabilities required by Coda's main window.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-start-dragging",
+    "core:window:allow-close",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        {
+          "url": "https://bandcamp.com/settings?pane=fan"
+        },
+        {
+          "url": "https://bandcamp.com/**"
+        },
+        {
+          "url": "https://*.bandcamp.com/**"
+        }
+      ]
+    }
+  ]
+}
