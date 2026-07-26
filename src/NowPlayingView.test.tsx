@@ -54,10 +54,12 @@ describe("NowPlayingView Radio metadata", () => {
         artwork={<span>Artwork</span>}
         airPlayAvailable={false}
         queueOpen={false}
-        onMinimize={noOp}
+        onBack={noOp}
         onToggle={noOp}
         onPrevious={noOp}
         onNext={noOp}
+        canPrevious
+        canNext
         onSeek={onSeek}
         onVolume={noOp}
         onRepeat={noOp}

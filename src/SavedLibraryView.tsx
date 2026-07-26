@@ -8,9 +8,11 @@ import {
   ListPlus,
   LoaderCircle,
   Music2,
+  Pause,
   Pencil,
   Play,
   Plus,
+  Radio,
   RefreshCw,
   Shuffle,
   Trash2,
@@ -24,15 +26,21 @@ import {
   fetchCoverUrl,
   fetchPlaylist,
   fetchPlaylists,
+  fetchRadioShow,
   formatTime,
+  paletteFor,
   updatePlaylist,
 } from "./lib";
+import { countLabel } from "./countLabel";
 import { shuffled } from "./queue";
+import { boundRadioChapters } from "./radioPlayback";
 import type {
   Album,
-  FavoriteCollection,
+  LocalFavoriteCollection,
   PlaylistDetail,
   PlaylistSummary,
+  RadioShow,
+  RadioShowSummary,
   Track,
 } from "./types";
 import { transitionCodaView } from "./viewTransitions";
@@ -42,12 +50,16 @@ export const PLAYLISTS_QUERY_KEY = ["bandcamp", "playlists"] as const;
 type SavedLibraryViewProps = {
   mode: "favorites" | "playlists";
   connected: boolean;
-  favorites?: FavoriteCollection;
+  favorites?: LocalFavoriteCollection;
   favoritesLoading: boolean;
   favoritesError?: string;
   favoritesLocal?: boolean;
   onRefreshFavorites: () => void;
   onToggleFavorite: (id: string, kind: "song" | "album", favorite: boolean) => void;
+  onToggleRadioFavorite: (show: RadioShowSummary, favorite: boolean) => void;
+  currentTrackId?: string;
+  playing: boolean;
+  onTogglePlayback: () => void;
   onPlayTracks: (tracks: Track[]) => void;
   onQueueTracks: (tracks: Track[]) => void;
   onPlayTrack: (track: Track) => void;
@@ -58,8 +70,36 @@ type SavedLibraryViewProps = {
   onNotify: (message: string, tone?: "good" | "bad") => void;
 };
 
+const RADIO_STALE_TIME_MS = 10 * 60 * 1_000;
+const radioDateFormatter = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
+
 function mutationError(cause: unknown): string {
   return String(cause).replace(/^Error:\s*/, "");
+}
+
+function radioShowDate(value: string): string {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : radioDateFormatter.format(parsed);
+}
+
+function radioTrack(show: RadioShow): Track {
+  return {
+    id: `radio:${show.id}`,
+    title: show.subtitle,
+    artist: "Bandcamp Radio",
+    album: show.title,
+    albumId: `radio:${show.id}`,
+    duration: show.duration,
+    track: 1,
+    artworkUrl: show.artworkUrl,
+    streamUrl: show.streamUrl,
+    radioChapters: boundRadioChapters(show.chapters),
+    palette: paletteFor(`radio:${show.id}`),
+  };
 }
 
 function FavoriteArtwork({
@@ -186,7 +226,7 @@ function PlaylistList({
               <span className="playlist-card__copy">
                 <strong>{playlist.name}</strong>
                 <span>
-                  {playlist.songCount} {playlist.songCount === 1 ? "track" : "tracks"}
+                  {countLabel(playlist.songCount, "track")}
                   {playlist.duration ? ` · ${formatTime(playlist.duration)}` : ""}
                 </span>
                 {playlist.comment ? <small>{playlist.comment}</small> : null}
@@ -212,6 +252,9 @@ function PlaylistDetailView({
   onBack,
   onPlay,
   onQueue,
+  currentTrackId,
+  playing,
+  onTogglePlayback,
   onAddToPlaylist,
   onRename,
   onRemove,
@@ -226,6 +269,9 @@ function PlaylistDetailView({
   onBack: () => void;
   onPlay: (tracks: Track[]) => void;
   onQueue: (tracks: Track[]) => void;
+  currentTrackId?: string;
+  playing: boolean;
+  onTogglePlayback: () => void;
   onAddToPlaylist: (tracks: Track[]) => void;
   onRename: (name: string) => void;
   onRemove: (index: number) => void;
@@ -238,6 +284,7 @@ function PlaylistDetailView({
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const activePlaylist = playlist?.tracks.some((track) => track.id === currentTrackId) ?? false;
 
   useEffect(() => {
     setName(playlist?.name ?? "");
@@ -324,17 +371,30 @@ function PlaylistDetailView({
             </div>
           )}
           <p>
-            {playlist.songCount} {playlist.songCount === 1 ? "track" : "tracks"}
+            {countLabel(playlist.songCount, "track")}
             {playlist.duration ? ` · ${formatTime(playlist.duration)}` : ""}
             {" · Synced with Bandcamp"}
           </p>
           <div className="saved-hero__actions">
             <button
-              className="primary-button"
+              className={`primary-button ${activePlaylist ? "is-current" : ""} ${activePlaylist && playing ? "is-playing" : ""}`}
               disabled={!playlist.tracks.length}
-              onClick={() => onPlay(playlist.tracks)}
+              onClick={
+                activePlaylist
+                  ? onTogglePlayback
+                  : () => onPlay(playlist.tracks)
+              }
+              aria-label={
+                activePlaylist
+                  ? `${playing ? "Pause" : "Resume"} ${playlist.name}`
+                  : "Play"
+              }
+              aria-pressed={activePlaylist && playing}
             >
-              <Play size={16} fill="currentColor" /> Play
+              {activePlaylist && playing
+                ? <Pause size={16} fill="currentColor" />
+                : <Play size={16} fill="currentColor" />}
+              {activePlaylist ? (playing ? "Pause" : "Resume") : "Play"}
             </button>
             <button
               className="secondary-button"
@@ -356,15 +416,24 @@ function PlaylistDetailView({
 
       {playlist.tracks.length ? (
         <div className="saved-tracklist" aria-label={`${playlist.name} tracks`}>
-          {playlist.tracks.map((track, index) => (
-            <div className="saved-track saved-track--playlist" key={`${track.id}-${index}`}>
+          {playlist.tracks.map((track, index) => {
+            const activeTrack = currentTrackId === track.id;
+            return (
+            <div className={`saved-track saved-track--playlist ${activeTrack ? "is-current" : ""}`} key={`${track.id}-${index}`}>
               <button
-                className="saved-track__number"
-                onClick={() => onPlay([track])}
-                aria-label={`Play ${track.title}`}
+                className={`saved-track__number ${activeTrack && playing ? "is-playing" : ""}`}
+                onClick={activeTrack ? onTogglePlayback : () => onPlay([track])}
+                aria-label={
+                  activeTrack
+                    ? `${playing ? "Pause" : "Resume"} ${track.title}`
+                    : `Play ${track.title}`
+                }
+                aria-pressed={activeTrack && playing}
               >
                 <span>{index + 1}</span>
-                <Play size={13} fill="currentColor" />
+                {activeTrack && playing
+                  ? <Pause size={13} fill="currentColor" />
+                  : <Play size={13} fill="currentColor" />}
               </button>
               <div className="saved-track__copy">
                 <strong>{track.title}</strong>
@@ -391,7 +460,8 @@ function PlaylistDetailView({
                   : <X size={15} />}
               </button>
             </div>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <SavedEmpty
@@ -448,7 +518,7 @@ export function AddToPlaylistDialog({
       updatePlaylist({ playlistId: playlist.id, songIdsToAdd: songIds }),
     onSuccess: async (playlist) => {
       await queryClient.invalidateQueries({ queryKey: PLAYLISTS_QUERY_KEY });
-      onNotify(`${tracks.length} ${tracks.length === 1 ? "track" : "tracks"} added to ${playlist.name}`, "good");
+      onNotify(`${countLabel(tracks.length, "track")} added to ${playlist.name}`, "good");
       onClose();
     },
     onError: (cause) => onNotify(mutationError(cause), "bad"),
@@ -457,7 +527,7 @@ export function AddToPlaylistDialog({
     mutationFn: (playlistName: string) => createPlaylist(playlistName, songIds),
     onSuccess: async (playlist) => {
       await queryClient.invalidateQueries({ queryKey: PLAYLISTS_QUERY_KEY });
-      onNotify(`${playlist.name} created with ${tracks.length} ${tracks.length === 1 ? "track" : "tracks"}`, "good");
+      onNotify(`${playlist.name} created with ${countLabel(tracks.length, "track")}`, "good");
       onClose();
     },
     onError: (cause) => onNotify(mutationError(cause), "bad"),
@@ -491,7 +561,7 @@ export function AddToPlaylistDialog({
           <div>
             <span className="eyebrow">Bandcamp playlists</span>
             <h2>Add to playlist</h2>
-            <p>{tracks.length} {tracks.length === 1 ? "track" : "tracks"} selected</p>
+            <p>{countLabel(tracks.length, "track")} selected</p>
           </div>
           <button
             className="icon-button"
@@ -542,7 +612,7 @@ export function AddToPlaylistDialog({
                 <span><ListMusic size={17} /></span>
                 <span>
                   <strong>{playlist.name}</strong>
-                  <small>{playlist.songCount} {playlist.songCount === 1 ? "track" : "tracks"}</small>
+                  <small>{countLabel(playlist.songCount, "track")}</small>
                 </span>
                 {addMutation.isPending && addMutation.variables.id === playlist.id
                   ? <LoaderCircle className="spin" size={16} />
@@ -567,6 +637,10 @@ export default function SavedLibraryView({
   favoritesLocal = false,
   onRefreshFavorites,
   onToggleFavorite,
+  onToggleRadioFavorite,
+  currentTrackId,
+  playing,
+  onTogglePlayback,
   onPlayTracks,
   onQueueTracks,
   onPlayTrack,
@@ -578,6 +652,10 @@ export default function SavedLibraryView({
 }: SavedLibraryViewProps) {
   const queryClient = useQueryClient();
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string>();
+  const [radioAction, setRadioAction] = useState<{
+    id: number;
+    action: "play" | "queue";
+  }>();
   const playlists = useQuery({
     queryKey: PLAYLISTS_QUERY_KEY,
     queryFn: fetchPlaylists,
@@ -621,6 +699,27 @@ export default function SavedLibraryView({
     },
     onError: (cause) => onNotify(mutationError(cause), "bad"),
   });
+  const actOnFavoriteRadioShow = async (
+    show: RadioShowSummary,
+    action: "play" | "queue",
+  ) => {
+    if (radioAction) return;
+    setRadioAction({ id: show.id, action });
+    try {
+      const details = await queryClient.fetchQuery({
+        queryKey: ["bandcamp-radio-show", show.id],
+        queryFn: () => fetchRadioShow(show.id),
+        staleTime: RADIO_STALE_TIME_MS,
+      });
+      const track = radioTrack(details);
+      if (action === "play") onPlayTrack(track);
+      else onQueueTrack(track);
+    } catch (cause) {
+      onNotify(mutationError(cause), "bad");
+    } finally {
+      setRadioAction(undefined);
+    }
+  };
 
   if (!connected && mode === "playlists") {
     return (
@@ -666,6 +765,9 @@ export default function SavedLibraryView({
             }}
             onPlay={onPlayTracks}
             onQueue={onQueueTracks}
+            currentTrackId={currentTrackId}
+            playing={playing}
+            onTogglePlayback={onTogglePlayback}
             onAddToPlaylist={onAddToPlaylist}
             onRename={(name) => updateMutation.mutate({ playlistId: selectedPlaylistId, name })}
             onRemove={(index) => updateMutation.mutate({
@@ -744,8 +846,14 @@ export default function SavedLibraryView({
 
   const favoriteTracks = favorites?.tracks ?? [];
   const favoriteAlbums = favorites?.albums ?? [];
+  const favoriteRadioShows = favorites?.radioShows ?? [];
+  const activeFavoriteTrack = favoriteTracks.some((track) => track.id === currentTrackId);
   const favoriteTrackCount = favorites?.songIds.length ?? favoriteTracks.length;
   const favoriteAlbumCount = favorites?.albumIds.length ?? favoriteAlbums.length;
+  const favoriteRadioShowCount =
+    favorites?.radioShowIds?.length ?? favoriteRadioShows.length;
+  const favoriteDisplayMetadataCount =
+    favoriteTrackCount + favoriteAlbumCount + favoriteRadioShowCount;
   return (
     <section className="saved-library">
       <header className="saved-library__header">
@@ -789,23 +897,23 @@ export default function SavedLibraryView({
             </button>
           )}
         />
-      ) : !favoriteAlbumCount && !favoriteTrackCount ? (
+      ) : !favoriteAlbumCount && !favoriteTrackCount && !favoriteRadioShowCount ? (
         <SavedEmpty
           icon={<Heart size={28} />}
           title="Nothing starred yet"
           detail={favoritesLocal
-            ? "Use the heart on any release or track. Favorites stay on this device."
+            ? "Use the heart on any release, track, or Radio show. Favorites stay on this device."
             : "Use the heart on a release or track. Your favorites sync through Bandcamp’s Subsonic library."}
         />
       ) : (
         <>
-          {!favoriteTracks.length && !favoriteAlbums.length ? (
+          {!favoriteTracks.length && !favoriteAlbums.length && !favoriteRadioShows.length ? (
             <SavedEmpty
               icon={<Heart size={28} />}
               title="Your stars are saved"
               detail={favoritesLocal
-                ? `${favoriteTrackCount + favoriteAlbumCount} local favorites are waiting for collection metadata. Coda will repair them when the release or track is loaded.`
-                : `Bandcamp returned ${favoriteTrackCount + favoriteAlbumCount} favorite IDs without display metadata. Refresh after your collection finishes syncing.`}
+                ? `${countLabel(favoriteDisplayMetadataCount, "local favorite")} ${favoriteDisplayMetadataCount === 1 ? "is" : "are"} waiting for display metadata. Coda will repair ${favoriteDisplayMetadataCount === 1 ? "it" : "them"} when the item is loaded.`
+                : `Bandcamp returned ${countLabel(favoriteTrackCount + favoriteAlbumCount, "favorite ID")} without display metadata. Refresh after your collection finishes syncing.`}
               action={favoritesLocal ? undefined : (
                 <button onClick={onRefreshFavorites} disabled={favoritesLoading}>
                   <RefreshCw className={favoritesLoading ? "spin" : ""} size={14} />
@@ -819,9 +927,25 @@ export default function SavedLibraryView({
               <div className="section-heading">
                 <h2>Tracks</h2>
                 <div className="section-heading__actions">
-                  <span>{favoriteTrackCount} tracks</span>
-                  <button className="queue-results-button" onClick={() => onPlayTracks(favoriteTracks)}>
-                    <Play size={14} fill="currentColor" /> Play all
+                  <span>{countLabel(favoriteTrackCount, "track")}</span>
+                  <button
+                    className={`queue-results-button ${activeFavoriteTrack ? "is-current" : ""} ${activeFavoriteTrack && playing ? "is-playing" : ""}`}
+                    onClick={
+                      activeFavoriteTrack
+                        ? onTogglePlayback
+                        : () => onPlayTracks(favoriteTracks)
+                    }
+                    aria-label={
+                      activeFavoriteTrack
+                        ? `${playing ? "Pause" : "Resume"} favorite tracks`
+                        : "Play all favorite tracks"
+                    }
+                    aria-pressed={activeFavoriteTrack && playing}
+                  >
+                    {activeFavoriteTrack && playing
+                      ? <Pause size={14} fill="currentColor" />
+                      : <Play size={14} fill="currentColor" />}
+                    {activeFavoriteTrack ? (playing ? "Pause" : "Resume") : "Play all"}
                   </button>
                   <button className="queue-results-button" onClick={() => onQueueTracks(favoriteTracks)}>
                     <ListPlus size={14} /> Add all
@@ -829,16 +953,30 @@ export default function SavedLibraryView({
                 </div>
               </div>
               <div className="saved-tracklist" aria-label="Favorite tracks">
-                {favoriteTracks.map((track, index) => (
-                  <div className="saved-track saved-track--favorite" key={track.id}>
-                    <button className="saved-track__number" onClick={() => onPlayTrack(track)} aria-label={`Play ${track.title}`}>
-                      <span>{index + 1}</span><Play size={13} fill="currentColor" />
+                {favoriteTracks.map((track, index) => {
+                  const activeTrack = currentTrackId === track.id;
+                  return (
+                  <div className={`saved-track saved-track--favorite ${activeTrack ? "is-current" : ""}`} key={track.id}>
+                    <button
+                      className={`saved-track__number ${activeTrack && playing ? "is-playing" : ""}`}
+                      onClick={activeTrack ? onTogglePlayback : () => onPlayTrack(track)}
+                      aria-label={
+                        activeTrack
+                          ? `${playing ? "Pause" : "Resume"} ${track.title}`
+                          : `Play ${track.title}`
+                      }
+                      aria-pressed={activeTrack && playing}
+                    >
+                      <span>{index + 1}</span>
+                      {activeTrack && playing
+                        ? <Pause size={13} fill="currentColor" />
+                        : <Play size={13} fill="currentColor" />}
                     </button>
                     <FavoriteArtwork item={track} />
                     <div className="saved-track__copy">
                       <button
                         className="saved-track__title-link"
-                        onClick={() => onPlayTrack(track)}
+                        onClick={activeTrack ? onTogglePlayback : () => onPlayTrack(track)}
                       >
                         {track.title}
                       </button>
@@ -860,7 +998,90 @@ export default function SavedLibraryView({
                       <Heart size={15} fill="currentColor" />
                     </button>
                   </div>
-                ))}
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
+          {favoriteRadioShows.length ? (
+            <section className="favorites-section">
+              <div className="section-heading">
+                <h2>Radio shows</h2>
+                <span>{countLabel(favoriteRadioShowCount, "show")}</span>
+              </div>
+              <div className="favorite-radio-grid">
+                {favoriteRadioShows.map((show) => {
+                  const activeShow = currentTrackId === `radio:${show.id}`;
+                  const busyAction = radioAction?.id === show.id
+                    ? radioAction.action
+                    : undefined;
+                  return (
+                    <article
+                      className={`favorite-radio ${activeShow ? "is-current" : ""}`}
+                      key={show.id}
+                    >
+                      <FavoriteArtwork
+                        item={{
+                          title: show.subtitle,
+                          palette: paletteFor(`radio:${show.id}`),
+                        }}
+                      />
+                      <div className="favorite-radio__copy">
+                        <span className="eyebrow">
+                          <Radio size={12} /> Bandcamp Radio
+                        </span>
+                        <strong>{show.subtitle}</strong>
+                        <time dateTime={show.publishedAt}>
+                          {radioShowDate(show.publishedAt)}
+                        </time>
+                        {show.description ? <p>{show.description}</p> : null}
+                      </div>
+                      <div className="favorite-radio__actions">
+                        <button
+                          className={`icon-button ${activeShow && playing ? "is-active" : ""}`}
+                          onClick={
+                            activeShow
+                              ? onTogglePlayback
+                              : () => void actOnFavoriteRadioShow(show, "play")
+                          }
+                          disabled={Boolean(radioAction)}
+                          aria-label={
+                            activeShow
+                              ? `${playing ? "Pause" : "Resume"} ${show.subtitle}`
+                              : `Play ${show.subtitle}`
+                          }
+                          aria-pressed={activeShow && playing}
+                          title={activeShow ? (playing ? "Pause" : "Resume") : "Play"}
+                        >
+                          {busyAction === "play"
+                            ? <LoaderCircle className="spin" size={15} />
+                            : activeShow && playing
+                              ? <Pause size={15} fill="currentColor" />
+                              : <Play size={15} fill="currentColor" />}
+                        </button>
+                        <button
+                          className="icon-button"
+                          onClick={() => void actOnFavoriteRadioShow(show, "queue")}
+                          disabled={Boolean(radioAction)}
+                          aria-label={`Add ${show.subtitle} to queue`}
+                          title="Add to queue"
+                        >
+                          {busyAction === "queue"
+                            ? <LoaderCircle className="spin" size={15} />
+                            : <ListPlus size={15} />}
+                        </button>
+                        <button
+                          className="icon-button favorite-button is-favorite"
+                          onClick={() => onToggleRadioFavorite(show, false)}
+                          aria-label={`Remove ${show.subtitle} from favorites`}
+                          title="Remove from favorites"
+                        >
+                          <Heart size={15} fill="currentColor" />
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
               </div>
             </section>
           ) : null}
@@ -868,7 +1089,7 @@ export default function SavedLibraryView({
             <section className="favorites-section">
               <div className="section-heading">
                 <h2>Releases</h2>
-                <span>{favoriteAlbumCount} releases</span>
+                <span>{countLabel(favoriteAlbumCount, "release")}</span>
               </div>
               <div className="favorite-album-grid">
                 {favoriteAlbums.map((album) => (

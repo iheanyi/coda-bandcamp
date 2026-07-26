@@ -4,6 +4,7 @@ import {
   ChevronDown,
   Disc3,
   LoaderCircle,
+  Pause,
   Play,
   Plus,
   RefreshCw,
@@ -11,6 +12,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { type FormEvent, memo, useMemo, useState } from "react";
+import { countLabel } from "./countLabel";
 import { DISCOVER_GENRES, normalizeGenre } from "./genres";
 import {
   fetchDiscover,
@@ -48,16 +50,23 @@ function previewTrack(release: DiscoverRelease): Track | undefined {
 const DiscoverCard = memo(function DiscoverCard({
   release,
   fallbackGenre,
+  currentTrackId,
+  playing,
   onPlay,
+  onTogglePlayback,
   onQueue,
 }: {
   release: DiscoverRelease;
   fallbackGenre?: string;
+  currentTrackId?: string;
+  playing: boolean;
   onPlay: (track: Track) => void;
+  onTogglePlayback: () => void;
   onQueue: (track: Track) => void;
 }) {
   const track = previewTrack(release);
   const palette = paletteFor(release.id);
+  const active = Boolean(track && currentTrackId === track.id);
 
   return (
     <article className="discover-card">
@@ -83,11 +92,18 @@ const DiscoverCard = memo(function DiscoverCard({
         )}
         {track ? (
           <button
-            className="discover-card__play"
-            onClick={() => onPlay(track)}
-            aria-label={`Preview ${track.title}`}
+            className={`discover-card__play ${active ? "is-current" : ""} ${active && playing ? "is-playing" : ""}`}
+            onClick={active ? onTogglePlayback : () => onPlay(track)}
+            aria-label={
+              active
+                ? `${playing ? "Pause" : "Resume"} ${track.title}`
+                : `Preview ${track.title}`
+            }
+            aria-pressed={active && playing}
           >
-            <Play size={20} fill="currentColor" />
+            {active && playing
+              ? <Pause size={20} fill="currentColor" />
+              : <Play size={20} fill="currentColor" />}
           </button>
         ) : null}
       </div>
@@ -130,9 +146,15 @@ const DiscoverCard = memo(function DiscoverCard({
 export default function DiscoverView({
   onPlay,
   onQueue,
+  currentTrackId,
+  playing,
+  onTogglePlayback,
 }: {
   onPlay: (track: Track) => void;
   onQueue: (track: Track) => void;
+  currentTrackId?: string;
+  playing: boolean;
+  onTogglePlayback: () => void;
 }) {
   const [draftTag, setDraftTag] = useState("");
   const [filters, setFilters] = useState<DiscoverFilters>({ tag: "", sort: "top" });
@@ -277,7 +299,7 @@ export default function DiscoverView({
         <>
           <div className="section-heading">
             <h2>{filters.tag ? `Sounds tagged “${filters.tag}”` : "Across Bandcamp"}</h2>
-            <span>{total.toLocaleString()} results</span>
+            <span>{countLabel(total, "result")}</span>
           </div>
           <div className="discover-grid">
             {releases.map((release) => (
@@ -285,7 +307,10 @@ export default function DiscoverView({
                 key={release.id}
                 release={release}
                 fallbackGenre={filters.tag || undefined}
+                currentTrackId={currentTrackId}
+                playing={playing}
                 onPlay={onPlay}
+                onTogglePlayback={onTogglePlayback}
                 onQueue={onQueue}
               />
             ))}

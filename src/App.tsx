@@ -94,8 +94,10 @@ import {
   readLocalFavorites,
   repairLocalFavoriteMetadata,
   updateLocalFavorites,
+  updateLocalRadioFavorite,
   writeLocalFavorites,
 } from "./localFavorites";
+import { countLabel } from "./countLabel";
 import { showAirPlayPicker, supportsAirPlayPicker } from "./media";
 import { NowPlayingView } from "./NowPlayingView";
 import { isEphemeralTrackId } from "./playerState";
@@ -103,6 +105,8 @@ import { appendUnique, keepCurrentTrack, moveItem, shuffled } from "./queue";
 import { pickRandomItem, pickWeightedItem } from "./random";
 import {
   boundRadioChapters,
+  nextRadioChapterTime,
+  previousRadioChapterTime,
   radioAiringAt,
   radioShowIdFromTrackId,
 } from "./radioPlayback";
@@ -117,11 +121,12 @@ import {
 import type {
   Album,
   ConnectionInput,
-  FavoriteCollection,
   LastFmPlaybackProgress,
   LastFmStatus,
   LastFmTrackInput,
+  LocalFavoriteCollection,
   RadioScrobbleProgress,
+  RadioShowSummary,
   RepeatMode,
   SortMode,
   Track,
@@ -147,6 +152,7 @@ const QUEUE_RENDER_BATCH_SIZE = 250;
 const QUEUE_PANEL_EXIT_MS = 240;
 const PLAYER_STATE_SAVE_DEBOUNCE_MS = 450;
 const PLAYER_STATE_CHECKPOINT_MS = 5_000;
+const PREVIOUS_RESTART_THRESHOLD_SECONDS = 4;
 const LIBRARY_BROWSE_OPTIONS: ReadonlyArray<{
   mode: LibraryBrowseMode;
   label: string;
@@ -303,12 +309,18 @@ const AlbumCard = memo(function AlbumCard({
   onPlay,
   onQueue,
   onArtist,
+  active,
+  playing,
+  onTogglePlayback,
 }: {
   album: Album;
   onOpen: (album: Album) => void;
   onPlay: (album: Album) => void;
   onQueue: (album: Album) => void;
   onArtist: (artist: string) => void;
+  active: boolean;
+  playing: boolean;
+  onTogglePlayback: () => void;
 }) {
   return (
     <article className="album-card">
@@ -320,8 +332,20 @@ const AlbumCard = memo(function AlbumCard({
           aria-label={`Open ${album.title}`}
         />
         <span className="album-card__play">
-          <button onClick={() => onPlay(album)} aria-label={`Play ${album.title}`} title="Play album">
-            <Play size={19} fill="currentColor" />
+          <button
+            className={`${active ? "is-current" : ""} ${active && playing ? "is-playing" : ""}`}
+            onClick={active ? onTogglePlayback : () => onPlay(album)}
+            aria-label={
+              active
+                ? `${playing ? "Pause" : "Resume"} ${album.title}`
+                : `Play ${album.title}`
+            }
+            aria-pressed={active && playing}
+            title={active ? (playing ? "Pause album" : "Resume album") : "Play album"}
+          >
+            {active && playing
+              ? <Pause size={19} fill="currentColor" />
+              : <Play size={19} fill="currentColor" />}
           </button>
         </span>
       </div>
@@ -366,9 +390,9 @@ const ArtistCard = memo(function ArtistCard({
       <span className="artist-card__copy">
         <strong>{group.name}</strong>
         <span>
-          {group.releaseCount} {group.releaseCount === 1 ? "release" : "releases"}
+          {countLabel(group.releaseCount, "release")}
           {" · "}
-          {group.trackCount} {group.trackCount === 1 ? "track" : "tracks"}
+          {countLabel(group.trackCount, "track")}
         </span>
       </span>
       <ChevronRight size={17} />
@@ -383,6 +407,9 @@ const ArtistHero = memo(function ArtistHero({
   onPlay,
   onShuffle,
   onQueue,
+  active,
+  playing,
+  onTogglePlayback,
 }: {
   group: ArtistGroup;
   loading?: "play" | "shuffle" | "queue";
@@ -390,6 +417,9 @@ const ArtistHero = memo(function ArtistHero({
   onPlay: (group: ArtistGroup) => void;
   onShuffle: (group: ArtistGroup) => void;
   onQueue: (group: ArtistGroup) => void;
+  active: boolean;
+  playing: boolean;
+  onTogglePlayback: () => void;
 }) {
   return (
     <section className="artist-hero">
@@ -402,20 +432,34 @@ const ArtistHero = memo(function ArtistHero({
         <span className="eyebrow">Artist</span>
         <h2>{group.name}</h2>
         <p>
-          {group.releaseCount} {group.releaseCount === 1 ? "release" : "releases"}
+          {countLabel(group.releaseCount, "release")}
           {" · "}
-          {group.trackCount} {group.trackCount === 1 ? "track" : "tracks"}
+          {countLabel(group.trackCount, "track")}
           {" · "}
           {formatTime(group.duration)}
         </p>
         <div className="artist-hero__actions">
           <button
-            className="primary-button"
-            onClick={() => onPlay(group)}
+            className={`primary-button ${active ? "is-current" : ""} ${active && playing ? "is-playing" : ""}`}
+            onClick={active ? onTogglePlayback : () => onPlay(group)}
             disabled={Boolean(loading)}
+            aria-label={
+              active
+                ? `${playing ? "Pause" : "Resume"} ${group.name}`
+                : "Play all"
+            }
+            aria-pressed={active && playing}
           >
-            {loading === "play" ? <RefreshCw className="spin" size={16} /> : <Play size={16} fill="currentColor" />}
-            {loading === "play" ? "Loading…" : "Play all"}
+            {loading === "play"
+              ? <RefreshCw className="spin" size={16} />
+              : active && playing
+                ? <Pause size={16} fill="currentColor" />
+                : <Play size={16} fill="currentColor" />}
+            {loading === "play"
+              ? "Loading…"
+              : active
+                ? (playing ? "Pause" : "Resume")
+                : "Play all"}
           </button>
           <button
             className="secondary-button"
@@ -798,7 +842,7 @@ const QueuePanel = memo(function QueuePanel({
 
       <div className="queue-panel__footer">
         <span className="queue-panel__count" key={upcoming.length}>
-          {upcoming.length} {upcoming.length === 1 ? "track" : "tracks"} next
+          {countLabel(upcoming.length, "track")} next
         </span>
         <span>{upcoming.length ? `${formatTime(remaining)} remaining` : "Queue ready"}</span>
       </div>
@@ -816,6 +860,8 @@ function Player({
   onToggle,
   onPrevious,
   onNext,
+  canPrevious,
+  canNext,
   onSeek,
   onVolume,
   onRepeat,
@@ -839,6 +885,8 @@ function Player({
   onToggle: () => void;
   onPrevious: () => void;
   onNext: () => void;
+  canPrevious: boolean;
+  canNext: boolean;
   onSeek: (value: number) => void;
   onVolume: (value: number) => void;
   onRepeat: () => void;
@@ -905,11 +953,11 @@ function Player({
       </div>
       <div className="player__transport">
         <div className="transport-buttons">
-          <button className="icon-button" onClick={onPrevious} disabled={!track} title="Previous" aria-label="Previous"><SkipBack size={18} fill="currentColor" /></button>
+          <button className="icon-button" onClick={onPrevious} disabled={!canPrevious} title="Previous" aria-label="Previous"><SkipBack size={18} fill="currentColor" /></button>
           <button className="play-button" onClick={onToggle} disabled={!track} aria-label={playing ? "Pause" : "Play"}>
             {playing ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
           </button>
-          <button className="icon-button" onClick={onNext} disabled={!track} title="Next" aria-label="Next"><SkipForward size={18} fill="currentColor" /></button>
+          <button className="icon-button" onClick={onNext} disabled={!canNext} title="Next" aria-label="Next"><SkipForward size={18} fill="currentColor" /></button>
           <button className={`icon-button ${repeat !== "off" ? "is-active" : ""}`} onClick={onRepeat} disabled={!track} title="Repeat" aria-label={`Repeat ${repeat}`}>
             {repeat === "one" ? <Repeat1 size={17} /> : <Repeat size={17} />}
           </button>
@@ -950,7 +998,7 @@ function Player({
             <Airplay size={18} />
           </button>
         ) : null}
-        {track && !track.id.startsWith("radio:") ? (
+        {track ? (
           <>
             <button
               className={`icon-button favorite-button ${favorite ? "is-favorite" : ""}`}
@@ -961,14 +1009,16 @@ function Player({
             >
               <Heart size={17} fill={favorite ? "currentColor" : "none"} />
             </button>
-            <button
-              className="icon-button"
-              onClick={onAddToPlaylist}
-              title="Add to playlist"
-              aria-label={`Add ${track.title} to playlist`}
-            >
-              <ListPlus size={17} />
-            </button>
+            {!track.id.startsWith("radio:") ? (
+              <button
+                className="icon-button"
+                onClick={onAddToPlaylist}
+                title="Add to playlist"
+                aria-label={`Add ${track.title} to playlist`}
+              >
+                <ListPlus size={17} />
+              </button>
+            ) : null}
           </>
         ) : null}
         <button
@@ -999,6 +1049,10 @@ function AlbumDetailPage({
   onToggleFavoriteAlbum,
   onToggleFavoriteTrack,
   onAddToPlaylist,
+  currentTrackId,
+  currentAlbumId,
+  playing,
+  onTogglePlayback,
 }: {
   album: Album;
   loading: boolean;
@@ -1013,7 +1067,12 @@ function AlbumDetailPage({
   onToggleFavoriteAlbum: () => void;
   onToggleFavoriteTrack: (track: Track) => void;
   onAddToPlaylist: (tracks: Track[]) => void;
+  currentTrackId?: string;
+  currentAlbumId?: string;
+  playing: boolean;
+  onTogglePlayback: () => void;
 }) {
+  const activeAlbum = currentAlbumId === album.id;
   return (
     <article className="album-detail" aria-label={`${album.title} release details`}>
       <button className="album-detail__back" onClick={onBack}>
@@ -1034,11 +1093,26 @@ function AlbumDetailPage({
               {album.artist}
             </button>
             <span className="album-detail__facts">
-              {album.year ?? "Year unknown"} · {album.songCount} {album.songCount === 1 ? "track" : "tracks"} · {formatTime(album.duration)}
+              {album.year ?? "Year unknown"} · {countLabel(album.songCount, "track")} · {formatTime(album.duration)}
             </span>
             <div className="album-detail__actions">
-              <button className="primary-button" onClick={onPlayAlbum} disabled={loading}>
-                <Play size={17} fill="currentColor" /> Play {album.songCount === 1 ? "single" : "album"}
+              <button
+                className={`primary-button ${activeAlbum ? "is-current" : ""} ${activeAlbum && playing ? "is-playing" : ""}`}
+                onClick={activeAlbum ? onTogglePlayback : onPlayAlbum}
+                disabled={loading}
+                aria-label={
+                  activeAlbum
+                    ? `${playing ? "Pause" : "Resume"} ${album.title}`
+                    : `Play ${album.songCount === 1 ? "single" : "album"}`
+                }
+                aria-pressed={activeAlbum && playing}
+              >
+                {activeAlbum && playing
+                  ? <Pause size={17} fill="currentColor" />
+                  : <Play size={17} fill="currentColor" />}
+                {activeAlbum
+                  ? (playing ? "Pause" : "Resume")
+                  : `Play ${album.songCount === 1 ? "single" : "album"}`}
               </button>
               <button className="secondary-button" onClick={onQueueAlbum} disabled={loading}>
                 <Plus size={17} /> Add to queue
@@ -1065,7 +1139,7 @@ function AlbumDetailPage({
           <div className="album-detail__tracks-heading">
             <div>
               <span className="eyebrow">Track list</span>
-              <h3>{album.songCount} {album.songCount === 1 ? "song" : "songs"}</h3>
+              <h3>{countLabel(album.songCount, "song")}</h3>
             </div>
             <span>{formatTime(album.duration)}</span>
           </div>
@@ -1088,12 +1162,29 @@ function AlbumDetailPage({
               <span>This release may not be streamable through Bandcamp’s Subsonic beta yet.</span>
             </div>
           ) : (
-            album.tracks.map((track) => (
-              <div className="track-row" key={track.id}>
-                <button className="track-row__number" onClick={() => onPlayTrack(track)} aria-label={`Play ${track.title}`}>
-                  <span>{track.track}</span><Play size={13} fill="currentColor" />
+            album.tracks.map((track) => {
+              const activeTrack = currentTrackId === track.id;
+              return (
+              <div className={`track-row ${activeTrack ? "is-current" : ""}`} key={track.id}>
+                <button
+                  className={`track-row__number ${activeTrack && playing ? "is-playing" : ""}`}
+                  onClick={activeTrack ? onTogglePlayback : () => onPlayTrack(track)}
+                  aria-label={
+                    activeTrack
+                      ? `${playing ? "Pause" : "Resume"} ${track.title}`
+                      : `Play ${track.title}`
+                  }
+                  aria-pressed={activeTrack && playing}
+                >
+                  <span>{track.track}</span>
+                  {activeTrack && playing
+                    ? <Pause size={13} fill="currentColor" />
+                    : <Play size={13} fill="currentColor" />}
                 </button>
-                <button className="track-row__title" onClick={() => onPlayTrack(track)}>
+                <button
+                  className="track-row__title"
+                  onClick={activeTrack ? onTogglePlayback : () => onPlayTrack(track)}
+                >
                   <strong>{track.title}</strong><span>{track.artist}</span>
                 </button>
                 <span className="track-row__duration">{formatTime(track.duration)}</span>
@@ -1115,7 +1206,8 @@ function AlbumDetailPage({
                   </button>
                 </div>
               </div>
-            ))
+              );
+            })
           )}
           </div>
         </section>
@@ -1426,7 +1518,7 @@ function EmptyState({
 export default function App() {
   const queryClient = useQueryClient();
   const [albums, setAlbums] = useState<Album[]>(() => readLibraryCache());
-  const [localFavorites, setLocalFavorites] = useState<FavoriteCollection>(
+  const [localFavorites, setLocalFavorites] = useState<LocalFavoriteCollection>(
     () => readLocalFavorites(),
   );
   const [connected, setConnected] = useState(false);
@@ -1449,8 +1541,8 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(0);
   const [volume, setVolume] = useState(0.72);
   const [repeat, setRepeat] = useState<RepeatMode>("off");
-  const [queueOpen, setQueueOpen] = useState(true);
-  const [queuePresent, setQueuePresent] = useState(true);
+  const [queueOpen, setQueueOpen] = useState(false);
+  const [queuePresent, setQueuePresent] = useState(false);
   const [nowPlayingOpen, setNowPlayingOpen] = useState(false);
   const [playerStateReady, setPlayerStateReady] = useState(false);
   const [selectedAlbum, setSelectedAlbum] = useState<Album>();
@@ -1518,6 +1610,9 @@ export default function App() {
   );
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
   const currentTrack = queue[currentIndex];
+  const currentRadioShowId = currentTrack
+    ? radioShowIdFromTrackId(currentTrack.id)
+    : undefined;
   const latestPlayerStateRef = useRef({
     queue,
     currentIndex,
@@ -1571,6 +1666,10 @@ export default function App() {
   const favoriteAlbumIds = useMemo(
     () => new Set(localFavorites.albumIds),
     [localFavorites.albumIds],
+  );
+  const favoriteRadioShowIds = useMemo(
+    () => new Set(localFavorites.radioShowIds),
+    [localFavorites.radioShowIds],
   );
   const localFavoriteTrackCandidates = useMemo(() => {
     const existing = new Set(localFavorites.tracks.map((track) => track.id));
@@ -1649,6 +1748,50 @@ export default function App() {
     selectedAlbum,
   ]);
 
+  const toggleRadioFavorite = useCallback((
+    show: RadioShowSummary,
+    favorite?: boolean,
+  ) => {
+    const nextFavorite = favorite ?? !favoriteRadioShowIds.has(show.id);
+    try {
+      const next = writeLocalFavorites(
+        updateLocalRadioFavorite(localFavorites, show, nextFavorite),
+      );
+      setLocalFavorites(next);
+      notify(
+        nextFavorite
+          ? "Radio show saved to Favorites on this device"
+          : "Radio show removed from local Favorites",
+        "good",
+      );
+    } catch (cause) {
+      notify(String(cause).replace(/^Error:\s*/, ""), "bad");
+    }
+  }, [favoriteRadioShowIds, localFavorites, notify]);
+
+  const toggleCurrentFavorite = useCallback(() => {
+    if (!currentTrack) return;
+    const radioShowId = radioShowIdFromTrackId(currentTrack.id);
+    if (radioShowId === undefined) {
+      toggleFavorite(currentTrack.id, "song");
+      return;
+    }
+    void queryClient.fetchQuery({
+      queryKey: ["bandcamp-radio-show", radioShowId],
+      queryFn: () => fetchRadioShow(radioShowId),
+      staleTime: 10 * 60 * 1_000,
+    }).then(
+      (show) => toggleRadioFavorite(show),
+      (cause) => notify(String(cause).replace(/^Error:\s*/, ""), "bad"),
+    );
+  }, [
+    currentTrack,
+    notify,
+    queryClient,
+    toggleFavorite,
+    toggleRadioFavorite,
+  ]);
+
   const enqueuePlayerStateWrite = useCallback((write: () => Promise<unknown>) => {
     const result = playerStateWriteRef.current
       .catch(() => undefined)
@@ -1681,7 +1824,7 @@ export default function App() {
         setCurrentTime(state.positionSeconds);
         setVolume(state.volume);
         setRepeat(state.repeatMode);
-        setQueueOpen(state.queueOpen);
+        setQueueOpen(Boolean(restoredTrack) && state.queueOpen);
         setPlaying(false);
       })
       .catch((cause) => {
@@ -1711,7 +1854,7 @@ export default function App() {
       setConnected(true);
       setLibraryError("");
       setSyncState("idle");
-      if (announce) notify(`${library.length} albums synced`, "good");
+      if (announce) notify(`${countLabel(library.length, "album")} synced`, "good");
     } catch (cause) {
       const message = String(cause).replace(/^Error:\s*/, "");
       setLibraryError(message);
@@ -2176,7 +2319,7 @@ export default function App() {
     if (currentTrack) setPlaying((value) => !value);
   }, [currentTrack]);
 
-  const next = useCallback(() => {
+  const advanceQueue = useCallback(() => {
     setCurrentTime(0);
     setCurrentIndex((index) => {
       if (repeat === "one") return index;
@@ -2186,6 +2329,28 @@ export default function App() {
       return index;
     });
   }, [queue.length, repeat]);
+
+  const next = useCallback(() => {
+    if (!currentTrack) return;
+    const playbackSeconds = audioRef.current?.currentTime ?? currentTime;
+    const chapterTime = nextRadioChapterTime(
+      currentTrack?.radioChapters,
+      playbackSeconds,
+    );
+    if (chapterTime !== undefined) {
+      setCurrentTime(chapterTime);
+      if (audioRef.current) audioRef.current.currentTime = chapterTime;
+      return;
+    }
+    const canAdvance =
+      currentIndex + 1 < queue.length ||
+      (repeat === "all" && queue.length > 1);
+    if (!canAdvance) return;
+    setCurrentTime(0);
+    setCurrentIndex((index) =>
+      index + 1 < queue.length ? index + 1 : 0,
+    );
+  }, [currentIndex, currentTime, currentTrack, queue.length, repeat]);
 
   const handleAudioEnded = useCallback((event: SyntheticEvent<HTMLAudioElement>) => {
     const track = currentTrack;
@@ -2233,25 +2398,43 @@ export default function App() {
           });
       }
     }
-    next();
+    advanceQueue();
   }, [
     currentTrack,
     checkpointLatestPlayerState,
     dispatchRadioScrobbleActions,
     lastFmStatus.connected,
-    next,
+    advanceQueue,
     notify,
   ]);
 
   const previous = useCallback(() => {
-    if (currentTime > 4) {
+    if (!currentTrack) return;
+    const playbackSeconds = audioRef.current?.currentTime ?? currentTime;
+    const chapterTime = previousRadioChapterTime(
+      currentTrack?.radioChapters,
+      playbackSeconds,
+      PREVIOUS_RESTART_THRESHOLD_SECONDS,
+    );
+    if (chapterTime !== undefined) {
+      setCurrentTime(chapterTime);
+      if (audioRef.current) audioRef.current.currentTime = chapterTime;
+      return;
+    }
+    if (playbackSeconds > PREVIOUS_RESTART_THRESHOLD_SECONDS) {
       setCurrentTime(0);
       if (audioRef.current) audioRef.current.currentTime = 0;
       return;
     }
+    const canMoveBack =
+      currentIndex > 0 ||
+      (repeat === "all" && queue.length > 1);
+    if (!canMoveBack) return;
     setCurrentTime(0);
-    setCurrentIndex((index) => Math.max(0, index - 1));
-  }, [currentTime]);
+    setCurrentIndex((index) =>
+      index > 0 ? index - 1 : queue.length - 1,
+    );
+  }, [currentIndex, currentTime, currentTrack, queue.length, repeat]);
 
   useEffect(() => {
     const keyboard = (event: KeyboardEvent) => {
@@ -2339,6 +2522,17 @@ export default function App() {
     [artistGroups, selectedArtist],
   );
   const currentRadioChapter = radioAiringAt(currentTrack?.radioChapters, currentTime).current;
+  const canPrevious = Boolean(currentTrack) && (
+    currentTime > PREVIOUS_RESTART_THRESHOLD_SECONDS ||
+    currentIndex > 0 ||
+    (repeat === "all" && queue.length > 1) ||
+    previousRadioChapterTime(currentTrack?.radioChapters, currentTime) !== undefined
+  );
+  const canNext = Boolean(currentTrack) && (
+    currentIndex + 1 < queue.length ||
+    (repeat === "all" && queue.length > 1) ||
+    nextRadioChapterTime(currentTrack?.radioChapters, currentTime) !== undefined
+  );
   const windowTitleSubject =
     nowPlayingOpen && currentTrack
       ? currentRadioChapter?.title ?? currentTrack.title
@@ -2544,13 +2738,13 @@ export default function App() {
         setPlaying(true);
         notify(
           action === "shuffle"
-            ? `Shuffling ${tracks.length} tracks by ${group.name}`
+            ? `Shuffling ${countLabel(tracks.length, "track")} by ${group.name}`
             : `Playing ${group.name}`,
           "good",
         );
       } else {
         setQueue((items) => appendUnique(items, tracks));
-        notify(`${tracks.length} ${group.name} tracks added to queue`, "good");
+        notify(`${countLabel(tracks.length, `${group.name} track`)} added to queue`, "good");
       }
     } finally {
       setArtistAction(undefined);
@@ -2607,7 +2801,7 @@ export default function App() {
       setQueue((items) => appendUnique(items, tracks));
       notify(
         tracks.length
-          ? `${tracks.length} tracks from ${hydrated.size} search results added`
+          ? `${countLabel(tracks.length, "track")} from ${countLabel(hydrated.size, "search result")} added`
           : "No playable tracks were returned for those results.",
         tracks.length ? "good" : "bad",
       );
@@ -2671,7 +2865,7 @@ export default function App() {
       setCurrentTime(0);
       setPlaying(true);
       notify(
-        `${tracks.length} tracks from ${scopeName} shuffled`,
+        `${countLabel(tracks.length, "track")} from ${scopeName} shuffled`,
         "good",
       );
     } finally {
@@ -2716,13 +2910,13 @@ export default function App() {
     setCurrentIndex(0);
     setCurrentTime(0);
     setPlaying(true);
-    notify(`Playing ${tracks.length} ${tracks.length === 1 ? "track" : "tracks"}`, "good");
+    notify(`Playing ${countLabel(tracks.length, "track")}`, "good");
   }, [notify]);
 
   const queueTracks = useCallback((tracks: Track[]) => {
     if (!tracks.length) return;
     setQueue((items) => appendUnique(items, tracks));
-    notify(`${tracks.length} ${tracks.length === 1 ? "track" : "tracks"} added to queue`, "good");
+    notify(`${countLabel(tracks.length, "track")} added to queue`, "good");
   }, [notify]);
 
   const playRandomTrack = useCallback(async (
@@ -2845,7 +3039,7 @@ export default function App() {
       const unchecked = Math.max(0, albums.filter((album) => !album.coverArt).length - missing.length);
       if (recovered.size) {
         notify(
-          `${recovered.size} missing ${recovered.size === 1 ? "cover" : "covers"} recovered`,
+          `${countLabel(recovered.size, "missing cover")} recovered`,
           "good",
         );
       } else if (missing.length || unchecked) {
@@ -2920,7 +3114,7 @@ export default function App() {
       void transitionCodaView(() => setNowPlayingOpen(true), "now-playing");
     }
   }, [currentTrack]);
-  const minimizeNowPlaying = useCallback(() => {
+  const backFromNowPlaying = useCallback(() => {
     const restoreFocus = () => {
       document.querySelector<HTMLButtonElement>(".player__art-link")?.focus({
         preventScroll: true,
@@ -2950,7 +3144,7 @@ export default function App() {
     setPlayerStateReady(true);
     setLibraryError("");
     setSyncState("idle");
-    notify(`${library.length} albums synced`, "good");
+    notify(`${countLabel(library.length, "album")} synced`, "good");
   }, [notify]);
   const chooseView = useCallback((nextView: LibraryView) => {
     if (
@@ -3140,10 +3334,12 @@ export default function App() {
               )}
               airPlayAvailable={airPlayAvailable}
               queueOpen={queueOpen}
-              onMinimize={minimizeNowPlaying}
+              onBack={backFromNowPlaying}
               onToggle={togglePlayback}
               onPrevious={previous}
               onNext={next}
+              canPrevious={canPrevious}
+              canNext={canNext}
               onSeek={seek}
               onVolume={setVolume}
               onRepeat={cycleRepeat}
@@ -3152,9 +3348,17 @@ export default function App() {
               onArtist={browseArtist}
               onAlbum={openTrackAlbum}
               onPlayQueueIndex={playQueueIndex}
-              favorite={favoriteTrackIds.has(currentTrack.id)}
-              onToggleFavorite={() => toggleFavorite(currentTrack.id, "song")}
-              onAddToPlaylist={() => setPlaylistTarget([currentTrack])}
+              favorite={
+                currentRadioShowId !== undefined
+                  ? favoriteRadioShowIds.has(currentRadioShowId)
+                  : favoriteTrackIds.has(currentTrack.id)
+              }
+              onToggleFavorite={toggleCurrentFavorite}
+              onAddToPlaylist={
+                currentRadioShowId === undefined
+                  ? () => setPlaylistTarget([currentTrack])
+                  : undefined
+              }
             />
           ) : view === "favorites" || view === "playlists" ? (
             <Suspense fallback={<LibrarySkeleton />}>
@@ -3166,6 +3370,11 @@ export default function App() {
                 favoritesLocal
                 onRefreshFavorites={() => setLocalFavorites(readLocalFavorites())}
                 onToggleFavorite={(id, kind, favorite) => toggleFavorite(id, kind, favorite)}
+                onToggleRadioFavorite={(show, favorite) =>
+                  toggleRadioFavorite(show, favorite)}
+                currentTrackId={currentTrack?.id}
+                playing={playing}
+                onTogglePlayback={togglePlayback}
                 onPlayTracks={playTracks}
                 onQueueTracks={queueTracks}
                 onPlayTrack={playTrack}
@@ -3181,11 +3390,27 @@ export default function App() {
             </Suspense>
           ) : view === "discover" ? (
             <Suspense fallback={<LibrarySkeleton />}>
-              <DiscoverView onPlay={playTrack} onQueue={queueTrack} />
+              <DiscoverView
+                onPlay={playTrack}
+                onQueue={queueTrack}
+                currentTrackId={currentTrack?.id}
+                playing={playing}
+                onTogglePlayback={togglePlayback}
+              />
             </Suspense>
           ) : view === "radio" ? (
             <Suspense fallback={<LibrarySkeleton />}>
-              <RadioView onPlay={playTrack} onPlayAt={playTrackAt} onQueue={queueTrack} />
+              <RadioView
+                onPlay={playTrack}
+                onPlayAt={playTrackAt}
+                onQueue={queueTrack}
+                currentTrackId={currentTrack?.id}
+                currentTime={currentTime}
+                playing={playing}
+                onTogglePlayback={togglePlayback}
+                favoriteShowIds={favoriteRadioShowIds}
+                onToggleFavorite={toggleRadioFavorite}
+              />
             </Suspense>
           ) : (
             <>
@@ -3197,7 +3422,7 @@ export default function App() {
                 {syncState === "checking"
                   ? "Checking your saved connection…"
                   : connected
-                    ? `${albums.length} ${albums.length === 1 ? "release" : "releases"}, ready when you are.`
+                    ? `${countLabel(albums.length, "release")}, ready when you are.`
                     : "Connect your Bandcamp library to start listening."}
               </p>
             </div>
@@ -3376,6 +3601,10 @@ export default function App() {
                 onToggleFavoriteAlbum={() => toggleFavorite(selectedAlbum.id, "album")}
                 onToggleFavoriteTrack={(track) => toggleFavorite(track.id, "song")}
                 onAddToPlaylist={setPlaylistTarget}
+                currentTrackId={currentTrack?.id}
+                currentAlbumId={currentTrack?.albumId}
+                playing={playing}
+                onTogglePlayback={togglePlayback}
               />
             ) : isInitialLoading ? (
               <LibrarySkeleton />
@@ -3429,7 +3658,7 @@ export default function App() {
                 <div className="section-heading">
                   <h2>{genre === "All" ? "Artists" : `${genre} artists`}</h2>
                   <span>
-                    {artistGroups.length} {artistGroups.length === 1 ? "artist" : "artists"}
+                    {countLabel(artistGroups.length, "artist")}
                   </span>
                 </div>
                 {artistGroups.length ? (
@@ -3459,12 +3688,15 @@ export default function App() {
                     onPlay={playArtist}
                     onShuffle={shuffleArtist}
                     onQueue={queueArtist}
+                    active={activeArtist.albums.some((album) => album.id === currentTrack?.albumId)}
+                    playing={playing}
+                    onTogglePlayback={togglePlayback}
                   />
                 ) : null}
                 <div className="section-heading">
                   <h2>{releaseSectionTitle}</h2>
                   <div className="section-heading__actions">
-                    <span>{visibleAlbums.length} {visibleAlbums.length === 1 ? "release" : "releases"}</span>
+                    <span>{countLabel(visibleAlbums.length, "release")}</span>
                     {deferredQuery && visibleAlbums.length ? (
                       <button
                         className="queue-results-button"
@@ -3491,6 +3723,9 @@ export default function App() {
                           onPlay={playAlbum}
                           onQueue={queueAlbum}
                           onArtist={browseArtist}
+                          active={currentTrack?.albumId === album.id}
+                          playing={playing}
+                          onTogglePlayback={togglePlayback}
                         />
                       ))}
                     </div>
@@ -3558,6 +3793,8 @@ export default function App() {
           onToggle={togglePlayback}
           onPrevious={previous}
           onNext={next}
+          canPrevious={canPrevious}
+          canNext={canNext}
           onSeek={seek}
           onVolume={setVolume}
           onRepeat={cycleRepeat}
@@ -3566,10 +3803,12 @@ export default function App() {
           onArtist={browseArtist}
           onAlbum={openTrackAlbum}
           onNowPlaying={openNowPlaying}
-          favorite={currentTrack ? favoriteTrackIds.has(currentTrack.id) : false}
-          onToggleFavorite={() => {
-            if (currentTrack) toggleFavorite(currentTrack.id, "song");
-          }}
+          favorite={currentTrack
+            ? currentRadioShowId !== undefined
+              ? favoriteRadioShowIds.has(currentRadioShowId)
+              : favoriteTrackIds.has(currentTrack.id)
+            : false}
+          onToggleFavorite={toggleCurrentFavorite}
           onAddToPlaylist={() => {
             if (currentTrack) setPlaylistTarget([currentTrack]);
           }}

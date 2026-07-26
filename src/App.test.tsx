@@ -242,15 +242,64 @@ describe("Coda application flows", () => {
     await screen.findByText("Soft Focus");
     fireEvent.click(screen.getByRole("button", { name: "Play Soft Focus" }));
 
-    expect(await screen.findByText("Now playing")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Open Now Playing" }))
+      .toBeInTheDocument();
     expect(screen.getAllByText("First Light").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "Choose AirPlay device" }));
     expect(airPlayPicker).toHaveBeenCalledOnce();
 
+    fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
+    expect(await screen.findByText("Now playing")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Clear next" }));
     expect(screen.getByText("End of the queue")).toBeInTheDocument();
     expect(screen.getAllByText("First Light").length).toBeGreaterThan(0);
     expect(screen.queryByText("Afterimage")).not.toBeInTheDocument();
+  });
+
+  it("restarts with Previous near the track body and disables unavailable transport", async () => {
+    mocks.loadPlayerState.mockResolvedValue({
+      version: 1,
+      savedAt: Date.now(),
+      queue: tracks.map(({ streamUrl: _streamUrl, ...track }) => track),
+      currentIndex: 0,
+      positionSeconds: 0,
+      volume: 0.72,
+      repeatMode: "off",
+      queueOpen: false,
+    });
+    const { container } = renderApp();
+
+    await screen.findByRole("button", { name: "Open Now Playing" });
+
+    const player = container.querySelector<HTMLElement>(".player");
+    expect(player).not.toBeNull();
+    const previous = within(player!).getByRole("button", { name: "Previous" });
+    const next = within(player!).getByRole("button", { name: "Next" });
+    const audio = container.querySelector("audio")!;
+
+    expect(previous).toBeDisabled();
+    await waitFor(() => expect(next).toBeEnabled());
+
+    audio.currentTime = 6;
+    fireEvent.timeUpdate(audio);
+    expect(previous).toBeEnabled();
+    fireEvent.click(previous);
+
+    expect(audio.currentTime).toBe(0);
+    expect(within(player!).getByText("First Light")).toBeInTheDocument();
+    expect(previous).toBeDisabled();
+
+    fireEvent.click(next);
+    await waitFor(() =>
+      expect(within(player!).getByText("Afterimage")).toBeInTheDocument(),
+    );
+    expect(next).toBeDisabled();
+    expect(previous).toBeEnabled();
+
+    fireEvent.click(within(player!).getByRole("button", { name: "Repeat off" }));
+    expect(next).toBeEnabled();
+    fireEvent.click(next);
+    expect(within(player!).getByText("First Light")).toBeInTheDocument();
   });
 
   it("durably saves a changed queue after the structural debounce", async () => {
@@ -282,22 +331,19 @@ describe("Coda application flows", () => {
     const appBody = document.querySelector(".app-body");
     expect(appBody).not.toBeNull();
     const libraryPane = screen.getByRole("main");
-    expect(screen.getByRole("complementary", { name: "Playback queue" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Upcoming tracks" })).toHaveAttribute(
-      "tabindex",
-      "0",
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Hide queue" }));
-    expect(screen.queryByRole("complementary", { name: "Playback queue" })).not.toBeInTheDocument();
-    expect(document.querySelector(".queue-panel--closing")).toHaveAttribute("aria-hidden", "true");
-    expect(screen.getByRole("button", { name: "Show queue" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByRole("complementary", { name: "Playback queue" }))
+      .not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show queue" }))
+      .toHaveAttribute("aria-pressed", "false");
     expect(appBody).toHaveClass("app-body--queue-closed");
-    expect(screen.getByRole("main")).toBe(libraryPane);
 
     fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
     await waitFor(() =>
       expect(screen.getByRole("complementary", { name: "Playback queue" })).toHaveFocus(),
+    );
+    expect(screen.getByRole("region", { name: "Upcoming tracks" })).toHaveAttribute(
+      "tabindex",
+      "0",
     );
     expect(screen.getByRole("button", { name: "Hide queue" })).toHaveAttribute(
       "aria-pressed",
@@ -305,6 +351,36 @@ describe("Coda application flows", () => {
     );
     expect(appBody).not.toHaveClass("app-body--queue-closed");
     expect(screen.getByRole("main")).toBe(libraryPane);
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide queue" }));
+    expect(screen.queryByRole("complementary", { name: "Playback queue" }))
+      .not.toBeInTheDocument();
+    expect(document.querySelector(".queue-panel--closing"))
+      .toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByRole("button", { name: "Show queue" }))
+      .toHaveAttribute("aria-pressed", "false");
+    expect(appBody).toHaveClass("app-body--queue-closed");
+    expect(screen.getByRole("main")).toBe(libraryPane);
+  });
+
+  it("does not reopen a saved queue drawer without a restorable current track", async () => {
+    mocks.loadPlayerState.mockResolvedValue({
+      version: 1,
+      savedAt: Date.now(),
+      queue: [],
+      currentIndex: 0,
+      positionSeconds: 0,
+      volume: 0.72,
+      repeatMode: "off",
+      queueOpen: true,
+    });
+    renderApp();
+
+    await waitFor(() => expect(mocks.loadPlayerState).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("complementary", { name: "Playback queue" }))
+      .not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show queue" }))
+      .toHaveAttribute("aria-pressed", "false");
   });
 
   it("reports the actual native restore failure instead of blaming a pause", async () => {
@@ -358,7 +434,7 @@ describe("Coda application flows", () => {
     expect(await within(settings).findByText("nightlistener")).toBeInTheDocument();
     fireEvent.click(within(settings).getByRole("button", { name: "Close" }));
     fireEvent.click(screen.getByRole("button", { name: "Play Soft Focus" }));
-    await screen.findByText("Now playing");
+    await screen.findByRole("button", { name: "Open Now Playing" });
     const audio = container.querySelector("audio");
     expect(audio).not.toBeNull();
     fireEvent.playing(audio!);
@@ -387,7 +463,8 @@ describe("Coda application flows", () => {
       name: "Play a random track from the singles view",
     }));
 
-    expect(await screen.findByText("Now playing")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Open Now Playing" }))
+      .toBeInTheDocument();
     expect(screen.getAllByText("Streetlight").length).toBeGreaterThan(0);
   });
 
@@ -454,6 +531,19 @@ describe("Coda application flows", () => {
       volume: 0.7,
       repeatMode: "off",
       queueOpen: false,
+      radioScrobbleProgress: {
+        showTrackId: "radio:979",
+        activeChapterKey: "60:chapter",
+        chapterStartedAt: 0,
+        chapterListenedSeconds: 5,
+        lastPosition: 65,
+        chapterNowPlayingSent: false,
+        chapterScrobbleState: "idle",
+        showStartedAt: 0,
+        showListenedSeconds: 65,
+        showScrobbleState: "idle",
+        scrobbledChapterKeys: [],
+      },
     });
     const { container } = renderApp();
 
@@ -475,6 +565,18 @@ describe("Coda application flows", () => {
     fireEvent.loadedMetadata(audio);
     expect(audio.currentTime).toBe(65);
     expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(mocks.checkpointPlayerState).toHaveBeenCalledWith(
+        expect.objectContaining({
+          currentTrackId: "radio:979",
+          positionSeconds: 65,
+          radioScrobbleProgress: expect.objectContaining({
+            showTrackId: "radio:979",
+            showListenedSeconds: 65,
+          }),
+        }),
+      ),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
     const chapters = await screen.findByRole("region", { name: "Show chapters" });
@@ -488,6 +590,69 @@ describe("Coda application flows", () => {
     expect(within(chapters).getByRole("button", {
       name: "Seek to Opening signal at 0:00",
     })).toHaveAttribute("aria-current", "true");
+  });
+
+  it("uses player Previous and Next as Radio chapter transport before changing queue items", async () => {
+    mocks.fetchRadioShow.mockResolvedValue({
+      id: 979,
+      subtitle: "The Coda Broadcast",
+      title: "Bandcamp Weekly",
+      description: "A broadcast from Bandcamp.",
+      publishedAt: "2026-07-20T12:00:00Z",
+      duration: 3_600,
+      streamUrl: "https://example.test/radio-979-refreshed.mp3",
+      chapters: [
+        { title: "Opening signal", artist: "Bandcamp Radio", timecode: 0 },
+        { title: "Second signal", artist: "Night Archive", timecode: 60 },
+        { title: "Final signal", artist: "Signal Path", timecode: 120 },
+      ],
+    });
+    mocks.loadPlayerState.mockResolvedValue({
+      version: 1,
+      savedAt: Date.now(),
+      queue: [
+        {
+          id: "radio:979",
+          title: "The Coda Broadcast",
+          artist: "Bandcamp Radio",
+          album: "Bandcamp Weekly",
+          albumId: "radio:979",
+          duration: 3_600,
+          track: 1,
+          palette: ["#ca6954", "#241b1a"],
+        },
+        tracks[0],
+      ],
+      currentIndex: 0,
+      positionSeconds: 65,
+      volume: 0.7,
+      repeatMode: "off",
+      queueOpen: false,
+    });
+    const { container } = renderApp();
+
+    await waitFor(() => expect(mocks.fetchRadioShow).toHaveBeenCalledWith(979));
+    const audio = container.querySelector("audio")!;
+    Object.defineProperty(audio, "duration", {
+      configurable: true,
+      value: 3_600,
+    });
+    fireEvent.loadedMetadata(audio);
+    expect(audio.currentTime).toBe(65);
+    expect(screen.getByRole("button", { name: "Previous" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(audio.currentTime).toBe(120);
+
+    fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+    expect(audio.currentTime).toBe(60);
+
+    audio.currentTime = 120;
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findAllByText("First Light")).not.toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Previous" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
   });
 
   it("scrobbles Radio chapters and the completed show as separate radio selections", async () => {
@@ -586,6 +751,11 @@ describe("Coda application flows", () => {
   it("separates release types and navigates through artist and album views", async () => {
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album, single]);
+    mocks.fetchAlbum.mockImplementation((requestedAlbum: Album) =>
+      Promise.resolve(
+        requestedAlbum.id === single.id ? single.tracks : album.tracks,
+      ),
+    );
     renderApp();
 
     await screen.findByText("Soft Focus");
@@ -614,7 +784,8 @@ describe("Coda application flows", () => {
     expect(screen.getByRole("button", { name: "Play all" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Shuffle artist" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Shuffle" }));
-    expect(await screen.findByText("Now playing")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Open Now Playing" }))
+      .toBeInTheDocument();
     expect(screen.getAllByText("Streetlight").length).toBeGreaterThan(0);
   });
 
@@ -638,12 +809,39 @@ describe("Coda application flows", () => {
     expect(document.title).toBe("First Light — Coda");
 
     fireEvent.click(within(nowPlaying).getByRole("button", {
-      name: "Minimize Now Playing",
+      name: "Back",
     }));
     expect(screen.getByRole("article", { name: "Soft Focus release details" })).toBeInTheDocument();
     const miniArtwork = screen.getByRole("button", { name: "Open Now Playing" });
     expect(miniArtwork).toBeInTheDocument();
     await waitFor(() => expect(miniArtwork).toHaveFocus());
+  });
+
+  it("matches album and track controls to the current playing and paused state", async () => {
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    fireEvent.click(screen.getByRole("button", { name: "Open Soft Focus" }));
+    const albumPage = await screen.findByRole("article", {
+      name: "Soft Focus release details",
+    });
+    fireEvent.click(within(albumPage).getByRole("button", { name: "Play album" }));
+
+    expect(await within(albumPage).findByRole("button", {
+      name: "Pause Soft Focus",
+    })).toHaveAttribute("aria-pressed", "true");
+    const pauseTrack = within(albumPage).getByRole("button", {
+      name: "Pause First Light",
+    });
+    expect(pauseTrack).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(pauseTrack);
+    expect(within(albumPage).getByRole("button", { name: "Resume Soft Focus" }))
+      .toHaveAttribute("aria-pressed", "false");
+    expect(within(albumPage).getByRole("button", { name: "Resume First Light" }))
+      .toHaveAttribute("aria-pressed", "false");
   });
 
   it("uses a shared-element view transition when the WebView supports it", async () => {
@@ -674,7 +872,7 @@ describe("Coda application flows", () => {
       expect(document.documentElement).toHaveClass("coda-view-transitions-supported");
 
       fireEvent.click(within(nowPlaying).getByRole("button", {
-        name: "Minimize Now Playing",
+        name: "Back",
       }));
       expect(startViewTransition).toHaveBeenCalledTimes(2);
       await waitFor(() =>

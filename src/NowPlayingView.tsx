@@ -1,6 +1,6 @@
 import {
   Airplay,
-  ChevronDown,
+  ArrowLeft,
   Clock3,
   ExternalLink,
   Heart,
@@ -25,6 +25,7 @@ import {
   useState,
 } from "react";
 import { formatTime, openBandcampUrl } from "./lib";
+import { countLabel } from "./countLabel";
 import { boundRadioChapters, radioAiringAt } from "./radioPlayback";
 import type { RepeatMode, Track } from "./types";
 
@@ -40,10 +41,12 @@ type NowPlayingViewProps = {
   artwork: ReactNode;
   airPlayAvailable: boolean;
   queueOpen: boolean;
-  onMinimize: () => void;
+  onBack: () => void;
   onToggle: () => void;
   onPrevious: () => void;
   onNext: () => void;
+  canPrevious: boolean;
+  canNext: boolean;
   onSeek: (value: number) => void;
   onVolume: (value: number) => void;
   onRepeat: () => void;
@@ -71,10 +74,12 @@ function NowPlayingViewComponent({
   artwork,
   airPlayAvailable,
   queueOpen,
-  onMinimize,
+  onBack,
   onToggle,
   onPrevious,
   onNext,
+  canPrevious,
+  canNext,
   onSeek,
   onVolume,
   onRepeat,
@@ -132,13 +137,13 @@ function NowPlayingViewComponent({
       <div className="now-playing__wash" aria-hidden="true" />
       <header className="now-playing__header">
         <button
-          className="now-playing__minimize"
-          onClick={onMinimize}
-          aria-label="Minimize Now Playing"
-          title="Return to compact player"
+          className="now-playing__back"
+          onClick={onBack}
+          aria-label="Back"
+          title="Back to previous view"
         >
-          <ChevronDown size={17} strokeWidth={2.2} />
-          Minimize
+          <ArrowLeft size={17} strokeWidth={2.2} />
+          Back
         </button>
         <span className="now-playing__status">
           <i aria-hidden="true" />
@@ -194,9 +199,12 @@ function NowPlayingViewComponent({
           <div className="now-playing__facts">
             <span>Track {track.track}</span>
             <span><Clock3 size={13} /> {formatTime(safeDuration)}</span>
-            <span>{queue.length - currentIndex - 1} next</span>
+            <span>{countLabel(queue.length - currentIndex - 1, "track")} next</span>
           </div>
-          {!track.id.startsWith("radio:") && (onToggleFavorite || onAddToPlaylist) ? (
+          {(
+            onToggleFavorite ||
+            (!track.id.startsWith("radio:") && onAddToPlaylist)
+          ) ? (
             <div className="now-playing__library-actions">
               {onToggleFavorite ? (
                 <button
@@ -208,7 +216,7 @@ function NowPlayingViewComponent({
                   {favorite ? "Favorited" : "Favorite"}
                 </button>
               ) : null}
-              {onAddToPlaylist ? (
+              {!track.id.startsWith("radio:") && onAddToPlaylist ? (
                 <button className="text-button" onClick={onAddToPlaylist}>
                   <ListPlus size={15} /> Add to playlist
                 </button>
@@ -247,13 +255,13 @@ function NowPlayingViewComponent({
             >
               {repeat === "one" ? <Repeat1 size={20} /> : <Repeat size={20} />}
             </button>
-            <button className="icon-button now-playing__skip" onClick={onPrevious} title="Previous" aria-label="Previous">
+            <button className="icon-button now-playing__skip" onClick={onPrevious} disabled={!canPrevious} title="Previous" aria-label="Previous">
               <SkipBack size={24} fill="currentColor" />
             </button>
             <button className="now-playing__play" onClick={onToggle} aria-label={playing ? "Pause" : "Play"}>
               {playing ? <Pause size={29} fill="currentColor" /> : <Play size={29} fill="currentColor" />}
             </button>
-            <button className="icon-button now-playing__skip" onClick={onNext} title="Next" aria-label="Next">
+            <button className="icon-button now-playing__skip" onClick={onNext} disabled={!canNext} title="Next" aria-label="Next">
               <SkipForward size={24} fill="currentColor" />
             </button>
             <button
@@ -314,7 +322,7 @@ function NowPlayingViewComponent({
               <span className="eyebrow">Broadcast tracklist</span>
               <h2 id="radio-timeline-heading">Songs in this show</h2>
             </div>
-            <span>{radioTimeline.length} chapters</span>
+            <span>{countLabel(radioTimeline.length, "chapter")}</span>
           </div>
           <ol className="now-playing__radio-chapters">
             {radioTimeline.map((chapter, index) => {

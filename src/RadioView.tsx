@@ -5,14 +5,17 @@ import {
   Clock3,
   ExternalLink,
   Headphones,
+  Heart,
   ListMusic,
   ListPlus,
   LoaderCircle,
+  Pause,
   Play,
   Radio,
   RefreshCw,
 } from "lucide-react";
 import { type CSSProperties, memo, useCallback, useState } from "react";
+import { countLabel } from "./countLabel";
 import {
   fetchRadioShow,
   fetchRadioShows,
@@ -21,7 +24,7 @@ import {
   openBandcampUrl,
   paletteFor,
 } from "./lib";
-import { boundRadioChapters } from "./radioPlayback";
+import { boundRadioChapters, radioAiringAt } from "./radioPlayback";
 import type { RadioShow, RadioShowSummary, Track } from "./types";
 import { transitionCodaView } from "./viewTransitions";
 
@@ -91,15 +94,25 @@ const RadioArtwork = memo(function RadioArtwork({
 const RadioCard = memo(function RadioCard({
   show,
   busyAction,
+  active,
+  playing,
   onPlay,
+  onTogglePlayback,
   onQueue,
   onDetails,
+  favorite,
+  onToggleFavorite,
 }: {
   show: RadioShowSummary;
   busyAction?: "play" | "queue" | "detail";
+  active: boolean;
+  playing: boolean;
   onPlay: (show: RadioShowSummary) => void;
+  onTogglePlayback: () => void;
   onQueue: (show: RadioShowSummary) => void;
   onDetails: (show: RadioShowSummary) => void;
+  favorite: boolean;
+  onToggleFavorite: (show: RadioShowSummary) => void;
 }) {
   return (
     <article className="radio-card">
@@ -111,16 +124,38 @@ const RadioCard = memo(function RadioCard({
         <p>{show.description}</p>
         <div className="radio-card__actions">
           <button
-            className="radio-card__play"
-            onClick={() => onPlay(show)}
+            className={`radio-card__play ${active ? "is-current" : ""} ${active && playing ? "is-playing" : ""}`}
+            onClick={active ? onTogglePlayback : () => onPlay(show)}
             disabled={Boolean(busyAction)}
+            aria-label={
+              active
+                ? `${playing ? "Pause" : "Resume"} ${show.subtitle}`
+                : `Play ${show.subtitle}`
+            }
+            aria-pressed={active && playing}
           >
             {busyAction === "play" ? (
               <LoaderCircle className="spin" size={15} />
+            ) : active && playing ? (
+              <Pause size={15} fill="currentColor" />
             ) : (
               <Play size={15} fill="currentColor" />
             )}
-            Play
+            {active ? (playing ? "Pause" : "Resume") : "Play"}
+          </button>
+          <button
+            className={`icon-button favorite-button ${favorite ? "is-favorite" : ""}`}
+            onClick={() => onToggleFavorite(show)}
+            disabled={Boolean(busyAction)}
+            aria-label={
+              favorite
+                ? `Remove ${show.subtitle} from favorites`
+                : `Add ${show.subtitle} to favorites`
+            }
+            aria-pressed={favorite}
+            title={favorite ? "Remove from favorites" : "Add to favorites"}
+          >
+            <Heart size={15} fill={favorite ? "currentColor" : "none"} />
           </button>
           <button
             className="icon-button"
@@ -169,7 +204,13 @@ const RadioDetail = memo(function RadioDetail({
   onPlay,
   onQueue,
   onPlayAt,
+  currentTrackId,
+  currentTime,
+  playing,
+  onTogglePlayback,
   onOpenItem,
+  favorite,
+  onToggleFavorite,
 }: {
   show: RadioShow;
   actionError: string;
@@ -177,10 +218,20 @@ const RadioDetail = memo(function RadioDetail({
   onPlay: (track: Track) => void;
   onQueue: (track: Track) => void;
   onPlayAt?: (track: Track, position: number) => void;
+  currentTrackId?: string;
+  currentTime: number;
+  playing: boolean;
+  onTogglePlayback: () => void;
   onOpenItem: (url: string) => void;
+  favorite: boolean;
+  onToggleFavorite: (show: RadioShowSummary) => void;
 }) {
   const track = radioTrack(show);
   const chapters = track.radioChapters ?? [];
+  const activeShow = currentTrackId === track.id;
+  const currentChapter = activeShow
+    ? radioAiringAt(chapters, currentTime).current
+    : undefined;
 
   return (
     <section className="radio-detail" aria-labelledby="radio-detail-title">
@@ -198,17 +249,37 @@ const RadioDetail = memo(function RadioDetail({
           <div className="radio-feature__meta">
             <span><CalendarDays size={13} /> {showDate(show.publishedAt)}</span>
             <span><Clock3 size={13} /> {formatTime(show.duration)}</span>
-            <span><ListMusic size={13} /> {chapters.length} chapters</span>
+            <span><ListMusic size={13} /> {countLabel(chapters.length, "chapter")}</span>
           </div>
           <p>{show.description}</p>
           <div className="radio-feature__actions">
-            <button className="primary-button" onClick={() => onPlay(track)}>
-              <Play size={17} fill="currentColor" />
-              Play show
+            <button
+              className={`primary-button ${activeShow ? "is-current" : ""} ${activeShow && playing ? "is-playing" : ""}`}
+              onClick={activeShow ? onTogglePlayback : () => onPlay(track)}
+              aria-label={activeShow ? `${playing ? "Pause" : "Resume"} show` : "Play show"}
+              aria-pressed={activeShow && playing}
+            >
+              {activeShow && playing
+                ? <Pause size={17} fill="currentColor" />
+                : <Play size={17} fill="currentColor" />}
+              {activeShow ? (playing ? "Pause show" : "Resume show") : "Play show"}
             </button>
             <button className="secondary-button" onClick={() => onQueue(track)}>
               <ListPlus size={17} />
               Add to queue
+            </button>
+            <button
+              className={`secondary-button favorite-button ${favorite ? "is-favorite" : ""}`}
+              onClick={() => onToggleFavorite(show)}
+              aria-pressed={favorite}
+              aria-label={
+                favorite
+                  ? `Remove ${show.subtitle} from favorites`
+                  : `Add ${show.subtitle} to favorites`
+              }
+            >
+              <Heart size={16} fill={favorite ? "currentColor" : "none"} />
+              {favorite ? "Favorited" : "Favorite"}
             </button>
             <button
               className="icon-button"
@@ -229,15 +300,17 @@ const RadioDetail = memo(function RadioDetail({
           <span className="eyebrow">Broadcast tracklist</span>
           <h2>Songs in this show</h2>
         </div>
-        <span>{chapters.length} chapters</span>
+        <span>{countLabel(chapters.length, "chapter")}</span>
       </div>
       {chapters.length ? (
         <ol className="radio-detail__chapters">
-          {chapters.map((chapter, index) => (
-            <li
-              className="radio-detail__chapter"
-              key={`${chapter.timecode}-${chapter.artist}-${chapter.title}-${index}`}
-            >
+          {chapters.map((chapter, index) => {
+            const activeChapter = currentChapter === chapter;
+            return (
+              <li
+                className={`radio-detail__chapter ${activeChapter ? "is-current" : ""}`}
+                key={`${chapter.timecode}-${chapter.artist}-${chapter.title}-${index}`}
+              >
               <span className="radio-detail__chapter-number">
                 {String(index + 1).padStart(2, "0")}
               </span>
@@ -263,17 +336,29 @@ const RadioDetail = memo(function RadioDetail({
               <time>{formatTime(chapter.timecode)}</time>
               {onPlayAt ? (
                 <button
-                  className="radio-detail__chapter-play"
-                  onClick={() => onPlayAt(track, chapter.timecode)}
-                  aria-label={`Play ${chapter.title} from ${formatTime(chapter.timecode)}`}
-                  title="Play from here"
+                  className={`radio-detail__chapter-play ${activeChapter ? "is-current" : ""} ${activeChapter && playing ? "is-playing" : ""}`}
+                  onClick={
+                    activeChapter
+                      ? onTogglePlayback
+                      : () => onPlayAt(track, chapter.timecode)
+                  }
+                  aria-label={
+                    activeChapter
+                      ? `${playing ? "Pause" : "Resume"} ${chapter.title}`
+                      : `Play ${chapter.title} from ${formatTime(chapter.timecode)}`
+                  }
+                  aria-pressed={activeChapter && playing}
+                  title={activeChapter ? (playing ? "Pause" : "Resume") : "Play from here"}
                 >
-                  <Play size={14} fill="currentColor" />
-                  Play
+                  {activeChapter && playing
+                    ? <Pause size={14} fill="currentColor" />
+                    : <Play size={14} fill="currentColor" />}
+                  {activeChapter ? (playing ? "Pause" : "Resume") : "Play"}
                 </button>
               ) : null}
             </li>
-          ))}
+            );
+          })}
         </ol>
       ) : (
         <p className="radio-detail__empty">Bandcamp did not provide a tracklist for this show.</p>
@@ -289,10 +374,22 @@ export default function RadioView({
   onPlay,
   onQueue,
   onPlayAt,
+  currentTrackId,
+  currentTime,
+  playing,
+  onTogglePlayback,
+  favoriteShowIds,
+  onToggleFavorite,
 }: {
   onPlay: (track: Track) => void;
   onQueue: (track: Track) => void;
   onPlayAt?: (track: Track, position: number) => void;
+  currentTrackId?: string;
+  currentTime: number;
+  playing: boolean;
+  onTogglePlayback: () => void;
+  favoriteShowIds: ReadonlySet<number>;
+  onToggleFavorite: (show: RadioShowSummary) => void;
 }) {
   const queryClient = useQueryClient();
   const showsQuery = useQuery({
@@ -426,7 +523,13 @@ export default function RadioView({
         onPlay={onPlay}
         onQueue={onQueue}
         onPlayAt={onPlayAt}
+        currentTrackId={currentTrackId}
+        currentTime={currentTime}
+        playing={playing}
+        onTogglePlayback={onTogglePlayback}
         onOpenItem={openItem}
+        favorite={favoriteShowIds.has(selectedShow.id)}
+        onToggleFavorite={onToggleFavorite}
       />
     );
   }
@@ -447,16 +550,51 @@ export default function RadioView({
           <p>{featured.description}</p>
           <div className="radio-feature__actions">
             <button
-              className="primary-button"
-              onClick={() => void actOnShow(featured, "play")}
+              className={`primary-button ${currentTrackId === `radio:${featured.id}` ? "is-current" : ""} ${currentTrackId === `radio:${featured.id}` && playing ? "is-playing" : ""}`}
+              onClick={
+                currentTrackId === `radio:${featured.id}`
+                  ? onTogglePlayback
+                  : () => void actOnShow(featured, "play")
+              }
               disabled={Boolean(busy)}
+              aria-label={
+                actionFor(featured) === "play"
+                  ? "Loading show…"
+                  : currentTrackId === `radio:${featured.id}`
+                  ? `${playing ? "Pause" : "Resume"} latest show`
+                  : "Play latest show"
+              }
+              aria-pressed={currentTrackId === `radio:${featured.id}` && playing}
             >
               {actionFor(featured) === "play" ? (
                 <LoaderCircle className="spin" size={17} />
+              ) : currentTrackId === `radio:${featured.id}` && playing ? (
+                <Pause size={17} fill="currentColor" />
               ) : (
                 <Play size={17} fill="currentColor" />
               )}
-              {actionFor(featured) === "play" ? "Loading show…" : "Play latest show"}
+              {actionFor(featured) === "play"
+                ? "Loading show…"
+                : currentTrackId === `radio:${featured.id}`
+                  ? (playing ? "Pause latest show" : "Resume latest show")
+                  : "Play latest show"}
+            </button>
+            <button
+              className={`secondary-button favorite-button ${favoriteShowIds.has(featured.id) ? "is-favorite" : ""}`}
+              onClick={() => onToggleFavorite(featured)}
+              disabled={Boolean(busy)}
+              aria-pressed={favoriteShowIds.has(featured.id)}
+              aria-label={
+                favoriteShowIds.has(featured.id)
+                  ? `Remove ${featured.subtitle} from favorites`
+                  : `Add ${featured.subtitle} to favorites`
+              }
+            >
+              <Heart
+                size={16}
+                fill={favoriteShowIds.has(featured.id) ? "currentColor" : "none"}
+              />
+              {favoriteShowIds.has(featured.id) ? "Favorited" : "Favorite"}
             </button>
             <button
               className="secondary-button"
@@ -500,7 +638,7 @@ export default function RadioView({
           <span className="eyebrow">From the archive</span>
           <h2>More shows</h2>
         </div>
-        <span>{shows.length.toLocaleString()} broadcasts</span>
+        <span>{countLabel(shows.length, "broadcast")}</span>
       </div>
       <div className="radio-grid">
         {visibleShows.map((show) => (
@@ -508,9 +646,14 @@ export default function RadioView({
             key={show.id}
             show={show}
             busyAction={actionFor(show)}
+            active={currentTrackId === `radio:${show.id}`}
+            playing={playing}
             onPlay={(item) => void actOnShow(item, "play")}
+            onTogglePlayback={onTogglePlayback}
             onQueue={(item) => void actOnShow(item, "queue")}
             onDetails={(item) => void viewShow(item)}
+            favorite={favoriteShowIds.has(show.id)}
+            onToggleFavorite={onToggleFavorite}
           />
         ))}
       </div>

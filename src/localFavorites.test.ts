@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  emptyLocalFavorites,
   LOCAL_FAVORITES_KEY,
   readLocalFavorites,
   repairLocalFavoriteMetadata,
   updateLocalFavorites,
+  updateLocalRadioFavorite,
   writeLocalFavorites,
 } from "./localFavorites";
-import type { Album, Track } from "./types";
+import type { Album, RadioShowSummary, Track } from "./types";
 
 const track: Track = {
   id: "song-1",
@@ -34,6 +36,14 @@ const album: Album = {
   palette: ["#a66", "#222"],
 };
 
+const radioShow: RadioShowSummary = {
+  id: 979,
+  subtitle: "The Hip Hop Show",
+  description: "New independent hip-hop from around the world.",
+  publishedAt: "24 Jul 2026 00:00:00 GMT",
+  artworkUrl: "https://f4.bcbits.com/img/0046240870_10.jpg",
+};
+
 beforeEach(() => {
   window.localStorage.clear();
 });
@@ -41,7 +51,7 @@ beforeEach(() => {
 describe("local favorites", () => {
   it("persists bounded track metadata without signed media URLs", () => {
     let favorites = updateLocalFavorites(
-      { albumIds: [], songIds: [], albums: [], tracks: [] },
+      emptyLocalFavorites(),
       { id: album.id, kind: "album", favorite: true },
       album,
     );
@@ -76,7 +86,7 @@ describe("local favorites", () => {
 
   it("removes favorites and discards malformed storage", () => {
     const added = updateLocalFavorites(
-      { albumIds: [], songIds: [], albums: [], tracks: [] },
+      emptyLocalFavorites(),
       { id: track.id, kind: "song", favorite: true },
       track,
     );
@@ -91,6 +101,8 @@ describe("local favorites", () => {
       songIds: [],
       albums: [],
       tracks: [],
+      radioShowIds: [],
+      radioShows: [],
     });
     expect(window.localStorage.getItem(LOCAL_FAVORITES_KEY)).toBeNull();
   });
@@ -114,6 +126,8 @@ describe("local favorites", () => {
         songIds: ["song-1"],
         albums: [],
         tracks: [],
+        radioShowIds: [],
+        radioShows: [],
       },
       [nativeAlbum],
       [nativeTrack],
@@ -133,6 +147,8 @@ describe("local favorites", () => {
         songIds: [],
         albums: [{ ...album, tracks: undefined }],
         tracks: [],
+        radioShowIds: [],
+        radioShows: [],
       },
       [album],
       [],
@@ -151,11 +167,54 @@ describe("local favorites", () => {
         songIds: [],
         albums: [album],
         tracks: [],
+        radioShowIds: [],
+        radioShows: [],
       },
       [{ ...album, tracks: [refreshedTrack] }],
       [],
     );
 
     expect(repaired.albums[0].tracks?.[0].title).toBe("Mirage (Remastered)");
+  });
+
+  it("migrates version-one favorites without losing music metadata", () => {
+    window.localStorage.setItem(
+      LOCAL_FAVORITES_KEY,
+      JSON.stringify({
+        version: 1,
+        albumIds: ["album-1"],
+        songIds: [],
+        albums: [album],
+        tracks: [],
+      }),
+    );
+
+    expect(readLocalFavorites()).toMatchObject({
+      albumIds: ["album-1"],
+      radioShowIds: [],
+      radioShows: [],
+    });
+  });
+
+  it("persists radio-show favorites without remote artwork URLs", () => {
+    const favorites = updateLocalRadioFavorite(
+      emptyLocalFavorites(),
+      radioShow,
+      true,
+    );
+    writeLocalFavorites(favorites);
+
+    const serialized = window.localStorage.getItem(LOCAL_FAVORITES_KEY)!;
+    expect(serialized).not.toContain("f4.bcbits.com");
+    expect(readLocalFavorites().radioShows).toEqual([
+      {
+        id: 979,
+        subtitle: "The Hip Hop Show",
+        description: "New independent hip-hop from around the world.",
+        publishedAt: "24 Jul 2026 00:00:00 GMT",
+      },
+    ]);
+    expect(updateLocalRadioFavorite(favorites, radioShow, false).radioShowIds)
+      .toEqual([]);
   });
 });

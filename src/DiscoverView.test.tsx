@@ -18,15 +18,30 @@ vi.mock("./lib", async (importOriginal) => {
 
 import DiscoverView from "./DiscoverView";
 
-function renderDiscover(onQueue = vi.fn()) {
+function renderDiscover(
+  onQueue = vi.fn(),
+  playback: {
+    currentTrackId?: string;
+    playing?: boolean;
+    onTogglePlayback?: () => void;
+  } = {},
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  const onTogglePlayback = playback.onTogglePlayback ?? vi.fn();
   return {
     onQueue,
+    onTogglePlayback,
     ...render(
       <QueryClientProvider client={client}>
-        <DiscoverView onPlay={vi.fn()} onQueue={onQueue} />
+        <DiscoverView
+          onPlay={vi.fn()}
+          onQueue={onQueue}
+          currentTrackId={playback.currentTrackId}
+          playing={playback.playing ?? false}
+          onTogglePlayback={onTogglePlayback}
+        />
       </QueryClientProvider>,
     ),
   };
@@ -94,5 +109,18 @@ describe("Discover", () => {
       ),
     );
     expect(await screen.findByText("Jazz · Chicago, Illinois")).toBeInTheDocument();
+  });
+
+  it("keeps the active preview control visible and matched to playback", async () => {
+    const { onTogglePlayback } = renderDiscover(vi.fn(), {
+      currentTrackId: "preview-1",
+      playing: true,
+    });
+
+    await screen.findByText("Blue Hours");
+    const pause = screen.getByRole("button", { name: "Pause Glass Lines" });
+    expect(pause).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(pause);
+    expect(onTogglePlayback).toHaveBeenCalledOnce();
   });
 });

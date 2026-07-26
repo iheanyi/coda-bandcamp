@@ -183,6 +183,11 @@ export type RadioShowSummary = {
   artworkUrl?: string;
 };
 
+export type LocalFavoriteCollection = FavoriteCollection & {
+  radioShowIds: number[];
+  radioShows: RadioShowSummary[];
+};
+
 export type RadioChapter = {
   title: string;
   artist: string;

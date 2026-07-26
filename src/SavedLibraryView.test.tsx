@@ -1,7 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { FavoriteCollection, PlaylistDetail, PlaylistSummary, Track } from "./types";
+import type {
+  LocalFavoriteCollection,
+  PlaylistDetail,
+  PlaylistSummary,
+  Track,
+} from "./types";
 
 const mocks = vi.hoisted(() => ({
   createPlaylist: vi.fn(),
@@ -48,7 +53,7 @@ const detail: PlaylistDetail = {
   tracks: [track],
 };
 
-const favorites: FavoriteCollection = {
+const favorites: LocalFavoriteCollection = {
   albumIds: ["album-1"],
   songIds: ["song-1"],
   albums: [{
@@ -60,6 +65,13 @@ const favorites: FavoriteCollection = {
     palette: ["#a66", "#222"],
   }],
   tracks: [track],
+  radioShowIds: [979],
+  radioShows: [{
+    id: 979,
+    subtitle: "The Hip Hop Show",
+    description: "New independent hip-hop.",
+    publishedAt: "24 Jul 2026 00:00:00 GMT",
+  }],
 };
 
 function withQueryClient(node: React.ReactNode) {
@@ -79,6 +91,9 @@ const commonProps = {
   favoritesLocal: true,
   onRefreshFavorites: vi.fn(),
   onToggleFavorite: vi.fn(),
+  onToggleRadioFavorite: vi.fn(),
+  playing: false,
+  onTogglePlayback: vi.fn(),
   onPlayTracks: vi.fn(),
   onQueueTracks: vi.fn(),
   onPlayTrack: vi.fn(),
@@ -179,5 +194,33 @@ describe("saved Bandcamp library views", () => {
     }));
     expect(commonProps.onOpenTrackAlbum).toHaveBeenCalledWith(track);
     expect(screen.getByText("Local")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {
+      name: "Remove The Hip Hop Show from favorites",
+    }));
+    expect(commonProps.onToggleRadioFavorite).toHaveBeenCalledWith(
+      favorites.radioShows[0],
+      false,
+    );
+  });
+
+  it("matches playlist and track play controls to the current player state", async () => {
+    const onTogglePlayback = vi.fn();
+    withQueryClient(
+      <SavedLibraryView
+        mode="playlists"
+        {...commonProps}
+        currentTrackId="song-1"
+        playing
+        onTogglePlayback={onTogglePlayback}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /Night drive/ }));
+    expect(await screen.findByRole("button", { name: "Pause Night drive" }))
+      .toHaveAttribute("aria-pressed", "true");
+    const trackPause = screen.getByRole("button", { name: "Pause Mirage" });
+    expect(trackPause).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(trackPause);
+    expect(onTogglePlayback).toHaveBeenCalledOnce();
   });
 });

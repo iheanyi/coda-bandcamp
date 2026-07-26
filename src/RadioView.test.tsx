@@ -57,16 +57,34 @@ function renderRadio(
   onPlay = vi.fn<(track: Track) => void>(),
   onQueue = vi.fn<(track: Track) => void>(),
   onPlayAt = vi.fn<(track: Track, position: number) => void>(),
+  playback: {
+    currentTrackId?: string;
+    currentTime?: number;
+    playing?: boolean;
+    onTogglePlayback?: () => void;
+  } = {},
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  const onTogglePlayback = playback.onTogglePlayback ?? vi.fn();
+  const onToggleFavorite = vi.fn();
   render(
     <QueryClientProvider client={client}>
-      <RadioView onPlay={onPlay} onQueue={onQueue} onPlayAt={onPlayAt} />
+      <RadioView
+        onPlay={onPlay}
+        onQueue={onQueue}
+        onPlayAt={onPlayAt}
+        currentTrackId={playback.currentTrackId}
+        currentTime={playback.currentTime ?? 0}
+        playing={playback.playing ?? false}
+        onTogglePlayback={onTogglePlayback}
+        favoriteShowIds={new Set()}
+        onToggleFavorite={onToggleFavorite}
+      />
     </QueryClientProvider>,
   );
-  return { onPlay, onQueue, onPlayAt };
+  return { onPlay, onQueue, onPlayAt, onTogglePlayback, onToggleFavorite };
 }
 
 beforeEach(() => {
@@ -111,6 +129,23 @@ describe("Bandcamp Radio", () => {
     }));
   });
 
+  it("matches the latest show button to Now Playing and toggles it without reloading", async () => {
+    const onTogglePlayback = vi.fn();
+    renderRadio(vi.fn(), vi.fn(), vi.fn(), {
+      currentTrackId: "radio:979",
+      playing: true,
+      onTogglePlayback,
+    });
+
+    await screen.findByRole("heading", { name: "Kinrose" });
+    const pause = screen.getByRole("button", { name: "Pause latest show" });
+    expect(pause).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(pause);
+
+    expect(onTogglePlayback).toHaveBeenCalledOnce();
+    expect(mocks.fetchRadioShow).not.toHaveBeenCalled();
+  });
+
   it("adds an archive show to the queue and opens only its verified Bandcamp page", async () => {
     const archiveShow = { ...show, ...shows[1], title: "Bandcamp Weekly" };
     mocks.fetchRadioShow.mockResolvedValueOnce(archiveShow);
@@ -130,6 +165,18 @@ describe("Bandcamp Radio", () => {
     expect(mocks.openBandcampUrl).toHaveBeenCalledWith(
       "https://bandcamp.com/radio?show=978",
     );
+  });
+
+  it("favorites a Radio show without loading its signed stream", async () => {
+    const { onToggleFavorite } = renderRadio();
+
+    await screen.findByRole("heading", { name: "Kinrose" });
+    fireEvent.click(screen.getByRole("button", {
+      name: "Add Kinrose to favorites",
+    }));
+
+    expect(onToggleFavorite).toHaveBeenCalledWith(shows[0]);
+    expect(mocks.fetchRadioShow).not.toHaveBeenCalled();
   });
 
   it("opens show details lazily and keeps link and play-from-here intent separate", async () => {
@@ -162,5 +209,20 @@ describe("Bandcamp Radio", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Back to Radio" }));
     expect(screen.getByRole("heading", { name: "Kinrose" })).toBeInTheDocument();
+  });
+
+  it("keeps the live chapter highlighted in the Radio detail tracklist", async () => {
+    renderRadio(vi.fn(), vi.fn(), vi.fn(), {
+      currentTrackId: "radio:979",
+      currentTime: 130,
+      playing: true,
+    });
+
+    await screen.findByRole("heading", { name: "Kinrose" });
+    fireEvent.click(screen.getByRole("button", { name: "View tracklist" }));
+
+    const pauseChapter = await screen.findByRole("button", { name: "Pause Mirage" });
+    expect(pauseChapter).toHaveAttribute("aria-pressed", "true");
+    expect(pauseChapter.closest("li")).toHaveClass("is-current");
   });
 });
