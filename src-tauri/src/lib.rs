@@ -1181,6 +1181,12 @@ fn radio_artwork_url(image_id: Option<u64>) -> Option<String> {
         .map(|id| format!("https://f4.bcbits.com/img/{id:010}_10.jpg"))
 }
 
+fn radio_track_artwork_url(image_id: Option<u64>) -> Option<String> {
+    image_id
+        .filter(|id| *id > 0)
+        .map(|id| format!("https://f4.bcbits.com/img/a{id}_10.jpg"))
+}
+
 fn radio_artist_url(hints: Option<&RawRadioUrlHints>, item_url: Option<&str>) -> Option<String> {
     let hinted = hints
         .and_then(|value| value.subdomain.as_deref())
@@ -1276,7 +1282,7 @@ fn radio_show_from_raw(value: RawRadioShow) -> Result<RadioShow, String> {
                 item_url,
                 artist_url,
                 album_url,
-                artwork_url: radio_artwork_url(chapter.track_art_id),
+                artwork_url: radio_track_artwork_url(chapter.track_art_id),
             })
         })
         .collect();
@@ -2987,7 +2993,7 @@ mod tests {
         );
         assert_eq!(
             show.chapters[0].artwork_url.as_deref(),
-            Some("https://f4.bcbits.com/img/0000012345_10.jpg")
+            Some("https://f4.bcbits.com/img/a12345_10.jpg")
         );
     }
 
