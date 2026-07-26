@@ -149,7 +149,6 @@ function NowPlayingViewComponent({
       <div className="now-playing__stage">
         <div className="now-playing__artwork">{artwork}</div>
         <section className="now-playing__details" aria-label="Current track">
-          <span className="eyebrow">Now playing</span>
           <h1
             id="now-playing-heading"
             ref={headingRef}

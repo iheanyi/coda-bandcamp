@@ -4475,11 +4475,19 @@ html:not(.coda-view-transitions-supported) .now-playing__up-next {
 
 .saved-track {
   display: grid;
-  grid-template-columns: 42px 38px minmax(0, 1fr) 76px repeat(3, 32px);
   align-items: center;
+  column-gap: 8px;
   min-height: 58px;
-  padding: 0 14px 0 5px;
+  padding: 0 12px 0 4px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.045);
+}
+
+.saved-track--playlist {
+  grid-template-columns: 34px minmax(0, 1fr) 64px repeat(2, 32px);
+}
+
+.saved-track--favorite {
+  grid-template-columns: 34px 38px minmax(0, 1fr) 64px repeat(3, 32px);
 }
 
 .saved-track:last-child {
@@ -5014,8 +5022,16 @@ html:not(.coda-view-transitions-supported) .now-playing__up-next {
   }
 
   .saved-track {
-    grid-template-columns: 34px 36px minmax(0, 1fr) 54px repeat(3, 30px);
+    column-gap: 6px;
     padding-right: 8px;
+  }
+
+  .saved-track--playlist {
+    grid-template-columns: 30px minmax(0, 1fr) 50px repeat(2, 32px);
+  }
+
+  .saved-track--favorite {
+    grid-template-columns: 30px 38px minmax(0, 1fr) 50px repeat(3, 32px);
   }
 }
 

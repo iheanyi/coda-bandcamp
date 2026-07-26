@@ -357,7 +357,7 @@ function PlaylistDetailView({
       {playlist.tracks.length ? (
         <div className="saved-tracklist" aria-label={`${playlist.name} tracks`}>
           {playlist.tracks.map((track, index) => (
-            <div className="saved-track" key={`${track.id}-${index}`}>
+            <div className="saved-track saved-track--playlist" key={`${track.id}-${index}`}>
               <button
                 className="saved-track__number"
                 onClick={() => onPlay([track])}
@@ -830,7 +830,7 @@ export default function SavedLibraryView({
               </div>
               <div className="saved-tracklist" aria-label="Favorite tracks">
                 {favoriteTracks.map((track, index) => (
-                  <div className="saved-track" key={track.id}>
+                  <div className="saved-track saved-track--favorite" key={track.id}>
                     <button className="saved-track__number" onClick={() => onPlayTrack(track)} aria-label={`Play ${track.title}`}>
                       <span>{index + 1}</span><Play size={13} fill="currentColor" />
                     </button>

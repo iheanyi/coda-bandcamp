@@ -553,7 +553,8 @@ describe("Coda application flows", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Open Now Playing" }));
     const nowPlaying = screen.getByRole("article", { name: "First Light" });
-    expect(within(nowPlaying).getByText("Now playing")).toBeInTheDocument();
+    expect(within(nowPlaying).getByText("Playing now")).toBeInTheDocument();
+    expect(within(nowPlaying).queryByText("Now playing")).not.toBeInTheDocument();
     expect(within(nowPlaying).getByRole("button", { name: "Pause" })).toBeInTheDocument();
     expect(screen.queryByRole("contentinfo")).not.toBeInTheDocument();
     expect(within(nowPlaying).getByRole("heading", { name: "First Light" })).toHaveFocus();
