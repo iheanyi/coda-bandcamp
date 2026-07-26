@@ -25,7 +25,47 @@ export type Track = {
   coverArt?: string;
   artworkUrl?: string;
   streamUrl?: string;
+  radioChapters?: RadioChapter[];
   palette: [string, string];
+};
+
+export type PlaylistSummary = {
+  id: string;
+  name: string;
+  comment?: string;
+  owner?: string;
+  public?: boolean;
+  songCount: number;
+  duration: number;
+  createdAt?: string;
+  changedAt?: string;
+  coverArt?: string;
+};
+
+export type PlaylistDetail = PlaylistSummary & {
+  tracks: Track[];
+};
+
+export type PlaylistUpdateInput = {
+  playlistId: string;
+  name?: string;
+  comment?: string;
+  public?: boolean;
+  songIdsToAdd?: string[];
+  songIndexesToRemove?: number[];
+};
+
+export type FavoriteCollection = {
+  albumIds: string[];
+  songIds: string[];
+  albums: Album[];
+  tracks: Track[];
+};
+
+export type FavoriteInput = {
+  id: string;
+  kind: "song" | "album";
+  favorite: boolean;
 };
 
 export type ConnectionInput = {
@@ -33,8 +73,59 @@ export type ConnectionInput = {
   password: string;
 };
 
+export type LastFmStatus = {
+  configured: boolean;
+  connected: boolean;
+  username?: string;
+};
+
+export type LastFmAuthorization = {
+  authorizationUrl: string;
+  token: string;
+};
+
+export type LastFmTrackInput = {
+  artist: string;
+  title: string;
+  album: string;
+  duration: number;
+  trackNumber: number;
+};
+
 export type RepeatMode = "off" | "all" | "one";
 export type SortMode = "recent" | "artist" | "title" | "year";
+
+export type PlayerStateTrack = Omit<Track, "artworkUrl" | "streamUrl">;
+
+export type LastFmPlaybackProgress = {
+  trackId: string;
+  startedAt: number;
+  listenedSeconds: number;
+  lastPosition: number;
+  nowPlayingSent: boolean;
+  scrobbleState: "idle" | "pending" | "sent" | "failed";
+};
+
+export type PlayerStateSnapshot = {
+  version: 1;
+  savedAt: number;
+  queue: PlayerStateTrack[];
+  currentIndex: number;
+  positionSeconds: number;
+  volume: number;
+  repeatMode: RepeatMode;
+  queueOpen: boolean;
+  lastFmProgress?: LastFmPlaybackProgress;
+};
+
+export type PlayerStateInput = Omit<PlayerStateSnapshot, "savedAt" | "version">;
+
+export type PlayerStateCheckpoint = {
+  currentIndex: number;
+  currentTrackId: string;
+  positionSeconds: number;
+  lastFmProgress?: LastFmPlaybackProgress;
+};
 
 export type DiscoverSort = "top" | "new";
 
@@ -64,4 +155,27 @@ export type DiscoverPage = {
   resultCount: number;
   cursor?: string;
   hasMore: boolean;
+};
+
+export type RadioShowSummary = {
+  id: number;
+  subtitle: string;
+  description: string;
+  publishedAt: string;
+  artworkUrl?: string;
+};
+
+export type RadioChapter = {
+  title: string;
+  artist: string;
+  album?: string;
+  timecode: number;
+  itemUrl?: string;
+};
+
+export type RadioShow = RadioShowSummary & {
+  title: string;
+  duration: number;
+  streamUrl: string;
+  chapters: RadioChapter[];
 };

@@ -5,10 +5,10 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "core:window:allow-minimize",
-    "core:window:allow-toggle-maximize",
-    "core:window:allow-start-dragging",
-    "core:window:allow-close",
+    "core:window:allow-unminimize",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
+    "core:window:allow-set-title",
     {
       "identifier": "opener:allow-open-url",
       "allow": [
@@ -20,6 +20,9 @@
         },
         {
           "url": "https://*.bandcamp.com/**"
+        },
+        {
+          "url": "https://www.last.fm/api/auth/**"
         }
       ]
     }

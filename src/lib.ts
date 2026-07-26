@@ -1,10 +1,26 @@
 import { invoke } from "@tauri-apps/api/core";
 import { normalizeGenre } from "./genres";
+import {
+  createPlayerState,
+  createPlayerStateCheckpoint,
+  parsePlayerState,
+} from "./playerState";
 import type {
   Album,
   ConnectionInput,
   DiscoverFilters,
   DiscoverPage,
+  LastFmAuthorization,
+  LastFmStatus,
+  LastFmTrackInput,
+  PlaylistDetail,
+  PlaylistSummary,
+  PlaylistUpdateInput,
+  PlayerStateCheckpoint,
+  PlayerStateInput,
+  PlayerStateSnapshot,
+  RadioShow,
+  RadioShowSummary,
   Track,
 } from "./types";
 
@@ -178,6 +194,75 @@ export async function disconnect(): Promise<void> {
   return invoke("disconnect");
 }
 
+export async function loadPlayerState(): Promise<PlayerStateSnapshot | undefined> {
+  if (!isDesktop()) return undefined;
+  const value = await invoke<unknown | null>("load_player_state");
+  if (value === null) return undefined;
+  const state = parsePlayerState(value);
+  if (!state) throw new Error("Coda ignored an invalid saved player state.");
+  return state;
+}
+
+export async function savePlayerState(input: PlayerStateInput): Promise<void> {
+  return invoke("save_player_state", { state: createPlayerState(input) });
+}
+
+export async function checkpointPlayerState(
+  checkpoint: PlayerStateCheckpoint,
+): Promise<boolean> {
+  return invoke<boolean>("checkpoint_player_state", {
+    checkpoint: createPlayerStateCheckpoint(checkpoint),
+  });
+}
+
+export async function clearPlayerState(): Promise<void> {
+  return invoke("clear_player_state");
+}
+
+export async function getLastFmStatus(): Promise<LastFmStatus> {
+  if (!isDesktop()) {
+    return { configured: false, connected: false };
+  }
+  return invoke<LastFmStatus>("lastfm_status");
+}
+
+export async function beginLastFmAuthorization(): Promise<LastFmAuthorization> {
+  return invoke<LastFmAuthorization>("lastfm_begin_auth");
+}
+
+export async function completeLastFmAuthorization(token: string): Promise<LastFmStatus> {
+  return invoke<LastFmStatus>("lastfm_complete_auth", { token });
+}
+
+export async function disconnectLastFm(): Promise<LastFmStatus> {
+  return invoke<LastFmStatus>("lastfm_disconnect");
+}
+
+export async function updateLastFmNowPlaying(track: LastFmTrackInput): Promise<void> {
+  return invoke("lastfm_update_now_playing", { input: track });
+}
+
+export async function scrobbleLastFm(track: LastFmTrackInput, timestamp: number): Promise<void> {
+  return invoke("lastfm_scrobble", { input: { track, timestamp } });
+}
+
+export async function openLastFmAuthorization(value: string): Promise<void> {
+  const url = new URL(value);
+  if (
+    url.protocol !== "https:" ||
+    url.hostname.toLowerCase() !== "www.last.fm" ||
+    url.pathname !== "/api/auth/"
+  ) {
+    throw new Error("Coda only opens the verified Last.fm authorization page.");
+  }
+  if (isDesktop()) {
+    const { openUrl } = await import("@tauri-apps/plugin-opener");
+    await openUrl(url.toString());
+  } else {
+    window.open(url.toString(), "_blank", "noopener,noreferrer");
+  }
+}
+
 export async function fetchLibrary(): Promise<Album[]> {
   const albums = await invoke<Omit<Album, "palette">[]>("fetch_library");
   const hydrated = albums.map(hydrateAlbum);
@@ -197,6 +282,55 @@ export async function fetchAlbum(album: Album): Promise<Track[]> {
     },
     MAX_ALBUM_REQUESTS,
   );
+}
+
+function hydratePlaylist(
+  playlist: Omit<PlaylistDetail, "tracks"> & {
+    tracks: Omit<Track, "palette">[];
+  },
+): PlaylistDetail {
+  return {
+    ...playlist,
+    tracks: playlist.tracks.map((track) => hydrateTrack(track)),
+  };
+}
+
+export async function fetchPlaylists(): Promise<PlaylistSummary[]> {
+  return invoke<PlaylistSummary[]>("fetch_playlists");
+}
+
+export async function fetchPlaylist(playlistId: string): Promise<PlaylistDetail> {
+  const playlist = await invoke<
+    Omit<PlaylistDetail, "tracks"> & { tracks: Omit<Track, "palette">[] }
+  >("fetch_playlist", { playlistId });
+  return hydratePlaylist(playlist);
+}
+
+export async function createPlaylist(
+  name: string,
+  songIds: string[] = [],
+): Promise<PlaylistDetail> {
+  const playlist = await invoke<
+    Omit<PlaylistDetail, "tracks"> & { tracks: Omit<Track, "palette">[] }
+  >("create_playlist", { name, songIds });
+  return hydratePlaylist(playlist);
+}
+
+export async function updatePlaylist(input: PlaylistUpdateInput): Promise<PlaylistDetail> {
+  const playlist = await invoke<
+    Omit<PlaylistDetail, "tracks"> & { tracks: Omit<Track, "palette">[] }
+  >("update_playlist", {
+    input: {
+      ...input,
+      songIdsToAdd: input.songIdsToAdd ?? [],
+      songIndexesToRemove: input.songIndexesToRemove ?? [],
+    },
+  });
+  return hydratePlaylist(playlist);
+}
+
+export async function deletePlaylist(playlistId: string): Promise<void> {
+  return invoke("delete_playlist", { playlistId });
 }
 
 export async function fetchStreamUrl(trackId: string): Promise<string> {
@@ -233,6 +367,20 @@ export async function fetchDiscover(
   });
 }
 
+export async function fetchRadioShows(): Promise<RadioShowSummary[]> {
+  if (!isDesktop()) {
+    throw new Error("Bandcamp Radio is available in the Coda desktop app.");
+  }
+  return invoke<RadioShowSummary[]>("radio_shows");
+}
+
+export async function fetchRadioShow(showId: number): Promise<RadioShow> {
+  if (!isDesktop()) {
+    throw new Error("Bandcamp Radio is available in the Coda desktop app.");
+  }
+  return invoke<RadioShow>("radio_show", { showId });
+}
+
 export async function openBandcampUrl(value: string): Promise<void> {
   const url = new URL(value);
   const host = url.hostname.toLowerCase();
@@ -253,7 +401,10 @@ export async function openBandcampUrl(value: string): Promise<void> {
 export function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
   const rounded = Math.floor(seconds);
-  return `${Math.floor(rounded / 60)}:${String(rounded % 60).padStart(2, "0")}`;
+  const hours = Math.floor(rounded / 3_600);
+  const minutes = Math.floor((rounded % 3_600) / 60);
+  const tail = `${String(minutes).padStart(hours ? 2 : 1, "0")}:${String(rounded % 60).padStart(2, "0")}`;
+  return hours ? `${hours}:${tail}` : tail;
 }
 
 export function initials(value: string): string {
