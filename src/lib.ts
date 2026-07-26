@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { normalizeGenre } from "./genres";
 import {
   createPlayerState,
@@ -32,15 +32,41 @@ const LIBRARY_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_CACHED_ALBUMS = 5_000;
 const MAX_MEDIA_URLS = 512;
 const MAX_ALBUM_REQUESTS = 128;
+const STREAM_URL_CACHE_TTL_MS = 10 * 60 * 1_000;
+const COVER_URL_CACHE_TTL_MS = 60 * 60 * 1_000;
+const ALBUM_REQUEST_CACHE_TTL_MS = 10 * 60 * 1_000;
 
 type LibraryCache = {
   savedAt: number;
   albums: Album[];
 };
 
-const coverUrlCache = new Map<string, Promise<string>>();
-const streamUrlCache = new Map<string, Promise<string>>();
-const albumRequestCache = new Map<string, Promise<Track[]>>();
+export type LibraryCacheSnapshot = {
+  savedAt: number;
+  albums: Album[];
+};
+
+export type LibrarySyncProgress = {
+  pageIndex: number;
+  loaded: number;
+  albums: Album[];
+};
+
+type NativeLibrarySyncEvent = {
+  kind: "page";
+  pageIndex: number;
+  loaded: number;
+  albums: Omit<Album, "palette">[];
+};
+
+type RuntimeCacheEntry<T> = {
+  promise: Promise<T>;
+  expiresAt: number;
+};
+
+const coverUrlCache = new Map<string, RuntimeCacheEntry<string>>();
+const streamUrlCache = new Map<string, RuntimeCacheEntry<string>>();
+const albumRequestCache = new Map<string, RuntimeCacheEntry<Track[]>>();
 let playerStateContractVersionRequest: Promise<number> | undefined;
 
 async function nativePlayerStateContractVersion(): Promise<number> {
@@ -99,23 +125,34 @@ export function hydrateTrack(
 }
 
 function rememberPromise<T>(
-  cache: Map<string, Promise<T>>,
+  cache: Map<string, RuntimeCacheEntry<T>>,
   key: string,
   load: () => Promise<T>,
   limit: number,
+  ttlMs: number,
 ): Promise<T> {
+  const now = Date.now();
   const existing = cache.get(key);
-  if (existing) {
+  if (existing && existing.expiresAt > now) {
     cache.delete(key);
     cache.set(key, existing);
-    return existing;
+    return existing.promise;
+  }
+  if (existing) {
+    cache.delete(key);
   }
 
-  const request = load().catch((error) => {
-    cache.delete(key);
+  let request: Promise<T>;
+  request = load().catch((error) => {
+    if (cache.get(key)?.promise === request) {
+      cache.delete(key);
+    }
     throw error;
   });
-  cache.set(key, request);
+  cache.set(key, {
+    promise: request,
+    expiresAt: now + ttlMs,
+  });
   if (cache.size > limit) {
     const oldest = cache.keys().next().value;
     if (oldest) cache.delete(oldest);
@@ -138,6 +175,23 @@ function isCachedAlbum(value: unknown): value is Album {
   );
 }
 
+function stripAlbumForCache(album: Album): Album {
+  return {
+    id: album.id,
+    title: album.title,
+    artist: album.artist,
+    songCount: album.songCount,
+    duration: album.duration,
+    ...(album.coverArt === undefined ? {} : { coverArt: album.coverArt }),
+    ...(album.year === undefined ? {} : { year: album.year }),
+    ...(album.genre === undefined
+      ? {}
+      : { genre: normalizeGenre(album.genre) }),
+    ...(album.addedAt === undefined ? {} : { addedAt: album.addedAt }),
+    palette: [album.palette[0], album.palette[1]],
+  };
+}
+
 export function readLibraryCache(now = Date.now()): Album[] {
   try {
     const raw = window.localStorage.getItem(LIBRARY_CACHE_KEY);
@@ -154,7 +208,12 @@ export function readLibraryCache(now = Date.now()): Album[] {
     return parsed.albums
       .filter(isCachedAlbum)
       .slice(0, MAX_CACHED_ALBUMS)
-      .map((album) => ({ ...album, genre: normalizeGenre(album.genre) }));
+      .map((album) =>
+        stripAlbumForCache({
+          ...album,
+          genre: normalizeGenre(album.genre),
+        }),
+      );
   } catch {
     return [];
   }
@@ -163,7 +222,7 @@ export function readLibraryCache(now = Date.now()): Album[] {
 export function writeLibraryCache(albums: Album[]): void {
   const payload: LibraryCache = {
     savedAt: Date.now(),
-    albums: albums.slice(0, MAX_CACHED_ALBUMS).map(({ tracks: _tracks, ...album }) => album),
+    albums: albums.slice(0, MAX_CACHED_ALBUMS).map(stripAlbumForCache),
   };
   const write = () => {
     try {
@@ -203,11 +262,51 @@ export async function hasConnection(): Promise<boolean> {
   return invoke<boolean>("has_connection");
 }
 
-export async function connectBandcamp(input: ConnectionInput): Promise<Album[]> {
-  const albums = await invoke<Omit<Album, "palette">[]>("connect", { input });
-  const hydrated = albums.map(hydrateAlbum);
-  writeLibraryCache(hydrated);
-  return hydrated;
+export async function loadLibraryCache(): Promise<LibraryCacheSnapshot | undefined> {
+  if (!isDesktop()) {
+    const albums = readLibraryCache();
+    return albums.length ? { savedAt: Date.now(), albums } : undefined;
+  }
+  try {
+    window.localStorage.removeItem(LIBRARY_CACHE_KEY);
+  } catch {
+    // Legacy storage may be unavailable; native hydration is unaffected.
+  }
+  const snapshot = await invoke<
+    | {
+        version: number;
+        savedAt: number;
+        albums: Omit<Album, "palette">[];
+      }
+    | null
+  >("load_library_cache");
+  if (!snapshot) return undefined;
+  return {
+    savedAt: snapshot.savedAt,
+    albums: snapshot.albums.map(hydrateAlbum),
+  };
+}
+
+export async function connectBandcamp(
+  input: ConnectionInput,
+  onPage?: (progress: LibrarySyncProgress) => void,
+): Promise<Album[]> {
+  const onProgress = new Channel<NativeLibrarySyncEvent>((event) => {
+    if (event.kind !== "page") return;
+    onPage?.({
+      pageIndex: event.pageIndex,
+      loaded: event.loaded,
+      albums: event.albums.map(hydrateAlbum),
+    });
+  });
+  const albums = await invoke<Omit<Album, "palette">[]>("connect", {
+    input,
+    onProgress,
+  });
+  coverUrlCache.clear();
+  streamUrlCache.clear();
+  albumRequestCache.clear();
+  return albums.map(hydrateAlbum);
 }
 
 export async function disconnect(): Promise<void> {
@@ -216,10 +315,31 @@ export async function disconnect(): Promise<void> {
 
 export async function loadPlayerState(): Promise<PlayerStateSnapshot | undefined> {
   if (!isDesktop()) return undefined;
-  const value = await invoke<unknown | null>("load_player_state");
-  if (value === null) return undefined;
+  let value: unknown | null;
+  try {
+    value = await invoke<unknown | null>("load_player_state");
+  } catch (cause) {
+    void invoke("record_player_state_diagnostic", {
+      event: "renderer.load.native-error",
+    }).catch(() => undefined);
+    throw cause;
+  }
+  if (value === null) {
+    void invoke("record_player_state_diagnostic", {
+      event: "renderer.load.none",
+    }).catch(() => undefined);
+    return undefined;
+  }
   const state = parsePlayerState(value);
-  if (!state) throw new Error("Coda ignored an invalid saved player state.");
+  if (!state) {
+    void invoke("record_player_state_diagnostic", {
+      event: "renderer.load.invalid",
+    }).catch(() => undefined);
+    throw new Error("Coda ignored an invalid saved player state.");
+  }
+  void invoke("record_player_state_diagnostic", {
+    event: "renderer.load.ok",
+  }).catch(() => undefined);
   return state;
 }
 
@@ -293,10 +413,21 @@ export async function openLastFmAuthorization(value: string): Promise<void> {
   }
 }
 
-export async function fetchLibrary(): Promise<Album[]> {
-  const albums = await invoke<Omit<Album, "palette">[]>("fetch_library");
+export async function fetchLibrary(
+  onPage?: (progress: LibrarySyncProgress) => void,
+): Promise<Album[]> {
+  const onProgress = new Channel<NativeLibrarySyncEvent>((event) => {
+    if (event.kind !== "page") return;
+    onPage?.({
+      pageIndex: event.pageIndex,
+      loaded: event.loaded,
+      albums: event.albums.map(hydrateAlbum),
+    });
+  });
+  const albums = await invoke<Omit<Album, "palette">[]>("fetch_library", {
+    onProgress,
+  });
   const hydrated = albums.map(hydrateAlbum);
-  writeLibraryCache(hydrated);
   return hydrated;
 }
 
@@ -311,6 +442,7 @@ export async function fetchAlbum(album: Album): Promise<Track[]> {
       return tracks.map((track) => hydrateTrack(track, album.palette));
     },
     MAX_ALBUM_REQUESTS,
+    ALBUM_REQUEST_CACHE_TTL_MS,
   );
 }
 
@@ -369,6 +501,7 @@ export async function fetchStreamUrl(trackId: string): Promise<string> {
     trackId,
     () => invoke<string>("get_stream_url", { trackId }),
     MAX_MEDIA_URLS,
+    STREAM_URL_CACHE_TTL_MS,
   );
 }
 
@@ -378,6 +511,7 @@ export async function fetchCoverUrl(coverArtId: string): Promise<string> {
     coverArtId,
     () => invoke<string>("get_cover_url", { coverArtId }),
     MAX_MEDIA_URLS,
+    COVER_URL_CACHE_TTL_MS,
   );
 }
 

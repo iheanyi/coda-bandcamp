@@ -525,6 +525,7 @@ dependencies = [
 name = "coda"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "keyring",
  "md5",
  "rand 0.8.7",

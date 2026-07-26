@@ -4,6 +4,12 @@ import type { PlayerStateInput } from "./types";
 const invokeMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@tauri-apps/api/core", () => ({
+  Channel: class {
+    onmessage: (value: unknown) => void;
+    constructor(onmessage = () => undefined) {
+      this.onmessage = onmessage;
+    }
+  },
   invoke: invokeMock,
 }));
 

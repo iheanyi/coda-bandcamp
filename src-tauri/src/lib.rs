@@ -1,3 +1,4 @@
+use futures_util::{stream, StreamExt};
 use keyring::Entry;
 use rand::{distributions::Alphanumeric, Rng};
 use reqwest::{redirect::Policy, Client};
@@ -7,9 +8,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Mutex, OnceLock,
+};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{
+    ipc::Channel,
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, WindowEvent,
@@ -43,6 +48,11 @@ const MAX_RADIO_SHOWS: usize = 1_000;
 const MAX_RADIO_CHAPTERS: usize = 256;
 const MAX_RADIO_TEXT_LENGTH: usize = 4_096;
 const MAX_RADIO_DURATION_SECONDS: f64 = 24.0 * 60.0 * 60.0;
+const LIBRARY_CACHE_VERSION: u8 = 1;
+const LIBRARY_CACHE_FILE: &str = "library-cache-v1.json";
+const LIBRARY_CACHE_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
+const MAX_LIBRARY_ALBUMS: usize = 5_000;
+const MAX_LIBRARY_CACHE_BYTES: usize = 32 * 1024 * 1024;
 const LASTFM_SERVICE_NAME: &str = "com.coda.lastfm";
 const LASTFM_SESSION_KEY: &str = "session";
 const LASTFM_API_ENDPOINT: &str = "https://ws.audioscrobbler.com/2.0/";
@@ -64,6 +74,8 @@ const PLAYER_STATE_VERSION: u8 = 1;
 const PLAYER_STATE_CONTRACT_VERSION: u8 = 2;
 const PLAYER_STATE_FILE: &str = "player-state.json";
 const PLAYER_CHECKPOINT_FILE: &str = "player-state-checkpoint.json";
+const PLAYER_DIAGNOSTIC_FILE: &str = "player-state-diagnostic.log";
+const MAX_PLAYER_DIAGNOSTIC_BYTES: u64 = 64 * 1024;
 const MAX_PLAYER_STATE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_PLAYER_CHECKPOINT_BYTES: usize = 16 * 1024;
 const MAX_PLAYER_QUEUE_LENGTH: usize = 25_000;
@@ -76,16 +88,19 @@ const MAX_RADIO_CHAPTER_KEY_LENGTH: usize = 128;
 static HTTP_CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
 static LASTFM_HTTP_CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
 static PLAYER_STATE_LOCK: Mutex<()> = Mutex::new(());
+static LIBRARY_CACHE_LOCK: Mutex<()> = Mutex::new(());
+static CONNECTION_GENERATION: AtomicU64 = AtomicU64::new(0);
+static LIBRARY_SYNC_GENERATION: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ConnectionInput {
     username: String,
     password: String,
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Album {
     id: String,
     title: String,
@@ -96,6 +111,28 @@ struct Album {
     year: Option<u64>,
     genre: Option<String>,
     added_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LibraryCacheSnapshot {
+    version: u8,
+    saved_at: u64,
+    albums: Vec<Album>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum LibrarySyncEvent {
+    Page {
+        page_index: u64,
+        loaded: usize,
+        albums: Vec<Album>,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -473,6 +510,101 @@ fn player_checkpoint_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .map_err(|error| format!("Could not locate Coda's application data directory: {error}"))
 }
 
+fn library_cache_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|directory| directory.join(LIBRARY_CACHE_FILE))
+        .map_err(|error| format!("Could not locate Coda's application data directory: {error}"))
+}
+
+fn player_state_track_kind(id: Option<&str>) -> &'static str {
+    match id {
+        Some(value) if value.starts_with("radio:") => "radio",
+        Some(_) => "library",
+        None => "none",
+    }
+}
+
+fn player_state_error_kind(error: &str) -> &'static str {
+    if error.contains("lock") {
+        "lock"
+    } else if error.contains("malformed") {
+        "malformed"
+    } else if error.contains("invalid")
+        || error.contains("belongs")
+        || error.contains("conflicting")
+    {
+        "validation"
+    } else if error.contains("open") {
+        "open"
+    } else if error.contains("read") || error.contains("inspect") {
+        "read"
+    } else if error.contains("write") || error.contains("replace") || error.contains("finalize") {
+        "write"
+    } else {
+        "other"
+    }
+}
+
+fn append_player_state_diagnostic(
+    app: &tauri::AppHandle,
+    event: &str,
+    queue_len: Option<usize>,
+    current_index: Option<usize>,
+    track_kind: &'static str,
+    position_seconds: Option<f64>,
+) {
+    let Ok(directory) = app.path().app_data_dir() else {
+        return;
+    };
+    if fs::create_dir_all(&directory).is_err() {
+        return;
+    }
+    let path = directory.join(PLAYER_DIAGNOSTIC_FILE);
+    if path
+        .metadata()
+        .is_ok_and(|metadata| metadata.len() >= MAX_PLAYER_DIAGNOSTIC_BYTES)
+    {
+        let _ = fs::remove_file(&path);
+    }
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_millis())
+        .unwrap_or_default();
+    let queue = queue_len
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "-".into());
+    let index = current_index
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "-".into());
+    let position = position_seconds
+        .filter(|value| value.is_finite())
+        .map(|value| format!("{value:.3}"))
+        .unwrap_or_else(|| "-".into());
+    let line = format!(
+        "{timestamp} event={event} queue={queue} index={index} kind={track_kind} position={position}\n"
+    );
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
+fn append_player_state_snapshot_diagnostic(
+    app: &tauri::AppHandle,
+    event: &str,
+    state: &PlayerStateSnapshot,
+) {
+    let current = state.queue.get(state.current_index);
+    append_player_state_diagnostic(
+        app,
+        event,
+        Some(state.queue.len()),
+        Some(state.current_index),
+        player_state_track_kind(current.map(|track| track.id.as_str())),
+        Some(state.position_seconds),
+    );
+}
+
 fn valid_player_text(value: &str, required: bool) -> bool {
     value.len() <= MAX_PLAYER_TEXT_LENGTH
         && !value.chars().any(char::is_control)
@@ -733,7 +865,7 @@ fn read_player_state(path: &Path) -> Result<Option<PlayerStateSnapshot>, String>
 fn write_bytes_atomically(path: &Path, serialized: &[u8], label: &str) -> Result<(), String> {
     let directory = path
         .parent()
-        .ok_or_else(|| "The player state path is invalid.".to_string())?;
+        .ok_or_else(|| format!("The {label} path is invalid."))?;
     fs::create_dir_all(directory)
         .map_err(|error| format!("Could not create Coda's application data directory: {error}"))?;
 
@@ -774,6 +906,133 @@ fn write_bytes_atomically(path: &Path, serialized: &[u8], label: &str) -> Result
         let _ = fs::remove_file(&temporary);
     }
     result
+}
+
+fn validate_library_cache(snapshot: &LibraryCacheSnapshot, now: u64) -> Result<(), String> {
+    if snapshot.version != LIBRARY_CACHE_VERSION {
+        return Err("The saved library uses an unsupported version.".into());
+    }
+    if snapshot.saved_at > now {
+        return Err("The saved library timestamp is in the future.".into());
+    }
+    if now.saturating_sub(snapshot.saved_at) > LIBRARY_CACHE_TTL_MS {
+        return Err("The saved library has expired.".into());
+    }
+    if snapshot.albums.len() > MAX_LIBRARY_ALBUMS {
+        return Err("The saved library contains too many albums.".into());
+    }
+    for album in &snapshot.albums {
+        validate_album(album)
+            .map_err(|_| "The saved library contains invalid album metadata.".to_string())?;
+    }
+    Ok(())
+}
+
+fn read_library_cache(path: &Path, now: u64) -> Result<Option<LibraryCacheSnapshot>, String> {
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("Could not open the saved library: {error}")),
+    };
+    if file
+        .metadata()
+        .map_err(|error| format!("Could not inspect the saved library: {error}"))?
+        .len()
+        > MAX_LIBRARY_CACHE_BYTES as u64
+    {
+        return Err("The saved library is unexpectedly large.".into());
+    }
+    let mut bytes = Vec::new();
+    file.take((MAX_LIBRARY_CACHE_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Could not read the saved library: {error}"))?;
+    if bytes.len() > MAX_LIBRARY_CACHE_BYTES {
+        return Err("The saved library is unexpectedly large.".into());
+    }
+    let snapshot: LibraryCacheSnapshot = serde_json::from_slice(&bytes)
+        .map_err(|_| "The saved library is malformed.".to_string())?;
+    validate_library_cache(&snapshot, now)?;
+    Ok(Some(snapshot))
+}
+
+fn write_library_cache(path: &Path, albums: &[Album], saved_at: u64) -> Result<(), String> {
+    if albums.len() > MAX_LIBRARY_ALBUMS {
+        return Err("The library is too large to cache safely.".into());
+    }
+    let snapshot = LibraryCacheSnapshot {
+        version: LIBRARY_CACHE_VERSION,
+        saved_at,
+        albums: albums.to_vec(),
+    };
+    validate_library_cache(&snapshot, saved_at)?;
+    let serialized = serde_json::to_vec(&snapshot)
+        .map_err(|error| format!("Could not prepare the library cache: {error}"))?;
+    if serialized.len() > MAX_LIBRARY_CACHE_BYTES {
+        return Err("The saved library is unexpectedly large.".into());
+    }
+    write_bytes_atomically(path, &serialized, "library cache")
+}
+
+fn load_library_cache_or_clear_invalid(
+    path: &Path,
+    now: u64,
+) -> Result<Option<LibraryCacheSnapshot>, String> {
+    match read_library_cache(path, now) {
+        Ok(snapshot) => Ok(snapshot),
+        Err(error)
+            if error.contains("malformed")
+                || error.contains("unsupported version")
+                || error.contains("timestamp")
+                || error.contains("expired")
+                || error.contains("too many")
+                || error.contains("invalid album")
+                || error.contains("unexpectedly large") =>
+        {
+            match fs::remove_file(path) {
+                Ok(()) => Ok(None),
+                Err(remove_error) if remove_error.kind() == std::io::ErrorKind::NotFound => {
+                    Ok(None)
+                }
+                Err(remove_error) => Err(format!(
+                    "Could not remove an invalid saved library ({error}; {remove_error})"
+                )),
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn save_library_cache_if_connection_current(
+    app: &tauri::AppHandle,
+    albums: &[Album],
+    expected_generation: u64,
+    expected_sync_generation: u64,
+    expected_credentials: &ConnectionInput,
+    replace_connection: bool,
+) -> Result<bool, String> {
+    let _guard = LIBRARY_CACHE_LOCK
+        .lock()
+        .map_err(|_| "The library cache lock is unavailable.".to_string())?;
+    if CONNECTION_GENERATION.load(Ordering::Acquire) != expected_generation
+        || LIBRARY_SYNC_GENERATION.load(Ordering::Acquire) != expected_sync_generation
+        || load_credentials().ok().as_ref() != Some(expected_credentials)
+    {
+        return Ok(false);
+    }
+    let path = library_cache_path(app)?;
+    if replace_connection {
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!(
+                    "Could not remove the prior saved library before reconnecting: {error}"
+                ))
+            }
+        }
+    }
+    write_library_cache(&path, albums, player_timestamp_ms()?)?;
+    Ok(true)
 }
 
 fn write_player_state(path: &Path, state: &PlayerStateSnapshot) -> Result<(), String> {
@@ -1684,6 +1943,37 @@ fn album_from_value(value: &Value) -> Option<Album> {
     })
 }
 
+fn validate_album(album: &Album) -> Result<(), String> {
+    validate_subsonic_id(&album.id, "album")?;
+    if !valid_subsonic_text(&album.title, MAX_SUBSONIC_TEXT_LENGTH, true)
+        || !valid_subsonic_text(&album.artist, MAX_SUBSONIC_TEXT_LENGTH, true)
+        || album.song_count > MAX_PLAYLIST_TRACKS as u64
+        || album.duration > MAX_SUBSONIC_DURATION_SECONDS
+        || album.year.is_some_and(|year| year > 9_999)
+        || album
+            .cover_art
+            .as_deref()
+            .is_some_and(|cover| validate_subsonic_id(cover, "cover artwork").is_err())
+        || album
+            .genre
+            .as_deref()
+            .is_some_and(|genre| !valid_subsonic_text(genre, MAX_SUBSONIC_TEXT_LENGTH, false))
+        || album
+            .added_at
+            .as_deref()
+            .is_some_and(|date| !valid_subsonic_text(date, MAX_SUBSONIC_TEXT_LENGTH, false))
+    {
+        return Err("Bandcamp returned invalid album metadata.".into());
+    }
+    Ok(())
+}
+
+fn bounded_album_from_value(value: &Value) -> Option<Album> {
+    let album = album_from_value(value)?;
+    validate_album(&album).ok()?;
+    Some(album)
+}
+
 fn track_from_value(value: &Value, fallback_album_id: &str) -> Option<Track> {
     let id = string_field(value, &["id"])?;
     Some(Track {
@@ -1838,12 +2128,37 @@ fn has_connection() -> bool {
 }
 
 #[tauri::command]
-fn disconnect() -> Result<(), String> {
+fn disconnect(app: tauri::AppHandle) -> Result<(), String> {
+    let _guard = LIBRARY_CACHE_LOCK
+        .lock()
+        .map_err(|_| "The library cache lock is unavailable.".to_string())?;
+    let path = library_cache_path(&app)?;
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("Could not remove the saved library: {error}")),
+    }
     match credential_entry()?.delete_credential() {
-        Ok(()) => Ok(()),
-        Err(keyring::Error::NoEntry) => Ok(()),
+        Ok(()) | Err(keyring::Error::NoEntry) => {
+            CONNECTION_GENERATION.fetch_add(1, Ordering::AcqRel);
+            LIBRARY_SYNC_GENERATION.fetch_add(1, Ordering::AcqRel);
+            Ok(())
+        }
         Err(error) => Err(format!("Could not remove credentials: {error}")),
     }
+}
+
+#[tauri::command]
+async fn load_library_cache(app: tauri::AppHandle) -> Result<Option<LibraryCacheSnapshot>, String> {
+    load_credentials()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = LIBRARY_CACHE_LOCK
+            .lock()
+            .map_err(|_| "The library cache lock is unavailable.".to_string())?;
+        load_library_cache_or_clear_invalid(&library_cache_path(&app)?, player_timestamp_ms()?)
+    })
+    .await
+    .map_err(|error| format!("Could not load the saved library: {error}"))?
 }
 
 #[tauri::command]
@@ -1852,37 +2167,91 @@ fn player_state_contract_version() -> u8 {
 }
 
 #[tauri::command]
+fn record_player_state_diagnostic(app: tauri::AppHandle, event: String) -> Result<(), String> {
+    if !matches!(
+        event.as_str(),
+        "renderer.load.ok"
+            | "renderer.load.none"
+            | "renderer.load.invalid"
+            | "renderer.load.native-error"
+    ) {
+        return Err("The player-state diagnostic event is invalid.".into());
+    }
+    append_player_state_diagnostic(&app, &event, None, None, "none", None);
+    Ok(())
+}
+
+#[tauri::command]
 async fn load_player_state(app: tauri::AppHandle) -> Result<Option<PlayerStateSnapshot>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let _guard = PLAYER_STATE_LOCK
-            .lock()
-            .map_err(|_| "The player state lock is unavailable.".to_string())?;
-        let state_path = player_state_path(&app)?;
-        let checkpoint_path = player_checkpoint_path(&app)?;
-        let Some(mut state) = load_player_state_or_clear_invalid(&state_path)? else {
-            let _ = fs::remove_file(checkpoint_path);
-            return Ok(None);
-        };
+        let result: Result<Option<PlayerStateSnapshot>, String> = (|| {
+            let _guard = PLAYER_STATE_LOCK
+                .lock()
+                .map_err(|_| "The player state lock is unavailable.".to_string())?;
+            let state_path = player_state_path(&app)?;
+            let state_existed = state_path.exists();
+            let checkpoint_path = player_checkpoint_path(&app)?;
+            let Some(mut state) = load_player_state_or_clear_invalid(&state_path)? else {
+                let _ = fs::remove_file(checkpoint_path);
+                append_player_state_diagnostic(
+                    &app,
+                    if state_existed {
+                        "native.load.cleared-invalid"
+                    } else {
+                        "native.load.none"
+                    },
+                    Some(0),
+                    Some(0),
+                    "none",
+                    Some(0.0),
+                );
+                return Ok(None);
+            };
 
-        match read_player_checkpoint(&checkpoint_path) {
-            Ok(Some(checkpoint)) => {
-                if !apply_player_checkpoint(&mut state, checkpoint) {
-                    let _ = fs::remove_file(&checkpoint_path);
+            match read_player_checkpoint(&checkpoint_path) {
+                Ok(Some(checkpoint)) => {
+                    if !apply_player_checkpoint(&mut state, checkpoint) {
+                        let _ = fs::remove_file(&checkpoint_path);
+                        append_player_state_diagnostic(
+                            &app,
+                            "native.load.dropped-stale-checkpoint",
+                            Some(state.queue.len()),
+                            Some(state.current_index),
+                            player_state_track_kind(
+                                state
+                                    .queue
+                                    .get(state.current_index)
+                                    .map(|track| track.id.as_str()),
+                            ),
+                            Some(state.position_seconds),
+                        );
+                    }
                 }
+                Ok(None) => {}
+                Err(error)
+                    if error.contains("malformed")
+                        || error.contains("invalid")
+                        || error.contains("unexpectedly large") =>
+                {
+                    let _ = fs::remove_file(&checkpoint_path);
+                    append_player_state_snapshot_diagnostic(
+                        &app,
+                        "native.load.dropped-invalid-checkpoint",
+                        &state,
+                    );
+                }
+                Err(error) => return Err(error),
             }
-            Ok(None) => {}
-            Err(error)
-                if error.contains("malformed")
-                    || error.contains("invalid")
-                    || error.contains("unexpectedly large") =>
-            {
-                let _ = fs::remove_file(&checkpoint_path);
-            }
-            Err(error) => return Err(error),
+            normalize_restored_player_progress(&mut state);
+            validate_player_state(&state)?;
+            append_player_state_snapshot_diagnostic(&app, "native.load.ok", &state);
+            Ok(Some(state))
+        })();
+        if let Err(error) = &result {
+            let event = format!("native.load.error.{}", player_state_error_kind(error));
+            append_player_state_diagnostic(&app, &event, None, None, "none", None);
         }
-        normalize_restored_player_progress(&mut state);
-        validate_player_state(&state)?;
-        Ok(Some(state))
+        result
     })
     .await
     .map_err(|error| format!("Could not load the player state: {error}"))?
@@ -1894,22 +2263,33 @@ async fn save_player_state(
     mut state: PlayerStateSnapshot,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let _guard = PLAYER_STATE_LOCK
-            .lock()
-            .map_err(|_| "The player state lock is unavailable.".to_string())?;
-        state.saved_at = player_timestamp_ms()?;
-        normalize_restored_player_progress(&mut state);
-        validate_player_state(&state)?;
-        let state_path = player_state_path(&app)?;
-        write_player_state(&state_path, &state)?;
-        let checkpoint_path = player_checkpoint_path(&app)?;
-        match fs::remove_file(checkpoint_path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(format!(
-                "Could not clear the prior player checkpoint: {error}"
-            )),
+        let result: Result<(), String> = (|| {
+            let _guard = PLAYER_STATE_LOCK
+                .lock()
+                .map_err(|_| "The player state lock is unavailable.".to_string())?;
+            state.saved_at = player_timestamp_ms()?;
+            normalize_restored_player_progress(&mut state);
+            validate_player_state(&state)?;
+            let state_path = player_state_path(&app)?;
+            write_player_state(&state_path, &state)?;
+            let checkpoint_path = player_checkpoint_path(&app)?;
+            match fs::remove_file(checkpoint_path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(format!(
+                        "Could not clear the prior player checkpoint: {error}"
+                    ));
+                }
+            }
+            append_player_state_snapshot_diagnostic(&app, "native.save.ok", &state);
+            Ok(())
+        })();
+        if let Err(error) = &result {
+            let event = format!("native.save.error.{}", player_state_error_kind(error));
+            append_player_state_diagnostic(&app, &event, None, None, "none", None);
         }
+        result
     })
     .await
     .map_err(|error| format!("Could not save the player state: {error}"))?
@@ -1921,32 +2301,63 @@ async fn checkpoint_player_state(
     mut checkpoint: PlayerStateCheckpoint,
 ) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let _guard = PLAYER_STATE_LOCK
-            .lock()
-            .map_err(|_| "The player state lock is unavailable.".to_string())?;
-        validate_player_checkpoint(&checkpoint)?;
-        let state_path = player_state_path(&app)?;
-        let Some(state) = load_player_state_or_clear_invalid(&state_path)? else {
-            return Ok(false);
-        };
-        if checkpoint.current_index >= state.queue.len()
-            || state.queue[checkpoint.current_index].id != checkpoint.current_track_id
-        {
-            return Ok(false);
-        }
-        if let Some(progress) = &mut checkpoint.last_fm_progress {
-            progress.started_at = 0;
-            progress.now_playing_sent = false;
-            if progress.scrobble_state == "pending" {
-                progress.scrobble_state = "sent".into();
+        let result: Result<bool, String> = (|| {
+            let _guard = PLAYER_STATE_LOCK
+                .lock()
+                .map_err(|_| "The player state lock is unavailable.".to_string())?;
+            validate_player_checkpoint(&checkpoint)?;
+            let state_path = player_state_path(&app)?;
+            let Some(state) = load_player_state_or_clear_invalid(&state_path)? else {
+                append_player_state_diagnostic(
+                    &app,
+                    "native.checkpoint.skipped-no-state",
+                    None,
+                    Some(checkpoint.current_index),
+                    player_state_track_kind(Some(&checkpoint.current_track_id)),
+                    Some(checkpoint.position_seconds),
+                );
+                return Ok(false);
+            };
+            if checkpoint.current_index >= state.queue.len()
+                || state.queue[checkpoint.current_index].id != checkpoint.current_track_id
+            {
+                append_player_state_diagnostic(
+                    &app,
+                    "native.checkpoint.skipped-mismatch",
+                    Some(state.queue.len()),
+                    Some(checkpoint.current_index),
+                    player_state_track_kind(Some(&checkpoint.current_track_id)),
+                    Some(checkpoint.position_seconds),
+                );
+                return Ok(false);
             }
+            if let Some(progress) = &mut checkpoint.last_fm_progress {
+                progress.started_at = 0;
+                progress.now_playing_sent = false;
+                if progress.scrobble_state == "pending" {
+                    progress.scrobble_state = "sent".into();
+                }
+            }
+            if let Some(progress) = &mut checkpoint.radio_scrobble_progress {
+                normalize_restored_radio_scrobble_progress(progress);
+            }
+            let checkpoint_path = player_checkpoint_path(&app)?;
+            write_player_checkpoint(&checkpoint_path, &checkpoint)?;
+            append_player_state_diagnostic(
+                &app,
+                "native.checkpoint.ok",
+                Some(state.queue.len()),
+                Some(checkpoint.current_index),
+                player_state_track_kind(Some(&checkpoint.current_track_id)),
+                Some(checkpoint.position_seconds),
+            );
+            Ok(true)
+        })();
+        if let Err(error) = &result {
+            let event = format!("native.checkpoint.error.{}", player_state_error_kind(error));
+            append_player_state_diagnostic(&app, &event, None, None, "none", None);
         }
-        if let Some(progress) = &mut checkpoint.radio_scrobble_progress {
-            normalize_restored_radio_scrobble_progress(progress);
-        }
-        let checkpoint_path = player_checkpoint_path(&app)?;
-        write_player_checkpoint(&checkpoint_path, &checkpoint)?;
-        Ok(true)
+        result
     })
     .await
     .map_err(|error| format!("Could not checkpoint the player state: {error}"))?
@@ -2066,32 +2477,127 @@ async fn lastfm_scrobble(input: LastFmScrobbleInput) -> Result<(), String> {
     Ok(())
 }
 
+async fn fetch_library_page(
+    credentials: &ConnectionInput,
+    page_index: u64,
+) -> Result<(usize, Vec<Album>), String> {
+    let body = request_json(
+        "getAlbumList2",
+        credentials,
+        &[
+            ("type", "alphabeticalByArtist".into()),
+            ("size", "500".into()),
+            ("offset", (page_index * 500).to_string()),
+        ],
+    )
+    .await?;
+    albums_from_library_page(&body)
+}
+
+fn albums_from_library_page(body: &Value) -> Result<(usize, Vec<Album>), String> {
+    let album_list = body
+        .pointer("/subsonic-response/albumList2")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "Bandcamp returned an unexpected library response.".to_string())?;
+    let items = match album_list.get("album") {
+        None => &[][..],
+        Some(value) => value
+            .as_array()
+            .map(Vec::as_slice)
+            .ok_or_else(|| "Bandcamp returned an unexpected library response.".to_string())?,
+    };
+    if items.len() > 500 {
+        return Err("Bandcamp returned an unexpectedly large library page.".into());
+    }
+    let albums = items
+        .iter()
+        .map(|value| {
+            bounded_album_from_value(value)
+                .ok_or_else(|| "Bandcamp returned invalid album metadata.".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((items.len(), albums))
+}
+
+fn append_library_page(
+    albums: &mut Vec<Album>,
+    album_ids: &mut BTreeSet<String>,
+    page_albums: Vec<Album>,
+) -> Vec<Album> {
+    let mut appended = Vec::new();
+    for album in page_albums {
+        if album_ids.insert(album.id.clone()) {
+            appended.push(album.clone());
+            albums.push(album);
+        }
+        if albums.len() == MAX_LIBRARY_ALBUMS {
+            break;
+        }
+    }
+    appended
+}
+
+fn emit_library_page(
+    on_progress: &Channel<LibrarySyncEvent>,
+    page_index: u64,
+    loaded: usize,
+    albums: Vec<Album>,
+) {
+    let _ = on_progress.send(LibrarySyncEvent::Page {
+        page_index,
+        loaded,
+        albums,
+    });
+}
+
+fn ensure_library_sync_current(
+    expected_sync_generation: u64,
+    expected_connection_generation: Option<u64>,
+) -> Result<(), String> {
+    if LIBRARY_SYNC_GENERATION.load(Ordering::Acquire) != expected_sync_generation
+        || expected_connection_generation
+            .is_some_and(|expected| CONNECTION_GENERATION.load(Ordering::Acquire) != expected)
+    {
+        return Err("The Bandcamp connection changed before sync completed.".into());
+    }
+    Ok(())
+}
+
 async fn fetch_library_with_credentials(
     credentials: &ConnectionInput,
+    on_progress: &Channel<LibrarySyncEvent>,
+    expected_connection_generation: Option<u64>,
+    expected_sync_generation: u64,
 ) -> Result<Vec<Album>, String> {
     let mut albums = Vec::new();
+    let mut album_ids = BTreeSet::new();
 
-    for page in 0..10_u64 {
-        let offset = page * 500;
-        let body = request_json(
-            "getAlbumList2",
-            credentials,
-            &[
-                ("type", "alphabeticalByArtist".into()),
-                ("size", "500".into()),
-                ("offset", offset.to_string()),
-            ],
-        )
-        .await?;
-        let items = body
-            .pointer("/subsonic-response/albumList2/album")
-            .and_then(Value::as_array)
-            .map(Vec::as_slice)
-            .unwrap_or_default();
-        let item_count = items.len();
-        albums.extend(items.iter().filter_map(album_from_value));
-        if item_count < 500 {
-            break;
+    ensure_library_sync_current(expected_sync_generation, expected_connection_generation)?;
+    let (first_count, first_page) = fetch_library_page(credentials, 0).await?;
+    ensure_library_sync_current(expected_sync_generation, expected_connection_generation)?;
+    let appended = append_library_page(&mut albums, &mut album_ids, first_page);
+    emit_library_page(on_progress, 0, albums.len(), appended);
+    if first_count < 500 || albums.len() == MAX_LIBRARY_ALBUMS {
+        return Ok(albums);
+    }
+
+    let mut pages = stream::iter(1..10_u64)
+        .map(|page_index| async move {
+            ensure_library_sync_current(expected_sync_generation, expected_connection_generation)?;
+            Ok::<_, String>((
+                page_index,
+                fetch_library_page(credentials, page_index).await,
+            ))
+        })
+        .buffered(3);
+    while let Some(page) = pages.next().await {
+        let (page_index, result) = page?;
+        let (item_count, page_albums) = result?;
+        ensure_library_sync_current(expected_sync_generation, expected_connection_generation)?;
+        let appended = append_library_page(&mut albums, &mut album_ids, page_albums);
+        emit_library_page(on_progress, page_index, albums.len(), appended);
+        if item_count < 500 || albums.len() == MAX_LIBRARY_ALBUMS {
+            return Ok(albums);
         }
     }
     Ok(albums)
@@ -2106,31 +2612,85 @@ fn connection_error(error: String) -> String {
 }
 
 #[tauri::command]
-async fn connect(input: ConnectionInput) -> Result<Vec<Album>, String> {
+async fn connect(
+    app: tauri::AppHandle,
+    input: ConnectionInput,
+    on_progress: Channel<LibrarySyncEvent>,
+) -> Result<Vec<Album>, String> {
     validate_credentials(&input)?;
-    let albums = fetch_library_with_credentials(&input)
+    let sync_generation = LIBRARY_SYNC_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
+    let albums = fetch_library_with_credentials(&input, &on_progress, None, sync_generation)
         .await
         .map_err(connection_error)?;
+    ensure_library_sync_current(sync_generation, None)?;
     store_credentials(&input)?;
 
     let stored = load_credentials().map_err(|error| {
         format!("Credentials were accepted but could not be verified in the system vault: {error}")
     })?;
     if stored.username != input.username || stored.password != input.password {
-        let _ = disconnect();
+        let _ = disconnect(app.clone());
         return Err(
             "Credentials were accepted but the system vault did not return the saved connection."
                 .into(),
         );
     }
 
+    let connection_generation = CONNECTION_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
+    let cache_app = app.clone();
+    let cached_albums = albums.clone();
+    let cached_credentials = input.clone();
+    let cache_result = tauri::async_runtime::spawn_blocking(move || {
+        save_library_cache_if_connection_current(
+            &cache_app,
+            &cached_albums,
+            connection_generation,
+            sync_generation,
+            &cached_credentials,
+            true,
+        )
+    })
+    .await;
+    if matches!(cache_result, Ok(Ok(false))) {
+        return Err("The Bandcamp connection changed before sync completed.".into());
+    }
+
     Ok(albums)
 }
 
 #[tauri::command]
-async fn fetch_library() -> Result<Vec<Album>, String> {
+async fn fetch_library(
+    app: tauri::AppHandle,
+    on_progress: Channel<LibrarySyncEvent>,
+) -> Result<Vec<Album>, String> {
     let credentials = load_credentials()?;
-    fetch_library_with_credentials(&credentials).await
+    let connection_generation = CONNECTION_GENERATION.load(Ordering::Acquire);
+    let sync_generation = LIBRARY_SYNC_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
+    let albums = fetch_library_with_credentials(
+        &credentials,
+        &on_progress,
+        Some(connection_generation),
+        sync_generation,
+    )
+    .await?;
+    let cache_app = app.clone();
+    let cached_albums = albums.clone();
+    let cached_credentials = credentials.clone();
+    let cache_result = tauri::async_runtime::spawn_blocking(move || {
+        save_library_cache_if_connection_current(
+            &cache_app,
+            &cached_albums,
+            connection_generation,
+            sync_generation,
+            &cached_credentials,
+            false,
+        )
+    })
+    .await;
+    if matches!(cache_result, Ok(Ok(false))) {
+        return Err("The Bandcamp connection changed before sync completed.".into());
+    }
+    Ok(albums)
 }
 
 #[tauri::command]
@@ -2481,7 +3041,9 @@ pub fn run() {
             has_connection,
             connect,
             disconnect,
+            load_library_cache,
             player_state_contract_version,
+            record_player_state_diagnostic,
             load_player_state,
             save_player_state,
             checkpoint_player_state,
@@ -2632,6 +3194,31 @@ mod tests {
             .join(PLAYER_STATE_FILE)
     }
 
+    fn sample_album(id: &str) -> Album {
+        Album {
+            id: id.into(),
+            title: "Soft Focus".into(),
+            artist: "Night Archive".into(),
+            song_count: 9,
+            duration: 2_460,
+            cover_art: Some("cover-1".into()),
+            year: Some(2026),
+            genre: Some("Ambient".into()),
+            added_at: Some("2026-07-25T02:00:00Z".into()),
+        }
+    }
+
+    fn temporary_library_cache_path(label: &str) -> PathBuf {
+        let suffix: String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(16)
+            .map(char::from)
+            .collect();
+        std::env::temp_dir()
+            .join(format!("coda-library-cache-{label}-{suffix}"))
+            .join(LIBRARY_CACHE_FILE)
+    }
+
     #[test]
     fn rejects_control_characters_in_credentials() {
         let input = ConnectionInput {
@@ -2658,6 +3245,212 @@ mod tests {
     fn parses_flexible_numeric_fields() {
         let value = serde_json::json!({"duration": "42"});
         assert_eq!(number_field(&value, "duration"), Some(42));
+    }
+
+    #[test]
+    fn rejects_invalid_or_unbounded_album_metadata() {
+        assert!(bounded_album_from_value(&serde_json::json!({
+            "id": "album-1",
+            "name": "Soft Focus",
+            "artist": "Night Archive",
+            "songCount": 9,
+            "duration": 2460,
+            "coverArt": "cover-1"
+        }))
+        .is_some());
+        assert!(bounded_album_from_value(&serde_json::json!({
+            "id": "bad\nid",
+            "name": "Soft Focus",
+            "artist": "Night Archive"
+        }))
+        .is_none());
+        assert!(bounded_album_from_value(&serde_json::json!({
+            "id": "album-1",
+            "name": "Bad\nTitle",
+            "artist": "Night Archive"
+        }))
+        .is_none());
+        assert!(bounded_album_from_value(&serde_json::json!({
+            "id": "album-1",
+            "name": "Soft Focus",
+            "artist": "Night Archive",
+            "songCount": MAX_PLAYLIST_TRACKS as u64 + 1
+        }))
+        .is_none());
+        assert!(bounded_album_from_value(&serde_json::json!({
+            "id": "album-1",
+            "name": "Soft Focus",
+            "artist": "Night Archive",
+            "duration": MAX_SUBSONIC_DURATION_SECONDS + 1
+        }))
+        .is_none());
+        assert!(bounded_album_from_value(&serde_json::json!({
+            "id": "album-1",
+            "name": "Soft Focus",
+            "artist": "Night Archive",
+            "coverArt": "bad\ncover"
+        }))
+        .is_none());
+    }
+
+    #[test]
+    fn atomically_round_trips_bounded_library_cache_without_media_urls() {
+        let path = temporary_library_cache_path("roundtrip");
+        let now = 1_800_000_000_000;
+        write_library_cache(&path, &[sample_album("album-1")], now).unwrap();
+
+        let serialized = fs::read_to_string(&path).unwrap();
+        assert!(!serialized.contains("artworkUrl"));
+        assert!(!serialized.contains("streamUrl"));
+        assert!(!serialized.contains("\"tracks\""));
+
+        let restored = read_library_cache(&path, now + 1_000).unwrap().unwrap();
+        assert_eq!(restored.version, LIBRARY_CACHE_VERSION);
+        assert_eq!(restored.albums.len(), 1);
+        assert_eq!(restored.albums[0].id, "album-1");
+
+        let directory = path.parent().unwrap().to_path_buf();
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn rejects_expired_future_malformed_and_overfull_library_caches() {
+        let now = 1_800_000_000_000;
+        let valid = LibraryCacheSnapshot {
+            version: LIBRARY_CACHE_VERSION,
+            saved_at: now,
+            albums: vec![sample_album("album-1")],
+        };
+        assert!(validate_library_cache(&valid, now).is_ok());
+        assert!(validate_library_cache(
+            &LibraryCacheSnapshot {
+                saved_at: now + 1,
+                ..valid.clone()
+            },
+            now
+        )
+        .is_err());
+        assert!(validate_library_cache(
+            &LibraryCacheSnapshot {
+                saved_at: now - LIBRARY_CACHE_TTL_MS - 1,
+                ..valid.clone()
+            },
+            now
+        )
+        .is_err());
+        assert!(validate_library_cache(
+            &LibraryCacheSnapshot {
+                albums: vec![sample_album("album"); MAX_LIBRARY_ALBUMS + 1],
+                ..valid
+            },
+            now
+        )
+        .is_err());
+
+        let path = temporary_library_cache_path("malformed");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, b"{not-json").unwrap();
+        assert!(load_library_cache_or_clear_invalid(&path, now)
+            .unwrap()
+            .is_none());
+        assert!(!path.exists());
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn library_page_aggregation_preserves_order_deduplicates_and_caps_results() {
+        let mut albums = vec![sample_album("album-0")];
+        let mut ids = BTreeSet::from(["album-0".to_string()]);
+        let appended = append_library_page(
+            &mut albums,
+            &mut ids,
+            vec![
+                sample_album("album-1"),
+                sample_album("album-0"),
+                sample_album("album-2"),
+            ],
+        );
+
+        assert_eq!(
+            albums
+                .iter()
+                .map(|album| album.id.as_str())
+                .collect::<Vec<_>>(),
+            ["album-0", "album-1", "album-2"]
+        );
+        assert_eq!(
+            appended
+                .iter()
+                .map(|album| album.id.as_str())
+                .collect::<Vec<_>>(),
+            ["album-1", "album-2"]
+        );
+
+        let mut full = (0..MAX_LIBRARY_ALBUMS - 1)
+            .map(|index| sample_album(&format!("album-{index}")))
+            .collect::<Vec<_>>();
+        let mut full_ids = full
+            .iter()
+            .map(|album| album.id.clone())
+            .collect::<BTreeSet<_>>();
+        append_library_page(
+            &mut full,
+            &mut full_ids,
+            vec![sample_album("last-album"), sample_album("overflow-album")],
+        );
+        assert_eq!(full.len(), MAX_LIBRARY_ALBUMS);
+        assert_eq!(
+            full.last().map(|album| album.id.as_str()),
+            Some("last-album")
+        );
+    }
+
+    #[test]
+    fn library_progress_uses_the_renderer_camel_case_contract() {
+        let value = serde_json::to_value(LibrarySyncEvent::Page {
+            page_index: 2,
+            loaded: 1_500,
+            albums: vec![sample_album("album-1")],
+        })
+        .unwrap();
+
+        assert_eq!(value.get("kind").and_then(Value::as_str), Some("page"));
+        assert_eq!(value.get("pageIndex").and_then(Value::as_u64), Some(2));
+        assert_eq!(value.get("loaded").and_then(Value::as_u64), Some(1_500));
+        assert!(value.get("page_index").is_none());
+    }
+
+    #[test]
+    fn library_pages_require_the_bounded_subsonic_shape() {
+        let empty = serde_json::json!({
+            "subsonic-response": { "albumList2": {} }
+        });
+        assert_eq!(albums_from_library_page(&empty).unwrap(), (0, Vec::new()));
+
+        let missing = serde_json::json!({
+            "subsonic-response": {}
+        });
+        assert!(albums_from_library_page(&missing).is_err());
+
+        let wrong_type = serde_json::json!({
+            "subsonic-response": { "albumList2": { "album": {} } }
+        });
+        assert!(albums_from_library_page(&wrong_type).is_err());
+
+        let oversized = serde_json::json!({
+            "subsonic-response": {
+                "albumList2": {
+                    "album": (0..501)
+                        .map(|index| serde_json::json!({
+                            "id": format!("album-{index}"),
+                            "name": "Soft Focus",
+                            "artist": "Night Archive"
+                        }))
+                        .collect::<Vec<_>>()
+                }
+            }
+        });
+        assert!(albums_from_library_page(&oversized).is_err());
     }
 
     #[test]
