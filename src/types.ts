@@ -194,6 +194,9 @@ export type RadioChapter = {
   album?: string;
   timecode: number;
   itemUrl?: string;
+  artistUrl?: string;
+  albumUrl?: string;
+  artworkUrl?: string;
 };
 
 export type RadioShow = RadioShowSummary & {

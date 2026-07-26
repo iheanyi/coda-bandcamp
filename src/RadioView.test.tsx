@@ -49,6 +49,9 @@ const show: RadioShow = {
       album: "Mirage",
       timecode: 120,
       itemUrl: "https://sweepsbeats.bandcamp.com/track/mirage-w-keylime",
+      artistUrl: "https://sweepsbeats.bandcamp.com/",
+      albumUrl: "https://sweepsbeats.bandcamp.com/album/mirage",
+      artworkUrl: "https://f4.bcbits.com/img/0161226005_10.jpg",
     },
   ],
 };
@@ -196,6 +199,22 @@ describe("Bandcamp Radio", () => {
     }));
     expect(mocks.openBandcampUrl).toHaveBeenCalledWith(
       "https://sweepsbeats.bandcamp.com/track/mirage-w-keylime",
+    );
+    fireEvent.click(screen.getByRole("button", {
+      name: "Open artist Sweeps on Bandcamp",
+    }));
+    expect(mocks.openBandcampUrl).toHaveBeenCalledWith(
+      "https://sweepsbeats.bandcamp.com/",
+    );
+    fireEvent.click(screen.getByRole("button", {
+      name: "Open album Mirage on Bandcamp",
+    }));
+    expect(mocks.openBandcampUrl).toHaveBeenCalledWith(
+      "https://sweepsbeats.bandcamp.com/album/mirage",
+    );
+    expect(document.querySelector(".radio-chapter-artwork img")).toHaveAttribute(
+      "src",
+      "https://f4.bcbits.com/img/0161226005_10.jpg",
     );
     expect(onPlayAt).not.toHaveBeenCalled();
 

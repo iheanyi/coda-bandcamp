@@ -24,6 +24,10 @@ import {
   openBandcampUrl,
   paletteFor,
 } from "./lib";
+import {
+  RadioChapterArtwork,
+  RadioChapterCopy,
+} from "./RadioChapterMetadata";
 import { boundRadioChapters, radioAiringAt } from "./radioPlayback";
 import type { RadioShow, RadioShowSummary, Track } from "./types";
 import { transitionCodaView } from "./viewTransitions";
@@ -311,28 +315,12 @@ const RadioDetail = memo(function RadioDetail({
                 className={`radio-detail__chapter ${activeChapter ? "is-current" : ""}`}
                 key={`${chapter.timecode}-${chapter.artist}-${chapter.title}-${index}`}
               >
-              <span className="radio-detail__chapter-number">
-                {String(index + 1).padStart(2, "0")}
-              </span>
-              <div className="radio-detail__chapter-copy">
-                {chapter.itemUrl ? (
-                  <button
-                    className="metadata-link radio-detail__chapter-link"
-                    onClick={() => onOpenItem(chapter.itemUrl!)}
-                    aria-label={`Open ${chapter.title} by ${chapter.artist} on Bandcamp`}
-                    title="Open on Bandcamp"
-                  >
-                    {chapter.title}
-                    <ExternalLink size={13} aria-hidden="true" />
-                  </button>
-                ) : (
-                  <strong>{chapter.title}</strong>
-                )}
-                <span>
-                  {chapter.artist}
-                  {chapter.album ? ` · ${chapter.album}` : ""}
-                </span>
-              </div>
+              <RadioChapterArtwork chapter={chapter} index={index} />
+              <RadioChapterCopy
+                chapter={chapter}
+                className="radio-detail__chapter-copy"
+                onOpen={onOpenItem}
+              />
               <time>{formatTime(chapter.timecode)}</time>
               {onPlayAt ? (
                 <button

@@ -26,6 +26,10 @@ import {
 } from "react";
 import { formatTime, openBandcampUrl } from "./lib";
 import { countLabel } from "./countLabel";
+import {
+  RadioChapterArtwork,
+  RadioChapterCopy,
+} from "./RadioChapterMetadata";
 import { boundRadioChapters, radioAiringAt } from "./radioPlayback";
 import type { RepeatMode, Track } from "./types";
 
@@ -344,30 +348,14 @@ function NowPlayingViewComponent({
                     aria-label={`Seek to ${chapter.title} at ${formatTime(chapter.timecode)}`}
                     title={`Play from ${formatTime(chapter.timecode)}`}
                   >
-                    <span className="now-playing__radio-number">
-                      {String(index + 1).padStart(2, "0")}
-                    </span>
+                    <RadioChapterArtwork chapter={chapter} index={index} />
                     <time>{formatTime(chapter.timecode)}</time>
                   </button>
-                  <div className="now-playing__radio-chapter-copy">
-                    {chapter.itemUrl ? (
-                      <button
-                        className="metadata-link now-playing__radio-title-link"
-                        onClick={() => openRadioChapter(chapter.itemUrl!)}
-                        aria-label={`Open ${chapter.title} by ${chapter.artist} on Bandcamp`}
-                        title="Open on Bandcamp"
-                      >
-                        {chapter.title}
-                        <ExternalLink size={13} aria-hidden="true" />
-                      </button>
-                    ) : (
-                      <strong>{chapter.title}</strong>
-                    )}
-                    <span>
-                      {chapter.artist}
-                      {chapter.album ? ` · ${chapter.album}` : ""}
-                    </span>
-                  </div>
+                  <RadioChapterCopy
+                    chapter={chapter}
+                    className="now-playing__radio-chapter-copy"
+                    onOpen={openRadioChapter}
+                  />
                   {isCurrent ? (
                     <span className="now-playing__radio-state">
                       <i

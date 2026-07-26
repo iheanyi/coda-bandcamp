@@ -376,6 +376,9 @@ struct RadioChapter {
     album: Option<String>,
     timecode: u64,
     item_url: Option<String>,
+    artist_url: Option<String>,
+    album_url: Option<String>,
+    artwork_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -429,6 +432,14 @@ struct RawRadioChapter {
     timecode: Option<f64>,
     track_url: Option<String>,
     url: Option<String>,
+    album_url: Option<String>,
+    track_art_id: Option<u64>,
+    url_hints: Option<RawRadioUrlHints>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawRadioUrlHints {
+    subdomain: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1170,6 +1181,31 @@ fn radio_artwork_url(image_id: Option<u64>) -> Option<String> {
         .map(|id| format!("https://f4.bcbits.com/img/{id:010}_10.jpg"))
 }
 
+fn radio_artist_url(hints: Option<&RawRadioUrlHints>, item_url: Option<&str>) -> Option<String> {
+    let hinted = hints
+        .and_then(|value| value.subdomain.as_deref())
+        .filter(|value| {
+            !value.is_empty()
+                && value.len() <= 63
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
+        .and_then(|subdomain| {
+            allowed_url(
+                &format!("https://{}.bandcamp.com/", subdomain.to_ascii_lowercase()),
+                "bandcamp",
+            )
+        });
+    hinted.or_else(|| {
+        let mut parsed = Url::parse(item_url?).ok()?;
+        parsed.set_path("/");
+        parsed.set_query(None);
+        parsed.set_fragment(None);
+        allowed_url(parsed.as_str(), "bandcamp")
+    })
+}
+
 fn radio_summary_from_raw(value: RawRadioSummary) -> Option<RadioShowSummary> {
     if value.id == 0 {
         return None;
@@ -1212,8 +1248,12 @@ fn radio_show_from_raw(value: RawRadioShow) -> Result<RadioShow, String> {
             if !timecode.is_finite() || !(0.0..=MAX_RADIO_DURATION_SECONDS).contains(&timecode) {
                 return None;
             }
-            let item_url = chapter
+            let track_url = chapter
                 .track_url
+                .as_deref()
+                .and_then(|url| allowed_url(url, "bandcamp"));
+            let album_url = chapter
+                .album_url
                 .as_deref()
                 .and_then(|url| allowed_url(url, "bandcamp"))
                 .or_else(|| {
@@ -1222,6 +1262,8 @@ fn radio_show_from_raw(value: RawRadioShow) -> Result<RadioShow, String> {
                         .as_deref()
                         .and_then(|url| allowed_url(url, "bandcamp"))
                 });
+            let item_url = track_url.clone().or_else(|| album_url.clone());
+            let artist_url = radio_artist_url(chapter.url_hints.as_ref(), item_url.as_deref());
             Some(RadioChapter {
                 title: clean_radio_text(&chapter.title, "Untitled track"),
                 artist: clean_radio_text(&chapter.artist, "Unknown artist"),
@@ -1232,6 +1274,9 @@ fn radio_show_from_raw(value: RawRadioShow) -> Result<RadioShow, String> {
                     .filter(|album| !album.is_empty()),
                 timecode: timecode.round() as u64,
                 item_url,
+                artist_url,
+                album_url,
+                artwork_url: radio_artwork_url(chapter.track_art_id),
             })
         })
         .collect();
@@ -2918,7 +2963,12 @@ mod tests {
                     "artist": "Artist",
                     "album_title": "Album",
                     "timecode": 92.4,
-                    "track_url": "https://artist.bandcamp.com/track/example"
+                    "track_url": "https://artist.bandcamp.com/track/example",
+                    "album_url": "https://artist.bandcamp.com/album/example",
+                    "track_art_id": 12345,
+                    "url_hints": {
+                        "subdomain": "artist"
+                    }
                 }]
             }))
             .unwrap(),
@@ -2927,6 +2977,50 @@ mod tests {
         assert_eq!(show.duration, 4937);
         assert_eq!(show.chapters.len(), 1);
         assert_eq!(show.chapters[0].timecode, 92);
+        assert_eq!(
+            show.chapters[0].artist_url.as_deref(),
+            Some("https://artist.bandcamp.com/")
+        );
+        assert_eq!(
+            show.chapters[0].album_url.as_deref(),
+            Some("https://artist.bandcamp.com/album/example")
+        );
+        assert_eq!(
+            show.chapters[0].artwork_url.as_deref(),
+            Some("https://f4.bcbits.com/img/0000012345_10.jpg")
+        );
+    }
+
+    #[test]
+    fn rejects_untrusted_radio_chapter_links_and_url_hints() {
+        let show = radio_show_from_raw(
+            serde_json::from_value(serde_json::json!({
+                "show_id": 979,
+                "title": "The Hip Hop Show",
+                "subtitle": "Kinrose",
+                "audio_duration": 60,
+                "audio_stream": {
+                    "mp3-128": "https://bandcamp.com/stream_redirect?enc=mp3-128"
+                },
+                "tracks": [{
+                    "title": "Example",
+                    "artist": "Artist",
+                    "album_title": "Album",
+                    "timecode": 0,
+                    "track_url": "https://evil.example/track/example",
+                    "album_url": "https://evil.example/album/example",
+                    "url_hints": {
+                        "subdomain": "artist.evil.example"
+                    }
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let chapter = &show.chapters[0];
+        assert!(chapter.item_url.is_none());
+        assert!(chapter.artist_url.is_none());
+        assert!(chapter.album_url.is_none());
     }
 
     #[test]
