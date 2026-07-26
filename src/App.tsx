@@ -106,6 +106,14 @@ import {
   radioAiringAt,
   radioShowIdFromTrackId,
 } from "./radioPlayback";
+import {
+  advanceRadioScrobbling,
+  completeRadioShowScrobble,
+  createRadioScrobbleProgress,
+  markRadioChapterScrobble,
+  markRadioShowScrobble,
+  type RadioScrobbleAction,
+} from "./radioScrobbling";
 import type {
   Album,
   ConnectionInput,
@@ -113,6 +121,7 @@ import type {
   LastFmPlaybackProgress,
   LastFmStatus,
   LastFmTrackInput,
+  RadioScrobbleProgress,
   RepeatMode,
   SortMode,
   Track,
@@ -187,6 +196,19 @@ function persistedLastFmProgress(
     lastPosition: session.lastPosition,
     nowPlayingSent: session.nowPlayingSent,
     scrobbleState: session.scrobbleState,
+  };
+}
+
+function persistedRadioScrobbleProgress(
+  track: Track | undefined,
+  progress: RadioScrobbleProgress | undefined,
+): RadioScrobbleProgress | undefined {
+  if (!track?.id.startsWith("radio:") || progress?.showTrackId !== track.id) {
+    return undefined;
+  }
+  return {
+    ...progress,
+    scrobbledChapterKeys: [...progress.scrobbledChapterKeys],
   };
 }
 
@@ -1452,6 +1474,9 @@ export default function App() {
   const randomPickActiveRef = useRef(false);
   const restoreGenerationRef = useRef(0);
   const restoredPlaybackSessionRef = useRef<PlaybackSession | undefined>(undefined);
+  const restoredRadioScrobbleProgressRef = useRef<RadioScrobbleProgress | undefined>(
+    undefined,
+  );
   const pendingRestorePositionRef = useRef<{ trackId: string; position: number } | undefined>(
     undefined,
   );
@@ -1488,6 +1513,9 @@ export default function App() {
     nowPlayingSent: false,
     scrobbleState: "idle",
   });
+  const radioScrobbleProgressRef = useRef<RadioScrobbleProgress | undefined>(
+    undefined,
+  );
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
   const currentTrack = queue[currentIndex];
   const latestPlayerStateRef = useRef({
@@ -1643,6 +1671,7 @@ export default function App() {
         const restoredQueue = state.queue as Track[];
         const restoredTrack = restoredQueue[state.currentIndex];
         restoredPlaybackSessionRef.current = state.lastFmProgress;
+        restoredRadioScrobbleProgressRef.current = state.radioScrobbleProgress;
         pendingRestorePositionRef.current =
           restoredTrack && state.positionSeconds > 0
             ? { trackId: restoredTrack.id, position: state.positionSeconds }
@@ -1731,6 +1760,24 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (currentTrack?.id.startsWith("radio:")) {
+      const restoredRadio = restoredRadioScrobbleProgressRef.current;
+      radioScrobbleProgressRef.current =
+        restoredRadio?.showTrackId === currentTrack.id
+          ? { ...restoredRadio, lastPosition: currentTime }
+          : createRadioScrobbleProgress(currentTrack.id, currentTime);
+      restoredRadioScrobbleProgressRef.current = undefined;
+      playbackSessionRef.current = {
+        trackId: "",
+        startedAt: 0,
+        listenedSeconds: 0,
+        lastPosition: currentTime,
+        nowPlayingSent: false,
+        scrobbleState: "idle",
+      };
+      return;
+    }
+    radioScrobbleProgressRef.current = undefined;
     const restored = restoredPlaybackSessionRef.current;
     if (currentTrack && restored?.trackId === currentTrack.id) {
       playbackSessionRef.current = {
@@ -1767,6 +1814,10 @@ export default function App() {
         currentTrackId: track.id,
         positionSeconds: state.positionSeconds,
         lastFmProgress: persistedLastFmProgress(track, playbackSessionRef.current),
+        radioScrobbleProgress: persistedRadioScrobbleProgress(
+          track,
+          radioScrobbleProgressRef.current,
+        ),
       }),
     );
   }, [enqueuePlayerStateWrite]);
@@ -1784,6 +1835,10 @@ export default function App() {
           repeatMode: repeat,
           queueOpen,
           lastFmProgress: persistedLastFmProgress(track, playbackSessionRef.current),
+          radioScrobbleProgress: persistedRadioScrobbleProgress(
+            track,
+            radioScrobbleProgressRef.current,
+          ),
         }),
       )
         .then(() => {
@@ -1942,8 +1997,59 @@ export default function App() {
     }
   }, [notify]);
 
+  const dispatchRadioScrobbleActions = useCallback((
+    showTrackId: string,
+    actions: readonly RadioScrobbleAction[],
+  ) => {
+    for (const action of actions) {
+      if (action.kind === "now-playing") {
+        updateLastFmNowPlaying(action.track).catch(() => {
+          notify("Last.fm could not update this Radio chapter.", "bad");
+        });
+        continue;
+      }
+      scrobbleLastFm(action.track, action.timestamp)
+        .then(() => {
+          const progress = radioScrobbleProgressRef.current;
+          if (progress?.showTrackId === showTrackId) {
+            radioScrobbleProgressRef.current = markRadioChapterScrobble(
+              progress,
+              action.chapterKey,
+              "sent",
+            );
+          }
+        })
+        .catch(() => {
+          const progress = radioScrobbleProgressRef.current;
+          if (progress?.showTrackId === showTrackId) {
+            radioScrobbleProgressRef.current = markRadioChapterScrobble(
+              progress,
+              action.chapterKey,
+              "failed",
+            );
+          }
+          notify("Last.fm could not scrobble this Radio chapter.", "bad");
+        });
+    }
+  }, [notify]);
+
   const handleAudioPlaying = useCallback(() => {
-    if (!currentTrack || currentTrack.id.startsWith("radio:")) return;
+    if (!currentTrack) return;
+    if (currentTrack.id.startsWith("radio:")) {
+      const progress =
+        radioScrobbleProgressRef.current ??
+        createRadioScrobbleProgress(currentTrack.id, currentTime);
+      const advanced = advanceRadioScrobbling(
+        currentTrack,
+        progress,
+        audioRef.current?.currentTime ?? currentTime,
+        true,
+        lastFmStatus.connected,
+      );
+      radioScrobbleProgressRef.current = advanced.progress;
+      dispatchRadioScrobbleActions(currentTrack.id, advanced.actions);
+      return;
+    }
     const session = playbackSessionRef.current;
     if (session.trackId !== currentTrack.id) return;
     if (!session.startedAt) {
@@ -1956,10 +2062,22 @@ export default function App() {
         notify("Last.fm could not update Now Playing.", "bad");
       }
     });
-  }, [currentTrack, lastFmStatus.connected, notify]);
+  }, [
+    currentTime,
+    currentTrack,
+    dispatchRadioScrobbleActions,
+    lastFmStatus.connected,
+    notify,
+  ]);
 
   const handleAudioSeeking = useCallback((event: SyntheticEvent<HTMLAudioElement>) => {
     playbackSessionRef.current.lastPosition = event.currentTarget.currentTime;
+    if (radioScrobbleProgressRef.current) {
+      radioScrobbleProgressRef.current = {
+        ...radioScrobbleProgressRef.current,
+        lastPosition: event.currentTarget.currentTime,
+      };
+    }
   }, []);
 
   const handleAudioLoadedMetadata = useCallback((event: SyntheticEvent<HTMLAudioElement>) => {
@@ -1971,6 +2089,12 @@ export default function App() {
       : pending.position;
     const position = Math.min(Math.max(0, pending.position), maximum);
     playbackSessionRef.current.lastPosition = position;
+    if (radioScrobbleProgressRef.current) {
+      radioScrobbleProgressRef.current = {
+        ...radioScrobbleProgressRef.current,
+        lastPosition: position,
+      };
+    }
     event.currentTarget.currentTime = position;
     setCurrentTime(position);
     pendingRestorePositionRef.current = undefined;
@@ -1982,11 +2106,27 @@ export default function App() {
     setCurrentTime((value) => Math.floor(value) === second ? value : second);
 
     const track = currentTrack;
+    if (!track) return;
+    if (track.id.startsWith("radio:")) {
+      const progress =
+        radioScrobbleProgressRef.current ??
+        createRadioScrobbleProgress(track.id, position);
+      const advanced = advanceRadioScrobbling(
+        track,
+        progress,
+        position,
+        playing,
+        lastFmStatus.connected,
+      );
+      radioScrobbleProgressRef.current = advanced.progress;
+      dispatchRadioScrobbleActions(track.id, advanced.actions);
+      return;
+    }
+
     const session = playbackSessionRef.current;
-    if (!track || session.trackId !== track.id) return;
+    if (session.trackId !== track.id) return;
     const delta = position - session.lastPosition;
     session.lastPosition = position;
-    if (track.id.startsWith("radio:")) return;
     if (playing && delta > 0 && delta <= 10) {
       session.listenedSeconds += delta;
     }
@@ -2014,7 +2154,13 @@ export default function App() {
           notify("Last.fm could not scrobble this track.", "bad");
         }
       });
-  }, [currentTrack, lastFmStatus.connected, notify, playing]);
+  }, [
+    currentTrack,
+    dispatchRadioScrobbleActions,
+    lastFmStatus.connected,
+    notify,
+    playing,
+  ]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -2040,6 +2186,62 @@ export default function App() {
       return index;
     });
   }, [queue.length, repeat]);
+
+  const handleAudioEnded = useCallback((event: SyntheticEvent<HTMLAudioElement>) => {
+    const track = currentTrack;
+    if (track?.id.startsWith("radio:")) {
+      const progress =
+        radioScrobbleProgressRef.current ??
+        createRadioScrobbleProgress(track.id, event.currentTarget.currentTime);
+      const advanced = advanceRadioScrobbling(
+        track,
+        progress,
+        event.currentTarget.currentTime,
+        true,
+        lastFmStatus.connected,
+      );
+      dispatchRadioScrobbleActions(track.id, advanced.actions);
+      const completed = completeRadioShowScrobble(
+        track,
+        advanced.progress,
+        lastFmStatus.connected,
+      );
+      radioScrobbleProgressRef.current = completed.progress;
+      if (
+        completed.action ||
+        advanced.actions.some((action) => action.kind === "chapter-scrobble")
+      ) {
+        void checkpointLatestPlayerState().catch(() => {
+          // The normal periodic checkpoint remains a fallback.
+        });
+      }
+      if (completed.action) {
+        const showTrackId = track.id;
+        scrobbleLastFm(completed.action.track, completed.action.timestamp)
+          .then(() => {
+            const latest = radioScrobbleProgressRef.current;
+            if (latest?.showTrackId === showTrackId) {
+              radioScrobbleProgressRef.current = markRadioShowScrobble(latest, "sent");
+            }
+          })
+          .catch(() => {
+            const latest = radioScrobbleProgressRef.current;
+            if (latest?.showTrackId === showTrackId) {
+              radioScrobbleProgressRef.current = markRadioShowScrobble(latest, "failed");
+            }
+            notify("Last.fm could not scrobble this completed Radio show.", "bad");
+          });
+      }
+    }
+    next();
+  }, [
+    currentTrack,
+    checkpointLatestPlayerState,
+    dispatchRadioScrobbleActions,
+    lastFmStatus.connected,
+    next,
+    notify,
+  ]);
 
   const previous = useCallback(() => {
     if (currentTime > 4) {
@@ -2670,6 +2872,8 @@ export default function App() {
     setNowPlayingOpen(false);
     pendingRestorePositionRef.current = undefined;
     restoredPlaybackSessionRef.current = undefined;
+    restoredRadioScrobbleProgressRef.current = undefined;
+    radioScrobbleProgressRef.current = undefined;
     setLibraryError("");
     setSyncState("idle");
     queryClient.removeQueries({ queryKey: ["bandcamp"] });
@@ -3384,7 +3588,7 @@ export default function App() {
         onDurationChange={(event) => {
           if (Number.isFinite(event.currentTarget.duration)) setCurrentTime(event.currentTarget.currentTime);
         }}
-        onEnded={next}
+        onEnded={handleAudioEnded}
       />
       {connectionOpen ? (
         <ConnectionDialog

@@ -490,6 +490,71 @@ describe("Coda application flows", () => {
     })).toHaveAttribute("aria-current", "true");
   });
 
+  it("scrobbles Radio chapters and the completed show as separate radio selections", async () => {
+    mocks.getLastFmStatus.mockResolvedValue({
+      configured: true,
+      connected: true,
+      username: "nightlistener",
+    });
+    mocks.loadPlayerState.mockResolvedValue({
+      version: 1,
+      savedAt: Date.now(),
+      queue: [{
+        id: "radio:979",
+        title: "The Coda Broadcast",
+        artist: "Bandcamp Radio",
+        album: "Bandcamp Weekly",
+        albumId: "radio:979",
+        duration: 3_600,
+        track: 1,
+        palette: ["#ca6954", "#241b1a"],
+      }],
+      currentIndex: 0,
+      positionSeconds: 60,
+      volume: 0.7,
+      repeatMode: "off",
+      queueOpen: false,
+    });
+    const { container } = renderApp();
+
+    await waitFor(() => expect(mocks.fetchRadioShow).toHaveBeenCalledWith(979));
+    const audio = container.querySelector("audio")!;
+    Object.defineProperty(audio, "duration", {
+      configurable: true,
+      value: 3_600,
+    });
+    fireEvent.loadedMetadata(audio);
+    fireEvent.click(await screen.findByRole("button", { name: "Play" }));
+    fireEvent.playing(audio);
+    await waitFor(() => expect(mocks.updateLastFmNowPlaying).toHaveBeenCalledWith(
+      expect.objectContaining({
+        artist: "Night Archive",
+        title: "Second signal",
+        chosenByUser: false,
+      }),
+    ));
+
+    for (let position = 70; position <= 300; position += 10) {
+      audio.currentTime = position;
+      fireEvent.timeUpdate(audio);
+    }
+    await waitFor(() => expect(mocks.scrobbleLastFm).toHaveBeenCalledTimes(1));
+    expect(mocks.scrobbleLastFm.mock.calls[0][0]).toMatchObject({
+      artist: "Night Archive",
+      title: "Second signal",
+      chosenByUser: false,
+    });
+
+    audio.currentTime = 3_600;
+    fireEvent.ended(audio);
+    await waitFor(() => expect(mocks.scrobbleLastFm).toHaveBeenCalledTimes(2));
+    expect(mocks.scrobbleLastFm.mock.calls[1][0]).toMatchObject({
+      artist: "Bandcamp Radio",
+      title: "The Coda Broadcast",
+      chosenByUser: false,
+    });
+  });
+
   it("retains a large restored queue while rendering upcoming tracks in batches", async () => {
     const largeQueue = Array.from({ length: 300 }, (_, index): Track => ({
       ...tracks[0],

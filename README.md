@@ -118,6 +118,12 @@ after real listening reaches half its duration or four minutes, whichever comes
 first, following Last.fm's desktop-client guidance. Tracks of 30 seconds or less
 are not scrobbled, and seeking does not manufacture listening time.
 
+For Bandcamp Radio, Coda reports each eligible chapter as the song selected by
+the broadcast (`chosenByUser=false`) and applies the same genuine-listening
+threshold. When a broadcast reaches its natural end after enough actual
+listening, Coda also scrobbles the Bandcamp Radio show itself. This gives both
+the featured artist and the curated show an accurate Last.fm entry.
+
 ## Discover
 
 Discover uses Bandcamp's anonymous public Discover feed. It is deliberately
@@ -174,15 +180,17 @@ commands. If Bandcamp changes the public feed shape, Radio can fail closed
 without affecting the authenticated collection. Coda preserves a Radio show's
 bounded identifier, display metadata, queue position, and playhead, then
 reacquires a fresh anonymous stream when a session is restored. Signed episode
-and artwork URLs are never written to disk, and whole shows are not submitted
-to Last.fm as tracks.
+and artwork URLs are never written to disk. Only bounded listened-time and
+hashed chapter dedupe markers are restored; chapter payloads are reacquired.
 
 When a show includes chapter metadata, Coda resolves the current song from the
 audio playhead and surfaces it in the compact player, Queue, window title, and
 Now Playing view. The show remains one honest queue item. Its tracklist is a
 seekable chapter timeline instead of a collection of fake standalone songs;
 linked chapter titles open verified Bandcamp HTTPS pages in the default browser
-so a listener can save or buy the release. Restored sessions start paused at
+so a listener can save or buy the release. Eligible chapters are scrobbled
+individually as radio-selected songs, while the show itself is scrobbled only
+after natural completion and enough real listening. Restored sessions start paused at
 the saved chapter and timestamp.
 
 ## Desktop behavior

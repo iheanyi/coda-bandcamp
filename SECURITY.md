@@ -50,13 +50,17 @@
   sessions persist only a validated numeric show identifier, bounded display
   metadata, queue position, and playhead; Coda anonymously reacquires fresh
   chapter, artwork, and signed stream data when the show is restored.
+- Radio scrobble restoration stores bounded listened-time counters and opaque
+  chapter dedupe keys, never chapter titles, artists, links, or signed media
+  URLs. Seeking is excluded from listened time.
 - AirPlay uses WebKit's operating-system playback-target picker only when that
   native capability is present. Coda does not discover receivers itself, proxy
   audio through a third party, or expose saved Bandcamp credentials to the
   picker.
 - Last.fm requests use a separate HTTPS-only client with redirects disabled,
   strict metadata and response-size validation, and Last.fm's signed desktop
-  API protocol. Coda never handles a Last.fm password.
+  API protocol. Radio chapters and completed shows are explicitly marked
+  `chosenByUser=false`. Coda never handles a Last.fm password.
 - The Last.fm API key and shared application secret are build credentials and
   are necessarily recoverable from a distributed desktop binary. Local and CI
   builds receive them through environment variables so they do not enter source

@@ -48,6 +48,10 @@ Treat these behaviors as product requirements, not implementation details:
 - A Radio show remains one queue item. Chapter metadata supplies current-song
   display, a seekable timeline, and verified Bandcamp links; do not inflate
   chapters into fake global queue tracks.
+- Eligible Radio chapters scrobble as radio-selected songs with
+  `chosenByUser=false` after genuine listened time reaches the Last.fm
+  threshold. The complete show also scrobbles, but only from natural completion
+  after enough actual listening; seeking must not manufacture either event.
 - Radio session restore stores only the validated show ID, bounded metadata,
   and playhead. Reacquire the anonymous signed stream and chapter data on
   restore; never persist Radio stream or artwork URLs.
@@ -72,6 +76,8 @@ releases as Albums/EPs. Do not infer a more specific type from names or artwork.
 - `src/SavedLibraryView.tsx` — lazy-loaded Favorites, playlists, playlist
   details, and Add-to-playlist dialog using TanStack Query.
 - `src/radioPlayback.ts` — bounded Radio chapter ordering and playhead lookup.
+- `src/radioScrobbling.ts` — pure listened-time accounting, chapter/show
+  eligibility, and bounded Radio scrobble deduplication.
 - `src/lib.ts` — typed renderer-to-Tauri bridge, URL validation, hydration, and
   bounded runtime/local-storage caches.
 - `src/types.ts` — shared TypeScript domain types.
@@ -284,7 +290,8 @@ renderer.
   cursors, cap page/response sizes, enforce timeouts, and allowlist returned
   URLs.
 - Radio responses must remain typed and bounded. Never persist its signed show
-  streams or scrobble a complete broadcast as a Last.fm track.
+  streams. Persist only bounded listened-time and opaque chapter dedupe state
+  for Last.fm; never persist chapter metadata in the player snapshot.
 - Do not reverse-engineer or embed a user's normal Bandcamp web session. Library
   playback uses the official Subsonic API; Discover uses the anonymous public
   feed.
