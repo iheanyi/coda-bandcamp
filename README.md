@@ -148,9 +148,11 @@ release's track metadata in bounded batches.
 Bandcamp's Subsonic beta does not currently return a valid `getStarred2`
 response, so Coda labels Favorites as device-local instead of implying that
 hearts sync to Bandcamp. The local store is versioned and bounded; it contains
-stable IDs and display metadata only. Signed artwork and stream URLs are never
-persisted. Coda resolves fresh artwork from the stored cover ID and links saved
-tracks/releases back to their internal album detail pages.
+stable IDs, display metadata, and sanitized tracklists for saved releases.
+Signed artwork and stream URLs are never persisted. Coda resolves fresh artwork
+from the stored cover ID and opens saved releases immediately from local
+metadata, then revalidates the tracklist against Bandcamp in the background.
+Playback requests a fresh authenticated stream only when a track is played.
 
 Playlists continue to use Bandcamp's authenticated Subsonic playlist endpoints.
 Playlist server state is cached and deduplicated with TanStack Query. Opening

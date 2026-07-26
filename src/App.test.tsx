@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   completeLastFmAuthorization: vi.fn(),
   connectBandcamp: vi.fn(),
   disconnectLastFm: vi.fn(),
+  fetchAlbum: vi.fn(),
   fetchLibrary: vi.fn(),
   fetchFavorites: vi.fn(),
   fetchRadioShow: vi.fn(),
@@ -35,6 +36,7 @@ vi.mock("./lib", async (importOriginal) => {
     completeLastFmAuthorization: mocks.completeLastFmAuthorization,
     connectBandcamp: mocks.connectBandcamp,
     disconnectLastFm: mocks.disconnectLastFm,
+    fetchAlbum: mocks.fetchAlbum,
     fetchLibrary: mocks.fetchLibrary,
     fetchFavorites: mocks.fetchFavorites,
     fetchRadioShow: mocks.fetchRadioShow,
@@ -134,6 +136,7 @@ beforeEach(() => {
   mocks.completeLastFmAuthorization.mockReset();
   mocks.connectBandcamp.mockReset();
   mocks.disconnectLastFm.mockReset();
+  mocks.fetchAlbum.mockReset().mockResolvedValue(tracks);
   mocks.fetchLibrary.mockReset();
   mocks.fetchFavorites.mockReset().mockResolvedValue({
     albumIds: [],
@@ -688,8 +691,69 @@ describe("Coda application flows", () => {
     expect(await screen.findByText("Local")).toBeInTheDocument();
     expect(screen.getByText("Soft Focus")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Soft Focus.*Night Archive/ }));
-    expect(await screen.findByRole("article", {
+    const reopenedAlbum = await screen.findByRole("article", {
       name: "Soft Focus release details",
-    })).toBeInTheDocument();
+    });
+    expect(within(reopenedAlbum).getByText("First Light")).toBeInTheDocument();
+  });
+
+  it("renders a favorite album tracklist locally when its detail transition applies late", async () => {
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    fireEvent.click(screen.getByRole("button", { name: "Open Soft Focus" }));
+    let albumPage = await screen.findByRole("article", {
+      name: "Soft Focus release details",
+    });
+    fireEvent.click(within(albumPage).getByRole("button", { name: "Favorite" }));
+    fireEvent.click(screen.getByRole("button", { name: "Favorites" }));
+    await screen.findByText("Local");
+
+    let resolveRefresh!: (tracks: Track[]) => void;
+    mocks.fetchAlbum.mockClear();
+    mocks.fetchAlbum.mockReturnValueOnce(new Promise((resolve) => {
+      resolveRefresh = resolve;
+    }));
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      document,
+      "startViewTransition",
+    );
+    let applyTransitionUpdate: (() => void) | undefined;
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: vi.fn((update: () => void) => {
+        applyTransitionUpdate = update;
+        return { finished: Promise.resolve() };
+      }),
+    });
+
+    try {
+      fireEvent.click(screen.getByRole("button", { name: /Soft Focus.*Night Archive/ }));
+      applyTransitionUpdate?.();
+
+      albumPage = await screen.findByRole("article", {
+        name: "Soft Focus release details",
+      });
+      expect(within(albumPage).getByText("First Light")).toBeInTheDocument();
+      expect(within(albumPage).getByText("Afterimage")).toBeInTheDocument();
+      await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledWith(
+        expect.objectContaining({ id: album.id }),
+      ));
+
+      resolveRefresh([
+        { ...tracks[0], title: "First Light (Bandcamp refresh)" },
+        tracks[1],
+      ]);
+      expect(await within(albumPage).findByText("First Light (Bandcamp refresh)"))
+        .toBeInTheDocument();
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(document, "startViewTransition", originalDescriptor);
+      } else {
+        Reflect.deleteProperty(document, "startViewTransition");
+      }
+    }
   });
 });

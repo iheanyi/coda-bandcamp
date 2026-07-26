@@ -39,7 +39,7 @@ beforeEach(() => {
 });
 
 describe("local favorites", () => {
-  it("persists bounded metadata without signed URLs or embedded tracks", () => {
+  it("persists bounded track metadata without signed media URLs", () => {
     let favorites = updateLocalFavorites(
       { albumIds: [], songIds: [], albums: [], tracks: [] },
       { id: album.id, kind: "album", favorite: true },
@@ -62,7 +62,16 @@ describe("local favorites", () => {
       albums: [{ id: "album-1", coverArt: "cover-1" }],
       tracks: [{ id: "song-1", coverArt: "cover-1" }],
     });
-    expect(readLocalFavorites().albums[0]).not.toHaveProperty("tracks");
+    expect(readLocalFavorites().albums[0].tracks).toMatchObject([
+      {
+        id: "song-1",
+        title: "Mirage",
+        albumId: "album-1",
+        coverArt: "cover-1",
+      },
+    ]);
+    expect(readLocalFavorites().albums[0].tracks?.[0]).not.toHaveProperty("streamUrl");
+    expect(readLocalFavorites().albums[0].tracks?.[0]).not.toHaveProperty("artworkUrl");
   });
 
   it("removes favorites and discards malformed storage", () => {
@@ -115,5 +124,38 @@ describe("local favorites", () => {
     expect(repaired.albums[0]).not.toHaveProperty("coverArt");
     expect(repaired.tracks[0]).not.toHaveProperty("disc");
     expect(() => writeLocalFavorites(repaired)).not.toThrow();
+  });
+
+  it("upgrades a metadata-only favorite when its tracklist becomes available", () => {
+    const repaired = repairLocalFavoriteMetadata(
+      {
+        albumIds: ["album-1"],
+        songIds: [],
+        albums: [{ ...album, tracks: undefined }],
+        tracks: [],
+      },
+      [album],
+      [],
+    );
+
+    expect(repaired.albums).toHaveLength(1);
+    expect(repaired.albums[0].tracks).toMatchObject([{ id: "song-1" }]);
+    expect(writeLocalFavorites(repaired).albums[0].tracks).toHaveLength(1);
+  });
+
+  it("updates a saved tracklist from refreshed Bandcamp metadata", () => {
+    const refreshedTrack = { ...track, title: "Mirage (Remastered)" };
+    const repaired = repairLocalFavoriteMetadata(
+      {
+        albumIds: ["album-1"],
+        songIds: [],
+        albums: [album],
+        tracks: [],
+      },
+      [{ ...album, tracks: [refreshedTrack] }],
+      [],
+    );
+
+    expect(repaired.albums[0].tracks?.[0].title).toBe("Mirage (Remastered)");
   });
 });

@@ -5,6 +5,7 @@ export const LOCAL_FAVORITES_KEY = "coda.local-favorites.v1";
 const LOCAL_FAVORITES_VERSION = 1;
 const MAX_FAVORITE_ALBUMS = 5_000;
 const MAX_FAVORITE_TRACKS = 25_000;
+const MAX_TRACKS_PER_ALBUM = 5_000;
 const MAX_LOCAL_FAVORITES_BYTES = 4 * 1024 * 1024;
 const MAX_TEXT_LENGTH = 1_024;
 const MAX_DURATION_SECONDS = 7 * 24 * 60 * 60;
@@ -88,6 +89,11 @@ function sanitizeTrack(value: unknown): Track | undefined {
 function sanitizeAlbum(value: unknown): Album | undefined {
   if (!isRecord(value)) return undefined;
   const colors = palette(value.palette);
+  const tracks = isAbsent(value.tracks)
+    ? undefined
+    : Array.isArray(value.tracks) && value.tracks.length <= MAX_TRACKS_PER_ALBUM
+      ? value.tracks.map(sanitizeTrack)
+      : undefined;
   if (
     !isText(value.id) ||
     !isText(value.title) ||
@@ -98,6 +104,9 @@ function sanitizeAlbum(value: unknown): Album | undefined {
     (!isAbsent(value.year) && !isCount(value.year)) ||
     (!isAbsent(value.genre) && !isText(value.genre, false)) ||
     (!isAbsent(value.addedAt) && !isText(value.addedAt, false)) ||
+    (!isAbsent(value.tracks) &&
+      (!tracks ||
+        tracks.some((track) => !track || track.albumId !== value.id))) ||
     !colors
   ) {
     return undefined;
@@ -112,6 +121,7 @@ function sanitizeAlbum(value: unknown): Album | undefined {
     ...(isAbsent(value.year) ? {} : { year: value.year }),
     ...(isAbsent(value.genre) ? {} : { genre: value.genre }),
     ...(isAbsent(value.addedAt) ? {} : { addedAt: value.addedAt }),
+    ...(tracks ? { tracks: tracks as Track[] } : {}),
     palette: colors,
   };
 }
@@ -130,6 +140,42 @@ function uniqueById<T extends { id: string }>(items: T[]): T[] {
     seen.add(item.id);
     return true;
   });
+}
+
+function sameTrackMetadata(left: Track, right: Track): boolean {
+  return (
+    left.id === right.id &&
+    left.title === right.title &&
+    left.artist === right.artist &&
+    left.album === right.album &&
+    left.albumId === right.albumId &&
+    left.duration === right.duration &&
+    left.track === right.track &&
+    left.disc === right.disc &&
+    left.coverArt === right.coverArt &&
+    left.palette[0] === right.palette[0] &&
+    left.palette[1] === right.palette[1]
+  );
+}
+
+function sameAlbumMetadata(left: Album, right: Album): boolean {
+  const leftTracks = left.tracks ?? [];
+  const rightTracks = right.tracks ?? [];
+  return (
+    left.id === right.id &&
+    left.title === right.title &&
+    left.artist === right.artist &&
+    left.songCount === right.songCount &&
+    left.duration === right.duration &&
+    left.coverArt === right.coverArt &&
+    left.year === right.year &&
+    left.genre === right.genre &&
+    left.addedAt === right.addedAt &&
+    left.palette[0] === right.palette[0] &&
+    left.palette[1] === right.palette[1] &&
+    leftTracks.length === rightTracks.length &&
+    leftTracks.every((track, index) => sameTrackMetadata(track, rightTracks[index]))
+  );
 }
 
 export function emptyLocalFavorites(): FavoriteCollection {
@@ -153,6 +199,11 @@ export function sanitizeLocalFavorites(value: unknown): FavoriteCollection | und
   const albums = value.albums.map(sanitizeAlbum);
   const tracks = value.tracks.map(sanitizeTrack);
   if (albums.some((item) => !item) || tracks.some((item) => !item)) return undefined;
+  const embeddedTrackCount = albums.reduce(
+    (total, album) => total + (album?.tracks?.length ?? 0),
+    0,
+  );
+  if (embeddedTrackCount > MAX_FAVORITE_TRACKS) return undefined;
   return {
     albumIds,
     songIds,
@@ -236,23 +287,37 @@ export function repairLocalFavoriteMetadata(
   albumCandidates: readonly Album[],
   trackCandidates: readonly Track[],
 ): FavoriteCollection {
-  const existingAlbumIds = new Set(current.albums.map((album) => album.id));
+  const existingAlbums = new Map(current.albums.map((album) => [album.id, album]));
   const existingTrackIds = new Set(current.tracks.map((track) => track.id));
   const wantedAlbumIds = new Set(current.albumIds);
   const wantedTrackIds = new Set(current.songIds);
   const repairedAlbums = albumCandidates
-    .filter((album) => wantedAlbumIds.has(album.id) && !existingAlbumIds.has(album.id))
+    .filter((album) => wantedAlbumIds.has(album.id))
     .map(sanitizeAlbum)
-    .filter((album): album is Album => Boolean(album));
+    .filter((album): album is Album => Boolean(album))
+    .map((album) => {
+      const existing = existingAlbums.get(album.id);
+      return existing?.tracks?.length && !album.tracks?.length
+        ? { ...album, tracks: existing.tracks }
+        : album;
+    })
+    .filter((album) => {
+      const existing = existingAlbums.get(album.id);
+      return !existing || !sameAlbumMetadata(existing, album);
+    });
   const repairedTracks = trackCandidates
     .filter((track) => wantedTrackIds.has(track.id) && !existingTrackIds.has(track.id))
     .map(sanitizeTrack)
     .filter((track): track is Track => Boolean(track));
 
   if (!repairedAlbums.length && !repairedTracks.length) return current;
+  const repairedAlbumMap = new Map(repairedAlbums.map((album) => [album.id, album]));
   return {
     ...current,
-    albums: uniqueById([...current.albums, ...repairedAlbums]),
+    albums: uniqueById([
+      ...current.albums.map((album) => repairedAlbumMap.get(album.id) ?? album),
+      ...repairedAlbums,
+    ]),
     tracks: uniqueById([...current.tracks, ...repairedTracks]),
   };
 }

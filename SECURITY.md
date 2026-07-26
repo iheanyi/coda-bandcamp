@@ -24,8 +24,9 @@
   action.
 - Favorites are device-local because Bandcamp does not return a valid Subsonic
   Favorites envelope. Their versioned store is capped at 4 MiB and contains
-  bounded IDs/display metadata plus stable cover IDs. Signed artwork/stream
-  URLs, credentials, and embedded album tracks are stripped before persistence.
+  bounded IDs/display metadata, sanitized release tracklists, and stable cover
+  IDs. Signed artwork/stream URLs, credentials, and Radio chapter payloads are
+  stripped before persistence.
 - Discover is an isolated anonymous client. Its endpoint, page size, sort
   allowlist, cursor/tag bounds, timeout, and 8 MB response ceiling are enforced
   in Rust. Saved Subsonic credentials are never loaded for these requests.

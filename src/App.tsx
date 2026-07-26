@@ -1592,8 +1592,8 @@ export default function App() {
     const candidate = kind === "song"
       ? queue.find((track) => track.id === id) ??
         selectedAlbum?.tracks?.find((track) => track.id === id)
-      : albums.find((album) => album.id === id) ??
-        (selectedAlbum?.id === id ? selectedAlbum : undefined);
+      : (selectedAlbum?.id === id ? selectedAlbum : undefined) ??
+        albums.find((album) => album.id === id);
     try {
       const next = writeLocalFavorites(
         updateLocalFavorites(localFavorites, input, candidate),
@@ -2207,9 +2207,26 @@ export default function App() {
   }, []);
 
   const openAlbum = useCallback(async (album: Album) => {
-    void transitionCodaView(() => setSelectedAlbum(album), "page-forward");
+    const hasLocalTracklist = Boolean(album.tracks?.length);
+    let albumForDetail = album;
+    void transitionCodaView(() => setSelectedAlbum(albumForDetail), "page-forward");
     try {
-      await ensureTracks(album);
+      albumForDetail = await ensureTracks(album);
+      setSelectedAlbum((item) => item?.id === album.id ? albumForDetail : item);
+      if (hasLocalTracklist) {
+        void fetchAlbum(album)
+          .then((tracks) => {
+            if (!tracks.length && albumForDetail.tracks?.length) return;
+            const refreshed = albumWithTracks(albumForDetail, tracks);
+            setAlbums((items) =>
+              items.map((item) => item.id === album.id ? refreshed : item),
+            );
+            setSelectedAlbum((item) => item?.id === album.id ? refreshed : item);
+          })
+          .catch(() => {
+            // Keep the usable local tracklist when background revalidation fails.
+          });
+      }
     } catch (cause) {
       notify(String(cause), "bad");
     }
