@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   hasConnection: vi.fn(),
   loadPlayerState: vi.fn(),
   openLastFmAuthorization: vi.fn(),
+  openBandcampUrl: vi.fn(),
   readLibraryCache: vi.fn(),
   scrobbleLastFm: vi.fn(),
   savePlayerState: vi.fn(),
@@ -45,6 +46,7 @@ vi.mock("./lib", async (importOriginal) => {
     hasConnection: mocks.hasConnection,
     isDesktop: () => false,
     openLastFmAuthorization: mocks.openLastFmAuthorization,
+    openBandcampUrl: mocks.openBandcampUrl,
     loadPlayerState: mocks.loadPlayerState,
     readLibraryCache: mocks.readLibraryCache,
     scrobbleLastFm: mocks.scrobbleLastFm,
@@ -155,7 +157,15 @@ beforeEach(() => {
     artworkUrl: "https://example.test/radio-979.jpg",
     chapters: [
       { title: "Opening signal", artist: "Bandcamp Radio", timecode: 0 },
-      { title: "Second signal", artist: "Night Archive", timecode: 60 },
+      {
+        title: "Second signal",
+        artist: "Night Archive",
+        album: "Night Signals",
+        timecode: 60,
+        itemUrl: "https://nightarchive.bandcamp.com/track/second-signal",
+        artistUrl: "https://nightarchive.bandcamp.com",
+        albumUrl: "https://nightarchive.bandcamp.com/album/night-signals",
+      },
     ],
   });
   mocks.fetchStreamUrl.mockReset().mockResolvedValue("https://example.test/restored.mp3");
@@ -166,6 +176,7 @@ beforeEach(() => {
   mocks.hasConnection.mockReset();
   mocks.loadPlayerState.mockReset().mockResolvedValue(undefined);
   mocks.openLastFmAuthorization.mockReset().mockResolvedValue(undefined);
+  mocks.openBandcampUrl.mockReset().mockResolvedValue(undefined);
   mocks.readLibraryCache.mockReset().mockReturnValue([]);
   mocks.scrobbleLastFm.mockReset().mockResolvedValue(undefined);
   mocks.savePlayerState.mockReset().mockResolvedValue(undefined);
@@ -576,6 +587,12 @@ describe("Coda application flows", () => {
     fireEvent.loadedMetadata(audio);
     expect(audio.currentTime).toBe(65);
     expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {
+      name: "Open Second signal by Night Archive on Bandcamp",
+    }));
+    expect(mocks.openBandcampUrl).toHaveBeenCalledWith(
+      "https://nightarchive.bandcamp.com/track/second-signal",
+    );
     await waitFor(() =>
       expect(mocks.checkpointPlayerState).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -590,6 +607,13 @@ describe("Coda application flows", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
+    const queuePanel = screen.getByRole("complementary", { name: "Playback queue" });
+    fireEvent.click(within(queuePanel).getByRole("button", {
+      name: "Open artist Night Archive on Bandcamp",
+    }));
+    expect(mocks.openBandcampUrl).toHaveBeenCalledWith(
+      "https://nightarchive.bandcamp.com",
+    );
     const chapters = await screen.findByRole("region", { name: "Show chapters" });
     expect(within(chapters).getByRole("button", {
       name: "Seek to Second signal at 1:00",

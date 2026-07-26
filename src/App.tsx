@@ -76,6 +76,7 @@ import {
   invalidateCoverUrl,
   isDesktop,
   openLastFmAuthorization,
+  openBandcampUrl,
   readLibraryCache,
   loadPlayerState,
   savePlayerState,
@@ -100,6 +101,7 @@ import {
 import { countLabel } from "./countLabel";
 import { showAirPlayPicker, supportsAirPlayPicker } from "./media";
 import { NowPlayingView } from "./NowPlayingView";
+import { RadioChapterCopy } from "./RadioChapterMetadata";
 import { isEphemeralTrackId } from "./playerState";
 import { appendUnique, keepCurrentTrack, moveItem, shuffled } from "./queue";
 import { pickRandomItem, pickWeightedItem } from "./random";
@@ -622,6 +624,7 @@ const QueuePanel = memo(function QueuePanel({
   onArtist,
   onAlbum,
   onNowPlaying,
+  onOpenRadioItem,
   onSeek,
 }: {
   open: boolean;
@@ -639,6 +642,7 @@ const QueuePanel = memo(function QueuePanel({
   onArtist: (artist: string) => void;
   onAlbum: (track: Track) => void;
   onNowPlaying: () => void;
+  onOpenRadioItem: (url: string) => void;
   onSeek: (position: number) => void;
 }) {
   const [dragged, setDragged] = useState<number | null>(null);
@@ -718,18 +722,14 @@ const QueuePanel = memo(function QueuePanel({
               }}
             />
             </button>
-            <span className="queue-track__meta">
-              <button
-                className="queue-track__title"
-                onClick={onNowPlaying}
-              >
-                {currentRadioAiring.current?.title ?? currentTrack.title}
-              </button>
+            <div className="queue-track__meta">
               {currentRadioAiring.current ? (
                 <>
-                  <span className="queue-now__chapter-artist">
-                    {currentRadioAiring.current.artist} · Bandcamp Radio
-                  </span>
+                  <RadioChapterCopy
+                    chapter={currentRadioAiring.current}
+                    className="queue-now__radio-copy"
+                    onOpen={onOpenRadioItem}
+                  />
                   {currentRadioAiring.next ? (
                     <span className="queue-now__chapter-next">
                       Next: {currentRadioAiring.next.title}
@@ -737,14 +737,22 @@ const QueuePanel = memo(function QueuePanel({
                   ) : null}
                 </>
               ) : (
-                <button
-                  className="metadata-link"
-                  onClick={() => onArtist(currentTrack.artist)}
-                >
-                  {currentTrack.artist}
-                </button>
+                <>
+                  <button
+                    className="queue-track__title"
+                    onClick={onNowPlaying}
+                  >
+                    {currentTrack.title}
+                  </button>
+                  <button
+                    className="metadata-link"
+                    onClick={() => onArtist(currentTrack.artist)}
+                  >
+                    {currentTrack.artist}
+                  </button>
+                </>
               )}
-            </span>
+            </div>
             <span className="queue-bars"><i /><i /><i /></span>
           </div>
           <QueueRadioChapters
@@ -873,6 +881,7 @@ function Player({
   onArtist,
   onAlbum,
   onNowPlaying,
+  onOpenRadioItem,
   favorite,
   onToggleFavorite,
   onAddToPlaylist,
@@ -898,6 +907,7 @@ function Player({
   onArtist: (artist: string) => void;
   onAlbum: (track: Track) => void;
   onNowPlaying: () => void;
+  onOpenRadioItem: (url: string) => void;
   favorite: boolean;
   onToggleFavorite: () => void;
   onAddToPlaylist: () => void;
@@ -906,8 +916,6 @@ function Player({
 }) {
   const progress = duration ? Math.min(100, (currentTime / duration) * 100) : 0;
   const radioAiring = radioAiringAt(track?.radioChapters, currentTime);
-  const displayTitle = radioAiring.current?.title ?? track?.title;
-  const displayArtist = radioAiring.current?.artist ?? track?.artist;
   return (
     <footer className="player">
       <div className="player__track">
@@ -925,28 +933,34 @@ function Player({
               />
             </button>
             <div>
-              <strong title={displayTitle}>{displayTitle}</strong>
               {radioAiring.current ? (
-                <span className="player__radio-meta" aria-live="polite">
+                <div className="player__radio-live" aria-live="polite">
                   <i aria-hidden="true" />
-                  {displayArtist} · Bandcamp Radio
-                </span>
+                  <RadioChapterCopy
+                    chapter={radioAiring.current}
+                    className="player__radio-chapter-copy"
+                    onOpen={onOpenRadioItem}
+                  />
+                </div>
               ) : (
-                <span>
-                  <button
-                    className="metadata-link"
-                    onClick={() => onArtist(track.artist)}
-                  >
-                    {track.artist}
-                  </button>
-                  {" · "}
-                  <button
-                    className="metadata-link"
-                    onClick={() => onAlbum(track)}
-                  >
-                    {track.album}
-                  </button>
-                </span>
+                <>
+                  <strong title={track.title}>{track.title}</strong>
+                  <span>
+                    <button
+                      className="metadata-link"
+                      onClick={() => onArtist(track.artist)}
+                    >
+                      {track.artist}
+                    </button>
+                    {" · "}
+                    <button
+                      className="metadata-link"
+                      onClick={() => onAlbum(track)}
+                    >
+                      {track.album}
+                    </button>
+                  </span>
+                </>
               )}
             </div>
           </>
@@ -1656,6 +1670,11 @@ export default function App() {
     setToasts((items) => [...items, { id, message, tone }]);
     window.setTimeout(() => setToasts((items) => items.filter((item) => item.id !== id)), 2800);
   }, []);
+  const openRadioItem = useCallback((url: string) => {
+    void openBandcampUrl(url).catch((cause) => {
+      notify(String(cause).replace(/^Error:\s*/, ""), "bad");
+    });
+  }, [notify]);
   const reportPlayerStateError = useCallback((summary: string, cause: unknown) => {
     if (playerStateErrorNotifiedRef.current) return;
     playerStateErrorNotifiedRef.current = true;
@@ -3781,6 +3800,7 @@ export default function App() {
             onArtist={browseArtist}
             onAlbum={openTrackAlbum}
             onNowPlaying={openNowPlaying}
+            onOpenRadioItem={openRadioItem}
             onSeek={seek}
           />
         ) : null}
@@ -3806,6 +3826,7 @@ export default function App() {
           onArtist={browseArtist}
           onAlbum={openTrackAlbum}
           onNowPlaying={openNowPlaying}
+          onOpenRadioItem={openRadioItem}
           favorite={currentTrack
             ? currentRadioShowId !== undefined
               ? favoriteRadioShowIds.has(currentRadioShowId)

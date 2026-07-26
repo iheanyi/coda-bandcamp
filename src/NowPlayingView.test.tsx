@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -78,10 +78,27 @@ describe("NowPlayingView Radio metadata", () => {
       name: "Currently airing on Bandcamp Radio",
     });
     expect(currentlyAiring).toHaveTextContent("Mirage");
-    expect(currentlyAiring).toHaveTextContent("Sweeps · Mirage");
+    expect(currentlyAiring).toHaveTextContent("Sweeps");
     expect(currentlyAiring).toHaveTextContent("Up next: Night Drive by Keylime");
 
-    const currentTitle = screen.getByRole("button", {
+    const onAirTitle = within(currentlyAiring).getByRole("button", {
+      name: "Open Mirage by Sweeps on Bandcamp",
+    });
+    fireEvent.click(onAirTitle);
+    expect(mocks.openBandcampUrl).toHaveBeenCalledWith(
+      "https://sweepsbeats.bandcamp.com/track/mirage-w-keylime",
+    );
+
+    fireEvent.click(screen.getByRole("button", {
+      name: "Open The Hip Hop Show on Bandcamp Radio",
+    }));
+    expect(mocks.openBandcampUrl).toHaveBeenCalledWith(
+      "https://bandcamp.com/radio?show=979",
+    );
+
+    const chapterList = document.querySelector(".now-playing__radio-chapters");
+    expect(chapterList).not.toBeNull();
+    const currentTitle = within(chapterList as HTMLElement).getByRole("button", {
       name: "Open Mirage by Sweeps on Bandcamp",
     });
     expect(currentTitle.closest("li")).toHaveAttribute("aria-current", "true");
@@ -98,10 +115,10 @@ describe("NowPlayingView Radio metadata", () => {
       "https://sweepsbeats.bandcamp.com/track/mirage-w-keylime",
     );
 
-    fireEvent.click(screen.getByRole("button", {
+    fireEvent.click(within(chapterList as HTMLElement).getByRole("button", {
       name: "Open artist Sweeps on Bandcamp",
     }));
-    fireEvent.click(screen.getByRole("button", {
+    fireEvent.click(within(chapterList as HTMLElement).getByRole("button", {
       name: "Open album Mirage on Bandcamp",
     }));
     expect(mocks.openBandcampUrl).toHaveBeenCalledWith(

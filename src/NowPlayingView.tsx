@@ -30,7 +30,11 @@ import {
   RadioChapterArtwork,
   RadioChapterCopy,
 } from "./RadioChapterMetadata";
-import { boundRadioChapters, radioAiringAt } from "./radioPlayback";
+import {
+  boundRadioChapters,
+  radioAiringAt,
+  radioShowIdFromTrackId,
+} from "./radioPlayback";
 import type { RepeatMode, Track } from "./types";
 
 type NowPlayingViewProps = {
@@ -115,6 +119,10 @@ function NowPlayingViewComponent({
     () => radioAiringAt(radioTimeline, currentTime),
     [currentTime, radioTimeline],
   );
+  const radioShowId = radioShowIdFromTrackId(track.id);
+  const radioShowUrl = radioShowId
+    ? `https://bandcamp.com/radio?show=${radioShowId}`
+    : undefined;
 
   const openRadioChapter = (url: string) => {
     setRadioLinkError("");
@@ -165,16 +173,48 @@ function NowPlayingViewComponent({
             title={track.title}
             tabIndex={-1}
           >
-            {track.title}
+            {radioShowUrl ? (
+              <button
+                className="now-playing__show-link"
+                onClick={() => openRadioChapter(radioShowUrl)}
+                aria-label={`Open ${track.title} on Bandcamp Radio`}
+                title="Open show on Bandcamp Radio"
+              >
+                <span>{track.title}</span>
+                <ExternalLink size={20} aria-hidden="true" />
+              </button>
+            ) : (
+              track.title
+            )}
           </h1>
           <div className="now-playing__byline">
-            <button className="metadata-link" onClick={() => onArtist(track.artist)}>
-              {track.artist}
-            </button>
-            <span aria-hidden="true">·</span>
-            <button className="metadata-link" onClick={() => onAlbum(track)}>
-              {track.album}
-            </button>
+            {radioShowUrl ? (
+              <>
+                <button
+                  className="metadata-link"
+                  onClick={() => openRadioChapter("https://bandcamp.com/radio")}
+                >
+                  Bandcamp Radio
+                </button>
+                <span aria-hidden="true">·</span>
+                <button
+                  className="metadata-link"
+                  onClick={() => openRadioChapter(radioShowUrl)}
+                >
+                  {track.album}
+                </button>
+              </>
+            ) : (
+              <>
+                <button className="metadata-link" onClick={() => onArtist(track.artist)}>
+                  {track.artist}
+                </button>
+                <span aria-hidden="true">·</span>
+                <button className="metadata-link" onClick={() => onAlbum(track)}>
+                  {track.album}
+                </button>
+              </>
+            )}
           </div>
           {radioAiring.current ? (
             <section
@@ -184,11 +224,11 @@ function NowPlayingViewComponent({
               aria-atomic="true"
             >
               <span className="eyebrow">On air now</span>
-              <strong>{radioAiring.current.title}</strong>
-              <span>
-                {radioAiring.current.artist}
-                {radioAiring.current.album ? ` · ${radioAiring.current.album}` : ""}
-              </span>
+              <RadioChapterCopy
+                chapter={radioAiring.current}
+                className="now-playing__radio-live-copy"
+                onOpen={openRadioChapter}
+              />
               {radioAiring.next ? (
                 <small>
                   Up next: {radioAiring.next.title} by {radioAiring.next.artist}

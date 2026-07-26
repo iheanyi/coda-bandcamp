@@ -2859,6 +2859,41 @@ html:not(.coda-view-transitions-supported) .now-playing__up-next {
   letter-spacing: -0.04em;
 }
 
+.now-playing__show-link {
+  display: inline-flex;
+  align-items: baseline;
+  max-width: 100%;
+  gap: 0.22em;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.now-playing__show-link span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.now-playing__show-link svg {
+  flex: 0 0 auto;
+  color: #858984;
+  transition:
+    color 150ms ease,
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.now-playing__show-link:hover svg {
+  color: var(--now-playing-accent);
+  transform: translate(2px, -2px);
+}
+
 .now-playing__byline {
   display: flex;
   align-items: center;
@@ -3660,19 +3695,48 @@ html:not(.coda-view-transitions-supported) .now-playing__up-next {
   color: #ef8066;
 }
 
-.player__radio-meta {
-  display: flex !important;
+.player__radio-live {
+  display: grid;
+  grid-template-columns: 6px minmax(0, 1fr);
   align-items: center;
   gap: 6px;
-  color: #c49588 !important;
 }
 
-.player__radio-meta i {
+.player__radio-live > i {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--accent);
   box-shadow: 0 0 0 3px rgba(221, 101, 73, 0.12);
+}
+
+.player__radio-chapter-copy,
+.queue-now__radio-copy,
+.now-playing__radio-live-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 3px;
+}
+
+.player__radio-chapter-copy .radio-chapter-title-link,
+.queue-now__radio-copy .radio-chapter-title-link {
+  max-width: 100%;
+  color: #e6e4de;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.player__radio-chapter-copy .radio-chapter-title-link svg,
+.queue-now__radio-copy .radio-chapter-title-link svg {
+  width: 10px;
+  height: 10px;
+}
+
+.player__radio-chapter-copy .radio-chapter-byline,
+.queue-now__radio-copy .radio-chapter-byline {
+  color: #8f928d;
+  font-size: 9px;
 }
 
 .now-playing__radio-chapter {
@@ -3689,6 +3753,17 @@ html:not(.coda-view-transitions-supported) .now-playing__up-next {
 .now-playing__radio-chapter .eyebrow {
   margin: 0 0 3px;
   color: #d47761;
+}
+
+.now-playing__radio-live-copy .radio-chapter-title-link,
+.now-playing__radio-live-copy > strong {
+  color: #eeeae3;
+  font-size: 15px;
+}
+
+.now-playing__radio-live-copy .radio-chapter-byline {
+  color: #a9aaa5;
+  font-size: 11px;
 }
 
 .now-playing__radio-chapter strong {
