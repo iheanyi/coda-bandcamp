@@ -69,6 +69,19 @@ describe("player state persistence", () => {
     });
   });
 
+  it("accepts native nulls for absent optional progress", () => {
+    const state = createPlayerState({
+      ...input,
+      lastFmProgress: undefined,
+    });
+
+    expect(parsePlayerState({
+      ...state,
+      lastFmProgress: null,
+      radioScrobbleProgress: null,
+    })).toEqual(state);
+  });
+
   it("creates a versioned snapshot without signed stream URLs", () => {
     const state = createPlayerState(input, 1_700_000_000_000);
 

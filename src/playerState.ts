@@ -302,15 +302,17 @@ export function parsePlayerState(value: unknown): PlayerStateSnapshot | undefine
     return undefined;
   }
 
-  const lastFmProgress =
-    value.lastFmProgress === undefined ? undefined : parseLastFmProgress(value.lastFmProgress);
-  const radioScrobbleProgress =
-    value.radioScrobbleProgress === undefined
-      ? undefined
-      : parseRadioScrobbleProgress(value.radioScrobbleProgress);
+  const lastFmProgressAbsent = isAbsent(value.lastFmProgress);
+  const radioScrobbleProgressAbsent = isAbsent(value.radioScrobbleProgress);
+  const lastFmProgress = lastFmProgressAbsent
+    ? undefined
+    : parseLastFmProgress(value.lastFmProgress);
+  const radioScrobbleProgress = radioScrobbleProgressAbsent
+    ? undefined
+    : parseRadioScrobbleProgress(value.radioScrobbleProgress);
   const currentTrack = tracks[value.currentIndex as number];
   if (
-    value.lastFmProgress !== undefined &&
+    !lastFmProgressAbsent &&
     (!lastFmProgress ||
       tracks.length === 0 ||
       currentTrack?.id.startsWith("radio:") ||
@@ -319,7 +321,7 @@ export function parsePlayerState(value: unknown): PlayerStateSnapshot | undefine
     return undefined;
   }
   if (
-    value.radioScrobbleProgress !== undefined &&
+    !radioScrobbleProgressAbsent &&
     (!radioScrobbleProgress ||
       tracks.length === 0 ||
       !currentTrack?.id.startsWith("radio:") ||

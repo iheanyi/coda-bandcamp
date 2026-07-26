@@ -209,7 +209,9 @@ struct PlayerStateSnapshot {
     volume: f64,
     repeat_mode: String,
     queue_open: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     last_fm_progress: Option<LastFmPlaybackProgress>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     radio_scrobble_progress: Option<RadioScrobbleProgress>,
 }
 
@@ -219,7 +221,9 @@ struct PlayerStateCheckpoint {
     current_index: usize,
     current_track_id: String,
     position_seconds: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     last_fm_progress: Option<LastFmPlaybackProgress>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     radio_scrobble_progress: Option<RadioScrobbleProgress>,
 }
 

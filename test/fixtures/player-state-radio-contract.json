@@ -20,6 +20,7 @@
     "volume": 0.7,
     "repeatMode": "off",
     "queueOpen": false,
+    "lastFmProgress": null,
     "radioScrobbleProgress": {
       "showTrackId": "radio:979",
       "activeChapterKey": "60:chapter",
