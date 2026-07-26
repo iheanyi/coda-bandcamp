@@ -14,7 +14,7 @@ import {
   Radio,
   RefreshCw,
 } from "lucide-react";
-import { type CSSProperties, memo, useCallback, useState } from "react";
+import { memo, useCallback, useState } from "react";
 import { countLabel } from "./countLabel";
 import {
   fetchRadioShow,
@@ -69,17 +69,8 @@ const RadioArtwork = memo(function RadioArtwork({
   show: RadioShowSummary;
   eager?: boolean;
 }) {
-  const palette = paletteFor(`radio:${show.id}`);
   return (
-    <div
-      className="radio-artwork"
-      style={
-        {
-          "--cover-accent": palette[0],
-          "--cover-base": palette[1],
-        } as CSSProperties
-      }
-    >
+    <div className="radio-artwork">
       {show.artworkUrl ? (
         <img
           src={show.artworkUrl}

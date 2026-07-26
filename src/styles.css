@@ -1088,11 +1088,10 @@ kbd {
   place-items: center;
   aspect-ratio: 1;
   overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.065);
   border-radius: 9px;
-  background:
-    linear-gradient(145deg, var(--cover-accent), transparent 72%),
-    var(--cover-base);
-  color: rgba(255, 255, 255, 0.78);
+  background: #242729;
+  color: #a2a49f;
   font-size: clamp(24px, 5vw, 58px);
   font-weight: 700;
 }
@@ -1576,31 +1575,6 @@ kbd {
   background: var(--cover-base);
   color: #f7f3e8;
   isolation: isolate;
-}
-
-.cover::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  background:
-    linear-gradient(90deg, transparent 49%, rgba(255, 255, 255, 0.08) 49%, rgba(255, 255, 255, 0.08) 51%, transparent 51%),
-    linear-gradient(0deg, transparent 49%, rgba(255, 255, 255, 0.06) 49%, rgba(255, 255, 255, 0.06) 51%, transparent 51%);
-  background-size: 26px 26px;
-  opacity: 0.4;
-}
-
-.cover::after {
-  content: "";
-  position: absolute;
-  width: 68%;
-  height: 68%;
-  right: -22%;
-  bottom: -19%;
-  z-index: -1;
-  border: 18px solid var(--cover-accent);
-  border-radius: 50%;
-  opacity: 0.9;
 }
 
 .cover img {
@@ -3926,8 +3900,7 @@ html:not(.coda-view-transitions-supported) .now-playing__up-next {
   justify-self: center;
   border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: 7px;
-  background:
-    linear-gradient(145deg, rgba(221, 101, 73, 0.13), rgba(31, 34, 36, 0.88));
+  background: #232628;
   color: #858984;
   font-size: 8px;
   font-variant-numeric: tabular-nums;
@@ -4293,9 +4266,7 @@ html:not(.coda-view-transitions-supported) .now-playing__up-next {
   padding: 40px;
   border: 1px dashed var(--line-strong);
   border-radius: 12px;
-  background:
-    radial-gradient(circle at 50% 0, rgba(221, 101, 73, 0.06), transparent 45%),
-    rgba(255, 255, 255, 0.012);
+  background: rgba(255, 255, 255, 0.012);
   color: var(--muted);
   text-align: center;
 }
@@ -4429,9 +4400,8 @@ html:not(.coda-view-transitions-supported) .now-playing__up-next {
   width: 52px;
   height: 52px;
   border-radius: 8px;
-  background:
-    linear-gradient(145deg, rgba(221, 101, 73, 0.26), rgba(94, 62, 55, 0.12)),
-    #242729;
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  background: #242729;
   color: #e1846d;
 }
 
