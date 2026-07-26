@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createPlaybackClock } from "./playbackClock";
 import type { RadioShow, RadioShowSummary, Track } from "./types";
 
 const mocks = vi.hoisted(() => ({
@@ -79,7 +80,7 @@ function renderRadio(
         onQueue={onQueue}
         onPlayAt={onPlayAt}
         currentTrackId={playback.currentTrackId}
-        currentTime={playback.currentTime ?? 0}
+        playbackClock={createPlaybackClock(playback.currentTime ?? 0)}
         playing={playback.playing ?? false}
         onTogglePlayback={onTogglePlayback}
         favoriteShowIds={new Set()}

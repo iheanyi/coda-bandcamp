@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -14,6 +14,8 @@ vi.mock("./lib", async (importOriginal) => {
 });
 
 import { NowPlayingView } from "./NowPlayingView";
+import { createPlaybackClock } from "./playbackClock";
+import { boundRadioChapters } from "./radioPlayback";
 import type { Track } from "./types";
 
 const radioTrack: Track = {
@@ -39,6 +41,7 @@ const radioTrack: Track = {
     { title: "Night Drive", artist: "Keylime", timecode: 120 },
   ],
 };
+const radioTimeline = boundRadioChapters(radioTrack.radioChapters ?? []);
 
 describe("NowPlayingView Radio metadata", () => {
   it("announces the currently airing chapter and its successor", () => {
@@ -47,10 +50,11 @@ describe("NowPlayingView Radio metadata", () => {
     render(
       <NowPlayingView
         track={radioTrack}
+        radioTimeline={radioTimeline}
         queue={[radioTrack]}
         currentIndex={0}
         playing
-        currentTime={45}
+        playbackClock={createPlaybackClock(45)}
         duration={radioTrack.duration}
         volume={0.7}
         repeat="off"
@@ -80,6 +84,8 @@ describe("NowPlayingView Radio metadata", () => {
     expect(currentlyAiring).toHaveTextContent("Mirage");
     expect(currentlyAiring).toHaveTextContent("Sweeps");
     expect(currentlyAiring).toHaveTextContent("Up next: Night Drive by Keylime");
+    expect(screen.getByText("Playing now").closest(".now-playing__status"))
+      .toHaveClass("is-playing");
 
     const onAirTitle = within(currentlyAiring).getByRole("button", {
       name: "Open Mirage by Sweeps on Bandcamp",
@@ -130,6 +136,57 @@ describe("NowPlayingView Radio metadata", () => {
     expect(document.querySelector(".radio-chapter-artwork img")).toHaveAttribute(
       "src",
       "https://f4.bcbits.com/img/0161226005_10.jpg",
+    );
+  });
+
+  it("updates progress each second without rerendering Radio metadata inside a chapter", () => {
+    const noOp = vi.fn();
+    const playbackClock = createPlaybackClock(45);
+    const getRadioChapterLocalLinks = vi.fn(() => ({}));
+    render(
+      <NowPlayingView
+        track={radioTrack}
+        radioTimeline={radioTimeline}
+        queue={[radioTrack]}
+        currentIndex={0}
+        playing
+        playbackClock={playbackClock}
+        duration={radioTrack.duration}
+        volume={0.7}
+        repeat="off"
+        artwork={<span>Artwork</span>}
+        airPlayAvailable={false}
+        queueOpen={false}
+        onBack={noOp}
+        onToggle={noOp}
+        onPrevious={noOp}
+        onNext={noOp}
+        canPrevious
+        canNext
+        onSeek={noOp}
+        onVolume={noOp}
+        onRepeat={noOp}
+        onAirPlay={noOp}
+        onToggleQueue={noOp}
+        onArtist={noOp}
+        onAlbum={noOp}
+        onPlayQueueIndex={noOp}
+        getRadioChapterLocalLinks={getRadioChapterLocalLinks}
+      />,
+    );
+
+    const initialMetadataReads = getRadioChapterLocalLinks.mock.calls.length;
+    act(() => playbackClock.updateFromMedia(46.2));
+
+    expect(screen.getByLabelText("Now playing position")).toHaveValue("46");
+    expect(getRadioChapterLocalLinks).toHaveBeenCalledTimes(initialMetadataReads);
+
+    act(() => playbackClock.updateFromMedia(120));
+    expect(screen.getByRole("region", {
+      name: "Currently airing on Bandcamp Radio",
+    })).toHaveTextContent("Night Drive");
+    expect(getRadioChapterLocalLinks.mock.calls.length).toBeGreaterThan(
+      initialMetadataReads,
     );
   });
 });

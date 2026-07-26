@@ -44,6 +44,7 @@ import type {
   Track,
 } from "./types";
 import { transitionCodaView } from "./viewTransitions";
+import { VirtualizedSavedTrackList } from "./VirtualizedSavedTrackList";
 
 export const PLAYLISTS_QUERY_KEY = ["bandcamp", "playlists"] as const;
 
@@ -71,6 +72,8 @@ type SavedLibraryViewProps = {
 };
 
 const RADIO_STALE_TIME_MS = 10 * 60 * 1_000;
+const playlistTrackKey = (track: Track, index: number) => `${track.id}-${index}`;
+const favoriteTrackKey = (track: Track) => track.id;
 const radioDateFormatter = new Intl.DateTimeFormat(undefined, {
   month: "short",
   day: "numeric",
@@ -415,11 +418,18 @@ function PlaylistDetailView({
       </header>
 
       {playlist.tracks.length ? (
-        <div className="saved-tracklist" aria-label={`${playlist.name} tracks`}>
-          {playlist.tracks.map((track, index) => {
+        <VirtualizedSavedTrackList
+          aria-label={`${playlist.name} tracks`}
+          className="saved-tracklist"
+          getItemKey={playlistTrackKey}
+          items={playlist.tracks}
+          renderItem={(track, { index }, rowProps) => {
             const activeTrack = currentTrackId === track.id;
             return (
-            <div className={`saved-track saved-track--playlist ${activeTrack ? "is-current" : ""}`} key={`${track.id}-${index}`}>
+            <div
+              {...rowProps}
+              className={`saved-track saved-track--playlist ${activeTrack ? "is-current" : ""}`}
+            >
               <button
                 className={`saved-track__number ${activeTrack && playing ? "is-playing" : ""}`}
                 onClick={activeTrack ? onTogglePlayback : () => onPlay([track])}
@@ -461,8 +471,8 @@ function PlaylistDetailView({
               </button>
             </div>
             );
-          })}
-        </div>
+          }}
+        />
       ) : (
         <SavedEmpty
           icon={<Music2 size={28} />}
@@ -952,11 +962,18 @@ export default function SavedLibraryView({
                   </button>
                 </div>
               </div>
-              <div className="saved-tracklist" aria-label="Favorite tracks">
-                {favoriteTracks.map((track, index) => {
+              <VirtualizedSavedTrackList
+                aria-label="Favorite tracks"
+                className="saved-tracklist"
+                getItemKey={favoriteTrackKey}
+                items={favoriteTracks}
+                renderItem={(track, { index }, rowProps) => {
                   const activeTrack = currentTrackId === track.id;
                   return (
-                  <div className={`saved-track saved-track--favorite ${activeTrack ? "is-current" : ""}`} key={track.id}>
+                  <div
+                    {...rowProps}
+                    className={`saved-track saved-track--favorite ${activeTrack ? "is-current" : ""}`}
+                  >
                     <button
                       className={`saved-track__number ${activeTrack && playing ? "is-playing" : ""}`}
                       onClick={activeTrack ? onTogglePlayback : () => onPlayTrack(track)}
@@ -999,8 +1016,8 @@ export default function SavedLibraryView({
                     </button>
                   </div>
                   );
-                })}
-              </div>
+                }}
+              />
             </section>
           ) : null}
           {favoriteRadioShows.length ? (

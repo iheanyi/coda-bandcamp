@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   clearPlayerState: vi.fn(),
   completeLastFmAuthorization: vi.fn(),
   connectBandcamp: vi.fn(),
+  disconnect: vi.fn(),
   disconnectLastFm: vi.fn(),
   fetchAlbum: vi.fn(),
   fetchLibrary: vi.fn(),
@@ -17,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   fetchStreamUrl: vi.fn(),
   getLastFmStatus: vi.fn(),
   hasConnection: vi.fn(),
+  loadLibraryCache: vi.fn(),
   loadPlayerState: vi.fn(),
   openLastFmAuthorization: vi.fn(),
   openBandcampUrl: vi.fn(),
@@ -36,6 +38,7 @@ vi.mock("./lib", async (importOriginal) => {
     clearPlayerState: mocks.clearPlayerState,
     completeLastFmAuthorization: mocks.completeLastFmAuthorization,
     connectBandcamp: mocks.connectBandcamp,
+    disconnect: mocks.disconnect,
     disconnectLastFm: mocks.disconnectLastFm,
     fetchAlbum: mocks.fetchAlbum,
     fetchLibrary: mocks.fetchLibrary,
@@ -45,6 +48,7 @@ vi.mock("./lib", async (importOriginal) => {
     getLastFmStatus: mocks.getLastFmStatus,
     hasConnection: mocks.hasConnection,
     isDesktop: () => false,
+    loadLibraryCache: mocks.loadLibraryCache,
     openLastFmAuthorization: mocks.openLastFmAuthorization,
     openBandcampUrl: mocks.openBandcampUrl,
     loadPlayerState: mocks.loadPlayerState,
@@ -137,6 +141,7 @@ beforeEach(() => {
   mocks.clearPlayerState.mockReset().mockResolvedValue(undefined);
   mocks.completeLastFmAuthorization.mockReset();
   mocks.connectBandcamp.mockReset();
+  mocks.disconnect.mockReset().mockResolvedValue(undefined);
   mocks.disconnectLastFm.mockReset();
   mocks.fetchAlbum.mockReset().mockResolvedValue(tracks);
   mocks.fetchLibrary.mockReset();
@@ -162,6 +167,7 @@ beforeEach(() => {
         artist: "Night Archive",
         album: "Night Signals",
         timecode: 60,
+        artworkUrl: "https://example.test/second-signal.jpg",
         itemUrl: "https://nightarchive.bandcamp.com/track/second-signal",
         artistUrl: "https://nightarchive.bandcamp.com",
         albumUrl: "https://nightarchive.bandcamp.com/album/night-signals",
@@ -174,6 +180,7 @@ beforeEach(() => {
     connected: false,
   });
   mocks.hasConnection.mockReset();
+  mocks.loadLibraryCache.mockReset().mockResolvedValue(undefined);
   mocks.loadPlayerState.mockReset().mockResolvedValue(undefined);
   mocks.openLastFmAuthorization.mockReset().mockResolvedValue(undefined);
   mocks.openBandcampUrl.mockReset().mockResolvedValue(undefined);
@@ -231,13 +238,129 @@ describe("Coda application flows", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Connect Bandcamp" }));
 
     await waitFor(() =>
-      expect(mocks.connectBandcamp).toHaveBeenCalledWith({
-        username: "generated-user",
-        password: "generated-password",
-      }),
+      expect(mocks.connectBandcamp).toHaveBeenCalledWith(
+        {
+          username: "generated-user",
+          password: "generated-password",
+        },
+        expect.any(Function),
+      ),
     );
     expect(await screen.findByText("Soft Focus")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ambient" })).toBeInTheDocument();
+  });
+
+  it("hydrates the native library cache before a network refresh completes", async () => {
+    let resolveRefresh!: (albums: Album[]) => void;
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.loadLibraryCache.mockResolvedValue({
+      savedAt: Date.now(),
+      albums: [album],
+    });
+    mocks.fetchLibrary.mockReturnValue(new Promise((resolve) => {
+      resolveRefresh = resolve;
+    }));
+
+    renderApp();
+
+    expect(await screen.findByText("Soft Focus")).toBeInTheDocument();
+    expect(mocks.fetchLibrary).toHaveBeenCalledTimes(1);
+    resolveRefresh([{ ...album, title: "Soft Focus (refreshed)" }]);
+    expect(await screen.findByText("Soft Focus (refreshed)")).toBeInTheDocument();
+  });
+
+  it("shows progressive sync pages and restores cached data after a failed refresh", async () => {
+    const progressiveAlbum: Album = {
+      ...album,
+      id: "progressive-album",
+      title: "Arriving now",
+    };
+    let rejectRefresh!: (cause: Error) => void;
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.loadLibraryCache.mockResolvedValue({
+      savedAt: Date.now(),
+      albums: [album],
+    });
+    mocks.fetchLibrary.mockImplementation(
+      (onPage?: (progress: {
+        pageIndex: number;
+        loaded: number;
+        albums: Album[];
+      }) => void) => {
+        onPage?.({
+          pageIndex: 0,
+          loaded: 1,
+          albums: [progressiveAlbum],
+        });
+        return new Promise((_, reject) => {
+          rejectRefresh = reject;
+        });
+      },
+    );
+
+    renderApp();
+
+    expect(await screen.findByText("Arriving now")).toBeInTheDocument();
+    rejectRefresh(new Error("Refresh unavailable"));
+    expect(await screen.findByText("Refresh unavailable")).toBeInTheDocument();
+    expect(screen.getByText("Soft Focus")).toBeInTheDocument();
+    expect(screen.queryByText("Arriving now")).not.toBeInTheDocument();
+  });
+
+  it("ignores a native cache read that resolves after disconnect", async () => {
+    let resolveCache!: (snapshot: {
+      savedAt: number;
+      albums: Album[];
+    }) => void;
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.loadLibraryCache.mockReturnValue(new Promise((resolve) => {
+      resolveCache = resolve;
+    }));
+    mocks.fetchLibrary.mockResolvedValue([album]);
+
+    renderApp();
+
+    await screen.findByText("Bandcamp synced");
+    fireEvent.click(screen.getByRole("button", { name: "Connection settings" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Bandcamp is connected",
+    });
+    fireEvent.click(within(dialog).getByRole("button", {
+      name: "Disconnect and remove Bandcamp credentials",
+    }));
+    expect(await screen.findByText("Your collection starts here")).toBeInTheDocument();
+
+    resolveCache({ savedAt: Date.now(), albums: [album] });
+    await waitFor(() => expect(mocks.fetchLibrary).not.toHaveBeenCalled());
+    expect(screen.queryByText("Soft Focus")).not.toBeInTheDocument();
+  });
+
+  it("keeps an active sync valid when native disconnect fails", async () => {
+    let resolveRefresh!: (albums: Album[]) => void;
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.loadLibraryCache.mockResolvedValue({
+      savedAt: Date.now(),
+      albums: [album],
+    });
+    mocks.fetchLibrary.mockReturnValue(new Promise((resolve) => {
+      resolveRefresh = resolve;
+    }));
+    mocks.disconnect.mockRejectedValue(new Error("Vault unavailable"));
+
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    fireEvent.click(screen.getByRole("button", { name: "Connection settings" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Bandcamp is connected",
+    });
+    fireEvent.click(within(dialog).getByRole("button", {
+      name: "Disconnect and remove Bandcamp credentials",
+    }));
+    expect(await within(dialog).findByText("Vault unavailable")).toBeInTheDocument();
+
+    resolveRefresh([{ ...album, title: "Sync still active" }]);
+    expect(await screen.findByText("Sync still active")).toBeInTheDocument();
   });
 
   it("plays an album, exposes native AirPlay, and preserves now playing when clearing", async () => {
@@ -248,7 +371,7 @@ describe("Coda application flows", () => {
     });
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
-    renderApp();
+    const { container } = renderApp();
 
     await screen.findByText("Soft Focus");
     fireEvent.click(screen.getByRole("button", { name: "Play Soft Focus" }));
@@ -256,13 +379,22 @@ describe("Coda application flows", () => {
     expect(await screen.findByRole("button", { name: "Open Now Playing" }))
       .toBeInTheDocument();
     expect(screen.getAllByText("First Light").length).toBeGreaterThan(0);
+    const player = container.querySelector<HTMLElement>(".player");
+    const favorite = screen.getByRole("button", {
+      name: "Add First Light to favorites",
+    });
+    expect(favorite.closest(".player__track-title-row")).not.toBeNull();
+    expect(player?.querySelector(".player__track")?.contains(favorite))
+      .toBe(true);
+    expect(player?.querySelector(".player__volume")?.contains(favorite))
+      .toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Choose AirPlay device" }));
     expect(airPlayPicker).toHaveBeenCalledOnce();
 
     fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
     expect(await screen.findByText("Now playing")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Clear next" }));
-    expect(screen.getByText("End of the queue")).toBeInTheDocument();
+    expect(await screen.findByText("End of the queue")).toBeInTheDocument();
     expect(screen.getAllByText("First Light").length).toBeGreaterThan(0);
     expect(screen.queryByText("Afterimage")).not.toBeInTheDocument();
   });
@@ -578,6 +710,31 @@ describe("Coda application flows", () => {
     );
     expect(screen.getAllByText("Second signal").length).toBeGreaterThan(0);
     expect(mocks.fetchStreamUrl).not.toHaveBeenCalledWith("radio:979");
+    const miniArtwork = screen.getByRole("button", { name: "Open Now Playing" });
+    await waitFor(() =>
+      expect(within(miniArtwork).getByRole("img")).toHaveAttribute(
+        "src",
+        "https://example.test/second-signal.jpg",
+      ),
+    );
+
+    fireEvent.click(miniArtwork);
+    const nowPlaying = screen.getByRole("article", { name: "The Coda Broadcast" });
+    await waitFor(() =>
+      expect(within(nowPlaying).getByRole("img")).toHaveAttribute(
+        "src",
+        "https://example.test/second-signal.jpg",
+      ),
+    );
+    fireEvent.click(within(nowPlaying).getByRole("button", { name: "Back" }));
+    const restoredMiniArtwork = screen.getByRole("button", {
+      name: "Open Now Playing",
+    });
+    fireEvent.error(within(restoredMiniArtwork).getByRole("img"));
+    expect(within(restoredMiniArtwork).getByRole("img")).toHaveAttribute(
+      "src",
+      "https://example.test/radio-979.jpg",
+    );
 
     const audio = container.querySelector("audio")!;
     Object.defineProperty(audio, "duration", {
@@ -622,6 +779,12 @@ describe("Coda application flows", () => {
       name: "Seek to Opening signal at 0:00",
     }));
     expect(audio.currentTime).toBe(0);
+    expect(within(
+      screen.getByRole("button", { name: "Open Now Playing" }),
+    ).getByRole("img")).toHaveAttribute(
+      "src",
+      "https://example.test/radio-979.jpg",
+    );
     expect(within(chapters).getByRole("button", {
       name: "Seek to Opening signal at 0:00",
     })).toHaveAttribute("aria-current", "true");
@@ -755,7 +918,7 @@ describe("Coda application flows", () => {
     });
   });
 
-  it("retains a large restored queue while rendering upcoming tracks in batches", async () => {
+  it("retains a large restored queue while bounding upcoming track rendering", async () => {
     const largeQueue = Array.from({ length: 300 }, (_, index): Track => ({
       ...tracks[0],
       id: `large-track-${index}`,
@@ -777,10 +940,15 @@ describe("Coda application flows", () => {
     });
     renderApp();
 
-    const showMore = await screen.findByRole("button", { name: /Show 49 more/ });
+    const queueRegion = await screen.findByRole("region", {
+      name: "Upcoming tracks",
+    });
+    await waitFor(() =>
+      expect(queueRegion).toHaveAttribute("data-virtualized", "true"),
+    );
+    expect(within(queueRegion).queryAllByRole("listitem").length).toBeLessThan(40);
     expect(screen.queryByText("Large queue track 299")).not.toBeInTheDocument();
-    fireEvent.click(showMore);
-    expect(await screen.findByText("Large queue track 299")).toBeInTheDocument();
+    expect(screen.getByText("299 tracks next")).toBeInTheDocument();
   });
 
   it("separates release types and navigates through artist and album views", async () => {
@@ -1047,8 +1215,7 @@ describe("Coda application flows", () => {
       albumPage = await screen.findByRole("article", {
         name: "Soft Focus release details",
       });
-      expect(within(albumPage).getByText("First Light")).toBeInTheDocument();
-      expect(within(albumPage).getByText("Afterimage")).toBeInTheDocument();
+      expect(within(albumPage).getByText("Loading tracks…")).toBeInTheDocument();
       await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledWith(
         expect.objectContaining({ id: album.id }),
       ));
@@ -1059,6 +1226,7 @@ describe("Coda application flows", () => {
       ]);
       expect(await within(albumPage).findByText("First Light (Bandcamp refresh)"))
         .toBeInTheDocument();
+      expect(within(albumPage).getByText("Afterimage")).toBeInTheDocument();
     } finally {
       if (originalDescriptor) {
         Object.defineProperty(document, "startViewTransition", originalDescriptor);

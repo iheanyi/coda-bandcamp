@@ -63,9 +63,19 @@ function meaningfulChapter(chapter: RadioChapter): boolean {
 }
 
 export function radioChapterTimeline(track: Track): RadioChapterWindow[] {
+  return radioChapterTimelineFromBounded(
+    track,
+    boundRadioChapters(track.radioChapters ?? []),
+  );
+}
+
+export function radioChapterTimelineFromBounded(
+  track: Track,
+  timeline: readonly RadioChapter[],
+): RadioChapterWindow[] {
   const duration = Math.max(0, track.duration);
   const unique: RadioChapter[] = [];
-  for (const chapter of boundRadioChapters(track.radioChapters ?? [])) {
+  for (const chapter of timeline) {
     const previous = unique.at(-1);
     if (previous?.timecode === chapter.timecode) {
       unique[unique.length - 1] = chapter;
@@ -95,13 +105,27 @@ export function radioChapterAt(
   track: Track,
   position: number,
 ): RadioChapterWindow | undefined {
+  return radioChapterAtTimeline(radioChapterTimeline(track), position);
+}
+
+export function radioChapterAtTimeline(
+  timeline: readonly RadioChapterWindow[],
+  position: number,
+): RadioChapterWindow | undefined {
   const safePosition = Number.isFinite(position) ? Math.max(0, position) : 0;
-  let current: RadioChapterWindow | undefined;
-  for (const window of radioChapterTimeline(track)) {
-    if (window.start > safePosition) break;
-    current = window;
+  let low = 0;
+  let high = timeline.length - 1;
+  let currentIndex = -1;
+  while (low <= high) {
+    const middle = low + Math.floor((high - low) / 2);
+    if (timeline[middle].start <= safePosition) {
+      currentIndex = middle;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
   }
-  return current;
+  return currentIndex >= 0 ? timeline[currentIndex] : undefined;
 }
 
 export function radioChapterTrackInput(
@@ -218,13 +242,33 @@ export function advanceRadioScrobbling(
   enabled: boolean,
   nowSeconds = Math.floor(Date.now() / 1_000),
 ): { progress: RadioScrobbleProgress; actions: RadioScrobbleAction[] } {
+  return advanceRadioScrobblingWithTimeline(
+    track,
+    radioChapterTimeline(track),
+    current,
+    position,
+    playing,
+    enabled,
+    nowSeconds,
+  );
+}
+
+export function advanceRadioScrobblingWithTimeline(
+  track: Track,
+  timeline: readonly RadioChapterWindow[],
+  current: RadioScrobbleProgress,
+  position: number,
+  playing: boolean,
+  enabled: boolean,
+  nowSeconds = Math.floor(Date.now() / 1_000),
+): { progress: RadioScrobbleProgress; actions: RadioScrobbleAction[] } {
   const safePosition = Number.isFinite(position)
     ? Math.min(Math.max(0, position), Math.max(0, track.duration))
     : current.lastPosition;
   const previousPosition = current.lastPosition;
   const delta = safePosition - previousPosition;
-  const previousWindow = radioChapterAt(track, previousPosition);
-  const currentWindow = radioChapterAt(track, safePosition);
+  const previousWindow = radioChapterAtTimeline(timeline, previousPosition);
+  const currentWindow = radioChapterAtTimeline(timeline, safePosition);
   const actions: RadioScrobbleAction[] = [];
   let progress = current.showTrackId === track.id
     ? current

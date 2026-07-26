@@ -223,4 +223,92 @@ describe("saved Bandcamp library views", () => {
     fireEvent.click(trackPause);
     expect(onTogglePlayback).toHaveBeenCalledOnce();
   });
+
+  it("keeps a large favorites list bounded while preserving current-track controls", async () => {
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    const originalResizeObserver = globalThis.ResizeObserver;
+    class ResizeObserverMock implements ResizeObserver {
+      private readonly observed = new WeakSet<Element>();
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      disconnect() {}
+      observe(target: Element) {
+        if (this.observed.has(target)) return;
+        this.observed.add(target);
+        const bounds = target.getBoundingClientRect();
+        this.callback([{
+          borderBoxSize: [{
+            blockSize: bounds.height,
+            inlineSize: bounds.width,
+          }],
+          contentRect: bounds,
+          target,
+        } as unknown as ResizeObserverEntry], this);
+      }
+      unobserve() {}
+    }
+    globalThis.ResizeObserver = ResizeObserverMock;
+    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+      const scrollElement = this.classList.contains("library-pane");
+      const top = scrollElement ? 0 : 90;
+      const height = scrollElement ? 240 : 0;
+      return {
+        bottom: top + height,
+        height,
+        left: 0,
+        right: 800,
+        top,
+        width: 800,
+        x: 0,
+        y: top,
+        toJSON: () => undefined,
+      };
+    };
+
+    try {
+      const tracks = Array.from({ length: 300 }, (_, index): Track => ({
+        ...track,
+        id: `favorite-track-${index}`,
+        title: `Favorite track ${index}`,
+        track: index + 1,
+      }));
+      const largeFavorites: LocalFavoriteCollection = {
+        albumIds: [],
+        albums: [],
+        radioShowIds: [],
+        radioShows: [],
+        songIds: tracks.map((item) => item.id),
+        tracks,
+      };
+      const onTogglePlayback = vi.fn();
+      withQueryClient(
+        <div className="library-pane">
+          <SavedLibraryView
+            mode="favorites"
+            {...commonProps}
+            currentTrackId={tracks[0].id}
+            favorites={largeFavorites}
+            onTogglePlayback={onTogglePlayback}
+            playing
+          />
+        </div>,
+      );
+
+      const list = screen.getByRole("list", { name: "Favorite tracks" });
+      await waitFor(() => {
+        const rows = within(list).getAllByRole("listitem");
+        expect(rows.length).toBeGreaterThan(0);
+        expect(rows.length).toBeLessThan(30);
+      });
+      expect(list).toHaveAttribute("data-virtualized", "true");
+      const pause = screen.getByRole("button", {
+        name: "Pause Favorite track 0",
+      });
+      expect(pause).toHaveAttribute("aria-pressed", "true");
+      fireEvent.click(pause);
+      expect(onTogglePlayback).toHaveBeenCalledOnce();
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = originalRect;
+      globalThis.ResizeObserver = originalResizeObserver;
+    }
+  });
 });

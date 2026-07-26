@@ -7,6 +7,11 @@ export type RadioAiringState = {
   next?: RadioChapter;
 };
 
+export type RadioAiringIndexes = {
+  currentIndex: number;
+  nextIndex: number;
+};
+
 export function radioShowIdFromTrackId(trackId: string): number | undefined {
   const match = /^radio:([1-9]\d{0,15})$/.exec(trackId);
   if (!match) return undefined;
@@ -39,26 +44,52 @@ export function radioAiringAt(
   if (!chapters?.length) return {};
 
   const timeline = boundRadioChapters(chapters);
-  if (!timeline.length) return {};
+  return radioAiringAtTimeline(timeline, playbackSeconds);
+}
+
+/**
+ * Selects chapter indexes from an already bounded, time-ordered timeline.
+ * Duplicate timestamps resolve to the final chapter at that timestamp.
+ */
+export function radioAiringIndexesAt(
+  timeline: readonly RadioChapter[],
+  playbackSeconds: number,
+): RadioAiringIndexes {
+  if (!timeline.length) return { currentIndex: -1, nextIndex: -1 };
 
   const position = Number.isFinite(playbackSeconds)
     ? Math.max(0, playbackSeconds)
     : 0;
+  let low = 0;
+  let high = timeline.length - 1;
   let currentIndex = -1;
-
-  for (let index = 0; index < timeline.length; index += 1) {
-    if (timeline[index].timecode > position) break;
-    currentIndex = index;
+  while (low <= high) {
+    const middle = low + Math.floor((high - low) / 2);
+    if (timeline[middle].timecode <= position) {
+      currentIndex = middle;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
   }
+  const nextIndex = currentIndex + 1 < timeline.length
+    ? currentIndex + 1
+    : -1;
+  return { currentIndex, nextIndex };
+}
 
-  if (currentIndex < 0) return { next: timeline[0] };
-
-  const current = timeline[currentIndex];
-  const next = timeline.find(
-    (chapter, index) =>
-      index > currentIndex && chapter.timecode > current.timecode,
+export function radioAiringAtTimeline(
+  timeline: readonly RadioChapter[],
+  playbackSeconds: number,
+): RadioAiringState {
+  const { currentIndex, nextIndex } = radioAiringIndexesAt(
+    timeline,
+    playbackSeconds,
   );
-  return { current, next };
+  return {
+    ...(currentIndex >= 0 ? { current: timeline[currentIndex] } : {}),
+    ...(nextIndex >= 0 ? { next: timeline[nextIndex] } : {}),
+  };
 }
 
 export function nextRadioChapterTime(
@@ -66,12 +97,18 @@ export function nextRadioChapterTime(
   playbackSeconds: number,
 ): number | undefined {
   if (!chapters?.length) return undefined;
-  const position = Number.isFinite(playbackSeconds)
-    ? Math.max(0, playbackSeconds)
-    : 0;
-  return boundRadioChapters(chapters)
-    .find((chapter) => chapter.timecode > position)
-    ?.timecode;
+  return nextRadioChapterTimeInTimeline(
+    boundRadioChapters(chapters),
+    playbackSeconds,
+  );
+}
+
+export function nextRadioChapterTimeInTimeline(
+  timeline: readonly RadioChapter[],
+  playbackSeconds: number,
+): number | undefined {
+  const { nextIndex } = radioAiringIndexesAt(timeline, playbackSeconds);
+  return nextIndex >= 0 ? timeline[nextIndex].timecode : undefined;
 }
 
 export function previousRadioChapterTime(
@@ -80,21 +117,29 @@ export function previousRadioChapterTime(
   restartThresholdSeconds = 4,
 ): number | undefined {
   if (!chapters?.length) return undefined;
-  const timeline = boundRadioChapters(chapters);
+  return previousRadioChapterTimeInTimeline(
+    boundRadioChapters(chapters),
+    playbackSeconds,
+    restartThresholdSeconds,
+  );
+}
+
+export function previousRadioChapterTimeInTimeline(
+  timeline: readonly RadioChapter[],
+  playbackSeconds: number,
+  restartThresholdSeconds = 4,
+): number | undefined {
+  if (!timeline.length) return undefined;
   const position = Number.isFinite(playbackSeconds)
     ? Math.max(0, playbackSeconds)
     : 0;
-  let currentStart: number | undefined;
-
-  for (const chapter of timeline) {
-    if (chapter.timecode > position) break;
-    currentStart = chapter.timecode;
-  }
-  if (currentStart === undefined) return undefined;
+  const { currentIndex } = radioAiringIndexesAt(timeline, position);
+  if (currentIndex < 0) return undefined;
+  const currentStart = timeline[currentIndex].timecode;
   if (position - currentStart > Math.max(0, restartThresholdSeconds)) {
     return currentStart;
   }
-  for (let index = timeline.length - 1; index >= 0; index -= 1) {
+  for (let index = currentIndex - 1; index >= 0; index -= 1) {
     if (timeline[index].timecode < currentStart) return timeline[index].timecode;
   }
   return undefined;

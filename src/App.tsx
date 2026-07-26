@@ -36,10 +36,8 @@ import {
   VolumeX,
   X,
 } from "lucide-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  type CSSProperties,
-  type DragEvent,
   type FormEvent,
   type RefObject,
   type SyntheticEvent,
@@ -52,6 +50,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { genreKey, summarizeGenres } from "./genres";
 import {
@@ -77,12 +76,10 @@ import {
   isDesktop,
   openLastFmAuthorization,
   openBandcampUrl,
-  readLibraryCache,
   loadPlayerState,
   savePlayerState,
   scrobbleLastFm,
   updateLastFmNowPlaying,
-  writeLibraryCache,
 } from "./lib";
 import {
   artistKey,
@@ -91,6 +88,14 @@ import {
   type ArtistGroup,
   type LibraryBrowseMode,
 } from "./libraryBrowse";
+import {
+  albumQueryOptions,
+  hydrateLibraryQuery,
+  libraryQueryKey,
+  libraryStateQueryOptions,
+  mergeLibraryProgress,
+  updateLibraryData,
+} from "./libraryQueries";
 import {
   readLocalFavorites,
   repairLocalFavoriteMetadata,
@@ -106,21 +111,26 @@ import {
   type RadioChapterLocalLinks,
 } from "./RadioChapterMetadata";
 import { isEphemeralTrackId } from "./playerState";
+import {
+  createPlaybackClock,
+  type PlaybackClock,
+} from "./playbackClock";
 import { appendUnique, keepCurrentTrack, moveItem, shuffled } from "./queue";
 import { pickRandomItem, pickWeightedItem } from "./random";
 import {
   boundRadioChapters,
-  nextRadioChapterTime,
-  previousRadioChapterTime,
-  radioAiringAt,
+  nextRadioChapterTimeInTimeline,
+  previousRadioChapterTimeInTimeline,
+  radioAiringIndexesAt,
   radioShowIdFromTrackId,
 } from "./radioPlayback";
 import {
-  advanceRadioScrobbling,
+  advanceRadioScrobblingWithTimeline,
   completeRadioShowScrobble,
   createRadioScrobbleProgress,
   markRadioChapterScrobble,
   markRadioShowScrobble,
+  radioChapterTimelineFromBounded,
   type RadioScrobbleAction,
 } from "./radioScrobbling";
 import { resolveRadioChapterLibraryTargets } from "./radioNavigation";
@@ -151,15 +161,49 @@ type PlaybackSession = {
   nowPlayingSent: boolean;
   scrobbleState: "idle" | "pending" | "sent" | "failed";
 };
-const ALBUM_BATCH_SIZE = 80;
+
+function usePlaybackPosition(playbackClock: PlaybackClock): number {
+  return useSyncExternalStore(
+    playbackClock.subscribe,
+    playbackClock.getSnapshot,
+    playbackClock.getSnapshot,
+  );
+}
+
+function useCurrentRadioChapter(
+  playbackClock: PlaybackClock,
+  timeline: readonly RadioChapter[],
+): {
+  current?: RadioChapter;
+  next?: RadioChapter;
+} {
+  const getCurrentIndex = useCallback(
+    () =>
+      radioAiringIndexesAt(timeline, playbackClock.getSnapshot()).currentIndex,
+    [playbackClock, timeline],
+  );
+  const currentIndex = useSyncExternalStore(
+    playbackClock.subscribe,
+    getCurrentIndex,
+    getCurrentIndex,
+  );
+  const current = currentIndex >= 0 ? timeline[currentIndex] : undefined;
+  const next = current
+    ? timeline[currentIndex + 1]
+    : timeline[0];
+  return { current, next };
+}
 const ARTWORK_REFRESH_CONCURRENCY = 4;
 const MAX_ARTWORK_DETAILS_PER_REFRESH = 200;
 const SEARCH_QUEUE_CONCURRENCY = 6;
-const QUEUE_RENDER_BATCH_SIZE = 250;
 const QUEUE_PANEL_EXIT_MS = 240;
 const PLAYER_STATE_SAVE_DEBOUNCE_MS = 450;
 const PLAYER_STATE_CHECKPOINT_MS = 5_000;
 const PREVIOUS_RESTART_THRESHOLD_SECONDS = 4;
+const LIBRARY_COLLATOR = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: "base",
+});
 const LIBRARY_BROWSE_OPTIONS: ReadonlyArray<{
   mode: LibraryBrowseMode;
   label: string;
@@ -173,6 +217,9 @@ const LIBRARY_BROWSE_OPTIONS: ReadonlyArray<{
 const DiscoverView = lazy(() => import("./DiscoverView"));
 const RadioView = lazy(() => import("./RadioView"));
 const SavedLibraryView = lazy(() => import("./SavedLibraryView"));
+const AlbumVirtualGrid = lazy(() => import("./AlbumVirtualGrid"));
+const ArtistVirtualGrid = lazy(() => import("./ArtistVirtualGrid"));
+const TrackQueueList = lazy(() => import("./TrackQueueList"));
 const AddToPlaylistDialog = lazy(() =>
   import("./SavedLibraryView").then((module) => ({ default: module.AddToPlaylistDialog })),
 );
@@ -231,9 +278,13 @@ function persistedRadioScrobbleProgress(
 function CoverArt({
   album,
   size = "card",
+  fallbackArtworkUrl,
+  animateChanges = false,
 }: {
   album: Pick<Album, "id" | "title" | "artist" | "coverArt" | "artworkUrl" | "palette">;
   size?: "card" | "small" | "large";
+  fallbackArtworkUrl?: string;
+  animateChanges?: boolean;
 }) {
   const [url, setUrl] = useState<string>();
   const [requestVersion, setRequestVersion] = useState(0);
@@ -259,6 +310,10 @@ function CoverArt({
       setUrl(album.artworkUrl);
       return;
     }
+    if (fallbackArtworkUrl) {
+      setUrl(fallbackArtworkUrl);
+      return;
+    }
     if (!album.coverArt || !isDesktop()) {
       setUrl(undefined);
       return;
@@ -273,9 +328,16 @@ function CoverArt({
     return () => {
       active = false;
     };
-  }, [album.artworkUrl, album.coverArt, requestVersion]);
+  }, [album.artworkUrl, album.coverArt, fallbackArtworkUrl, requestVersion]);
 
   const retryImage = () => {
+    if (
+      fallbackArtworkUrl &&
+      url !== fallbackArtworkUrl
+    ) {
+      setUrl(fallbackArtworkUrl);
+      return;
+    }
     setUrl(undefined);
     if (!album.coverArt || retryCountRef.current >= 1) return;
     retryCountRef.current += 1;
@@ -285,7 +347,7 @@ function CoverArt({
 
   return (
     <div
-      className={`cover cover--${size}`}
+      className={`cover cover--${size} ${animateChanges ? "cover--artwork-transition" : ""}`}
       style={
         {
           "--cover-accent": album.palette[0],
@@ -295,6 +357,7 @@ function CoverArt({
     >
       {url ? (
         <img
+          key={url}
           src={url}
           alt={`${album.title} cover`}
           loading={size === "card" ? "lazy" : "eager"}
@@ -312,6 +375,82 @@ function CoverArt({
     </div>
   );
 }
+
+const ClockedNowPlayingArtwork = memo(function ClockedNowPlayingArtwork({
+  playbackClock,
+  track,
+  radioTimeline,
+}: {
+  playbackClock: PlaybackClock;
+  track: Track;
+  radioTimeline: readonly RadioChapter[];
+}) {
+  const { current } = useCurrentRadioChapter(
+    playbackClock,
+    radioTimeline,
+  );
+  return (
+    <CoverArt
+      size="large"
+      album={{
+        id: track.albumId,
+        title: current?.title ?? track.album,
+        artist: current?.artist ?? track.artist,
+        coverArt: track.coverArt,
+        artworkUrl: current?.artworkUrl ?? track.artworkUrl,
+        palette: track.palette,
+      }}
+      fallbackArtworkUrl={current?.artworkUrl ? track.artworkUrl : undefined}
+      animateChanges={Boolean(track.radioChapters?.length)}
+    />
+  );
+});
+
+const WindowTitleController = memo(function WindowTitleController({
+  playbackClock,
+  currentTrack,
+  radioTimeline,
+  nowPlayingOpen,
+  selectedAlbumTitle,
+  activeArtistName,
+  view,
+}: {
+  playbackClock: PlaybackClock;
+  currentTrack?: Track;
+  radioTimeline: readonly RadioChapter[];
+  nowPlayingOpen: boolean;
+  selectedAlbumTitle?: string;
+  activeArtistName?: string;
+  view: LibraryView;
+}) {
+  const { current: currentRadioChapter } = useCurrentRadioChapter(
+    playbackClock,
+    radioTimeline,
+  );
+  const subject =
+    nowPlayingOpen && currentTrack
+      ? currentRadioChapter?.title ?? currentTrack.title
+      : selectedAlbumTitle ??
+        activeArtistName ??
+        (view === "discover"
+          ? "Discover"
+          : view === "radio"
+            ? "Bandcamp Radio"
+            : currentRadioChapter?.title ?? currentTrack?.title);
+  const windowTitle = subject ? `${subject} — Coda` : "Coda";
+
+  useEffect(() => {
+    document.title = windowTitle;
+    if (!isDesktop()) return;
+    void import("@tauri-apps/api/window")
+      .then(({ getCurrentWindow }) => getCurrentWindow().setTitle(windowTitle))
+      .catch(() => {
+        // The static native title remains a safe fallback.
+      });
+  }, [windowTitle]);
+
+  return null;
+});
 
 const AlbumCard = memo(function AlbumCard({
   album,
@@ -550,7 +689,7 @@ const QueueRadioChapters = memo(function QueueRadioChapters({
   open,
   onSeek,
 }: {
-  chapters: Track["radioChapters"];
+  chapters: readonly RadioChapter[] | undefined;
   currentChapterIndex: number;
   nextChapterIndex: number;
   open: boolean;
@@ -619,7 +758,8 @@ const QueuePanel = memo(function QueuePanel({
   queue,
   currentIndex,
   currentTrack,
-  currentTime,
+  radioTimeline,
+  playbackClock,
   playing,
   onPlay,
   onRemove,
@@ -638,7 +778,8 @@ const QueuePanel = memo(function QueuePanel({
   queue: Track[];
   currentIndex: number;
   currentTrack?: Track;
-  currentTime: number;
+  radioTimeline: readonly RadioChapter[];
+  playbackClock: PlaybackClock;
   playing: boolean;
   onPlay: (index: number) => void;
   onRemove: (index: number) => void;
@@ -652,28 +793,28 @@ const QueuePanel = memo(function QueuePanel({
   getRadioChapterLocalLinks: (chapter: RadioChapter) => RadioChapterLocalLinks;
   onSeek: (position: number) => void;
 }) {
-  const [dragged, setDragged] = useState<number | null>(null);
-  const [visibleUpcoming, setVisibleUpcoming] = useState(QUEUE_RENDER_BATCH_SIZE);
   const upcoming = queue.slice(currentIndex + 1);
-  const renderedUpcoming = upcoming.slice(0, visibleUpcoming);
   const remaining = upcoming.reduce((total, item) => total + item.duration, 0);
-  const radioTimeline = useMemo(
-    () => boundRadioChapters(currentTrack?.radioChapters ?? []),
-    [currentTrack?.radioChapters],
+  const {
+    current: currentRadioChapter,
+    next: nextRadioChapter,
+  } = useCurrentRadioChapter(
+    playbackClock,
+    radioTimeline,
   );
-  const currentRadioAiring = radioAiringAt(radioTimeline, currentTime);
-  const currentChapterIndex = currentRadioAiring.current
-    ? radioTimeline.indexOf(currentRadioAiring.current)
+  const currentChapterIndex = currentRadioChapter
+    ? radioTimeline.indexOf(currentRadioChapter)
     : -1;
-  const nextChapterIndex = currentRadioAiring.next
-    ? radioTimeline.indexOf(currentRadioAiring.next)
+  const nextChapterIndex = nextRadioChapter
+    ? radioTimeline.indexOf(nextRadioChapter)
     : -1;
-
-  const drop = (event: DragEvent, destination: number) => {
-    event.preventDefault();
-    if (dragged !== null) onMove(dragged, destination);
-    setDragged(null);
-  };
+  const emptyQueue = (
+    <div className="queue-empty">
+      <Music2 size={25} />
+      <strong>{currentTrack ? "End of the queue" : "Your queue is empty"}</strong>
+      <span>{currentTrack ? "Add another album or track to keep listening." : "Use the + button on any release to line up music."}</span>
+    </div>
+  );
 
   return (
     <aside
@@ -714,7 +855,7 @@ const QueuePanel = memo(function QueuePanel({
             <button
               className="queue-track__art"
               onClick={onNowPlaying}
-              aria-label={`Open Now Playing for ${currentRadioAiring.current?.title ?? currentTrack.title}`}
+              aria-label={`Open Now Playing for ${currentRadioChapter?.title ?? currentTrack.title}`}
               title="Open Now Playing"
             >
             <CoverArt
@@ -730,17 +871,17 @@ const QueuePanel = memo(function QueuePanel({
             />
             </button>
             <div className="queue-track__meta">
-              {currentRadioAiring.current ? (
+              {currentRadioChapter ? (
                 <>
                   <RadioChapterCopy
-                    chapter={currentRadioAiring.current}
+                    chapter={currentRadioChapter}
                     className="queue-now__radio-copy"
                     onOpen={onOpenRadioItem}
-                    localLinks={getRadioChapterLocalLinks(currentRadioAiring.current)}
+                    localLinks={getRadioChapterLocalLinks(currentRadioChapter)}
                   />
-                  {currentRadioAiring.next ? (
+                  {nextRadioChapter ? (
                     <span className="queue-now__chapter-next">
-                      Next: {currentRadioAiring.next.title}
+                      Next: {nextRadioChapter.title}
                     </span>
                   ) : null}
                 </>
@@ -773,91 +914,79 @@ const QueuePanel = memo(function QueuePanel({
         </div>
       ) : null}
 
-      <div
-        className="queue-list"
-        role="region"
-        aria-label="Upcoming tracks"
-        tabIndex={0}
+      <Suspense
+        fallback={(
+          <div
+            aria-label="Upcoming tracks"
+            className="queue-list"
+            role="region"
+            tabIndex={0}
+          >
+            {!upcoming.length ? emptyQueue : null}
+          </div>
+        )}
       >
-        {renderedUpcoming.map((track, upcomingIndex) => {
-          const absoluteIndex = currentIndex + 1 + upcomingIndex;
-          return (
-            <div
-              className={`queue-track ${upcomingIndex < 12 ? "queue-track--animated" : ""}`}
-              key={`${track.id}-${absoluteIndex}`}
-              style={
-                upcomingIndex < 12
-                  ? { "--queue-delay": `${upcomingIndex * 18}ms` } as CSSProperties
-                  : undefined
-              }
-              draggable
-              onDragStart={() => setDragged(absoluteIndex)}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => drop(event, absoluteIndex)}
-            >
-              <GripVertical className="queue-track__grip" size={15} />
-              <div className="queue-track__main">
-                <button
-                  className="queue-track__art"
-                  onClick={() => onAlbum(track)}
-                  aria-label={`Open ${track.album}`}
-                  title={`Open ${track.album}`}
-                >
-                  <CoverArt
-                    size="small"
-                    album={{
-                      id: track.albumId,
-                      title: track.album,
-                      artist: track.artist,
-                      coverArt: track.coverArt,
-                      artworkUrl: track.artworkUrl,
-                      palette: track.palette,
-                    }}
-                  />
-                </button>
-                <span className="queue-track__meta">
-                  <button
-                    className="queue-track__title"
-                    onClick={() => onPlay(absoluteIndex)}
-                  >
-                    {track.title}
-                  </button>
-                  <button
-                    className="metadata-link"
-                    onClick={() => onArtist(track.artist)}
-                  >
-                    {track.artist}
-                  </button>
-                </span>
-              </div>
-              <span className="queue-track__duration">{formatTime(track.duration)}</span>
-              <button className="icon-button queue-track__remove" onClick={() => onRemove(absoluteIndex)} aria-label={`Remove ${track.title}`} title="Remove">
-                <X size={14} />
-              </button>
-            </div>
-          );
-        })}
-        {visibleUpcoming < upcoming.length ? (
-          <button
-            className="queue-list__more"
-            onClick={() =>
-              setVisibleUpcoming((limit) =>
-                Math.min(limit + QUEUE_RENDER_BATCH_SIZE, upcoming.length),
-              )
+      <TrackQueueList
+        aria-label="Upcoming tracks"
+        className="queue-list"
+        empty={emptyQueue}
+        getItemKey={(track, absoluteIndex) => `${track.id}-${absoluteIndex}`}
+        items={upcoming}
+        onMove={onMove}
+        renderItem={(track, { absoluteIndex, index: upcomingIndex }) => (
+          <div
+            className={`queue-track ${upcomingIndex < 12 ? "queue-track--animated" : ""}`}
+            style={
+              upcomingIndex < 12
+                ? { "--queue-delay": `${upcomingIndex * 18}ms` } as React.CSSProperties
+                : undefined
             }
           >
-            Show {Math.min(QUEUE_RENDER_BATCH_SIZE, upcoming.length - visibleUpcoming)} more
-            <span>{upcoming.length - visibleUpcoming} not shown</span>
-          </button>
-        ) : null}
-        {!upcoming.length ? (
-          <div className="queue-empty">
-            <Music2 size={25} />
-            <strong>{currentTrack ? "End of the queue" : "Your queue is empty"}</strong>
-            <span>{currentTrack ? "Add another album or track to keep listening." : "Use the + button on any release to line up music."}</span>
+            <GripVertical className="queue-track__grip" size={15} />
+            <div className="queue-track__main">
+              <button
+                className="queue-track__art"
+                onClick={() => onAlbum(track)}
+                aria-label={`Open ${track.album}`}
+                title={`Open ${track.album}`}
+              >
+                <CoverArt
+                  size="small"
+                  album={{
+                    id: track.albumId,
+                    title: track.album,
+                    artist: track.artist,
+                    coverArt: track.coverArt,
+                    artworkUrl: track.artworkUrl,
+                    palette: track.palette,
+                  }}
+                />
+              </button>
+              <span className="queue-track__meta">
+                <button
+                  className="queue-track__title"
+                  onClick={() => onPlay(absoluteIndex)}
+                >
+                  {track.title}
+                </button>
+                <button
+                  className="metadata-link"
+                  onClick={() => onArtist(track.artist)}
+                >
+                  {track.artist}
+                </button>
+              </span>
+            </div>
+            <span className="queue-track__duration">{formatTime(track.duration)}</span>
+            <button className="icon-button queue-track__remove" onClick={() => onRemove(absoluteIndex)} aria-label={`Remove ${track.title}`} title="Remove">
+              <X size={14} />
+            </button>
           </div>
-        ) : null}
-      </div>
+        )}
+        startIndex={currentIndex + 1}
+        tabIndex={0}
+      />
+      </Suspense>
 
       <div className="queue-panel__footer">
         <span className="queue-panel__count" key={upcoming.length}>
@@ -869,10 +998,199 @@ const QueuePanel = memo(function QueuePanel({
   );
 });
 
+const PlayerTrack = memo(function PlayerTrack({
+  track,
+  radioTimeline,
+  playbackClock,
+  favorite,
+  onToggleFavorite,
+  onArtist,
+  onAlbum,
+  onNowPlaying,
+  onOpenRadioItem,
+  getRadioChapterLocalLinks,
+}: {
+  track?: Track;
+  radioTimeline: readonly RadioChapter[];
+  playbackClock: PlaybackClock;
+  favorite: boolean;
+  onToggleFavorite: () => void;
+  onArtist: (artist: string) => void;
+  onAlbum: (track: Track) => void;
+  onNowPlaying: () => void;
+  onOpenRadioItem: (url: string) => void;
+  getRadioChapterLocalLinks: (chapter: RadioChapter) => RadioChapterLocalLinks;
+}) {
+  const radioAiring = useCurrentRadioChapter(
+    playbackClock,
+    radioTimeline,
+  );
+  const activeChapter = radioAiring.current;
+  const favoriteControl = track ? (
+    <button
+      className={`icon-button favorite-button player__track-favorite ${favorite ? "is-favorite" : ""}`}
+      onClick={onToggleFavorite}
+      title={favorite ? "Remove from favorites" : "Add to favorites"}
+      aria-label={
+        favorite
+          ? `Remove ${track.title} from favorites`
+          : `Add ${track.title} to favorites`
+      }
+      aria-pressed={favorite}
+    >
+      <Heart size={17} fill={favorite ? "currentColor" : "none"} />
+    </button>
+  ) : null;
+
+  return (
+    <div className="player__track">
+      {track ? (
+        <>
+          <button
+            className="player__art-link"
+            onClick={onNowPlaying}
+            aria-label="Open Now Playing"
+            title={`Open Now Playing for ${track.title}`}
+          >
+            <CoverArt
+              size="small"
+              album={{
+                id: track.albumId,
+                title: activeChapter?.title ?? track.album,
+                artist: activeChapter?.artist ?? track.artist,
+                coverArt: track.coverArt,
+                artworkUrl: activeChapter?.artworkUrl ?? track.artworkUrl,
+                palette: track.palette,
+              }}
+              fallbackArtworkUrl={
+                activeChapter?.artworkUrl ? track.artworkUrl : undefined
+              }
+              animateChanges={Boolean(track.radioChapters?.length)}
+            />
+          </button>
+          {activeChapter ? (
+            <div className="player__track-details">
+              <div className="player__track-copy">
+                <div className="player__radio-live" aria-live="polite">
+                  <RadioChapterCopy
+                    chapter={activeChapter}
+                    className="player__radio-chapter-copy"
+                    onOpen={onOpenRadioItem}
+                    localLinks={getRadioChapterLocalLinks(activeChapter)}
+                  />
+                </div>
+              </div>
+              {favoriteControl}
+            </div>
+          ) : (
+            <div className="player__track-copy">
+              <div className="player__track-title-row">
+                <strong title={track.title}>{track.title}</strong>
+                {favoriteControl}
+              </div>
+              <span>
+                <button
+                  className="metadata-link"
+                  onClick={() => onArtist(track.artist)}
+                >
+                  {track.artist}
+                </button>
+                {" · "}
+                <button
+                  className="metadata-link"
+                  onClick={() => onAlbum(track)}
+                >
+                  {track.album}
+                </button>
+              </span>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="player__placeholder">
+          <Disc3 size={20} />
+          <span>Nothing playing</span>
+        </div>
+      )}
+    </div>
+  );
+});
+
+const PlayerTransport = memo(function PlayerTransport({
+  track,
+  radioTimeline,
+  playbackClock,
+  playing,
+  duration,
+  repeat,
+  canPrevious,
+  canNext,
+  onToggle,
+  onPrevious,
+  onNext,
+  onSeek,
+  onRepeat,
+}: {
+  track?: Track;
+  radioTimeline: readonly RadioChapter[];
+  playbackClock: PlaybackClock;
+  playing: boolean;
+  duration: number;
+  repeat: RepeatMode;
+  canPrevious: boolean;
+  canNext: boolean;
+  onToggle: () => void;
+  onPrevious: () => void;
+  onNext: () => void;
+  onSeek: (value: number) => void;
+  onRepeat: () => void;
+}) {
+  const currentTime = usePlaybackPosition(playbackClock);
+  const progress = duration ? Math.min(100, (currentTime / duration) * 100) : 0;
+  const positionCanPrevious = Boolean(track) && (
+    currentTime > PREVIOUS_RESTART_THRESHOLD_SECONDS ||
+    previousRadioChapterTimeInTimeline(radioTimeline, currentTime) !== undefined
+  );
+  const positionCanNext = Boolean(track) &&
+    nextRadioChapterTimeInTimeline(radioTimeline, currentTime) !== undefined;
+
+  return (
+    <div className="player__transport">
+      <div className="transport-buttons">
+        <button className="icon-button" onClick={onPrevious} disabled={!canPrevious && !positionCanPrevious} title="Previous" aria-label="Previous"><SkipBack size={18} fill="currentColor" /></button>
+        <button className="play-button" onClick={onToggle} disabled={!track} aria-label={playing ? "Pause" : "Play"}>
+          {playing ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
+        </button>
+        <button className="icon-button" onClick={onNext} disabled={!canNext && !positionCanNext} title="Next" aria-label="Next"><SkipForward size={18} fill="currentColor" /></button>
+        <button className={`icon-button ${repeat !== "off" ? "is-active" : ""}`} onClick={onRepeat} disabled={!track} title="Repeat" aria-label={`Repeat ${repeat}`}>
+          {repeat === "one" ? <Repeat1 size={17} /> : <Repeat size={17} />}
+        </button>
+      </div>
+      <div className="progress-row">
+        <span>{formatTime(currentTime)}</span>
+        <label className="range" style={{ "--range-value": `${progress}%` } as React.CSSProperties}>
+          <span className="sr-only">Track position</span>
+          <input
+            type="range"
+            min="0"
+            max={duration || 1}
+            step="1"
+            value={Math.min(currentTime, duration || 1)}
+            disabled={!track}
+            onChange={(event) => onSeek(Number(event.target.value))}
+          />
+        </label>
+        <span>{formatTime(duration)}</span>
+      </div>
+    </div>
+  );
+});
+
 function Player({
   track,
+  radioTimeline,
   playing,
-  currentTime,
+  playbackClock,
   duration,
   volume,
   repeat,
@@ -898,8 +1216,9 @@ function Player({
   onToggleQueue,
 }: {
   track?: Track;
+  radioTimeline: readonly RadioChapter[];
   playing: boolean;
-  currentTime: number;
+  playbackClock: PlaybackClock;
   duration: number;
   volume: number;
   repeat: RepeatMode;
@@ -924,89 +1243,35 @@ function Player({
   queueOpen: boolean;
   onToggleQueue: () => void;
 }) {
-  const progress = duration ? Math.min(100, (currentTime / duration) * 100) : 0;
-  const radioAiring = radioAiringAt(track?.radioChapters, currentTime);
   return (
     <footer className="player">
-      <div className="player__track">
-        {track ? (
-          <>
-            <button
-              className="player__art-link"
-              onClick={onNowPlaying}
-              aria-label="Open Now Playing"
-              title={`Open Now Playing for ${track.title}`}
-            >
-              <CoverArt
-                size="small"
-                album={{ id: track.albumId, title: track.album, artist: track.artist, coverArt: track.coverArt, artworkUrl: track.artworkUrl, palette: track.palette }}
-              />
-            </button>
-            <div>
-              {radioAiring.current ? (
-                <div className="player__radio-live" aria-live="polite">
-                  <i aria-hidden="true" />
-                  <RadioChapterCopy
-                    chapter={radioAiring.current}
-                    className="player__radio-chapter-copy"
-                    onOpen={onOpenRadioItem}
-                    localLinks={getRadioChapterLocalLinks(radioAiring.current)}
-                  />
-                </div>
-              ) : (
-                <>
-                  <strong title={track.title}>{track.title}</strong>
-                  <span>
-                    <button
-                      className="metadata-link"
-                      onClick={() => onArtist(track.artist)}
-                    >
-                      {track.artist}
-                    </button>
-                    {" · "}
-                    <button
-                      className="metadata-link"
-                      onClick={() => onAlbum(track)}
-                    >
-                      {track.album}
-                    </button>
-                  </span>
-                </>
-              )}
-            </div>
-          </>
-        ) : (
-          <div className="player__placeholder"><Disc3 size={20} /><span>Nothing playing</span></div>
-        )}
-      </div>
-      <div className="player__transport">
-        <div className="transport-buttons">
-          <button className="icon-button" onClick={onPrevious} disabled={!canPrevious} title="Previous" aria-label="Previous"><SkipBack size={18} fill="currentColor" /></button>
-          <button className="play-button" onClick={onToggle} disabled={!track} aria-label={playing ? "Pause" : "Play"}>
-            {playing ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
-          </button>
-          <button className="icon-button" onClick={onNext} disabled={!canNext} title="Next" aria-label="Next"><SkipForward size={18} fill="currentColor" /></button>
-          <button className={`icon-button ${repeat !== "off" ? "is-active" : ""}`} onClick={onRepeat} disabled={!track} title="Repeat" aria-label={`Repeat ${repeat}`}>
-            {repeat === "one" ? <Repeat1 size={17} /> : <Repeat size={17} />}
-          </button>
-        </div>
-        <div className="progress-row">
-          <span>{formatTime(currentTime)}</span>
-          <label className="range" style={{ "--range-value": `${progress}%` } as React.CSSProperties}>
-            <span className="sr-only">Track position</span>
-            <input
-              type="range"
-              min="0"
-              max={duration || 1}
-              step="1"
-              value={Math.min(currentTime, duration || 1)}
-              disabled={!track}
-              onChange={(event) => onSeek(Number(event.target.value))}
-            />
-          </label>
-          <span>{formatTime(duration)}</span>
-        </div>
-      </div>
+      <PlayerTrack
+        track={track}
+        radioTimeline={radioTimeline}
+        playbackClock={playbackClock}
+        favorite={favorite}
+        onToggleFavorite={onToggleFavorite}
+        onArtist={onArtist}
+        onAlbum={onAlbum}
+        onNowPlaying={onNowPlaying}
+        onOpenRadioItem={onOpenRadioItem}
+        getRadioChapterLocalLinks={getRadioChapterLocalLinks}
+      />
+      <PlayerTransport
+        track={track}
+        radioTimeline={radioTimeline}
+        playbackClock={playbackClock}
+        playing={playing}
+        duration={duration}
+        repeat={repeat}
+        canPrevious={canPrevious}
+        canNext={canNext}
+        onToggle={onToggle}
+        onPrevious={onPrevious}
+        onNext={onNext}
+        onSeek={onSeek}
+        onRepeat={onRepeat}
+      />
       <div className="player__volume">
         <button className="icon-button" onClick={() => onVolume(volume ? 0 : 0.72)} aria-label={volume ? "Mute" : "Unmute"}>
           {volume ? <Volume2 size={18} /> : <VolumeX size={18} />}
@@ -1026,28 +1291,15 @@ function Player({
             <Airplay size={18} />
           </button>
         ) : null}
-        {track ? (
-          <>
-            <button
-              className={`icon-button favorite-button ${favorite ? "is-favorite" : ""}`}
-              onClick={onToggleFavorite}
-              title={favorite ? "Remove from favorites" : "Add to favorites"}
-              aria-label={favorite ? `Remove ${track.title} from favorites` : `Add ${track.title} to favorites`}
-              aria-pressed={favorite}
-            >
-              <Heart size={17} fill={favorite ? "currentColor" : "none"} />
-            </button>
-            {!track.id.startsWith("radio:") ? (
-              <button
-                className="icon-button"
-                onClick={onAddToPlaylist}
-                title="Add to playlist"
-                aria-label={`Add ${track.title} to playlist`}
-              >
-                <ListPlus size={17} />
-              </button>
-            ) : null}
-          </>
+        {track && !track.id.startsWith("radio:") ? (
+          <button
+            className="icon-button"
+            onClick={onAddToPlaylist}
+            title="Add to playlist"
+            aria-label={`Add ${track.title} to playlist`}
+          >
+            <ListPlus size={17} />
+          </button>
         ) : null}
         <button
           className={`icon-button ${queueOpen ? "is-active" : ""}`}
@@ -1261,6 +1513,7 @@ function ConnectionDialog({
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [state, setState] = useState<"idle" | "connecting" | "error">("idle");
+  const [connectLoaded, setConnectLoaded] = useState(0);
   const [error, setError] = useState("");
   const [settingsOpening, setSettingsOpening] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
@@ -1274,9 +1527,12 @@ function ConnectionDialog({
     const input: ConnectionInput = { username: username.trim(), password };
     if (!input.username || !input.password) return;
     setError("");
+    setConnectLoaded(0);
     try {
       setState("connecting");
-      const library = await connectBandcamp(input);
+      const library = await connectBandcamp(input, ({ loaded }) => {
+        setConnectLoaded(loaded);
+      });
       setPassword("");
       onConnected(library);
       onClose();
@@ -1423,21 +1679,28 @@ function ConnectionDialog({
           {error ? <div className="form-error">{error}</div> : null}
           <button className="primary-button primary-button--wide" type="submit" disabled={!username.trim() || !password || state === "connecting"}>
             {state === "connecting" ? <RefreshCw className="spin" size={17} /> : <Radio size={17} />}
-            {state === "connecting" ? "Connecting securely…" : "Connect Bandcamp"}
+            {state === "connecting"
+              ? connectLoaded
+                ? `Loading ${countLabel(connectLoaded, "release")}…`
+                : "Connecting securely…"
+              : "Connect Bandcamp"}
           </button>
         </form> : null}
         {connected ? (
-          <button
-            type="button"
-            className="danger-button"
-            onClick={() => void removeBandcamp()}
-            disabled={disconnecting}
-          >
-            {disconnecting ? <RefreshCw className="spin" size={15} /> : null}
-            {disconnecting
-              ? "Disconnecting Bandcamp…"
-              : "Disconnect and remove Bandcamp credentials"}
-          </button>
+          <>
+            {error ? <div className="form-error">{error}</div> : null}
+            <button
+              type="button"
+              className="danger-button"
+              onClick={() => void removeBandcamp()}
+              disabled={disconnecting}
+            >
+              {disconnecting ? <RefreshCw className="spin" size={15} /> : null}
+              {disconnecting
+                ? "Disconnecting Bandcamp…"
+                : "Disconnect and remove Bandcamp credentials"}
+            </button>
+          </>
         ) : null}
         <div className="connection-dialog__divider" />
         <section className="lastfm-settings" aria-labelledby="lastfm-settings-title">
@@ -1545,7 +1808,12 @@ function EmptyState({
 
 export default function App() {
   const queryClient = useQueryClient();
-  const [albums, setAlbums] = useState<Album[]>(() => readLibraryCache());
+  const { data: albums } = useQuery(libraryStateQueryOptions);
+  const setAlbums = useCallback(
+    (update: React.SetStateAction<Album[]>) =>
+      updateLibraryData(queryClient, update),
+    [queryClient],
+  );
   const [localFavorites, setLocalFavorites] = useState<LocalFavoriteCollection>(
     () => readLocalFavorites(),
   );
@@ -1562,11 +1830,10 @@ export default function App() {
   const [genre, setGenre] = useState("All");
   const [browseMode, setBrowseMode] = useState<LibraryBrowseMode>("releases");
   const [selectedArtist, setSelectedArtist] = useState<string>();
-  const [albumLimit, setAlbumLimit] = useState(ALBUM_BATCH_SIZE);
   const [queue, setQueue] = useState<Track[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
+  const [playbackClock] = useState(createPlaybackClock);
   const [volume, setVolume] = useState(0.72);
   const [repeat, setRepeat] = useState<RepeatMode>("off");
   const [queueOpen, setQueueOpen] = useState(false);
@@ -1589,10 +1856,11 @@ export default function App() {
   const queuePanelRef = useRef<HTMLElement>(null);
   const queueFocusRequestedRef = useRef(false);
   const searchRef = useRef<HTMLInputElement>(null);
-  const loadMoreRef = useRef<HTMLButtonElement>(null);
+  const libraryPaneRef = useRef<HTMLElement>(null);
   const libraryShuffleActiveRef = useRef(false);
   const randomPickActiveRef = useRef(false);
   const restoreGenerationRef = useRef(0);
+  const librarySyncGenerationRef = useRef(0);
   const restoredPlaybackSessionRef = useRef<PlaybackSession | undefined>(undefined);
   const restoredRadioScrobbleProgressRef = useRef<RadioScrobbleProgress | undefined>(
     undefined,
@@ -1638,13 +1906,23 @@ export default function App() {
   );
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
   const currentTrack = queue[currentIndex];
+  const currentRadioTimeline = useMemo(
+    () => boundRadioChapters(currentTrack?.radioChapters ?? []),
+    [currentTrack?.radioChapters],
+  );
+  const currentRadioScrobbleTimeline = useMemo(
+    () =>
+      currentTrack?.id.startsWith("radio:")
+        ? radioChapterTimelineFromBounded(currentTrack, currentRadioTimeline)
+        : [],
+    [currentRadioTimeline, currentTrack],
+  );
   const currentRadioShowId = currentTrack
     ? radioShowIdFromTrackId(currentTrack.id)
     : undefined;
   const latestPlayerStateRef = useRef({
     queue,
     currentIndex,
-    positionSeconds: currentTime,
     volume,
     repeatMode: repeat,
     queueOpen,
@@ -1652,7 +1930,6 @@ export default function App() {
   latestPlayerStateRef.current = {
     queue,
     currentIndex,
-    positionSeconds: currentTime,
     volume,
     repeatMode: repeat,
     queueOpen,
@@ -1854,7 +2131,7 @@ export default function App() {
             : undefined;
         setQueue(restoredQueue);
         setCurrentIndex(state.currentIndex);
-        setCurrentTime(state.positionSeconds);
+        playbackClock.restore(state.positionSeconds);
         setVolume(state.volume);
         setRepeat(state.repeatMode);
         setQueueOpen(Boolean(restoredTrack) && state.queueOpen);
@@ -1877,33 +2154,57 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [reportPlayerStateError]);
+  }, [playbackClock, reportPlayerStateError]);
 
   const syncLibrary = useCallback(async (announce = true) => {
+    const generation = librarySyncGenerationRef.current + 1;
+    librarySyncGenerationRef.current = generation;
+    const previousLibrary =
+      queryClient.getQueryData<Album[]>(libraryQueryKey) ?? [];
     setSyncState("syncing");
     try {
-      const library = await fetchLibrary();
+      const library = await fetchLibrary((progress) => {
+        if (librarySyncGenerationRef.current !== generation) return;
+        setAlbums((current) => mergeLibraryProgress(current, progress));
+      });
+      if (librarySyncGenerationRef.current !== generation) return;
       setAlbums(library);
       setConnected(true);
       setLibraryError("");
       setSyncState("idle");
       if (announce) notify(`${countLabel(library.length, "album")} synced`, "good");
     } catch (cause) {
+      if (librarySyncGenerationRef.current !== generation) return;
+      setAlbums(previousLibrary);
       const message = String(cause).replace(/^Error:\s*/, "");
       setLibraryError(message);
       setSyncState("error");
       if (announce) notify(message, "bad");
     }
-  }, [notify]);
+  }, [notify, queryClient, setAlbums]);
 
   useEffect(() => {
     let active = true;
+    const generation = librarySyncGenerationRef.current;
     (async () => {
       try {
         const available = await hasConnection();
-        if (!active) return;
+        if (
+          !active ||
+          librarySyncGenerationRef.current !== generation
+        ) return;
         setConnected(available);
         if (available) {
+          const snapshot = await hydrateLibraryQuery().catch(() => undefined);
+          if (
+            !active ||
+            librarySyncGenerationRef.current !== generation
+          ) return;
+          if (snapshot) {
+            queryClient.setQueryData(libraryQueryKey, snapshot.albums, {
+              updatedAt: snapshot.savedAt,
+            });
+          }
           await syncLibrary(false);
         } else {
           clearRuntimeCaches();
@@ -1918,8 +2219,9 @@ export default function App() {
     })();
     return () => {
       active = false;
+      librarySyncGenerationRef.current += 1;
     };
-  }, [syncLibrary]);
+  }, [queryClient, setAlbums, syncLibrary]);
 
   useEffect(() => {
     let active = true;
@@ -1936,18 +2238,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const positionSeconds = playbackClock.readExact();
     if (currentTrack?.id.startsWith("radio:")) {
       const restoredRadio = restoredRadioScrobbleProgressRef.current;
       radioScrobbleProgressRef.current =
         restoredRadio?.showTrackId === currentTrack.id
-          ? { ...restoredRadio, lastPosition: currentTime }
-          : createRadioScrobbleProgress(currentTrack.id, currentTime);
+          ? { ...restoredRadio, lastPosition: positionSeconds }
+          : createRadioScrobbleProgress(currentTrack.id, positionSeconds);
       restoredRadioScrobbleProgressRef.current = undefined;
       playbackSessionRef.current = {
         trackId: "",
         startedAt: 0,
         listenedSeconds: 0,
-        lastPosition: currentTime,
+        lastPosition: positionSeconds,
         nowPlayingSent: false,
         scrobbleState: "idle",
       };
@@ -1960,7 +2263,7 @@ export default function App() {
         ...restored,
         startedAt: 0,
         nowPlayingSent: false,
-        lastPosition: currentTime,
+        lastPosition: positionSeconds,
       };
       restoredPlaybackSessionRef.current = undefined;
       return;
@@ -1969,16 +2272,17 @@ export default function App() {
       trackId: currentTrack?.id ?? "",
       startedAt: 0,
       listenedSeconds: 0,
-      lastPosition: currentTime,
+      lastPosition: positionSeconds,
       nowPlayingSent: false,
       scrobbleState: "idle",
     };
-  }, [currentTrack?.id]);
+  }, [currentTrack?.id, playbackClock]);
 
   const checkpointLatestPlayerState = useCallback(() => {
     const state = latestPlayerStateRef.current;
     const track = state.queue[state.currentIndex];
     if (!track || isEphemeralTrackId(track.id)) return Promise.resolve(false);
+    const positionSeconds = playbackClock.readExact();
     const persistedIndex =
       state.queue
         .slice(0, state.currentIndex + 1)
@@ -1988,7 +2292,7 @@ export default function App() {
       checkpointPlayerState({
         currentIndex: persistedIndex,
         currentTrackId: track.id,
-        positionSeconds: state.positionSeconds,
+        positionSeconds,
         lastFmProgress: persistedLastFmProgress(track, playbackSessionRef.current),
         radioScrobbleProgress: persistedRadioScrobbleProgress(
           track,
@@ -1996,17 +2300,18 @@ export default function App() {
         ),
       }),
     );
-  }, [enqueuePlayerStateWrite]);
+  }, [enqueuePlayerStateWrite, playbackClock]);
 
   useEffect(() => {
     if (!playerStateReady) return;
     const timer = window.setTimeout(() => {
       const track = queue[currentIndex];
+      const positionSeconds = playbackClock.readExact();
       void enqueuePlayerStateWrite(() =>
         savePlayerState({
           queue,
           currentIndex,
-          positionSeconds: currentTime,
+          positionSeconds,
           volume,
           repeatMode: repeat,
           queueOpen,
@@ -2029,6 +2334,7 @@ export default function App() {
     currentIndex,
     enqueuePlayerStateWrite,
     playerStateReady,
+    playbackClock,
     queue,
     queueOpen,
     repeat,
@@ -2211,14 +2517,17 @@ export default function App() {
 
   const handleAudioPlaying = useCallback(() => {
     if (!currentTrack) return;
+    const positionSeconds =
+      audioRef.current?.currentTime ?? playbackClock.readExact();
     if (currentTrack.id.startsWith("radio:")) {
       const progress =
         radioScrobbleProgressRef.current ??
-        createRadioScrobbleProgress(currentTrack.id, currentTime);
-      const advanced = advanceRadioScrobbling(
+        createRadioScrobbleProgress(currentTrack.id, positionSeconds);
+      const advanced = advanceRadioScrobblingWithTimeline(
         currentTrack,
+        currentRadioScrobbleTimeline,
         progress,
-        audioRef.current?.currentTime ?? currentTime,
+        positionSeconds,
         true,
         lastFmStatus.connected,
       );
@@ -2239,22 +2548,25 @@ export default function App() {
       }
     });
   }, [
-    currentTime,
     currentTrack,
+    currentRadioScrobbleTimeline,
     dispatchRadioScrobbleActions,
     lastFmStatus.connected,
     notify,
+    playbackClock,
   ]);
 
   const handleAudioSeeking = useCallback((event: SyntheticEvent<HTMLAudioElement>) => {
-    playbackSessionRef.current.lastPosition = event.currentTarget.currentTime;
+    const positionSeconds = event.currentTarget.currentTime;
+    playbackClock.seek(positionSeconds);
+    playbackSessionRef.current.lastPosition = positionSeconds;
     if (radioScrobbleProgressRef.current) {
       radioScrobbleProgressRef.current = {
         ...radioScrobbleProgressRef.current,
-        lastPosition: event.currentTarget.currentTime,
+        lastPosition: positionSeconds,
       };
     }
-  }, []);
+  }, [playbackClock]);
 
   const handleAudioLoadedMetadata = useCallback((event: SyntheticEvent<HTMLAudioElement>) => {
     const pending = pendingRestorePositionRef.current;
@@ -2272,14 +2584,13 @@ export default function App() {
       };
     }
     event.currentTarget.currentTime = position;
-    setCurrentTime(position);
+    playbackClock.restore(position);
     pendingRestorePositionRef.current = undefined;
-  }, [currentTrack?.id]);
+  }, [currentTrack?.id, playbackClock]);
 
   const handleAudioTimeUpdate = useCallback((event: SyntheticEvent<HTMLAudioElement>) => {
     const position = event.currentTarget.currentTime;
-    const second = Math.floor(position);
-    setCurrentTime((value) => Math.floor(value) === second ? value : second);
+    playbackClock.updateFromMedia(position);
 
     const track = currentTrack;
     if (!track) return;
@@ -2287,8 +2598,9 @@ export default function App() {
       const progress =
         radioScrobbleProgressRef.current ??
         createRadioScrobbleProgress(track.id, position);
-      const advanced = advanceRadioScrobbling(
+      const advanced = advanceRadioScrobblingWithTimeline(
         track,
+        currentRadioScrobbleTimeline,
         progress,
         position,
         playing,
@@ -2332,9 +2644,11 @@ export default function App() {
       });
   }, [
     currentTrack,
+    currentRadioScrobbleTimeline,
     dispatchRadioScrobbleActions,
     lastFmStatus.connected,
     notify,
+    playbackClock,
     playing,
   ]);
 
@@ -2353,7 +2667,7 @@ export default function App() {
   }, [currentTrack]);
 
   const advanceQueue = useCallback(() => {
-    setCurrentTime(0);
+    playbackClock.reset();
     setCurrentIndex((index) => {
       if (repeat === "one") return index;
       if (index + 1 < queue.length) return index + 1;
@@ -2361,17 +2675,18 @@ export default function App() {
       setPlaying(false);
       return index;
     });
-  }, [queue.length, repeat]);
+  }, [playbackClock, queue.length, repeat]);
 
   const next = useCallback(() => {
     if (!currentTrack) return;
-    const playbackSeconds = audioRef.current?.currentTime ?? currentTime;
-    const chapterTime = nextRadioChapterTime(
-      currentTrack?.radioChapters,
+    const playbackSeconds =
+      audioRef.current?.currentTime ?? playbackClock.readExact();
+    const chapterTime = nextRadioChapterTimeInTimeline(
+      currentRadioTimeline,
       playbackSeconds,
     );
     if (chapterTime !== undefined) {
-      setCurrentTime(chapterTime);
+      playbackClock.seek(chapterTime);
       if (audioRef.current) audioRef.current.currentTime = chapterTime;
       return;
     }
@@ -2379,11 +2694,18 @@ export default function App() {
       currentIndex + 1 < queue.length ||
       (repeat === "all" && queue.length > 1);
     if (!canAdvance) return;
-    setCurrentTime(0);
+    playbackClock.reset();
     setCurrentIndex((index) =>
       index + 1 < queue.length ? index + 1 : 0,
     );
-  }, [currentIndex, currentTime, currentTrack, queue.length, repeat]);
+  }, [
+    currentIndex,
+    currentRadioTimeline,
+    currentTrack,
+    playbackClock,
+    queue.length,
+    repeat,
+  ]);
 
   const handleAudioEnded = useCallback((event: SyntheticEvent<HTMLAudioElement>) => {
     const track = currentTrack;
@@ -2391,8 +2713,9 @@ export default function App() {
       const progress =
         radioScrobbleProgressRef.current ??
         createRadioScrobbleProgress(track.id, event.currentTarget.currentTime);
-      const advanced = advanceRadioScrobbling(
+      const advanced = advanceRadioScrobblingWithTimeline(
         track,
+        currentRadioScrobbleTimeline,
         progress,
         event.currentTarget.currentTime,
         true,
@@ -2434,6 +2757,7 @@ export default function App() {
     advanceQueue();
   }, [
     currentTrack,
+    currentRadioScrobbleTimeline,
     checkpointLatestPlayerState,
     dispatchRadioScrobbleActions,
     lastFmStatus.connected,
@@ -2443,19 +2767,20 @@ export default function App() {
 
   const previous = useCallback(() => {
     if (!currentTrack) return;
-    const playbackSeconds = audioRef.current?.currentTime ?? currentTime;
-    const chapterTime = previousRadioChapterTime(
-      currentTrack?.radioChapters,
+    const playbackSeconds =
+      audioRef.current?.currentTime ?? playbackClock.readExact();
+    const chapterTime = previousRadioChapterTimeInTimeline(
+      currentRadioTimeline,
       playbackSeconds,
       PREVIOUS_RESTART_THRESHOLD_SECONDS,
     );
     if (chapterTime !== undefined) {
-      setCurrentTime(chapterTime);
+      playbackClock.seek(chapterTime);
       if (audioRef.current) audioRef.current.currentTime = chapterTime;
       return;
     }
     if (playbackSeconds > PREVIOUS_RESTART_THRESHOLD_SECONDS) {
-      setCurrentTime(0);
+      playbackClock.reset();
       if (audioRef.current) audioRef.current.currentTime = 0;
       return;
     }
@@ -2463,11 +2788,18 @@ export default function App() {
       currentIndex > 0 ||
       (repeat === "all" && queue.length > 1);
     if (!canMoveBack) return;
-    setCurrentTime(0);
+    playbackClock.reset();
     setCurrentIndex((index) =>
       index > 0 ? index - 1 : queue.length - 1,
     );
-  }, [currentIndex, currentTime, currentTrack, queue.length, repeat]);
+  }, [
+    currentIndex,
+    currentRadioTimeline,
+    currentTrack,
+    playbackClock,
+    queue.length,
+    repeat,
+  ]);
 
   useEffect(() => {
     const keyboard = (event: KeyboardEvent) => {
@@ -2527,21 +2859,42 @@ export default function App() {
   }, [genre, genreSummary.all]);
 
   const effectiveBrowseMode = view === "library" ? browseMode : "releases";
+  const albumSearchIndex = useMemo(
+    () =>
+      new Map(
+        albums.map((album) => [
+          album.id,
+          `${album.title} ${album.artist} ${album.genre ?? ""}`.toLowerCase(),
+        ]),
+      ),
+    [albums],
+  );
   const matchingAlbums = useMemo(() => {
     const list = albums.filter((album) => {
       if (genre !== "All" && genreKey(album.genre) !== genreKey(genre)) return false;
-      if (deferredQuery && !`${album.title} ${album.artist} ${album.genre ?? ""}`.toLowerCase().includes(deferredQuery)) return false;
+      if (
+        deferredQuery &&
+        !albumSearchIndex.get(album.id)?.includes(deferredQuery)
+      ) return false;
       if (!matchesBrowseMode(album, effectiveBrowseMode)) return false;
       return true;
     });
     const sorted = [...list].sort((a, b) => {
-      if (sort === "artist") return a.artist.localeCompare(b.artist);
-      if (sort === "title") return a.title.localeCompare(b.title);
+      if (sort === "artist") return LIBRARY_COLLATOR.compare(a.artist, b.artist);
+      if (sort === "title") return LIBRARY_COLLATOR.compare(a.title, b.title);
       if (sort === "year") return (b.year ?? 0) - (a.year ?? 0);
       return (b.addedAt ?? "").localeCompare(a.addedAt ?? "");
     });
     return view === "recent" ? sorted.slice(0, 12) : sorted;
-  }, [albums, deferredQuery, effectiveBrowseMode, genre, sort, view]);
+  }, [
+    albumSearchIndex,
+    albums,
+    deferredQuery,
+    effectiveBrowseMode,
+    genre,
+    sort,
+    view,
+  ]);
   const artistGroups = useMemo(() => groupAlbumsByArtist(matchingAlbums), [matchingAlbums]);
   const visibleAlbums = useMemo(
     () =>
@@ -2554,54 +2907,33 @@ export default function App() {
     () => artistGroups.find((group) => group.key === selectedArtist),
     [artistGroups, selectedArtist],
   );
-  const currentRadioChapter = radioAiringAt(currentTrack?.radioChapters, currentTime).current;
   const canPrevious = Boolean(currentTrack) && (
-    currentTime > PREVIOUS_RESTART_THRESHOLD_SECONDS ||
     currentIndex > 0 ||
-    (repeat === "all" && queue.length > 1) ||
-    previousRadioChapterTime(currentTrack?.radioChapters, currentTime) !== undefined
+    (repeat === "all" && queue.length > 1)
   );
   const canNext = Boolean(currentTrack) && (
     currentIndex + 1 < queue.length ||
-    (repeat === "all" && queue.length > 1) ||
-    nextRadioChapterTime(currentTrack?.radioChapters, currentTime) !== undefined
+    (repeat === "all" && queue.length > 1)
   );
-  const windowTitleSubject =
-    nowPlayingOpen && currentTrack
-      ? currentRadioChapter?.title ?? currentTrack.title
-      : selectedAlbum?.title ??
-        activeArtist?.name ??
-        (view === "discover"
-          ? "Discover"
-          : view === "radio"
-            ? "Bandcamp Radio"
-            : currentRadioChapter?.title ?? currentTrack?.title);
-  const windowTitle = windowTitleSubject ? `${windowTitleSubject} — Coda` : "Coda";
-
-  useEffect(() => {
-    document.title = windowTitle;
-    if (!isDesktop()) return;
-    void import("@tauri-apps/api/window")
-      .then(({ getCurrentWindow }) => getCurrentWindow().setTitle(windowTitle))
-      .catch(() => {
-        // The static native title remains a safe fallback.
-      });
-  }, [windowTitle]);
 
   const libraryBrowseCounts = useMemo(
-    () => ({
-      artists: groupAlbumsByArtist(albums).length,
-      albums: albums.filter((album) => matchesBrowseMode(album, "albums")).length,
-      singles: albums.filter((album) => matchesBrowseMode(album, "singles")).length,
-    }),
+    () => {
+      const artists = new Set<string>();
+      let albumCount = 0;
+      let singleCount = 0;
+      for (const album of albums) {
+        artists.add(artistKey(album.artist));
+        if (matchesBrowseMode(album, "albums")) albumCount += 1;
+        if (matchesBrowseMode(album, "singles")) singleCount += 1;
+      }
+      return {
+        artists: artists.size,
+        albums: albumCount,
+        singles: singleCount,
+      };
+    },
     [albums],
   );
-  const renderedAlbums = visibleAlbums.slice(0, albumLimit);
-
-  useEffect(() => {
-    setAlbumLimit(ALBUM_BATCH_SIZE);
-  }, [browseMode, deferredQuery, genre, selectedArtist, sort, view]);
-
   useEffect(() => {
     if (
       effectiveBrowseMode === "artists" &&
@@ -2612,49 +2944,30 @@ export default function App() {
     }
   }, [artistGroups, effectiveBrowseMode, selectedArtist]);
 
-  useEffect(() => {
-    const target = loadMoreRef.current;
-    if (!target || albumLimit >= visibleAlbums.length) return;
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry?.isIntersecting) {
-          setAlbumLimit((limit) => Math.min(limit + ALBUM_BATCH_SIZE, visibleAlbums.length));
-        }
-      },
-      { rootMargin: "500px" },
-    );
-    observer.observe(target);
-    return () => observer.disconnect();
-  }, [albumLimit, visibleAlbums.length]);
-
   const ensureTracks = useCallback(async (album: Album): Promise<Album> => {
     if (album.tracks?.length) {
       const hydrated = albumWithTracks(album, album.tracks);
       if (hydrated.coverArt !== album.coverArt) {
-        setAlbums((items) => {
-          const updated = items.map((item) => item.id === album.id ? hydrated : item);
-          writeLibraryCache(updated);
-          return updated;
-        });
+        setAlbums((items) =>
+          items.map((item) => item.id === album.id ? hydrated : item),
+        );
         setSelectedAlbum((item) => item?.id === album.id ? hydrated : item);
       }
       return hydrated;
     }
     setAlbumLoading(true);
     try {
-      const tracks = await fetchAlbum(album);
+      const tracks = await queryClient.ensureQueryData(albumQueryOptions(album));
       const hydrated = albumWithTracks(album, tracks);
-      setAlbums((items) => {
-        const updated = items.map((item) => item.id === album.id ? hydrated : item);
-        if (hydrated.coverArt !== album.coverArt) writeLibraryCache(updated);
-        return updated;
-      });
+      setAlbums((items) =>
+        items.map((item) => item.id === album.id ? hydrated : item),
+      );
       setSelectedAlbum((item) => item?.id === album.id ? hydrated : item);
       return hydrated;
     } finally {
       setAlbumLoading(false);
     }
-  }, []);
+  }, [queryClient, setAlbums]);
 
   const openAlbum = useCallback(async (album: Album) => {
     const hasLocalTracklist = Boolean(album.tracks?.length);
@@ -2706,12 +3019,12 @@ export default function App() {
       if (!ready.tracks?.length) return;
       setQueue(ready.tracks);
       setCurrentIndex(0);
-      setCurrentTime(0);
+      playbackClock.reset();
       setPlaying(true);
     } catch (cause) {
       notify(String(cause), "bad");
     }
-  }, [ensureTracks, notify]);
+  }, [ensureTracks, notify, playbackClock]);
 
   const queueAlbum = useCallback(async (album: Album) => {
     try {
@@ -2767,7 +3080,7 @@ export default function App() {
       if (action === "play" || action === "shuffle") {
         setQueue(action === "shuffle" ? shuffled(tracks) : tracks);
         setCurrentIndex(0);
-        setCurrentTime(0);
+        playbackClock.reset();
         setPlaying(true);
         notify(
           action === "shuffle"
@@ -2782,7 +3095,7 @@ export default function App() {
     } finally {
       setArtistAction(undefined);
     }
-  }, [artistAction, notify]);
+  }, [artistAction, notify, playbackClock]);
 
   const queueSearchResults = useCallback(async () => {
     if (queueSearchProgress || !visibleAlbums.length) return;
@@ -2823,13 +3136,9 @@ export default function App() {
       );
       const tracks = tracksByAlbum.flat();
       if (hydrated.size) {
-        setAlbums((items) => {
-          const updated = items.map((album) => hydrated.get(album.id) ?? album);
-          if (Array.from(hydrated.values()).some((album) => album.coverArt)) {
-            writeLibraryCache(updated);
-          }
-          return updated;
-        });
+        setAlbums((items) =>
+          items.map((album) => hydrated.get(album.id) ?? album),
+        );
       }
       setQueue((items) => appendUnique(items, tracks));
       notify(
@@ -2888,14 +3197,12 @@ export default function App() {
         notify("Bandcamp did not return any playable tracks.", "bad");
         return;
       }
-      setAlbums((items) => {
-        const updated = items.map((album) => hydrated.get(album.id) ?? album);
-        writeLibraryCache(updated);
-        return updated;
-      });
+      setAlbums((items) =>
+        items.map((album) => hydrated.get(album.id) ?? album),
+      );
       setQueue(tracks);
       setCurrentIndex(0);
-      setCurrentTime(0);
+      playbackClock.reset();
       setPlaying(true);
       notify(
         `${countLabel(tracks.length, "track")} from ${scopeName} shuffled`,
@@ -2905,7 +3212,7 @@ export default function App() {
       libraryShuffleActiveRef.current = false;
       setLibraryShuffleProgress(undefined);
     }
-  }, [albums, connected, notify]);
+  }, [albums, connected, notify, playbackClock]);
 
   const playTrack = useCallback((track: Track) => {
     setQueue((items) => {
@@ -2920,9 +3227,9 @@ export default function App() {
       setCurrentIndex(insertion);
       return copy;
     });
-    setCurrentTime(0);
+    playbackClock.reset();
     setPlaying(true);
-  }, [currentIndex]);
+  }, [currentIndex, playbackClock]);
 
   const playTrackAt = useCallback((track: Track, position: number) => {
     const safePosition = Number.isFinite(position) ? Math.max(0, position) : 0;
@@ -2931,20 +3238,20 @@ export default function App() {
       pendingRestorePositionRef.current = { trackId: track.id, position: safePosition };
     }
     playTrack(track);
-    setCurrentTime(safePosition);
+    playbackClock.seek(safePosition);
     if (alreadyLoaded && audioRef.current) {
       audioRef.current.currentTime = safePosition;
     }
-  }, [currentTrack?.id, playTrack]);
+  }, [currentTrack?.id, playTrack, playbackClock]);
 
   const playTracks = useCallback((tracks: Track[]) => {
     if (!tracks.length) return;
     setQueue(tracks);
     setCurrentIndex(0);
-    setCurrentTime(0);
+    playbackClock.reset();
     setPlaying(true);
     notify(`Playing ${countLabel(tracks.length, "track")}`, "good");
-  }, [notify]);
+  }, [notify, playbackClock]);
 
   const queueTracks = useCallback((tracks: Track[]) => {
     if (!tracks.length) return;
@@ -2998,11 +3305,11 @@ export default function App() {
       });
       if (!nextQueue.length) {
         setPlaying(false);
-        setCurrentTime(0);
+        playbackClock.reset();
       }
       return nextQueue;
     });
-  }, []);
+  }, [playbackClock]);
 
   const clearQueue = useCallback(() => {
     if (currentTrack) {
@@ -3012,16 +3319,16 @@ export default function App() {
     }
     setQueue([]);
     setCurrentIndex(0);
-    setCurrentTime(0);
+    playbackClock.reset();
     setPlaying(false);
     setStreamUrl(undefined);
     setSelectedAlbum(undefined);
-  }, [currentIndex, currentTrack]);
+  }, [currentIndex, currentTrack, playbackClock]);
 
   const seek = useCallback((value: number) => {
-    setCurrentTime(value);
+    playbackClock.seek(value);
     if (audioRef.current) audioRef.current.currentTime = value;
-  }, []);
+  }, [playbackClock]);
 
   const cycleRepeat = useCallback(() => {
     setRepeat((value) => value === "off" ? "all" : value === "all" ? "one" : "off");
@@ -3061,11 +3368,9 @@ export default function App() {
         ),
       );
       if (recovered.size) {
-        setAlbums((items) => {
-          const updated = items.map((album) => recovered.get(album.id) ?? album);
-          writeLibraryCache(updated);
-          return updated;
-        });
+        setAlbums((items) =>
+          items.map((album) => recovered.get(album.id) ?? album),
+        );
         setSelectedAlbum((album) => album ? recovered.get(album.id) ?? album : album);
       }
 
@@ -3087,6 +3392,7 @@ export default function App() {
 
   const handleDisconnect = useCallback(async () => {
     await disconnect();
+    librarySyncGenerationRef.current += 1;
     restoreGenerationRef.current += 1;
     setPlayerStateReady(false);
     clearRuntimeCaches();
@@ -3094,7 +3400,7 @@ export default function App() {
     setAlbums([]);
     setQueue([]);
     setCurrentIndex(0);
-    setCurrentTime(0);
+    playbackClock.reset();
     setPlaying(false);
     setNowPlayingOpen(false);
     pendingRestorePositionRef.current = undefined;
@@ -3109,7 +3415,7 @@ export default function App() {
     });
     notify("Bandcamp credentials removed", "good");
     setConnectionOpen(false);
-  }, [enqueuePlayerStateWrite, notify, queryClient]);
+  }, [enqueuePlayerStateWrite, notify, playbackClock, queryClient]);
 
   const toggleQueue = useCallback(() => {
     setQueueOpen((open) => {
@@ -3121,9 +3427,9 @@ export default function App() {
 
   const playQueueIndex = useCallback((index: number) => {
     setCurrentIndex(index);
-    setCurrentTime(0);
+    playbackClock.reset();
     setPlaying(true);
-  }, []);
+  }, [playbackClock]);
 
   const shuffleQueue = useCallback(() => {
     setQueue((items) => {
@@ -3172,6 +3478,7 @@ export default function App() {
     notify(`${track.title} added to queue`, "good");
   }, [notify]);
   const handleConnected = useCallback((library: Album[]) => {
+    librarySyncGenerationRef.current += 1;
     setAlbums(library);
     setConnected(true);
     setPlayerStateReady(true);
@@ -3363,28 +3670,23 @@ export default function App() {
           connected={connected}
           onConnect={openConnection}
         />
-        <main className="library-pane">
+        <main className="library-pane" ref={libraryPaneRef}>
           {nowPlayingOpen && currentTrack ? (
             <NowPlayingView
               track={currentTrack}
               queue={queue}
               currentIndex={currentIndex}
               playing={playing}
-              currentTime={currentTime}
+              playbackClock={playbackClock}
+              radioTimeline={currentRadioTimeline}
               duration={currentTrack.duration}
               volume={volume}
               repeat={repeat}
               artwork={(
-                <CoverArt
-                  size="large"
-                  album={{
-                    id: currentTrack.albumId,
-                    title: currentTrack.album,
-                    artist: currentTrack.artist,
-                    coverArt: currentTrack.coverArt,
-                    artworkUrl: currentTrack.artworkUrl,
-                    palette: currentTrack.palette,
-                  }}
+                <ClockedNowPlayingArtwork
+                  playbackClock={playbackClock}
+                  track={currentTrack}
+                  radioTimeline={currentRadioTimeline}
                 />
               )}
               airPlayAvailable={airPlayAvailable}
@@ -3461,7 +3763,7 @@ export default function App() {
                 onPlayAt={playTrackAt}
                 onQueue={queueTrack}
                 currentTrackId={currentTrack?.id}
-                currentTime={currentTime}
+                playbackClock={playbackClock}
                 playing={playing}
                 onTogglePlayback={togglePlayback}
                 favoriteShowIds={favoriteRadioShowIds}
@@ -3718,11 +4020,15 @@ export default function App() {
                   </span>
                 </div>
                 {artistGroups.length ? (
-                  <div className="artist-grid">
-                    {artistGroups.map((group) => (
-                      <ArtistCard key={group.key} group={group} onOpen={openArtist} />
-                    ))}
-                  </div>
+                  <Suspense fallback={<LibrarySkeleton />}>
+                    <ArtistVirtualGrid
+                      items={artistGroups}
+                      renderItem={(group) => (
+                        <ArtistCard group={group} onOpen={openArtist} />
+                      )}
+                      scrollElementRef={libraryPaneRef}
+                    />
+                  </Suspense>
                 ) : (
                   <EmptyState
                     icon={<UsersRound size={28} />}
@@ -3769,11 +4075,12 @@ export default function App() {
                   </div>
                 </div>
                 {visibleAlbums.length ? (
-                  <>
-                    <div className="album-grid">
-                      {renderedAlbums.map((album) => (
+                  <Suspense fallback={<LibrarySkeleton />}>
+                    <AlbumVirtualGrid
+                      ariaLabel={releaseSectionTitle}
+                      items={visibleAlbums}
+                      renderItem={(album) => (
                         <AlbumCard
-                          key={album.id}
                           album={album}
                           onOpen={openAlbum}
                           onPlay={playAlbum}
@@ -3783,18 +4090,10 @@ export default function App() {
                           playing={playing}
                           onTogglePlayback={togglePlayback}
                         />
-                      ))}
-                    </div>
-                    {renderedAlbums.length < visibleAlbums.length ? (
-                      <button
-                        ref={loadMoreRef}
-                        className="load-more"
-                        onClick={() => setAlbumLimit((limit) => Math.min(limit + ALBUM_BATCH_SIZE, visibleAlbums.length))}
-                      >
-                        Load more releases
-                      </button>
-                    ) : null}
-                  </>
+                      )}
+                      scrollElementRef={libraryPaneRef}
+                    />
+                  </Suspense>
                 ) : (
                   <EmptyState
                     icon={<Search size={28} />}
@@ -3824,7 +4123,8 @@ export default function App() {
             queue={queue}
             currentIndex={currentIndex}
             currentTrack={currentTrack}
-            currentTime={currentTime}
+            radioTimeline={currentRadioTimeline}
+            playbackClock={playbackClock}
             playing={playing}
             onPlay={playQueueIndex}
             onRemove={removeQueueItem}
@@ -3843,8 +4143,9 @@ export default function App() {
       {nowPlayingOpen && currentTrack ? null : (
         <Player
           track={currentTrack}
+          radioTimeline={currentRadioTimeline}
           playing={playing}
-          currentTime={currentTime}
+          playbackClock={playbackClock}
           duration={currentTrack?.duration ?? 0}
           volume={volume}
           repeat={repeat}
@@ -3885,9 +4186,20 @@ export default function App() {
         onLoadedMetadata={handleAudioLoadedMetadata}
         onTimeUpdate={handleAudioTimeUpdate}
         onDurationChange={(event) => {
-          if (Number.isFinite(event.currentTarget.duration)) setCurrentTime(event.currentTarget.currentTime);
+          if (Number.isFinite(event.currentTarget.duration)) {
+            playbackClock.updateFromMedia(event.currentTarget.currentTime);
+          }
         }}
         onEnded={handleAudioEnded}
+      />
+      <WindowTitleController
+        playbackClock={playbackClock}
+        currentTrack={currentTrack}
+        radioTimeline={currentRadioTimeline}
+        nowPlayingOpen={nowPlayingOpen}
+        selectedAlbumTitle={selectedAlbum?.title}
+        activeArtistName={activeArtist?.name}
+        view={view}
       />
       {connectionOpen ? (
         <ConnectionDialog

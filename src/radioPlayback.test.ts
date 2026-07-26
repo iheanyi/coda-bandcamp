@@ -3,8 +3,12 @@ import {
   boundRadioChapters,
   MAX_RADIO_CHAPTERS,
   nextRadioChapterTime,
+  nextRadioChapterTimeInTimeline,
   previousRadioChapterTime,
+  previousRadioChapterTimeInTimeline,
   radioAiringAt,
+  radioAiringAtTimeline,
+  radioAiringIndexesAt,
   radioShowIdFromTrackId,
 } from "./radioPlayback";
 import type { RadioChapter } from "./types";
@@ -19,6 +23,24 @@ describe("radioAiringAt", () => {
   it("returns the first upcoming chapter before the first timestamp", () => {
     expect(radioAiringAt(chapters, 4)).toEqual({
       next: chapters[0],
+    });
+  });
+
+  it("selects an already bounded timeline by index without changing semantics", () => {
+    const timeline = boundRadioChapters([
+      chapters[2],
+      chapters[1],
+      { ...chapters[1], title: "Corrected Mirage" },
+      chapters[0],
+    ]);
+
+    expect(radioAiringIndexesAt(timeline, 45)).toEqual({
+      currentIndex: 2,
+      nextIndex: 3,
+    });
+    expect(radioAiringAtTimeline(timeline, 45)).toEqual({
+      current: timeline[2],
+      next: timeline[3],
     });
   });
 
@@ -96,6 +118,15 @@ describe("Radio chapter transport", () => {
 
     expect(nextRadioChapterTime(duplicateTimeline, 30)).toBe(70);
     expect(previousRadioChapterTime(duplicateTimeline, 71)).toBe(30);
+  });
+
+  it("uses the same transport behavior with a pre-bounded timeline", () => {
+    const timeline = boundRadioChapters(chapters);
+
+    expect(nextRadioChapterTimeInTimeline(timeline, 4)).toBe(15);
+    expect(nextRadioChapterTimeInTimeline(timeline, 45)).toBe(120);
+    expect(previousRadioChapterTimeInTimeline(timeline, 70)).toBe(45);
+    expect(previousRadioChapterTimeInTimeline(timeline, 47)).toBe(15);
   });
 });
 

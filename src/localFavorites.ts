@@ -139,7 +139,6 @@ function sanitizeAlbum(value: unknown): Album | undefined {
     ...(isAbsent(value.year) ? {} : { year: value.year }),
     ...(isAbsent(value.genre) ? {} : { genre: value.genre }),
     ...(isAbsent(value.addedAt) ? {} : { addedAt: value.addedAt }),
-    ...(tracks ? { tracks: tracks as Track[] } : {}),
     palette: colors,
   };
 }
@@ -199,27 +198,7 @@ function uniqueRadioShows(items: RadioShowSummary[]): RadioShowSummary[] {
   });
 }
 
-function sameTrackMetadata(left: Track, right: Track): boolean {
-  return (
-    left.id === right.id &&
-    left.title === right.title &&
-    left.artist === right.artist &&
-    left.album === right.album &&
-    left.albumId === right.albumId &&
-    left.duration === right.duration &&
-    left.track === right.track &&
-    left.disc === right.disc &&
-    left.albumArtist === right.albumArtist &&
-    left.musicBrainzId === right.musicBrainzId &&
-    left.coverArt === right.coverArt &&
-    left.palette[0] === right.palette[0] &&
-    left.palette[1] === right.palette[1]
-  );
-}
-
 function sameAlbumMetadata(left: Album, right: Album): boolean {
-  const leftTracks = left.tracks ?? [];
-  const rightTracks = right.tracks ?? [];
   return (
     left.id === right.id &&
     left.title === right.title &&
@@ -231,9 +210,7 @@ function sameAlbumMetadata(left: Album, right: Album): boolean {
     left.genre === right.genre &&
     left.addedAt === right.addedAt &&
     left.palette[0] === right.palette[0] &&
-    left.palette[1] === right.palette[1] &&
-    leftTracks.length === rightTracks.length &&
-    leftTracks.every((track, index) => sameTrackMetadata(track, rightTracks[index]))
+    left.palette[1] === right.palette[1]
   );
 }
 
@@ -280,11 +257,6 @@ export function sanitizeLocalFavorites(value: unknown): LocalFavoriteCollection 
   ) {
     return undefined;
   }
-  const embeddedTrackCount = albums.reduce(
-    (total, album) => total + (album?.tracks?.length ?? 0),
-    0,
-  );
-  if (embeddedTrackCount > MAX_FAVORITE_TRACKS) return undefined;
   return {
     albumIds,
     songIds,
@@ -401,12 +373,6 @@ export function repairLocalFavoriteMetadata(
     .filter((album) => wantedAlbumIds.has(album.id))
     .map(sanitizeAlbum)
     .filter((album): album is Album => Boolean(album))
-    .map((album) => {
-      const existing = existingAlbums.get(album.id);
-      return existing?.tracks?.length && !album.tracks?.length
-        ? { ...album, tracks: existing.tracks }
-        : album;
-    })
     .filter((album) => {
       const existing = existingAlbums.get(album.id);
       return !existing || !sameAlbumMetadata(existing, album);

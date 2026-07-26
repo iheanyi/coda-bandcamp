@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   advanceRadioScrobbling,
+  advanceRadioScrobblingWithTimeline,
   completeRadioShowScrobble,
   createRadioScrobbleProgress,
   markRadioChapterScrobble,
   markRadioShowScrobble,
   radioChapterTimeline,
+  radioChapterAtTimeline,
 } from "./radioScrobbling";
 import type { Track } from "./types";
 
@@ -54,6 +56,33 @@ describe("Radio scrobbling", () => {
       { title: "First light", start: 60, end: 180 },
       { title: "Corrected title", start: 180, end: 720 },
     ]);
+  });
+
+  it("reuses a precomputed timeline without changing scrobble accounting", () => {
+    const timeline = radioChapterTimeline(radioTrack);
+    const progress = createRadioScrobbleProgress(radioTrack.id, 60);
+    const direct = advanceRadioScrobbling(
+      radioTrack,
+      progress,
+      70,
+      true,
+      true,
+      1_000,
+    );
+    const precomputed = advanceRadioScrobblingWithTimeline(
+      radioTrack,
+      timeline,
+      progress,
+      70,
+      true,
+      true,
+      1_000,
+    );
+
+    expect(precomputed).toEqual(direct);
+    expect(radioChapterAtTimeline(timeline, 70)?.chapter.title).toBe(
+      "First light",
+    );
   });
 
   it("sends chapter Now Playing with radio semantics and scrobbles actual listening", () => {

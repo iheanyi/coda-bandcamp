@@ -14,7 +14,13 @@ import {
   Radio,
   RefreshCw,
 } from "lucide-react";
-import { memo, useCallback, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { countLabel } from "./countLabel";
 import {
   fetchRadioShow,
@@ -28,7 +34,11 @@ import {
   RadioChapterArtwork,
   RadioChapterCopy,
 } from "./RadioChapterMetadata";
-import { boundRadioChapters, radioAiringAt } from "./radioPlayback";
+import {
+  boundRadioChapters,
+  radioAiringIndexesAt,
+} from "./radioPlayback";
+import type { PlaybackClock } from "./playbackClock";
 import type { RadioShow, RadioShowSummary, Track } from "./types";
 import { transitionCodaView } from "./viewTransitions";
 
@@ -200,7 +210,7 @@ const RadioDetail = memo(function RadioDetail({
   onQueue,
   onPlayAt,
   currentTrackId,
-  currentTime,
+  playbackClock,
   playing,
   onTogglePlayback,
   onOpenItem,
@@ -214,19 +224,30 @@ const RadioDetail = memo(function RadioDetail({
   onQueue: (track: Track) => void;
   onPlayAt?: (track: Track, position: number) => void;
   currentTrackId?: string;
-  currentTime: number;
+  playbackClock: PlaybackClock;
   playing: boolean;
   onTogglePlayback: () => void;
   onOpenItem: (url: string) => void;
   favorite: boolean;
   onToggleFavorite: (show: RadioShowSummary) => void;
 }) {
-  const track = radioTrack(show);
+  const track = useMemo(() => radioTrack(show), [show]);
   const chapters = track.radioChapters ?? [];
   const activeShow = currentTrackId === track.id;
-  const currentChapter = activeShow
-    ? radioAiringAt(chapters, currentTime).current
-    : undefined;
+  const getCurrentChapterIndex = useCallback(
+    () =>
+      activeShow
+        ? radioAiringIndexesAt(chapters, playbackClock.getSnapshot()).currentIndex
+        : -1,
+    [activeShow, chapters, playbackClock],
+  );
+  const currentChapterIndex = useSyncExternalStore(
+    playbackClock.subscribe,
+    getCurrentChapterIndex,
+    getCurrentChapterIndex,
+  );
+  const currentChapter =
+    currentChapterIndex >= 0 ? chapters[currentChapterIndex] : undefined;
 
   return (
     <section className="radio-detail" aria-labelledby="radio-detail-title">
@@ -354,7 +375,7 @@ export default function RadioView({
   onQueue,
   onPlayAt,
   currentTrackId,
-  currentTime,
+  playbackClock,
   playing,
   onTogglePlayback,
   favoriteShowIds,
@@ -364,7 +385,7 @@ export default function RadioView({
   onQueue: (track: Track) => void;
   onPlayAt?: (track: Track, position: number) => void;
   currentTrackId?: string;
-  currentTime: number;
+  playbackClock: PlaybackClock;
   playing: boolean;
   onTogglePlayback: () => void;
   favoriteShowIds: ReadonlySet<number>;
@@ -503,7 +524,7 @@ export default function RadioView({
         onQueue={onQueue}
         onPlayAt={onPlayAt}
         currentTrackId={currentTrackId}
-        currentTime={currentTime}
+        playbackClock={playbackClock}
         playing={playing}
         onTogglePlayback={onTogglePlayback}
         onOpenItem={openItem}

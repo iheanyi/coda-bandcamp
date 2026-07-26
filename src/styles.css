@@ -1584,6 +1584,16 @@ kbd {
   object-fit: cover;
 }
 
+.cover--artwork-transition img {
+  animation: cover-artwork-in 180ms ease-out;
+}
+
+@keyframes cover-artwork-in {
+  from {
+    opacity: 0;
+  }
+}
+
 .cover--card {
   width: 100%;
   aspect-ratio: 1;
@@ -2525,11 +2535,33 @@ html.coda-transition--page-crossfade::view-transition-new(coda-page-content) {
   outline-offset: 2px;
 }
 
-.player__track > div:nth-child(2) {
+.player__track-details {
   display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  min-width: 0;
+  gap: 5px;
+}
+
+.player__track-copy {
+  display: flex;
+  flex: 0 1 auto;
   flex-direction: column;
   min-width: 0;
   gap: 3px;
+}
+
+.player__track-title-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 4px;
+}
+
+.player__track-favorite {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
 }
 
 .player__track strong {
@@ -2804,11 +2836,36 @@ html:not(.coda-view-transitions-supported) .now-playing__up-next {
 }
 
 .now-playing__status i {
+  position: relative;
+  display: block;
+  flex: 0 0 auto;
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--now-playing-accent);
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--now-playing-accent) 13%, transparent);
+}
+
+.now-playing__status.is-playing i::after {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--now-playing-accent);
+  content: "";
+  animation: now-playing-status-pulse 1.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+@keyframes now-playing-status-pulse {
+  from {
+    opacity: 0.52;
+    transform: scale(1);
+  }
+
+  72%,
+  to {
+    opacity: 0;
+    transform: scale(2.8);
+  }
 }
 
 .now-playing__stage {
@@ -3696,18 +3753,7 @@ html:not(.coda-view-transitions-supported) .now-playing__up-next {
 }
 
 .player__radio-live {
-  display: grid;
-  grid-template-columns: 6px minmax(0, 1fr);
-  align-items: center;
-  gap: 6px;
-}
-
-.player__radio-live > i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 0 3px rgba(221, 101, 73, 0.12);
+  min-width: 0;
 }
 
 .player__radio-chapter-copy,

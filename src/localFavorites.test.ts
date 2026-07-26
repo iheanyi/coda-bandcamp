@@ -79,16 +79,7 @@ describe("local favorites", () => {
         musicBrainzId: "189002e7-3285-4e2e-92a3-7f6c30d407a2",
       }],
     });
-    expect(readLocalFavorites().albums[0].tracks).toMatchObject([
-      {
-        id: "song-1",
-        title: "Mirage",
-        albumId: "album-1",
-        coverArt: "cover-1",
-      },
-    ]);
-    expect(readLocalFavorites().albums[0].tracks?.[0]).not.toHaveProperty("streamUrl");
-    expect(readLocalFavorites().albums[0].tracks?.[0]).not.toHaveProperty("artworkUrl");
+    expect(readLocalFavorites().albums[0].tracks).toBeUndefined();
   });
 
   it("removes favorites and discards malformed storage", () => {
@@ -147,7 +138,7 @@ describe("local favorites", () => {
     expect(() => writeLocalFavorites(repaired)).not.toThrow();
   });
 
-  it("upgrades a metadata-only favorite when its tracklist becomes available", () => {
+  it("keeps album favorites metadata-only when a tracklist becomes available", () => {
     const repaired = repairLocalFavoriteMetadata(
       {
         albumIds: ["album-1"],
@@ -162,11 +153,11 @@ describe("local favorites", () => {
     );
 
     expect(repaired.albums).toHaveLength(1);
-    expect(repaired.albums[0].tracks).toMatchObject([{ id: "song-1" }]);
-    expect(writeLocalFavorites(repaired).albums[0].tracks).toHaveLength(1);
+    expect(repaired.albums[0].tracks).toBeUndefined();
+    expect(writeLocalFavorites(repaired).albums[0].tracks).toBeUndefined();
   });
 
-  it("updates a saved tracklist from refreshed Bandcamp metadata", () => {
+  it("strips legacy saved album tracklists on the next write", () => {
     const refreshedTrack = { ...track, title: "Mirage (Remastered)" };
     const repaired = repairLocalFavoriteMetadata(
       {
@@ -181,7 +172,7 @@ describe("local favorites", () => {
       [],
     );
 
-    expect(repaired.albums[0].tracks?.[0].title).toBe("Mirage (Remastered)");
+    expect(writeLocalFavorites(repaired).albums[0].tracks).toBeUndefined();
   });
 
   it("migrates version-one favorites without losing music metadata", () => {
