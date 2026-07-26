@@ -54,6 +54,7 @@ jobs:
 
       - run: npm ci
       - run: npm run test:coverage
+      - run: npm run build:perf
       - run: cargo test --manifest-path src-tauri/Cargo.toml
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
