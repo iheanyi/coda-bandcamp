@@ -47,6 +47,13 @@ function isDuration(value: unknown): value is number {
   );
 }
 
+function isMusicBrainzId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(value)
+  );
+}
+
 function isAbsent(value: unknown): value is null | undefined {
   return value === undefined || value === null;
 }
@@ -74,6 +81,8 @@ function sanitizeTrack(value: unknown): Track | undefined {
     !isDuration(value.duration) ||
     !isCount(value.track) ||
     (!isAbsent(value.disc) && !isCount(value.disc)) ||
+    (!isAbsent(value.albumArtist) && !isText(value.albumArtist, false)) ||
+    (!isAbsent(value.musicBrainzId) && !isMusicBrainzId(value.musicBrainzId)) ||
     (!isAbsent(value.coverArt) && !isText(value.coverArt, false)) ||
     !colors
   ) {
@@ -88,6 +97,8 @@ function sanitizeTrack(value: unknown): Track | undefined {
     duration: value.duration,
     track: value.track,
     ...(isAbsent(value.disc) ? {} : { disc: value.disc }),
+    ...(isAbsent(value.albumArtist) ? {} : { albumArtist: value.albumArtist }),
+    ...(isAbsent(value.musicBrainzId) ? {} : { musicBrainzId: value.musicBrainzId }),
     ...(isAbsent(value.coverArt) ? {} : { coverArt: value.coverArt }),
     palette: colors,
   };
@@ -198,6 +209,8 @@ function sameTrackMetadata(left: Track, right: Track): boolean {
     left.duration === right.duration &&
     left.track === right.track &&
     left.disc === right.disc &&
+    left.albumArtist === right.albumArtist &&
+    left.musicBrainzId === right.musicBrainzId &&
     left.coverArt === right.coverArt &&
     left.palette[0] === right.palette[0] &&
     left.palette[1] === right.palette[1]

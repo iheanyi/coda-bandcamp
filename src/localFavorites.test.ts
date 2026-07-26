@@ -18,6 +18,8 @@ const track: Track = {
   albumId: "album-1",
   duration: 188,
   track: 1,
+  albumArtist: "Sweeps",
+  musicBrainzId: "189002e7-3285-4e2e-92a3-7f6c30d407a2",
   coverArt: "cover-1",
   artworkUrl: "https://bandcamp.com/api/subsonic/rest/getCoverArt.view?t=signed",
   streamUrl: "https://bandcamp.com/api/subsonic/rest/stream.view?t=signed",
@@ -70,7 +72,12 @@ describe("local favorites", () => {
       albumIds: ["album-1"],
       songIds: ["song-1"],
       albums: [{ id: "album-1", coverArt: "cover-1" }],
-      tracks: [{ id: "song-1", coverArt: "cover-1" }],
+      tracks: [{
+        id: "song-1",
+        coverArt: "cover-1",
+        albumArtist: "Sweeps",
+        musicBrainzId: "189002e7-3285-4e2e-92a3-7f6c30d407a2",
+      }],
     });
     expect(readLocalFavorites().albums[0].tracks).toMatchObject([
       {

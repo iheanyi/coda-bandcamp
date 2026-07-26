@@ -109,6 +109,8 @@ struct Track {
     duration: u64,
     track: u64,
     disc: Option<u64>,
+    album_artist: Option<String>,
+    music_brainz_id: Option<String>,
     cover_art: Option<String>,
 }
 
@@ -249,12 +251,14 @@ struct LastFmAuthorization {
     token: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LastFmTrackInput {
     artist: String,
     title: String,
     album: String,
+    album_artist: Option<String>,
+    music_brainz_id: Option<String>,
     duration: u64,
     track_number: u64,
     chosen_by_user: Option<bool>,
@@ -939,6 +943,18 @@ fn validate_lastfm_token(token: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn valid_musicbrainz_id(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 36
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                *byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit()
+            }
+        })
+}
+
 fn validate_lastfm_track(input: &LastFmTrackInput) -> Result<(), String> {
     for (label, value) in [
         ("artist", input.artist.trim()),
@@ -951,6 +967,20 @@ fn validate_lastfm_track(input: &LastFmTrackInput) -> Result<(), String> {
     }
     if input.artist.trim().is_empty() || input.title.trim().is_empty() {
         return Err("Last.fm requires both an artist and track title.".into());
+    }
+    if let Some(album_artist) = input.album_artist.as_deref() {
+        if album_artist.len() > MAX_LASTFM_METADATA_LENGTH
+            || album_artist.chars().any(char::is_control)
+        {
+            return Err("The Last.fm album artist metadata is invalid.".into());
+        }
+    }
+    if input
+        .music_brainz_id
+        .as_deref()
+        .is_some_and(|value| !valid_musicbrainz_id(value))
+    {
+        return Err("The Last.fm MusicBrainz identifier is invalid.".into());
     }
     Ok(())
 }
@@ -1464,12 +1494,28 @@ fn lastfm_track_parameters(input: &LastFmTrackInput) -> BTreeMap<String, String>
     if !input.album.trim().is_empty() {
         parameters.insert("album".into(), input.album.trim().into());
     }
+    if let Some(album_artist) = input
+        .album_artist
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        parameters.insert("albumArtist".into(), album_artist.into());
+    }
+    if let Some(music_brainz_id) = input.music_brainz_id.as_deref() {
+        parameters.insert("mbid".into(), music_brainz_id.into());
+    }
     if input.duration > 0 {
         parameters.insert("duration".into(), input.duration.to_string());
     }
     if input.track_number > 0 {
         parameters.insert("trackNumber".into(), input.track_number.to_string());
     }
+    parameters
+}
+
+fn lastfm_scrobble_parameters(input: &LastFmTrackInput) -> BTreeMap<String, String> {
+    let mut parameters = lastfm_track_parameters(input);
     if let Some(chosen_by_user) = input.chosen_by_user {
         parameters.insert(
             "chosenByUser".into(),
@@ -1649,6 +1695,11 @@ fn track_from_value(value: &Value, fallback_album_id: &str) -> Option<Track> {
         duration: number_field(value, "duration").unwrap_or(0),
         track: number_field(value, "track").unwrap_or(0),
         disc: number_field(value, "discNumber"),
+        album_artist: string_field(value, &["displayAlbumArtist", "albumArtist"])
+            .filter(|artist| valid_subsonic_text(artist, MAX_SUBSONIC_TEXT_LENGTH, false))
+            .filter(|artist| !artist.trim().is_empty()),
+        music_brainz_id: string_field(value, &["musicBrainzId"])
+            .filter(|identifier| valid_musicbrainz_id(identifier)),
         cover_art: string_field(value, &["coverArt"]),
     })
 }
@@ -1697,6 +1748,14 @@ fn bounded_track_from_value(value: &Value, fallback_album_id: &str) -> Option<Tr
         || track
             .disc
             .is_some_and(|disc| disc > MAX_PLAYER_TRACK_NUMBER)
+        || track
+            .album_artist
+            .as_deref()
+            .is_some_and(|artist| !valid_subsonic_text(artist, MAX_SUBSONIC_TEXT_LENGTH, false))
+        || track
+            .music_brainz_id
+            .as_deref()
+            .is_some_and(|identifier| !valid_musicbrainz_id(identifier))
         || track
             .cover_art
             .as_deref()
@@ -1999,7 +2058,7 @@ async fn lastfm_scrobble(input: LastFmScrobbleInput) -> Result<(), String> {
         return Err("The Last.fm scrobble timestamp is invalid.".into());
     }
     let session = require_lastfm_session()?;
-    let mut parameters = lastfm_track_parameters(&input.track);
+    let mut parameters = lastfm_scrobble_parameters(&input.track);
     parameters.insert("method".into(), "track.scrobble".into());
     parameters.insert("sk".into(), session.key);
     parameters.insert("timestamp".into(), input.timestamp.to_string());
@@ -2707,6 +2766,8 @@ mod tests {
             artist: "Night Archive".into(),
             title: "Afterimage".into(),
             album: "Soft Focus".into(),
+            album_artist: Some("Night Archive".into()),
+            music_brainz_id: Some("189002e7-3285-4e2e-92a3-7f6c30d407a2".into()),
             duration: 210,
             track_number: 2,
             chosen_by_user: None,
@@ -2714,7 +2775,7 @@ mod tests {
         assert!(validate_lastfm_track(&valid).is_ok());
         assert!(validate_lastfm_track(&LastFmTrackInput {
             title: "Bad\nTitle".into(),
-            ..valid
+            ..valid.clone()
         })
         .is_err());
 
@@ -2722,14 +2783,62 @@ mod tests {
             artist: "North Star".into(),
             title: "First light".into(),
             album: "Daybreak".into(),
+            album_artist: None,
+            music_brainz_id: None,
             duration: 120,
             track_number: 2,
             chosen_by_user: Some(false),
         };
-        let parameters = lastfm_track_parameters(&radio);
+        let parameters = lastfm_scrobble_parameters(&radio);
         assert_eq!(
             parameters.get("chosenByUser").map(String::as_str),
             Some("0")
+        );
+        assert!(!lastfm_track_parameters(&radio).contains_key("chosenByUser"));
+        assert_eq!(
+            lastfm_track_parameters(&valid)
+                .get("albumArtist")
+                .map(String::as_str),
+            Some("Night Archive")
+        );
+        assert_eq!(
+            lastfm_track_parameters(&valid)
+                .get("mbid")
+                .map(String::as_str),
+            Some("189002e7-3285-4e2e-92a3-7f6c30d407a2")
+        );
+        assert!(validate_lastfm_track(&LastFmTrackInput {
+            music_brainz_id: Some("not-an-mbid".into()),
+            ..valid.clone()
+        })
+        .is_err());
+    }
+
+    #[test]
+    fn preserves_supported_lastfm_identity_from_subsonic_tracks() {
+        let track = track_from_value(
+            &serde_json::json!({
+                "id": "song-1",
+                "title": "Afterimage",
+                "artist": "Night Archive",
+                "album": "Soft Focus",
+                "albumId": "album-1",
+                "duration": 210,
+                "track": 2,
+                "displayAlbumArtist": "Night Archive & Guests",
+                "musicBrainzId": "189002e7-3285-4e2e-92a3-7f6c30d407a2"
+            }),
+            "album-1",
+        )
+        .expect("valid Subsonic track");
+
+        assert_eq!(
+            track.album_artist.as_deref(),
+            Some("Night Archive & Guests")
+        );
+        assert_eq!(
+            track.music_brainz_id.as_deref(),
+            Some("189002e7-3285-4e2e-92a3-7f6c30d407a2")
         );
     }
 

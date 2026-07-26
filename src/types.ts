@@ -22,6 +22,8 @@ export type Track = {
   duration: number;
   track: number;
   disc?: number;
+  albumArtist?: string;
+  musicBrainzId?: string;
   coverArt?: string;
   artworkUrl?: string;
   streamUrl?: string;
@@ -88,6 +90,8 @@ export type LastFmTrackInput = {
   artist: string;
   title: string;
   album: string;
+  albumArtist?: string;
+  musicBrainzId?: string;
   duration: number;
   trackNumber: number;
   chosenByUser?: boolean;
@@ -97,7 +101,10 @@ export type RepeatMode = "off" | "all" | "one";
 export type SortMode = "recent" | "artist" | "title" | "year";
 export type ScrobbleState = "idle" | "pending" | "sent" | "failed";
 
-export type PlayerStateTrack = Omit<Track, "artworkUrl" | "streamUrl">;
+export type PlayerStateTrack = Omit<
+  Track,
+  "albumArtist" | "artworkUrl" | "musicBrainzId" | "streamUrl"
+>;
 
 export type LastFmPlaybackProgress = {
   trackId: string;

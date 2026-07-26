@@ -183,8 +183,11 @@ function lastFmTrackInput(track: Track): LastFmTrackInput {
     artist: track.artist,
     title: track.title,
     album: track.album,
+    ...(track.albumArtist ? { albumArtist: track.albumArtist } : {}),
+    ...(track.musicBrainzId ? { musicBrainzId: track.musicBrainzId } : {}),
     duration: Math.max(0, Math.floor(track.duration)),
     trackNumber: Math.max(0, Math.floor(track.track)),
+    chosenByUser: true,
   };
 }
 

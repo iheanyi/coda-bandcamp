@@ -420,7 +420,15 @@ describe("Coda application flows", () => {
 
   it("updates Now Playing and scrobbles after actual listened time", async () => {
     mocks.hasConnection.mockResolvedValue(true);
-    mocks.fetchLibrary.mockResolvedValue([album]);
+    const enrichedTrack = {
+      ...tracks[0],
+      albumArtist: "Night Archive & Guests",
+      musicBrainzId: "189002e7-3285-4e2e-92a3-7f6c30d407a2",
+    };
+    mocks.fetchLibrary.mockResolvedValue([{
+      ...album,
+      tracks: [enrichedTrack, tracks[1]],
+    }]);
     mocks.getLastFmStatus.mockResolvedValue({
       configured: true,
       connected: true,
@@ -449,6 +457,9 @@ describe("Coda application flows", () => {
       artist: "Night Archive",
       title: "First Light",
       album: "Soft Focus",
+      albumArtist: "Night Archive & Guests",
+      musicBrainzId: "189002e7-3285-4e2e-92a3-7f6c30d407a2",
+      chosenByUser: true,
     });
   });
 
