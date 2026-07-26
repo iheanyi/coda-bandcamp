@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   boundRadioChapters,
   MAX_RADIO_CHAPTERS,
+  nextRadioChapterTime,
+  previousRadioChapterTime,
   radioAiringAt,
   radioShowIdFromTrackId,
 } from "./radioPlayback";
@@ -69,6 +71,31 @@ describe("boundRadioChapters", () => {
     expect(result).toHaveLength(MAX_RADIO_CHAPTERS);
     expect(result[0].timecode).toBe(1);
     expect(many[0]).toBe(originalFirst);
+  });
+});
+
+describe("Radio chapter transport", () => {
+  it("moves Next to the next distinct chapter, including before the show starts", () => {
+    expect(nextRadioChapterTime(chapters, 4)).toBe(15);
+    expect(nextRadioChapterTime(chapters, 45)).toBe(120);
+    expect(nextRadioChapterTime(chapters, 9_999)).toBeUndefined();
+  });
+
+  it("restarts the current chapter or moves to the previous one near its start", () => {
+    expect(previousRadioChapterTime(chapters, 70)).toBe(45);
+    expect(previousRadioChapterTime(chapters, 47)).toBe(15);
+    expect(previousRadioChapterTime(chapters, 16)).toBeUndefined();
+  });
+
+  it("skips duplicate timecodes so transport cannot get stuck", () => {
+    const duplicateTimeline: RadioChapter[] = [
+      { title: "First", artist: "Artist A", timecode: 30 },
+      { title: "Correction", artist: "Artist B", timecode: 30 },
+      { title: "Later", artist: "Artist C", timecode: 70 },
+    ];
+
+    expect(nextRadioChapterTime(duplicateTimeline, 30)).toBe(70);
+    expect(previousRadioChapterTime(duplicateTimeline, 71)).toBe(30);
   });
 });
 
