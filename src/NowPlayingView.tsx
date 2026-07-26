@@ -29,13 +29,14 @@ import { countLabel } from "./countLabel";
 import {
   RadioChapterArtwork,
   RadioChapterCopy,
+  type RadioChapterLocalLinks,
 } from "./RadioChapterMetadata";
 import {
   boundRadioChapters,
   radioAiringAt,
   radioShowIdFromTrackId,
 } from "./radioPlayback";
-import type { RepeatMode, Track } from "./types";
+import type { RadioChapter, RepeatMode, Track } from "./types";
 
 type NowPlayingViewProps = {
   track: Track;
@@ -63,6 +64,7 @@ type NowPlayingViewProps = {
   onArtist: (artist: string) => void;
   onAlbum: (track: Track) => void;
   onPlayQueueIndex: (index: number) => void;
+  getRadioChapterLocalLinks?: (chapter: RadioChapter) => RadioChapterLocalLinks;
   favorite?: boolean;
   onToggleFavorite?: () => void;
   onAddToPlaylist?: () => void;
@@ -96,6 +98,7 @@ function NowPlayingViewComponent({
   onArtist,
   onAlbum,
   onPlayQueueIndex,
+  getRadioChapterLocalLinks,
   favorite = false,
   onToggleFavorite,
   onAddToPlaylist,
@@ -228,6 +231,7 @@ function NowPlayingViewComponent({
                 chapter={radioAiring.current}
                 className="now-playing__radio-live-copy"
                 onOpen={openRadioChapter}
+                localLinks={getRadioChapterLocalLinks?.(radioAiring.current)}
               />
               {radioAiring.next ? (
                 <small>
@@ -395,6 +399,7 @@ function NowPlayingViewComponent({
                     chapter={chapter}
                     className="now-playing__radio-chapter-copy"
                     onOpen={openRadioChapter}
+                    localLinks={getRadioChapterLocalLinks?.(chapter)}
                   />
                   {isCurrent ? (
                     <span className="now-playing__radio-state">

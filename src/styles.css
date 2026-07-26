@@ -4073,6 +4073,18 @@ html:not(.coda-view-transitions-supported) .now-playing__up-next {
   color: #e58b74;
 }
 
+.radio-chapter-metadata-link.is-external::after {
+  margin-left: 3px;
+  color: #686d68;
+  content: "↗";
+  font-size: 0.78em;
+  text-decoration: none;
+}
+
+.radio-chapter-metadata-link.is-local:hover {
+  color: #dadbd5;
+}
+
 .radio-detail__chapter > time {
   color: #777b76;
   font-size: 9px;

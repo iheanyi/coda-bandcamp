@@ -101,7 +101,10 @@ import {
 import { countLabel } from "./countLabel";
 import { showAirPlayPicker, supportsAirPlayPicker } from "./media";
 import { NowPlayingView } from "./NowPlayingView";
-import { RadioChapterCopy } from "./RadioChapterMetadata";
+import {
+  RadioChapterCopy,
+  type RadioChapterLocalLinks,
+} from "./RadioChapterMetadata";
 import { isEphemeralTrackId } from "./playerState";
 import { appendUnique, keepCurrentTrack, moveItem, shuffled } from "./queue";
 import { pickRandomItem, pickWeightedItem } from "./random";
@@ -120,6 +123,7 @@ import {
   markRadioShowScrobble,
   type RadioScrobbleAction,
 } from "./radioScrobbling";
+import { resolveRadioChapterLibraryTargets } from "./radioNavigation";
 import type {
   Album,
   ConnectionInput,
@@ -128,6 +132,7 @@ import type {
   LastFmTrackInput,
   LocalFavoriteCollection,
   RadioScrobbleProgress,
+  RadioChapter,
   RadioShowSummary,
   RepeatMode,
   SortMode,
@@ -625,6 +630,7 @@ const QueuePanel = memo(function QueuePanel({
   onAlbum,
   onNowPlaying,
   onOpenRadioItem,
+  getRadioChapterLocalLinks,
   onSeek,
 }: {
   open: boolean;
@@ -643,6 +649,7 @@ const QueuePanel = memo(function QueuePanel({
   onAlbum: (track: Track) => void;
   onNowPlaying: () => void;
   onOpenRadioItem: (url: string) => void;
+  getRadioChapterLocalLinks: (chapter: RadioChapter) => RadioChapterLocalLinks;
   onSeek: (position: number) => void;
 }) {
   const [dragged, setDragged] = useState<number | null>(null);
@@ -729,6 +736,7 @@ const QueuePanel = memo(function QueuePanel({
                     chapter={currentRadioAiring.current}
                     className="queue-now__radio-copy"
                     onOpen={onOpenRadioItem}
+                    localLinks={getRadioChapterLocalLinks(currentRadioAiring.current)}
                   />
                   {currentRadioAiring.next ? (
                     <span className="queue-now__chapter-next">
@@ -882,6 +890,7 @@ function Player({
   onAlbum,
   onNowPlaying,
   onOpenRadioItem,
+  getRadioChapterLocalLinks,
   favorite,
   onToggleFavorite,
   onAddToPlaylist,
@@ -908,6 +917,7 @@ function Player({
   onAlbum: (track: Track) => void;
   onNowPlaying: () => void;
   onOpenRadioItem: (url: string) => void;
+  getRadioChapterLocalLinks: (chapter: RadioChapter) => RadioChapterLocalLinks;
   favorite: boolean;
   onToggleFavorite: () => void;
   onAddToPlaylist: () => void;
@@ -940,6 +950,7 @@ function Player({
                     chapter={radioAiring.current}
                     className="player__radio-chapter-copy"
                     onOpen={onOpenRadioItem}
+                    localLinks={getRadioChapterLocalLinks(radioAiring.current)}
                   />
                 </div>
               ) : (
@@ -3216,6 +3227,28 @@ export default function App() {
       setSelectedAlbum(undefined);
     }, "page-forward");
   }, []);
+  const getRadioChapterLocalLinks = useCallback(
+    (chapter: RadioChapter): RadioChapterLocalLinks => {
+      const targets = resolveRadioChapterLibraryTargets(chapter, albums);
+      const openLocalAlbum = targets.album
+        ? () => {
+            setNowPlayingOpen(false);
+            setView("library");
+            setSelectedArtist(undefined);
+            void openAlbum(targets.album!);
+          }
+        : undefined;
+
+      return {
+        track: openLocalAlbum,
+        album: openLocalAlbum,
+        artist: targets.artist
+          ? () => browseArtist(targets.artist!)
+          : undefined,
+      };
+    },
+    [albums, browseArtist, openAlbum],
+  );
   const clearLibraryFilters = useCallback(() => {
     setQuery("");
     setGenre("All");
@@ -3370,6 +3403,7 @@ export default function App() {
               onArtist={browseArtist}
               onAlbum={openTrackAlbum}
               onPlayQueueIndex={playQueueIndex}
+              getRadioChapterLocalLinks={getRadioChapterLocalLinks}
               favorite={
                 currentRadioShowId !== undefined
                   ? favoriteRadioShowIds.has(currentRadioShowId)
@@ -3801,6 +3835,7 @@ export default function App() {
             onAlbum={openTrackAlbum}
             onNowPlaying={openNowPlaying}
             onOpenRadioItem={openRadioItem}
+            getRadioChapterLocalLinks={getRadioChapterLocalLinks}
             onSeek={seek}
           />
         ) : null}
@@ -3827,6 +3862,7 @@ export default function App() {
           onAlbum={openTrackAlbum}
           onNowPlaying={openNowPlaying}
           onOpenRadioItem={openRadioItem}
+          getRadioChapterLocalLinks={getRadioChapterLocalLinks}
           favorite={currentTrack
             ? currentRadioShowId !== undefined
               ? favoriteRadioShowIds.has(currentRadioShowId)
