@@ -16,6 +16,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import {
   clearRuntimeCaches,
+  fetchAlbum,
   fetchCoverUrl,
   fetchLibrary,
   fetchStreamUrl,
@@ -71,6 +72,77 @@ describe("runtime media caches", () => {
     expect(mocks.invoke).toHaveBeenCalledTimes(2);
   });
 
+  it("bypasses cached album metadata for an explicit artwork refresh", async () => {
+    const album = {
+      id: "album-1",
+      title: "Soft Focus",
+      artist: "Night Archive",
+      songCount: 1,
+      duration: 210,
+      palette: ["#111111", "#222222"] as [string, string],
+    };
+    mocks.invoke.mockResolvedValue([{
+      id: "track-1",
+      title: "Afterimage",
+      artist: "Night Archive",
+      album: "Soft Focus",
+      albumId: "album-1",
+      duration: 210,
+      track: 1,
+    }]);
+
+    await fetchAlbum(album);
+    await fetchAlbum(album);
+    await fetchAlbum(album, { forceRefresh: true });
+
+    expect(mocks.invoke).toHaveBeenCalledTimes(2);
+    expect(mocks.invoke).toHaveBeenNthCalledWith(1, "fetch_album", {
+      albumId: "album-1",
+      forceRefresh: false,
+    });
+    expect(mocks.invoke).toHaveBeenNthCalledWith(2, "fetch_album", {
+      albumId: "album-1",
+      forceRefresh: true,
+    });
+  });
+
+  it("deduplicates concurrent explicit album refreshes", async () => {
+    const album = {
+      id: "album-1",
+      title: "Soft Focus",
+      artist: "Night Archive",
+      songCount: 1,
+      duration: 210,
+      palette: ["#111111", "#222222"] as [string, string],
+    };
+    let resolveRefresh!: (tracks: unknown[]) => void;
+    mocks.invoke.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRefresh = resolve;
+        }),
+    );
+
+    const first = fetchAlbum(album, { forceRefresh: true });
+    const second = fetchAlbum(album, { forceRefresh: true });
+    resolveRefresh([{
+      id: "track-1",
+      title: "Afterimage",
+      artist: "Night Archive",
+      album: "Soft Focus",
+      albumId: "album-1",
+      duration: 210,
+      track: 1,
+    }]);
+
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+    expect(mocks.invoke).toHaveBeenCalledWith("fetch_album", {
+      albumId: "album-1",
+      forceRefresh: true,
+    });
+  });
+
   it("does not let an expired request failure evict its replacement", async () => {
     let rejectExpired!: (cause: Error) => void;
     mocks.invoke
@@ -99,10 +171,12 @@ describe("runtime media caches", () => {
       async (
         command: string,
         args?: {
+          forceFull?: boolean;
           onProgress?: { onmessage: (value: unknown) => void };
         },
       ) => {
         expect(command).toBe("fetch_library");
+        expect(args?.forceFull).toBe(true);
         args?.onProgress?.onmessage({
           kind: "page",
           pageIndex: 0,
@@ -126,7 +200,7 @@ describe("runtime media caches", () => {
     );
     const onPage = vi.fn();
 
-    const albums = await fetchLibrary(onPage);
+    const albums = await fetchLibrary(onPage, { forceFull: true });
 
     expect(onPage).toHaveBeenCalledWith(expect.objectContaining({
       pageIndex: 0,

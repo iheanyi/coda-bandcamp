@@ -94,6 +94,7 @@ import {
   libraryQueryKey,
   libraryStateQueryOptions,
   mergeLibraryProgress,
+  shouldAutoRevalidateLibrary,
   updateLibraryData,
 } from "./libraryQueries";
 import {
@@ -2156,17 +2157,26 @@ export default function App() {
     };
   }, [playbackClock, reportPlayerStateError]);
 
-  const syncLibrary = useCallback(async (announce = true) => {
+  const syncLibrary = useCallback(async ({
+    announce = true,
+    forceFull = true,
+  }: {
+    announce?: boolean;
+    forceFull?: boolean;
+  } = {}) => {
     const generation = librarySyncGenerationRef.current + 1;
     librarySyncGenerationRef.current = generation;
     const previousLibrary =
       queryClient.getQueryData<Album[]>(libraryQueryKey) ?? [];
     setSyncState("syncing");
     try {
-      const library = await fetchLibrary((progress) => {
-        if (librarySyncGenerationRef.current !== generation) return;
-        setAlbums((current) => mergeLibraryProgress(current, progress));
-      });
+      const library = await fetchLibrary(
+        (progress) => {
+          if (librarySyncGenerationRef.current !== generation) return;
+          setAlbums((current) => mergeLibraryProgress(current, progress));
+        },
+        { forceFull },
+      );
       if (librarySyncGenerationRef.current !== generation) return;
       setAlbums(library);
       setConnected(true);
@@ -2204,8 +2214,13 @@ export default function App() {
             queryClient.setQueryData(libraryQueryKey, snapshot.albums, {
               updatedAt: snapshot.savedAt,
             });
+            if (!shouldAutoRevalidateLibrary(snapshot)) {
+              setLibraryError("");
+              setSyncState("idle");
+              return;
+            }
           }
-          await syncLibrary(false);
+          await syncLibrary({ announce: false, forceFull: false });
         } else {
           clearRuntimeCaches();
           setAlbums([]);
@@ -3351,7 +3366,7 @@ export default function App() {
         const album = missing[cursor];
         cursor += 1;
         try {
-          const tracks = await fetchAlbum(album);
+          const tracks = await fetchAlbum(album, { forceRefresh: true });
           const hydrated = albumWithTracks(album, tracks);
           if (hydrated.coverArt) recovered.set(album.id, hydrated);
         } catch {

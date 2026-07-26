@@ -250,23 +250,27 @@ describe("Coda application flows", () => {
     expect(screen.getByRole("button", { name: "Ambient" })).toBeInTheDocument();
   });
 
-  it("hydrates the native library cache before a network refresh completes", async () => {
-    let resolveRefresh!: (albums: Album[]) => void;
+  it("uses a fresh native library cache without revalidating", async () => {
+    const cachedAt = Date.now();
     mocks.hasConnection.mockResolvedValue(true);
     mocks.loadLibraryCache.mockResolvedValue({
-      savedAt: Date.now(),
+      savedAt: cachedAt,
+      lastFullSyncAt: cachedAt,
       albums: [album],
     });
-    mocks.fetchLibrary.mockReturnValue(new Promise((resolve) => {
-      resolveRefresh = resolve;
-    }));
+    mocks.fetchLibrary.mockResolvedValue([album]);
 
     renderApp();
 
     expect(await screen.findByText("Soft Focus")).toBeInTheDocument();
-    expect(mocks.fetchLibrary).toHaveBeenCalledTimes(1);
-    resolveRefresh([{ ...album, title: "Soft Focus (refreshed)" }]);
-    expect(await screen.findByText("Soft Focus (refreshed)")).toBeInTheDocument();
+    expect(mocks.fetchLibrary).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: /^sync$/i }));
+    await waitFor(() =>
+      expect(mocks.fetchLibrary).toHaveBeenCalledWith(expect.any(Function), {
+        forceFull: true,
+      }),
+    );
   });
 
   it("shows progressive sync pages and restores cached data after a failed refresh", async () => {
@@ -276,9 +280,11 @@ describe("Coda application flows", () => {
       title: "Arriving now",
     };
     let rejectRefresh!: (cause: Error) => void;
+    const staleAt = Date.now() - 16 * 60 * 1_000;
     mocks.hasConnection.mockResolvedValue(true);
     mocks.loadLibraryCache.mockResolvedValue({
-      savedAt: Date.now(),
+      savedAt: staleAt,
+      lastFullSyncAt: staleAt,
       albums: [album],
     });
     mocks.fetchLibrary.mockImplementation(
@@ -301,6 +307,9 @@ describe("Coda application flows", () => {
     renderApp();
 
     expect(await screen.findByText("Arriving now")).toBeInTheDocument();
+    expect(mocks.fetchLibrary).toHaveBeenCalledWith(expect.any(Function), {
+      forceFull: false,
+    });
     rejectRefresh(new Error("Refresh unavailable"));
     expect(await screen.findByText("Refresh unavailable")).toBeInTheDocument();
     expect(screen.getByText("Soft Focus")).toBeInTheDocument();
@@ -310,6 +319,7 @@ describe("Coda application flows", () => {
   it("ignores a native cache read that resolves after disconnect", async () => {
     let resolveCache!: (snapshot: {
       savedAt: number;
+      lastFullSyncAt: number;
       albums: Album[];
     }) => void;
     mocks.hasConnection.mockResolvedValue(true);
@@ -330,16 +340,23 @@ describe("Coda application flows", () => {
     }));
     expect(await screen.findByText("Your collection starts here")).toBeInTheDocument();
 
-    resolveCache({ savedAt: Date.now(), albums: [album] });
+    const cachedAt = Date.now();
+    resolveCache({
+      savedAt: cachedAt,
+      lastFullSyncAt: cachedAt,
+      albums: [album],
+    });
     await waitFor(() => expect(mocks.fetchLibrary).not.toHaveBeenCalled());
     expect(screen.queryByText("Soft Focus")).not.toBeInTheDocument();
   });
 
   it("keeps an active sync valid when native disconnect fails", async () => {
     let resolveRefresh!: (albums: Album[]) => void;
+    const staleAt = Date.now() - 16 * 60 * 1_000;
     mocks.hasConnection.mockResolvedValue(true);
     mocks.loadLibraryCache.mockResolvedValue({
-      savedAt: Date.now(),
+      savedAt: staleAt,
+      lastFullSyncAt: staleAt,
       albums: [album],
     });
     mocks.fetchLibrary.mockReturnValue(new Promise((resolve) => {

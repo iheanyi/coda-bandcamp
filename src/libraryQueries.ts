@@ -12,6 +12,7 @@ import {
 import type { Album, Track } from "./types";
 
 export const libraryQueryKey = ["bandcamp", "library"] as const;
+export const LIBRARY_AUTO_REVALIDATE_INTERVAL_MS = 15 * 60 * 1_000;
 
 export const libraryStateQueryOptions = queryOptions({
   queryKey: libraryQueryKey,
@@ -46,6 +47,15 @@ export function updateLibraryData(
 export async function hydrateLibraryQuery(
 ): Promise<LibraryCacheSnapshot | undefined> {
   return loadLibraryCache();
+}
+
+export function shouldAutoRevalidateLibrary(
+  snapshot: LibraryCacheSnapshot | undefined,
+  now = Date.now(),
+): boolean {
+  if (!snapshot?.albums.length) return true;
+  if (!Number.isFinite(snapshot.savedAt) || snapshot.savedAt > now) return true;
+  return now - snapshot.savedAt >= LIBRARY_AUTO_REVALIDATE_INTERVAL_MS;
 }
 
 export function mergeLibraryProgress(

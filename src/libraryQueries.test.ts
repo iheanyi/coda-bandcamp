@@ -1,8 +1,10 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 import {
+  LIBRARY_AUTO_REVALIDATE_INTERVAL_MS,
   libraryQueryKey,
   mergeLibraryProgress,
+  shouldAutoRevalidateLibrary,
   updateLibraryData,
 } from "./libraryQueries";
 import type { Album } from "./types";
@@ -41,5 +43,54 @@ describe("library query helpers", () => {
       ["two", "two"],
       ["three", "three"],
     ]);
+  });
+
+  it("keeps a fresh populated native cache quiet", () => {
+    const now = 1_800_000_000_000;
+    const snapshot = {
+      savedAt: now,
+      lastFullSyncAt: now,
+      albums: [album("one")],
+    };
+
+    expect(shouldAutoRevalidateLibrary(snapshot, now)).toBe(false);
+    expect(
+      shouldAutoRevalidateLibrary(
+        {
+          ...snapshot,
+          savedAt: now - LIBRARY_AUTO_REVALIDATE_INTERVAL_MS + 1,
+        },
+        now,
+      ),
+    ).toBe(false);
+  });
+
+  it("revalidates missing, empty, stale, and future-dated native caches", () => {
+    const now = 1_800_000_000_000;
+    const snapshot = {
+      savedAt: now,
+      lastFullSyncAt: now,
+      albums: [album("one")],
+    };
+
+    expect(shouldAutoRevalidateLibrary(undefined, now)).toBe(true);
+    expect(
+      shouldAutoRevalidateLibrary({ ...snapshot, albums: [] }, now),
+    ).toBe(true);
+    expect(
+      shouldAutoRevalidateLibrary(
+        {
+          ...snapshot,
+          savedAt: now - LIBRARY_AUTO_REVALIDATE_INTERVAL_MS,
+        },
+        now,
+      ),
+    ).toBe(true);
+    expect(
+      shouldAutoRevalidateLibrary(
+        { ...snapshot, savedAt: now + 1 },
+        now,
+      ),
+    ).toBe(true);
   });
 });
