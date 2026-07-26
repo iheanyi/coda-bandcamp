@@ -11,9 +11,58 @@
     />
     <link rel="icon" href="/src-tauri/icons/app-icon.svg" type="image/svg+xml" />
     <title>Coda</title>
+    <style>
+      html, body, #root { width: 100%; height: 100%; margin: 0; background: #111315; }
+      .app-boot {
+        display: grid;
+        place-items: center;
+        width: 100%;
+        height: 100%;
+        color: #dedcd6;
+        font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
+      }
+      .app-boot__content {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 13px;
+      }
+      .app-boot__mark {
+        position: relative;
+        width: 34px;
+        height: 34px;
+        border: 1px solid #3a3d3d;
+        border-radius: 50%;
+        background: #191c1e;
+        box-shadow: 0 12px 30px rgba(0, 0, 0, .28);
+      }
+      .app-boot__mark::before {
+        position: absolute;
+        inset: 8px;
+        border: 2px solid #db7962;
+        border-top-color: transparent;
+        border-radius: 50%;
+        animation: coda-boot 800ms linear infinite;
+        content: "";
+      }
+      .app-boot strong { font-size: 11px; letter-spacing: .18em; }
+      .app-boot span { color: #696d68; font-size: 9px; }
+      @keyframes coda-boot { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) {
+        .app-boot__mark::before { animation: none; border-top-color: #db7962; }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="app-boot" role="status" aria-live="polite">
+        <div class="app-boot__content">
+          <div class="app-boot__mark" aria-hidden="true"></div>
+          <strong>CODA</strong>
+          <span>Opening your collection…</span>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -1,28 +1,73 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Album, Track } from "./types";
 
 const mocks = vi.hoisted(() => ({
+  beginLastFmAuthorization: vi.fn(),
+  checkpointPlayerState: vi.fn(),
+  clearPlayerState: vi.fn(),
+  completeLastFmAuthorization: vi.fn(),
   connectBandcamp: vi.fn(),
+  disconnectLastFm: vi.fn(),
   fetchLibrary: vi.fn(),
+  fetchFavorites: vi.fn(),
+  fetchRadioShow: vi.fn(),
+  fetchStreamUrl: vi.fn(),
+  getLastFmStatus: vi.fn(),
   hasConnection: vi.fn(),
+  loadPlayerState: vi.fn(),
+  openLastFmAuthorization: vi.fn(),
   readLibraryCache: vi.fn(),
+  scrobbleLastFm: vi.fn(),
+  savePlayerState: vi.fn(),
+  setFavorite: vi.fn(),
+  updateLastFmNowPlaying: vi.fn(),
 }));
 
 vi.mock("./lib", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./lib")>();
   return {
     ...actual,
+    beginLastFmAuthorization: mocks.beginLastFmAuthorization,
+    checkpointPlayerState: mocks.checkpointPlayerState,
+    clearPlayerState: mocks.clearPlayerState,
+    completeLastFmAuthorization: mocks.completeLastFmAuthorization,
     connectBandcamp: mocks.connectBandcamp,
+    disconnectLastFm: mocks.disconnectLastFm,
     fetchLibrary: mocks.fetchLibrary,
+    fetchFavorites: mocks.fetchFavorites,
+    fetchRadioShow: mocks.fetchRadioShow,
+    fetchStreamUrl: mocks.fetchStreamUrl,
+    getLastFmStatus: mocks.getLastFmStatus,
     hasConnection: mocks.hasConnection,
     isDesktop: () => false,
+    openLastFmAuthorization: mocks.openLastFmAuthorization,
+    loadPlayerState: mocks.loadPlayerState,
     readLibraryCache: mocks.readLibraryCache,
+    scrobbleLastFm: mocks.scrobbleLastFm,
+    savePlayerState: mocks.savePlayerState,
+    setFavorite: mocks.setFavorite,
+    updateLastFmNowPlaying: mocks.updateLastFmNowPlaying,
     writeLibraryCache: vi.fn(),
   };
 });
 
 import App from "./App";
+
+function renderApp() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>,
+  );
+}
 
 const tracks: Track[] = [
   {
@@ -60,23 +105,105 @@ const album: Album = {
   palette: ["#777", "#222"],
 };
 
+const single: Album = {
+  id: "single-1",
+  title: "Streetlight",
+  artist: "Glass Taxi",
+  songCount: 1,
+  duration: 164,
+  genre: "Electronic",
+  tracks: [{
+    id: "single-track-1",
+    title: "Streetlight",
+    artist: "Glass Taxi",
+    album: "Streetlight",
+    albumId: "single-1",
+    duration: 164,
+    track: 1,
+    streamUrl: "https://example.test/streetlight.mp3",
+    palette: ["#968", "#221"],
+  }],
+  palette: ["#968", "#221"],
+};
+
 beforeEach(() => {
+  window.localStorage.clear();
+  mocks.beginLastFmAuthorization.mockReset();
+  mocks.checkpointPlayerState.mockReset().mockResolvedValue(true);
+  mocks.clearPlayerState.mockReset().mockResolvedValue(undefined);
+  mocks.completeLastFmAuthorization.mockReset();
   mocks.connectBandcamp.mockReset();
+  mocks.disconnectLastFm.mockReset();
   mocks.fetchLibrary.mockReset();
+  mocks.fetchFavorites.mockReset().mockResolvedValue({
+    albumIds: [],
+    songIds: [],
+    albums: [],
+    tracks: [],
+  });
+  mocks.fetchRadioShow.mockReset().mockResolvedValue({
+    id: 979,
+    subtitle: "The Coda Broadcast",
+    title: "Bandcamp Weekly",
+    description: "A broadcast from Bandcamp.",
+    publishedAt: "2026-07-20T12:00:00Z",
+    duration: 3_600,
+    streamUrl: "https://example.test/radio-979-refreshed.mp3",
+    artworkUrl: "https://example.test/radio-979.jpg",
+    chapters: [
+      { title: "Opening signal", artist: "Bandcamp Radio", timecode: 0 },
+      { title: "Second signal", artist: "Night Archive", timecode: 60 },
+    ],
+  });
+  mocks.fetchStreamUrl.mockReset().mockResolvedValue("https://example.test/restored.mp3");
+  mocks.getLastFmStatus.mockReset().mockResolvedValue({
+    configured: true,
+    connected: false,
+  });
   mocks.hasConnection.mockReset();
+  mocks.loadPlayerState.mockReset().mockResolvedValue(undefined);
+  mocks.openLastFmAuthorization.mockReset().mockResolvedValue(undefined);
   mocks.readLibraryCache.mockReset().mockReturnValue([]);
+  mocks.scrobbleLastFm.mockReset().mockResolvedValue(undefined);
+  mocks.savePlayerState.mockReset().mockResolvedValue(undefined);
+  mocks.setFavorite.mockReset().mockResolvedValue(undefined);
+  mocks.updateLastFmNowPlaying.mockReset().mockResolvedValue(undefined);
   mocks.hasConnection.mockResolvedValue(false);
 });
 
 describe("Coda application flows", () => {
+  it("locks the connection form and names the pending Bandcamp request", async () => {
+    let resolveConnection!: (albums: Album[]) => void;
+    mocks.connectBandcamp.mockReturnValue(new Promise((resolve) => {
+      resolveConnection = resolve;
+    }));
+    renderApp();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Connect Bandcamp" }));
+    const dialog = await screen.findByRole("dialog", { name: "Bring in your collection" });
+    fireEvent.change(within(dialog).getByLabelText("Subsonic username"), {
+      target: { value: "generated-user" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("Subsonic password"), {
+      target: { value: "generated-password" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Connect Bandcamp" }));
+
+    expect(within(dialog).getByRole("button", {
+      name: "Connecting securely…",
+    })).toBeDisabled();
+    expect(within(dialog).getByLabelText("Subsonic username")).toBeDisabled();
+    expect(within(dialog).getByLabelText("Subsonic password")).toBeDisabled();
+
+    resolveConnection([album]);
+    expect(await screen.findByText("Soft Focus")).toBeInTheDocument();
+  });
+
   it("connects from the valid empty state and renders the returned library", async () => {
     mocks.connectBandcamp.mockResolvedValue([album]);
-    render(<App />);
+    renderApp();
 
     expect(await screen.findByText("Your collection starts here")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Minimize" })).toHaveAttribute("title", "Minimize");
-    expect(screen.getByRole("button", { name: "Maximize window" }))
-      .toHaveAttribute("title", "Maximize window");
     fireEvent.click(screen.getByRole("button", { name: "Connect Bandcamp" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Bring in your collection" });
@@ -107,7 +234,7 @@ describe("Coda application flows", () => {
     });
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
-    render(<App />);
+    renderApp();
 
     await screen.findByText("Soft Focus");
     fireEvent.click(screen.getByRole("button", { name: "Play Soft Focus" }));
@@ -121,5 +248,448 @@ describe("Coda application flows", () => {
     expect(screen.getByText("End of the queue")).toBeInTheDocument();
     expect(screen.getAllByText("First Light").length).toBeGreaterThan(0);
     expect(screen.queryByText("Afterimage")).not.toBeInTheDocument();
+  });
+
+  it("durably saves a changed queue after the structural debounce", async () => {
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    fireEvent.click(screen.getByRole("button", { name: "Play Soft Focus" }));
+
+    await waitFor(
+      () =>
+        expect(mocks.savePlayerState).toHaveBeenCalledWith(
+          expect.objectContaining({
+            queue: tracks,
+            currentIndex: 0,
+          }),
+        ),
+      { timeout: 1_500 },
+    );
+  });
+
+  it("toggles the queue pane from the dedicated player control", async () => {
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    const appBody = document.querySelector(".app-body");
+    expect(appBody).not.toBeNull();
+    const libraryPane = screen.getByRole("main");
+    expect(screen.getByRole("complementary", { name: "Playback queue" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Upcoming tracks" })).toHaveAttribute(
+      "tabindex",
+      "0",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide queue" }));
+    expect(screen.queryByRole("complementary", { name: "Playback queue" })).not.toBeInTheDocument();
+    expect(document.querySelector(".queue-panel--closing")).toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByRole("button", { name: "Show queue" })).toHaveAttribute("aria-pressed", "false");
+    expect(appBody).toHaveClass("app-body--queue-closed");
+    expect(screen.getByRole("main")).toBe(libraryPane);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
+    await waitFor(() =>
+      expect(screen.getByRole("complementary", { name: "Playback queue" })).toHaveFocus(),
+    );
+    expect(screen.getByRole("button", { name: "Hide queue" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(appBody).not.toHaveClass("app-body--queue-closed");
+    expect(screen.getByRole("main")).toBe(libraryPane);
+  });
+
+  it("connects Last.fm without asking Coda for a Last.fm password", async () => {
+    mocks.beginLastFmAuthorization.mockResolvedValue({
+      authorizationUrl: "https://www.last.fm/api/auth/?api_key=key&token=token",
+      token: "token",
+    });
+    mocks.completeLastFmAuthorization.mockResolvedValue({
+      configured: true,
+      connected: true,
+      username: "nightlistener",
+    });
+    renderApp();
+
+    fireEvent.click(screen.getByRole("button", { name: "Connection settings" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByLabelText(/Last\.fm password/i)).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Connect Last.fm" }));
+    await waitFor(() => expect(mocks.openLastFmAuthorization).toHaveBeenCalledOnce());
+    fireEvent.click(within(dialog).getByRole("button", { name: "Finish connection" }));
+
+    expect(await within(dialog).findByText("nightlistener")).toBeInTheDocument();
+    expect(mocks.completeLastFmAuthorization).toHaveBeenCalledWith("token");
+  });
+
+  it("updates Now Playing and scrobbles after actual listened time", async () => {
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    mocks.getLastFmStatus.mockResolvedValue({
+      configured: true,
+      connected: true,
+      username: "nightlistener",
+    });
+    const { container } = renderApp();
+
+    await screen.findByText("Soft Focus");
+    fireEvent.click(screen.getByRole("button", { name: "Connection settings" }));
+    const settings = await screen.findByRole("dialog");
+    expect(await within(settings).findByText("nightlistener")).toBeInTheDocument();
+    fireEvent.click(within(settings).getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("button", { name: "Play Soft Focus" }));
+    await screen.findByText("Now playing");
+    const audio = container.querySelector("audio");
+    expect(audio).not.toBeNull();
+    fireEvent.playing(audio!);
+    await waitFor(() => expect(mocks.updateLastFmNowPlaying).toHaveBeenCalledOnce());
+
+    for (let position = 10; position <= 90; position += 10) {
+      audio!.currentTime = position;
+      fireEvent.timeUpdate(audio!);
+    }
+    await waitFor(() => expect(mocks.scrobbleLastFm).toHaveBeenCalledOnce());
+    expect(mocks.scrobbleLastFm.mock.calls[0][0]).toMatchObject({
+      artist: "Night Archive",
+      title: "First Light",
+      album: "Soft Focus",
+    });
+  });
+
+  it("plays one random track from the current browsing context", async () => {
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album, single]);
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    fireEvent.click(screen.getByRole("button", { name: /Singles\s*1/ }));
+    fireEvent.click(screen.getByRole("button", {
+      name: "Play a random track from the singles view",
+    }));
+
+    expect(await screen.findByText("Now playing")).toBeInTheDocument();
+    expect(screen.getAllByText("Streetlight").length).toBeGreaterThan(0);
+  });
+
+  it("restores the saved queue paused and applies its position after media metadata loads", async () => {
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    mocks.loadPlayerState.mockResolvedValue({
+      version: 1,
+      savedAt: Date.now(),
+      queue: tracks.map(({ streamUrl: _streamUrl, artworkUrl: _artworkUrl, ...track }) => track),
+      currentIndex: 1,
+      positionSeconds: 42,
+      volume: 0.44,
+      repeatMode: "one",
+      queueOpen: false,
+      lastFmProgress: {
+        trackId: "track-2",
+        startedAt: 0,
+        listenedSeconds: 80,
+        lastPosition: 42,
+        nowPlayingSent: false,
+        scrobbleState: "sent",
+      },
+    });
+    const { container } = renderApp();
+
+    expect(await screen.findByRole("button", { name: "Open Now Playing" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show queue" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(screen.getAllByText("Afterimage").length).toBeGreaterThan(0);
+    await waitFor(() => expect(mocks.fetchStreamUrl).toHaveBeenCalledWith("track-2"));
+
+    const audio = container.querySelector("audio");
+    expect(audio).not.toBeNull();
+    Object.defineProperty(audio!, "duration", {
+      configurable: true,
+      value: 210,
+    });
+    fireEvent.loadedMetadata(audio!);
+    expect(audio!.currentTime).toBe(42);
+    expect(screen.getByLabelText("Track position")).toHaveValue("42");
+  });
+
+  it("refreshes a restored Radio show and resumes its saved playhead without a connection", async () => {
+    mocks.hasConnection.mockResolvedValue(false);
+    mocks.loadPlayerState.mockResolvedValue({
+      version: 1,
+      savedAt: Date.now(),
+      queue: [{
+        id: "radio:979",
+        title: "The Coda Broadcast",
+        artist: "Bandcamp Radio",
+        album: "Bandcamp Weekly",
+        albumId: "radio:979",
+        duration: 3_600,
+        track: 1,
+        palette: ["#ca6954", "#241b1a"],
+      }],
+      currentIndex: 0,
+      positionSeconds: 65,
+      volume: 0.7,
+      repeatMode: "off",
+      queueOpen: false,
+    });
+    const { container } = renderApp();
+
+    await waitFor(() => expect(mocks.fetchRadioShow).toHaveBeenCalledWith(979));
+    await waitFor(() =>
+      expect(container.querySelector("audio")).toHaveAttribute(
+        "src",
+        "https://example.test/radio-979-refreshed.mp3",
+      ),
+    );
+    expect(screen.getAllByText("Second signal").length).toBeGreaterThan(0);
+    expect(mocks.fetchStreamUrl).not.toHaveBeenCalledWith("radio:979");
+
+    const audio = container.querySelector("audio")!;
+    Object.defineProperty(audio, "duration", {
+      configurable: true,
+      value: 3_600,
+    });
+    fireEvent.loadedMetadata(audio);
+    expect(audio.currentTime).toBe(65);
+    expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
+    const chapters = await screen.findByRole("region", { name: "Show chapters" });
+    expect(within(chapters).getByRole("button", {
+      name: "Seek to Second signal at 1:00",
+    })).toHaveAttribute("aria-current", "true");
+    fireEvent.click(within(chapters).getByRole("button", {
+      name: "Seek to Opening signal at 0:00",
+    }));
+    expect(audio.currentTime).toBe(0);
+    expect(within(chapters).getByRole("button", {
+      name: "Seek to Opening signal at 0:00",
+    })).toHaveAttribute("aria-current", "true");
+  });
+
+  it("retains a large restored queue while rendering upcoming tracks in batches", async () => {
+    const largeQueue = Array.from({ length: 300 }, (_, index): Track => ({
+      ...tracks[0],
+      id: `large-track-${index}`,
+      title: `Large queue track ${index}`,
+      track: index + 1,
+      streamUrl: undefined,
+    }));
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    mocks.loadPlayerState.mockResolvedValue({
+      version: 1,
+      savedAt: Date.now(),
+      queue: largeQueue,
+      currentIndex: 0,
+      positionSeconds: 0,
+      volume: 0.72,
+      repeatMode: "off",
+      queueOpen: true,
+    });
+    renderApp();
+
+    const showMore = await screen.findByRole("button", { name: /Show 49 more/ });
+    expect(screen.queryByText("Large queue track 299")).not.toBeInTheDocument();
+    fireEvent.click(showMore);
+    expect(await screen.findByText("Large queue track 299")).toBeInTheDocument();
+  });
+
+  it("separates release types and navigates through artist and album views", async () => {
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album, single]);
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    fireEvent.click(screen.getByRole("button", { name: /Singles\s*1/ }));
+    expect(await screen.findByText("Streetlight")).toBeInTheDocument();
+    expect(screen.queryByText("Soft Focus")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Shuffle singles" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Streetlight" }));
+    const singlePage = await screen.findByRole("article", {
+      name: "Streetlight release details",
+    });
+    expect(singlePage).toBeInTheDocument();
+    expect(within(singlePage).getByText("#")).toHaveClass("tracklist__number-heading");
+    expect(within(singlePage).getByTitle("Duration")).toHaveClass(
+      "tracklist__duration-heading",
+    );
+    expect(singlePage.querySelector(".track-row__duration")).toHaveTextContent("2:44");
+    expect(screen.getByRole("heading", { name: "1 song" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Shuffle album" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back to releases" }));
+
+    fireEvent.click(screen.getByTitle("Browse Glass Taxi"));
+    expect(await screen.findByRole("heading", { name: "Glass Taxi" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All artists" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Play all" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Shuffle artist" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Shuffle" }));
+    expect(await screen.findByText("Now playing")).toBeInTheDocument();
+    expect(screen.getAllByText("Streetlight").length).toBeGreaterThan(0);
+  });
+
+  it("opens Now Playing from the player artwork and returns to the exact prior view", async () => {
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    fireEvent.click(screen.getByRole("button", { name: "Open Soft Focus" }));
+    const albumPage = await screen.findByRole("article", { name: "Soft Focus release details" });
+    fireEvent.click(within(albumPage).getByRole("button", { name: "Play album" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Open Now Playing" }));
+    const nowPlaying = screen.getByRole("article", { name: "First Light" });
+    expect(within(nowPlaying).getByText("Now playing")).toBeInTheDocument();
+    expect(within(nowPlaying).getByRole("button", { name: "Pause" })).toBeInTheDocument();
+    expect(screen.queryByRole("contentinfo")).not.toBeInTheDocument();
+    expect(within(nowPlaying).getByRole("heading", { name: "First Light" })).toHaveFocus();
+    expect(document.title).toBe("First Light — Coda");
+
+    fireEvent.click(within(nowPlaying).getByRole("button", {
+      name: "Minimize Now Playing",
+    }));
+    expect(screen.getByRole("article", { name: "Soft Focus release details" })).toBeInTheDocument();
+    const miniArtwork = screen.getByRole("button", { name: "Open Now Playing" });
+    expect(miniArtwork).toBeInTheDocument();
+    await waitFor(() => expect(miniArtwork).toHaveFocus());
+  });
+
+  it("uses a shared-element view transition when the WebView supports it", async () => {
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      document,
+      "startViewTransition",
+    );
+    const startViewTransition = vi.fn((update: () => void) => {
+      update();
+      return { finished: Promise.resolve() };
+    });
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: startViewTransition,
+    });
+
+    try {
+      mocks.hasConnection.mockResolvedValue(true);
+      mocks.fetchLibrary.mockResolvedValue([album]);
+      renderApp();
+
+      await screen.findByText("Soft Focus");
+      fireEvent.click(screen.getByRole("button", { name: "Play Soft Focus" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Open Now Playing" }));
+
+      const nowPlaying = screen.getByRole("article", { name: "First Light" });
+      expect(startViewTransition).toHaveBeenCalledOnce();
+      expect(document.documentElement).toHaveClass("coda-view-transitions-supported");
+
+      fireEvent.click(within(nowPlaying).getByRole("button", {
+        name: "Minimize Now Playing",
+      }));
+      expect(startViewTransition).toHaveBeenCalledTimes(2);
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Open Now Playing" })).toHaveFocus(),
+      );
+    } finally {
+      document.documentElement.classList.remove(
+        "coda-view-transitioning",
+        "coda-view-transitions-supported",
+      );
+      if (originalDescriptor) {
+        Object.defineProperty(document, "startViewTransition", originalDescriptor);
+      } else {
+        Reflect.deleteProperty(document, "startViewTransition");
+      }
+    }
+  });
+
+  it("links Now Playing metadata to artist and album pages", async () => {
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    const { unmount } = renderApp();
+
+    await screen.findByText("Soft Focus");
+    fireEvent.click(screen.getByRole("button", { name: "Play Soft Focus" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open Now Playing" }));
+    let nowPlaying = screen.getByRole("article", { name: "First Light" });
+    fireEvent.click(within(nowPlaying).getByRole("button", { name: "Night Archive" }));
+    expect(await screen.findByRole("heading", { name: "Night Archive" })).toBeInTheDocument();
+
+    unmount();
+    renderApp();
+    await screen.findByText("Soft Focus");
+    fireEvent.click(screen.getByRole("button", { name: "Play Soft Focus" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open Now Playing" }));
+    nowPlaying = screen.getByRole("article", { name: "First Light" });
+    fireEvent.click(within(nowPlaying).getByRole("button", { name: "Soft Focus" }));
+    expect(await screen.findByRole("article", {
+      name: "Soft Focus release details",
+    })).toBeInTheDocument();
+  });
+
+  it("drives the shared player state from the Now Playing controls", async () => {
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    const { container } = renderApp();
+
+    await screen.findByText("Soft Focus");
+    fireEvent.click(screen.getByRole("button", { name: "Play Soft Focus" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open Now Playing" }));
+    let nowPlaying = screen.getByRole("article", { name: "First Light" });
+
+    const pauseButton = within(nowPlaying).getByRole("button", { name: "Pause" });
+    fireEvent.keyDown(pauseButton, { code: "Space", key: " " });
+    expect(within(nowPlaying).getByRole("button", { name: "Pause" })).toBeInTheDocument();
+    fireEvent.click(pauseButton);
+    expect(within(nowPlaying).getByRole("button", { name: "Play" })).toBeInTheDocument();
+
+    const repeat = within(nowPlaying).getByRole("button", { name: "Repeat off" });
+    fireEvent.click(repeat);
+    expect(within(nowPlaying).getByRole("button", { name: "Repeat queue" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    fireEvent.change(within(nowPlaying).getByLabelText("Now playing position"), {
+      target: { value: "60" },
+    });
+    expect(container.querySelector("audio")?.currentTime).toBe(60);
+
+    fireEvent.click(within(nowPlaying).getByRole("button", { name: "Play Afterimage" }));
+    nowPlaying = await screen.findByRole("article", { name: "Afterimage" });
+    expect(within(nowPlaying).getByRole("heading", { name: "Afterimage" })).toBeInTheDocument();
+  });
+
+  it("saves favorites locally and opens their internal release page", async () => {
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    fireEvent.click(screen.getByRole("button", { name: "Open Soft Focus" }));
+    const albumPage = await screen.findByRole("article", {
+      name: "Soft Focus release details",
+    });
+    fireEvent.click(within(albumPage).getByRole("button", { name: "Favorite" }));
+
+    expect(window.localStorage.getItem("coda.local-favorites.v1")).toContain("album-1");
+    expect(mocks.setFavorite).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Favorites" }));
+    expect(await screen.findByText("Local")).toBeInTheDocument();
+    expect(screen.getByText("Soft Focus")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Soft Focus.*Night Archive/ }));
+    expect(await screen.findByRole("article", {
+      name: "Soft Focus release details",
+    })).toBeInTheDocument();
   });
 });

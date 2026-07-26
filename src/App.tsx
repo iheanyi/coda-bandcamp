@@ -1,6 +1,8 @@
 import {
   Airplay,
+  AudioLines,
   ArrowDownUp,
+  ArrowLeft,
   Check,
   ChevronDown,
   ChevronRight,
@@ -8,8 +10,10 @@ import {
   Clock3,
   Compass,
   Disc3,
+  Dices,
   ExternalLink,
   GripVertical,
+  Heart,
   Images,
   Library,
   ListMusic,
@@ -27,13 +31,18 @@ import {
   Shuffle,
   SkipBack,
   SkipForward,
+  UsersRound,
   Volume2,
   VolumeX,
   X,
 } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
+  type CSSProperties,
   type DragEvent,
   type FormEvent,
+  type RefObject,
+  type SyntheticEvent,
   lazy,
   memo,
   Suspense,
@@ -47,39 +56,137 @@ import {
 import { genreKey, summarizeGenres } from "./genres";
 import {
   clearCoverUrlCache,
+  checkpointPlayerState,
+  clearPlayerState,
   clearRuntimeCaches,
+  beginLastFmAuthorization,
+  completeLastFmAuthorization,
   connectBandcamp,
   disconnect,
+  disconnectLastFm,
   fetchAlbum,
   fetchCoverUrl,
   fetchLibrary,
+  fetchRadioShow,
   fetchStreamUrl,
   formatTime,
+  getLastFmStatus,
   hasConnection,
   initials,
   invalidateCoverUrl,
   isDesktop,
+  openLastFmAuthorization,
   readLibraryCache,
+  loadPlayerState,
+  savePlayerState,
+  scrobbleLastFm,
+  updateLastFmNowPlaying,
   writeLibraryCache,
 } from "./lib";
+import {
+  artistKey,
+  groupAlbumsByArtist,
+  matchesBrowseMode,
+  type ArtistGroup,
+  type LibraryBrowseMode,
+} from "./libraryBrowse";
+import {
+  readLocalFavorites,
+  repairLocalFavoriteMetadata,
+  updateLocalFavorites,
+  writeLocalFavorites,
+} from "./localFavorites";
 import { showAirPlayPicker, supportsAirPlayPicker } from "./media";
+import { NowPlayingView } from "./NowPlayingView";
+import { isEphemeralTrackId } from "./playerState";
 import { appendUnique, keepCurrentTrack, moveItem, shuffled } from "./queue";
-import type { Album, ConnectionInput, RepeatMode, SortMode, Track } from "./types";
+import { pickRandomItem, pickWeightedItem } from "./random";
+import {
+  boundRadioChapters,
+  radioAiringAt,
+  radioShowIdFromTrackId,
+} from "./radioPlayback";
+import type {
+  Album,
+  ConnectionInput,
+  FavoriteCollection,
+  LastFmPlaybackProgress,
+  LastFmStatus,
+  LastFmTrackInput,
+  RepeatMode,
+  SortMode,
+  Track,
+} from "./types";
+import { transitionCodaView } from "./viewTransitions";
 
 type Toast = { id: number; message: string; tone?: "good" | "bad" };
-type LibraryView = "library" | "recent" | "discover";
+type LibraryView = "library" | "favorites" | "playlists" | "recent" | "discover" | "radio";
 type SyncState = "checking" | "idle" | "syncing" | "error";
+type PlaybackSession = {
+  trackId: string;
+  startedAt: number;
+  listenedSeconds: number;
+  lastPosition: number;
+  nowPlayingSent: boolean;
+  scrobbleState: "idle" | "pending" | "sent" | "failed";
+};
 const ALBUM_BATCH_SIZE = 80;
 const ARTWORK_REFRESH_CONCURRENCY = 4;
 const MAX_ARTWORK_DETAILS_PER_REFRESH = 200;
 const SEARCH_QUEUE_CONCURRENCY = 6;
+const QUEUE_RENDER_BATCH_SIZE = 250;
+const QUEUE_PANEL_EXIT_MS = 240;
+const PLAYER_STATE_SAVE_DEBOUNCE_MS = 450;
+const PLAYER_STATE_CHECKPOINT_MS = 5_000;
+const LIBRARY_BROWSE_OPTIONS: ReadonlyArray<{
+  mode: LibraryBrowseMode;
+  label: string;
+  title: string;
+}> = [
+  { mode: "releases", label: "All releases", title: "Browse every purchase" },
+  { mode: "artists", label: "Artists", title: "Group purchases by artist" },
+  { mode: "albums", label: "Albums & EPs", title: "Multi-track purchases" },
+  { mode: "singles", label: "Singles", title: "One-track purchases" },
+];
 const DiscoverView = lazy(() => import("./DiscoverView"));
+const RadioView = lazy(() => import("./RadioView"));
+const SavedLibraryView = lazy(() => import("./SavedLibraryView"));
+const AddToPlaylistDialog = lazy(() =>
+  import("./SavedLibraryView").then((module) => ({ default: module.AddToPlaylistDialog })),
+);
 
 function albumWithTracks(album: Album, tracks: Track[]): Album {
   return {
     ...album,
     coverArt: album.coverArt ?? tracks.find((track) => track.coverArt)?.coverArt,
     tracks,
+  };
+}
+
+function lastFmTrackInput(track: Track): LastFmTrackInput {
+  return {
+    artist: track.artist,
+    title: track.title,
+    album: track.album,
+    duration: Math.max(0, Math.floor(track.duration)),
+    trackNumber: Math.max(0, Math.floor(track.track)),
+  };
+}
+
+function persistedLastFmProgress(
+  track: Track | undefined,
+  session: PlaybackSession,
+): LastFmPlaybackProgress | undefined {
+  if (!track || track.id.startsWith("radio:") || session.trackId !== track.id) {
+    return undefined;
+  }
+  return {
+    trackId: session.trackId,
+    startedAt: session.startedAt,
+    listenedSeconds: session.listenedSeconds,
+    lastPosition: session.lastPosition,
+    nowPlayingSent: session.nowPlayingSent,
+    scrobbleState: session.scrobbleState,
   };
 }
 
@@ -173,11 +280,13 @@ const AlbumCard = memo(function AlbumCard({
   onOpen,
   onPlay,
   onQueue,
+  onArtist,
 }: {
   album: Album;
   onOpen: (album: Album) => void;
   onPlay: (album: Album) => void;
   onQueue: (album: Album) => void;
+  onArtist: (artist: string) => void;
 }) {
   return (
     <article className="album-card">
@@ -198,7 +307,13 @@ const AlbumCard = memo(function AlbumCard({
         <button className="album-card__name" onClick={() => onOpen(album)}>
           {album.title}
         </button>
-        <span>{album.artist}</span>
+        <button
+          className="album-card__artist"
+          onClick={() => onArtist(album.artist)}
+          title={`Browse ${album.artist}`}
+        >
+          {album.artist}
+        </button>
       </div>
       <button
         className="icon-button album-card__more"
@@ -212,105 +327,95 @@ const AlbumCard = memo(function AlbumCard({
   );
 });
 
-function Titlebar() {
-  const [maximized, setMaximized] = useState(false);
-
-  useEffect(() => {
-    if (!isDesktop()) return;
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-    void import("@tauri-apps/api/window")
-      .then(async ({ getCurrentWindow }) => {
-        const appWindow = getCurrentWindow();
-        const update = async () => {
-          const next = await appWindow.isMaximized();
-          if (!disposed) setMaximized(next);
-        };
-        await update();
-        const stop = await appWindow.onResized(() => void update());
-        if (disposed) {
-          stop();
-        } else {
-          unlisten = stop;
-        }
-      })
-      .catch(() => {
-        // Standard window controls remain usable if state observation is unavailable.
-      });
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, []);
-
-  const windowAction = async (action: "minimize" | "maximize" | "close") => {
-    if (!isDesktop()) return;
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    const appWindow = getCurrentWindow();
-    if (action === "minimize") await appWindow.minimize();
-    if (action === "maximize") {
-      await appWindow.toggleMaximize();
-      setMaximized(await appWindow.isMaximized());
-    }
-    if (action === "close") await appWindow.close();
-  };
-  const beginWindowDrag = async (event: React.MouseEvent<HTMLDivElement>) => {
-    if (
-      event.button !== 0 ||
-      (event.target instanceof Element && event.target.closest("button"))
-    ) {
-      return;
-    }
-    event.preventDefault();
-    if (!isDesktop()) return;
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    await getCurrentWindow().startDragging();
-  };
-
+const ArtistCard = memo(function ArtistCard({
+  group,
+  onOpen,
+}: {
+  group: ArtistGroup;
+  onOpen: (group: ArtistGroup) => void;
+}) {
   return (
-    <div
-      className="titlebar"
-      onMouseDown={(event) => void beginWindowDrag(event)}
+    <button
+      className="artist-card"
+      onClick={() => onOpen(group)}
+      aria-label={`Browse ${group.name}`}
     >
-      <div className="titlebar__brand">
-        <span className="brand-mark"><span /></span>
-        <span>CODA</span>
-      </div>
-      <div className="titlebar__drag" />
-      <div className="titlebar__controls">
-        <button
-          onClick={() => windowAction("minimize")}
-          aria-label="Minimize"
-          title="Minimize"
-        >
-          <span className="window-control-icon window-control-icon--minimize" />
-        </button>
-        <button
-          onClick={() => windowAction("maximize")}
-          aria-label={maximized ? "Restore window" : "Maximize window"}
-          title={maximized ? "Restore window" : "Maximize window"}
-        >
-          {maximized ? (
-            <span className="window-control-icon window-control-icon--restore">
-              <i />
-              <i />
-            </span>
-          ) : (
-            <span className="window-control-icon window-control-icon--maximize" />
-          )}
-        </button>
-        <button
-          className="titlebar__close"
-          onClick={() => windowAction("close")}
-          aria-label="Hide Coda to tray"
-          title="Hide to tray"
-        >
-          <X size={15} />
-        </button>
-      </div>
-    </div>
+      <CoverArt album={group.representative} size="small" />
+      <span className="artist-card__copy">
+        <strong>{group.name}</strong>
+        <span>
+          {group.releaseCount} {group.releaseCount === 1 ? "release" : "releases"}
+          {" · "}
+          {group.trackCount} {group.trackCount === 1 ? "track" : "tracks"}
+        </span>
+      </span>
+      <ChevronRight size={17} />
+    </button>
   );
-}
+});
+
+const ArtistHero = memo(function ArtistHero({
+  group,
+  loading,
+  onBack,
+  onPlay,
+  onShuffle,
+  onQueue,
+}: {
+  group: ArtistGroup;
+  loading?: "play" | "shuffle" | "queue";
+  onBack: () => void;
+  onPlay: (group: ArtistGroup) => void;
+  onShuffle: (group: ArtistGroup) => void;
+  onQueue: (group: ArtistGroup) => void;
+}) {
+  return (
+    <section className="artist-hero">
+      <CoverArt album={group.representative} size="large" />
+      <div className="artist-hero__body">
+        <button className="artist-hero__back" onClick={onBack}>
+          <ArrowLeft size={14} />
+          All artists
+        </button>
+        <span className="eyebrow">Artist</span>
+        <h2>{group.name}</h2>
+        <p>
+          {group.releaseCount} {group.releaseCount === 1 ? "release" : "releases"}
+          {" · "}
+          {group.trackCount} {group.trackCount === 1 ? "track" : "tracks"}
+          {" · "}
+          {formatTime(group.duration)}
+        </p>
+        <div className="artist-hero__actions">
+          <button
+            className="primary-button"
+            onClick={() => onPlay(group)}
+            disabled={Boolean(loading)}
+          >
+            {loading === "play" ? <RefreshCw className="spin" size={16} /> : <Play size={16} fill="currentColor" />}
+            {loading === "play" ? "Loading…" : "Play all"}
+          </button>
+          <button
+            className="secondary-button"
+            onClick={() => onShuffle(group)}
+            disabled={Boolean(loading)}
+          >
+            {loading === "shuffle" ? <RefreshCw className="spin" size={16} /> : <Shuffle size={16} />}
+            {loading === "shuffle" ? "Shuffling…" : "Shuffle"}
+          </button>
+          <button
+            className="secondary-button"
+            onClick={() => onQueue(group)}
+            disabled={Boolean(loading)}
+          >
+            {loading === "queue" ? <RefreshCw className="spin" size={16} /> : <ListPlus size={16} />}
+            {loading === "queue" ? "Adding…" : "Add all"}
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+});
 
 const Sidebar = memo(function Sidebar({
   view,
@@ -330,6 +435,12 @@ const Sidebar = memo(function Sidebar({
         <button className={view === "library" ? "active" : ""} onClick={() => onView("library")}>
           <Library size={18} /><span>Collection</span>
         </button>
+        <button className={view === "favorites" ? "active" : ""} onClick={() => onView("favorites")}>
+          <Heart size={18} /><span>Favorites</span>
+        </button>
+        <button className={view === "playlists" ? "active" : ""} onClick={() => onView("playlists")}>
+          <ListMusic size={18} /><span>Playlists</span>
+        </button>
         <button className={view === "recent" ? "active" : ""} onClick={() => onView("recent")}>
           <Clock3 size={18} /><span>Recently added</span>
         </button>
@@ -337,8 +448,8 @@ const Sidebar = memo(function Sidebar({
           <Compass size={18} /><span>Discover</span>
         </button>
         <p className="eyebrow eyebrow--spaced">Listen</p>
-        <button onClick={() => document.querySelector(".queue-panel")?.scrollIntoView()}>
-          <ListMusic size={18} /><span>Queue</span>
+        <button className={view === "radio" ? "active" : ""} onClick={() => onView("radio")}>
+          <Radio size={18} /><span>Bandcamp Radio</span>
         </button>
       </nav>
 
@@ -356,28 +467,127 @@ const Sidebar = memo(function Sidebar({
   );
 });
 
+const QueueRadioChapters = memo(function QueueRadioChapters({
+  chapters,
+  currentChapterIndex,
+  nextChapterIndex,
+  open,
+  onSeek,
+}: {
+  chapters: Track["radioChapters"];
+  currentChapterIndex: number;
+  nextChapterIndex: number;
+  open: boolean;
+  onSeek: (position: number) => void;
+}) {
+  const currentChapterRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    if (open && currentChapterIndex >= 0) {
+      currentChapterRef.current?.scrollIntoView({ block: "nearest" });
+    }
+  }, [chapters, currentChapterIndex, open]);
+
+  if (!chapters?.length) return null;
+
+  return (
+    <section className="queue-radio" aria-label="Show chapters">
+      <header className="queue-radio__header">
+        <span>Show chapters</span>
+        <span>{chapters.length}</span>
+      </header>
+      <ol className="queue-radio__list">
+        {chapters.map((chapter, chapterIndex) => {
+          const isCurrent = chapterIndex === currentChapterIndex;
+          const isNext = chapterIndex === nextChapterIndex;
+          return (
+            <li
+              className={[
+                "queue-radio__chapter",
+                isCurrent ? "is-current" : "",
+                isNext ? "is-next" : "",
+              ].filter(Boolean).join(" ")}
+              key={`${chapter.timecode}-${chapter.artist}-${chapter.title}-${chapterIndex}`}
+            >
+              <button
+                ref={isCurrent ? currentChapterRef : undefined}
+                onClick={() => onSeek(chapter.timecode)}
+                aria-current={isCurrent ? "true" : undefined}
+                aria-label={`Seek to ${chapter.title} at ${formatTime(chapter.timecode)}`}
+              >
+                <time>{formatTime(chapter.timecode)}</time>
+                <span className="queue-radio__chapter-copy">
+                  <strong>{chapter.title}</strong>
+                  <small>
+                    {chapter.artist}
+                    {chapter.album ? ` · ${chapter.album}` : ""}
+                  </small>
+                </span>
+                {isCurrent ? (
+                  <span className="queue-radio__state">On air</span>
+                ) : isNext ? (
+                  <span className="queue-radio__state">Next</span>
+                ) : null}
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+    </section>
+  );
+});
+
 const QueuePanel = memo(function QueuePanel({
+  open,
+  panelRef,
   queue,
   currentIndex,
   currentTrack,
+  currentTime,
+  playing,
   onPlay,
   onRemove,
   onClear,
   onShuffle,
   onMove,
+  onArtist,
+  onAlbum,
+  onNowPlaying,
+  onSeek,
 }: {
+  open: boolean;
+  panelRef: RefObject<HTMLElement | null>;
   queue: Track[];
   currentIndex: number;
   currentTrack?: Track;
+  currentTime: number;
+  playing: boolean;
   onPlay: (index: number) => void;
   onRemove: (index: number) => void;
   onClear: () => void;
   onShuffle: () => void;
   onMove: (from: number, to: number) => void;
+  onArtist: (artist: string) => void;
+  onAlbum: (track: Track) => void;
+  onNowPlaying: () => void;
+  onSeek: (position: number) => void;
 }) {
   const [dragged, setDragged] = useState<number | null>(null);
+  const [visibleUpcoming, setVisibleUpcoming] = useState(QUEUE_RENDER_BATCH_SIZE);
   const upcoming = queue.slice(currentIndex + 1);
+  const renderedUpcoming = upcoming.slice(0, visibleUpcoming);
   const remaining = upcoming.reduce((total, item) => total + item.duration, 0);
+  const radioTimeline = useMemo(
+    () => boundRadioChapters(currentTrack?.radioChapters ?? []),
+    [currentTrack?.radioChapters],
+  );
+  const currentRadioAiring = radioAiringAt(radioTimeline, currentTime);
+  const currentChapterIndex = currentRadioAiring.current
+    ? radioTimeline.indexOf(currentRadioAiring.current)
+    : -1;
+  const nextChapterIndex = currentRadioAiring.next
+    ? radioTimeline.indexOf(currentRadioAiring.next)
+    : -1;
 
   const drop = (event: DragEvent, destination: number) => {
     event.preventDefault();
@@ -386,7 +596,14 @@ const QueuePanel = memo(function QueuePanel({
   };
 
   return (
-    <aside className="queue-panel">
+    <aside
+      ref={panelRef}
+      className={`queue-panel ${open ? "queue-panel--open" : "queue-panel--closing"}`}
+      aria-label="Playback queue"
+      aria-hidden={!open}
+      inert={!open}
+      tabIndex={open ? -1 : undefined}
+    >
       <div className="queue-panel__header">
         <div>
           <span className="eyebrow">Playing next</span>
@@ -408,9 +625,18 @@ const QueuePanel = memo(function QueuePanel({
       </div>
 
       {currentTrack ? (
-        <div className="queue-now">
+        <div
+          className={`queue-now ${playing ? "queue-now--playing" : "queue-now--paused"}`}
+          key={currentTrack.id}
+        >
           <span className="queue-now__label"><span />Now playing</span>
-          <button onClick={() => onPlay(currentIndex)}>
+          <div className="queue-now__main">
+            <button
+              className="queue-track__art"
+              onClick={onNowPlaying}
+              aria-label={`Open Now Playing for ${currentRadioAiring.current?.title ?? currentTrack.title}`}
+              title="Open Now Playing"
+            >
             <CoverArt
               size="small"
               album={{
@@ -422,45 +648,103 @@ const QueuePanel = memo(function QueuePanel({
                 palette: currentTrack.palette,
               }}
             />
+            </button>
             <span className="queue-track__meta">
-              <strong>{currentTrack.title}</strong>
-              <span>{currentTrack.artist}</span>
+              <button
+                className="queue-track__title"
+                onClick={onNowPlaying}
+              >
+                {currentRadioAiring.current?.title ?? currentTrack.title}
+              </button>
+              {currentRadioAiring.current ? (
+                <>
+                  <span className="queue-now__chapter-artist">
+                    {currentRadioAiring.current.artist} · Bandcamp Radio
+                  </span>
+                  {currentRadioAiring.next ? (
+                    <span className="queue-now__chapter-next">
+                      Next: {currentRadioAiring.next.title}
+                    </span>
+                  ) : null}
+                </>
+              ) : (
+                <button
+                  className="metadata-link"
+                  onClick={() => onArtist(currentTrack.artist)}
+                >
+                  {currentTrack.artist}
+                </button>
+              )}
             </span>
             <span className="queue-bars"><i /><i /><i /></span>
-          </button>
+          </div>
+          <QueueRadioChapters
+            chapters={radioTimeline}
+            currentChapterIndex={currentChapterIndex}
+            nextChapterIndex={nextChapterIndex}
+            open={open}
+            onSeek={onSeek}
+          />
         </div>
       ) : null}
 
-      <div className="queue-list">
-        {upcoming.map((track, upcomingIndex) => {
+      <div
+        className="queue-list"
+        role="region"
+        aria-label="Upcoming tracks"
+        tabIndex={0}
+      >
+        {renderedUpcoming.map((track, upcomingIndex) => {
           const absoluteIndex = currentIndex + 1 + upcomingIndex;
           return (
             <div
-              className="queue-track"
+              className={`queue-track ${upcomingIndex < 12 ? "queue-track--animated" : ""}`}
               key={`${track.id}-${absoluteIndex}`}
+              style={
+                upcomingIndex < 12
+                  ? { "--queue-delay": `${upcomingIndex * 18}ms` } as CSSProperties
+                  : undefined
+              }
               draggable
               onDragStart={() => setDragged(absoluteIndex)}
               onDragOver={(event) => event.preventDefault()}
               onDrop={(event) => drop(event, absoluteIndex)}
             >
               <GripVertical className="queue-track__grip" size={15} />
-              <button className="queue-track__main" onClick={() => onPlay(absoluteIndex)}>
-                <CoverArt
-                  size="small"
-                  album={{
-                    id: track.albumId,
-                    title: track.album,
-                    artist: track.artist,
-                    coverArt: track.coverArt,
-                    artworkUrl: track.artworkUrl,
-                    palette: track.palette,
-                  }}
-                />
+              <div className="queue-track__main">
+                <button
+                  className="queue-track__art"
+                  onClick={() => onAlbum(track)}
+                  aria-label={`Open ${track.album}`}
+                  title={`Open ${track.album}`}
+                >
+                  <CoverArt
+                    size="small"
+                    album={{
+                      id: track.albumId,
+                      title: track.album,
+                      artist: track.artist,
+                      coverArt: track.coverArt,
+                      artworkUrl: track.artworkUrl,
+                      palette: track.palette,
+                    }}
+                  />
+                </button>
                 <span className="queue-track__meta">
-                  <strong>{track.title}</strong>
-                  <span>{track.artist}</span>
+                  <button
+                    className="queue-track__title"
+                    onClick={() => onPlay(absoluteIndex)}
+                  >
+                    {track.title}
+                  </button>
+                  <button
+                    className="metadata-link"
+                    onClick={() => onArtist(track.artist)}
+                  >
+                    {track.artist}
+                  </button>
                 </span>
-              </button>
+              </div>
               <span className="queue-track__duration">{formatTime(track.duration)}</span>
               <button className="icon-button queue-track__remove" onClick={() => onRemove(absoluteIndex)} aria-label={`Remove ${track.title}`} title="Remove">
                 <X size={14} />
@@ -468,6 +752,19 @@ const QueuePanel = memo(function QueuePanel({
             </div>
           );
         })}
+        {visibleUpcoming < upcoming.length ? (
+          <button
+            className="queue-list__more"
+            onClick={() =>
+              setVisibleUpcoming((limit) =>
+                Math.min(limit + QUEUE_RENDER_BATCH_SIZE, upcoming.length),
+              )
+            }
+          >
+            Show {Math.min(QUEUE_RENDER_BATCH_SIZE, upcoming.length - visibleUpcoming)} more
+            <span>{upcoming.length - visibleUpcoming} not shown</span>
+          </button>
+        ) : null}
         {!upcoming.length ? (
           <div className="queue-empty">
             <Music2 size={25} />
@@ -478,7 +775,9 @@ const QueuePanel = memo(function QueuePanel({
       </div>
 
       <div className="queue-panel__footer">
-        <span>{upcoming.length} {upcoming.length === 1 ? "track" : "tracks"} next</span>
+        <span className="queue-panel__count" key={upcoming.length}>
+          {upcoming.length} {upcoming.length === 1 ? "track" : "tracks"} next
+        </span>
         <span>{upcoming.length ? `${formatTime(remaining)} remaining` : "Queue ready"}</span>
       </div>
     </aside>
@@ -500,7 +799,14 @@ function Player({
   onRepeat,
   airPlayAvailable,
   onAirPlay,
-  onShowQueue,
+  onArtist,
+  onAlbum,
+  onNowPlaying,
+  favorite,
+  onToggleFavorite,
+  onAddToPlaylist,
+  queueOpen,
+  onToggleQueue,
 }: {
   track?: Track;
   playing: boolean;
@@ -516,21 +822,59 @@ function Player({
   onRepeat: () => void;
   airPlayAvailable: boolean;
   onAirPlay: () => void;
-  onShowQueue: () => void;
+  onArtist: (artist: string) => void;
+  onAlbum: (track: Track) => void;
+  onNowPlaying: () => void;
+  favorite: boolean;
+  onToggleFavorite: () => void;
+  onAddToPlaylist: () => void;
+  queueOpen: boolean;
+  onToggleQueue: () => void;
 }) {
   const progress = duration ? Math.min(100, (currentTime / duration) * 100) : 0;
+  const radioAiring = radioAiringAt(track?.radioChapters, currentTime);
+  const displayTitle = radioAiring.current?.title ?? track?.title;
+  const displayArtist = radioAiring.current?.artist ?? track?.artist;
   return (
     <footer className="player">
       <div className="player__track">
         {track ? (
           <>
-            <CoverArt
-              size="small"
-              album={{ id: track.albumId, title: track.album, artist: track.artist, coverArt: track.coverArt, artworkUrl: track.artworkUrl, palette: track.palette }}
-            />
+            <button
+              className="player__art-link"
+              onClick={onNowPlaying}
+              aria-label="Open Now Playing"
+              title={`Open Now Playing for ${track.title}`}
+            >
+              <CoverArt
+                size="small"
+                album={{ id: track.albumId, title: track.album, artist: track.artist, coverArt: track.coverArt, artworkUrl: track.artworkUrl, palette: track.palette }}
+              />
+            </button>
             <div>
-              <strong>{track.title}</strong>
-              <span>{track.artist} · {track.album}</span>
+              <strong title={displayTitle}>{displayTitle}</strong>
+              {radioAiring.current ? (
+                <span className="player__radio-meta" aria-live="polite">
+                  <i aria-hidden="true" />
+                  {displayArtist} · Bandcamp Radio
+                </span>
+              ) : (
+                <span>
+                  <button
+                    className="metadata-link"
+                    onClick={() => onArtist(track.artist)}
+                  >
+                    {track.artist}
+                  </button>
+                  {" · "}
+                  <button
+                    className="metadata-link"
+                    onClick={() => onAlbum(track)}
+                  >
+                    {track.album}
+                  </button>
+                </span>
+              )}
             </div>
           </>
         ) : (
@@ -584,63 +928,134 @@ function Player({
             <Airplay size={18} />
           </button>
         ) : null}
-        <button className="icon-button is-active" onClick={onShowQueue} title="Show queue" aria-label="Show queue"><ListMusic size={18} /></button>
+        {track && !track.id.startsWith("radio:") ? (
+          <>
+            <button
+              className={`icon-button favorite-button ${favorite ? "is-favorite" : ""}`}
+              onClick={onToggleFavorite}
+              title={favorite ? "Remove from favorites" : "Add to favorites"}
+              aria-label={favorite ? `Remove ${track.title} from favorites` : `Add ${track.title} to favorites`}
+              aria-pressed={favorite}
+            >
+              <Heart size={17} fill={favorite ? "currentColor" : "none"} />
+            </button>
+            <button
+              className="icon-button"
+              onClick={onAddToPlaylist}
+              title="Add to playlist"
+              aria-label={`Add ${track.title} to playlist`}
+            >
+              <ListPlus size={17} />
+            </button>
+          </>
+        ) : null}
+        <button
+          className={`icon-button ${queueOpen ? "is-active" : ""}`}
+          onClick={onToggleQueue}
+          title={queueOpen ? "Hide queue" : "Show queue"}
+          aria-label={queueOpen ? "Hide queue" : "Show queue"}
+          aria-pressed={queueOpen}
+        >
+          <ListMusic size={18} />
+        </button>
       </div>
     </footer>
   );
 }
 
-function AlbumDialog({
+function AlbumDetailPage({
   album,
   loading,
-  onClose,
+  onBack,
   onPlayAlbum,
   onQueueAlbum,
   onPlayTrack,
   onQueueTrack,
+  onArtist,
+  favoriteAlbum,
+  favoriteTrackIds,
+  onToggleFavoriteAlbum,
+  onToggleFavoriteTrack,
+  onAddToPlaylist,
 }: {
   album: Album;
   loading: boolean;
-  onClose: () => void;
+  onBack: () => void;
   onPlayAlbum: () => void;
   onQueueAlbum: () => void;
   onPlayTrack: (track: Track) => void;
   onQueueTrack: (track: Track) => void;
+  onArtist: (artist: string) => void;
+  favoriteAlbum: boolean;
+  favoriteTrackIds: ReadonlySet<string>;
+  onToggleFavoriteAlbum: () => void;
+  onToggleFavoriteTrack: (track: Track) => void;
+  onAddToPlaylist: (tracks: Track[]) => void;
 }) {
-  useEffect(() => {
-    const close = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", close);
-    return () => window.removeEventListener("keydown", close);
-  }, [onClose]);
-
   return (
-    <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="album-dialog" role="dialog" aria-modal="true" aria-label={album.title}>
-        <button className="icon-button dialog-close" onClick={onClose} aria-label="Close album"><X size={19} /></button>
-        <header className="album-dialog__hero">
+    <article className="album-detail" aria-label={`${album.title} release details`}>
+      <button className="album-detail__back" onClick={onBack}>
+        <ArrowLeft size={15} />
+        Back to releases
+      </button>
+      <header className="album-detail__hero">
+        <div className="album-detail__art">
           <CoverArt album={album} size="large" />
-          <div>
-            <span className="eyebrow">Album</span>
+        </div>
+        <div className="album-detail__copy">
+            <span className="eyebrow">{album.songCount === 1 ? "Single" : "Album"}</span>
             <h2>{album.title}</h2>
-            <p>{album.artist}</p>
-            <span className="album-dialog__facts">
-              {album.year ?? "—"} · {album.songCount} tracks · {formatTime(album.duration)}
+            <button
+              className="album-detail__artist metadata-link"
+              onClick={() => onArtist(album.artist)}
+            >
+              {album.artist}
+            </button>
+            <span className="album-detail__facts">
+              {album.year ?? "Year unknown"} · {album.songCount} {album.songCount === 1 ? "track" : "tracks"} · {formatTime(album.duration)}
             </span>
-            <div className="album-dialog__actions">
+            <div className="album-detail__actions">
               <button className="primary-button" onClick={onPlayAlbum} disabled={loading}>
-                <Play size={17} fill="currentColor" /> Play album
+                <Play size={17} fill="currentColor" /> Play {album.songCount === 1 ? "single" : "album"}
               </button>
               <button className="secondary-button" onClick={onQueueAlbum} disabled={loading}>
                 <Plus size={17} /> Add to queue
               </button>
+              <button
+                className="secondary-button"
+                onClick={() => onAddToPlaylist(album.tracks ?? [])}
+                disabled={loading || !album.tracks?.length}
+              >
+                <ListPlus size={17} /> Add to playlist
+              </button>
+              <button
+                className={`secondary-button favorite-button ${favoriteAlbum ? "is-favorite" : ""}`}
+                onClick={onToggleFavoriteAlbum}
+                aria-pressed={favoriteAlbum}
+              >
+                <Heart size={17} fill={favoriteAlbum ? "currentColor" : "none"} />
+                {favoriteAlbum ? "Favorited" : "Favorite"}
+              </button>
             </div>
-          </div>
+        </div>
         </header>
-        <div className="tracklist">
+        <section className="album-detail__tracks" aria-label="Track list">
+          <div className="album-detail__tracks-heading">
+            <div>
+              <span className="eyebrow">Track list</span>
+              <h3>{album.songCount} {album.songCount === 1 ? "song" : "songs"}</h3>
+            </div>
+            <span>{formatTime(album.duration)}</span>
+          </div>
+          <div className="tracklist">
           <div className="tracklist__head">
-            <span>#</span><span>Title</span><span><Clock3 size={14} /></span><span />
+            <span className="tracklist__number-heading">#</span>
+            <span>Title</span>
+            <span className="tracklist__duration-heading" title="Duration">
+              <Clock3 size={14} aria-hidden="true" />
+              <span className="sr-only">Duration</span>
+            </span>
+            <span className="tracklist__actions-heading">Actions</span>
           </div>
           {loading ? (
             <div className="tracklist__loading"><RefreshCw size={20} className="spin" /> Loading tracks…</div>
@@ -659,37 +1074,61 @@ function AlbumDialog({
                 <button className="track-row__title" onClick={() => onPlayTrack(track)}>
                   <strong>{track.title}</strong><span>{track.artist}</span>
                 </button>
-                <span>{formatTime(track.duration)}</span>
-                <button className="icon-button" onClick={() => onQueueTrack(track)} title="Add to queue" aria-label={`Add ${track.title} to queue`}>
-                  <Plus size={16} />
-                </button>
+                <span className="track-row__duration">{formatTime(track.duration)}</span>
+                <div className="track-row__actions">
+                  <button className="icon-button" onClick={() => onQueueTrack(track)} title="Add to queue" aria-label={`Add ${track.title} to queue`}>
+                    <Plus size={16} />
+                  </button>
+                  <button className="icon-button" onClick={() => onAddToPlaylist([track])} title="Add to playlist" aria-label={`Add ${track.title} to playlist`}>
+                    <ListPlus size={16} />
+                  </button>
+                  <button
+                    className={`icon-button favorite-button ${favoriteTrackIds.has(track.id) ? "is-favorite" : ""}`}
+                    onClick={() => onToggleFavoriteTrack(track)}
+                    title={favoriteTrackIds.has(track.id) ? "Remove from favorites" : "Add to favorites"}
+                    aria-label={favoriteTrackIds.has(track.id) ? `Remove ${track.title} from favorites` : `Add ${track.title} to favorites`}
+                    aria-pressed={favoriteTrackIds.has(track.id)}
+                  >
+                    <Heart size={16} fill={favoriteTrackIds.has(track.id) ? "currentColor" : "none"} />
+                  </button>
+                </div>
               </div>
             ))
           )}
-        </div>
-      </section>
-    </div>
+          </div>
+        </section>
+    </article>
   );
 }
 
 function ConnectionDialog({
   connected,
+  lastFmStatus,
   onClose,
   onConnected,
   onDisconnected,
+  onLastFmStatus,
 }: {
   connected: boolean;
+  lastFmStatus: LastFmStatus;
   onClose: () => void;
   onConnected: (albums: Album[]) => void;
   onDisconnected: () => Promise<void>;
+  onLastFmStatus: (status: LastFmStatus) => void;
 }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [state, setState] = useState<"idle" | "connecting" | "error">("idle");
   const [error, setError] = useState("");
+  const [settingsOpening, setSettingsOpening] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [lastFmToken, setLastFmToken] = useState("");
+  const [lastFmAction, setLastFmAction] = useState<"idle" | "starting" | "finishing" | "disconnecting">("idle");
+  const [lastFmError, setLastFmError] = useState("");
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (state === "connecting") return;
     const input: ConnectionInput = { username: username.trim(), password };
     if (!input.username || !input.password) return;
     setError("");
@@ -707,8 +1146,10 @@ function ConnectionDialog({
   };
 
   const openSettings = async () => {
+    if (settingsOpening) return;
     const settingsUrl = "https://bandcamp.com/settings?pane=fan";
     setError("");
+    setSettingsOpening(true);
     try {
       if (isDesktop()) {
         const { openUrl } = await import("@tauri-apps/plugin-opener");
@@ -718,13 +1159,89 @@ function ConnectionDialog({
       }
     } catch {
       setError("Could not open your browser. Visit bandcamp.com/settings and choose Fan.");
+    } finally {
+      setSettingsOpening(false);
     }
   };
 
+  const removeBandcamp = async () => {
+    if (disconnecting) return;
+    setError("");
+    setDisconnecting(true);
+    try {
+      await onDisconnected();
+    } catch (cause) {
+      setError(String(cause).replace(/^Error:\s*/, ""));
+      setDisconnecting(false);
+    }
+  };
+
+  const beginLastFm = async () => {
+    setLastFmError("");
+    setLastFmAction("starting");
+    try {
+      const authorization = await beginLastFmAuthorization();
+      await openLastFmAuthorization(authorization.authorizationUrl);
+      setLastFmToken(authorization.token);
+    } catch (cause) {
+      setLastFmError(String(cause).replace(/^Error:\s*/, ""));
+    } finally {
+      setLastFmAction("idle");
+    }
+  };
+
+  const finishLastFm = async () => {
+    if (!lastFmToken) return;
+    setLastFmError("");
+    setLastFmAction("finishing");
+    try {
+      const status = await completeLastFmAuthorization(lastFmToken);
+      setLastFmToken("");
+      onLastFmStatus(status);
+    } catch (cause) {
+      setLastFmError(String(cause).replace(/^Error:\s*/, ""));
+    } finally {
+      setLastFmAction("idle");
+    }
+  };
+
+  const removeLastFm = async () => {
+    setLastFmError("");
+    setLastFmAction("disconnecting");
+    try {
+      onLastFmStatus(await disconnectLastFm());
+      setLastFmToken("");
+    } catch (cause) {
+      setLastFmError(String(cause).replace(/^Error:\s*/, ""));
+    } finally {
+      setLastFmAction("idle");
+    }
+  };
+  const dialogBusy =
+    state === "connecting" ||
+    settingsOpening ||
+    disconnecting ||
+    lastFmAction !== "idle";
+
   return (
-    <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="connection-dialog" role="dialog" aria-modal="true" aria-labelledby="connection-title">
-        <button className="icon-button dialog-close" onClick={onClose} aria-label="Close"><X size={19} /></button>
+    <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !dialogBusy) onClose();
+    }}>
+      <section
+        className="connection-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="connection-title"
+        aria-busy={dialogBusy}
+      >
+        <button
+          className="icon-button dialog-close"
+          onClick={onClose}
+          aria-label="Close"
+          disabled={dialogBusy}
+        >
+          <X size={19} />
+        </button>
         <div className="connection-dialog__icon"><Radio size={24} /></div>
         <span className="eyebrow">Secure connection</span>
         <h2 id="connection-title">{connected ? "Bandcamp is connected" : "Bring in your collection"}</h2>
@@ -737,34 +1254,113 @@ function ConnectionDialog({
           <span><Check size={15} /> Requests limited to bandcamp.com</span>
           <span><Check size={15} /> No analytics or third-party servers</span>
         </div>
-        <button className="settings-link" onClick={openSettings}>
-          <ExternalLink size={16} />
-          Sign in and generate credentials
+        <button
+          className="settings-link"
+          onClick={() => void openSettings()}
+          disabled={settingsOpening || state === "connecting" || disconnecting}
+        >
+          {settingsOpening
+            ? <RefreshCw className="spin" size={16} />
+            : <ExternalLink size={16} />}
+          {settingsOpening ? "Opening Bandcamp…" : "Sign in and generate credentials"}
         </button>
         <ol className="connection-dialog__steps">
           <li>Sign in to your Bandcamp fan account in the browser.</li>
           <li>Scroll to Subsonic and choose Generate credentials.</li>
           <li>Return here and enter the generated username and password.</li>
         </ol>
-        <form onSubmit={submit}>
+        {!connected ? <form onSubmit={submit}>
           <label>
             Subsonic username
-            <input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Generated username" />
+            <input name="subsonic-username" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Generated username" disabled={state === "connecting"} />
           </label>
           <label>
             Subsonic password
-            <input autoComplete="current-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Generated password" />
+            <input name="subsonic-password" autoComplete="current-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Generated password" disabled={state === "connecting"} />
           </label>
           {error ? <div className="form-error">{error}</div> : null}
           <button className="primary-button primary-button--wide" type="submit" disabled={!username.trim() || !password || state === "connecting"}>
             {state === "connecting" ? <RefreshCw className="spin" size={17} /> : <Radio size={17} />}
             {state === "connecting" ? "Connecting securely…" : "Connect Bandcamp"}
           </button>
-        </form>
+        </form> : null}
         {connected ? (
-          <button className="danger-button" onClick={onDisconnected}>Disconnect and remove credentials</button>
+          <button
+            type="button"
+            className="danger-button"
+            onClick={() => void removeBandcamp()}
+            disabled={disconnecting}
+          >
+            {disconnecting ? <RefreshCw className="spin" size={15} /> : null}
+            {disconnecting
+              ? "Disconnecting Bandcamp…"
+              : "Disconnect and remove Bandcamp credentials"}
+          </button>
         ) : null}
-        <small>Bandcamp’s Subsonic service is currently in beta. Coda is an independent client and is not affiliated with Bandcamp.</small>
+        <div className="connection-dialog__divider" />
+        <section className="lastfm-settings" aria-labelledby="lastfm-settings-title">
+          <div className="lastfm-settings__heading">
+            <AudioLines size={17} />
+            <div>
+              <h3 id="lastfm-settings-title">Last.fm scrobbling</h3>
+              <p>
+                Send Now Playing updates and scrobble after half the track or four minutes,
+                whichever comes first.
+              </p>
+            </div>
+            <span className={`service-status ${lastFmStatus.connected ? "service-status--live" : ""}`}>
+              {lastFmStatus.connected ? "Connected" : "Not connected"}
+            </span>
+          </div>
+          {lastFmStatus.connected ? (
+            <div className="lastfm-settings__connected">
+              <span>Scrobbling as <strong>{lastFmStatus.username}</strong></span>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => void removeLastFm()}
+                disabled={lastFmAction !== "idle"}
+              >
+                {lastFmAction === "disconnecting" ? <RefreshCw className="spin" size={15} /> : null}
+                {lastFmAction === "disconnecting" ? "Disconnecting…" : "Disconnect"}
+              </button>
+            </div>
+          ) : lastFmStatus.configured ? (
+            <div className="lastfm-settings__actions">
+              {lastFmToken ? (
+                <>
+                  <p>Approve Coda in the browser, then return here to finish.</p>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => void finishLastFm()}
+                    disabled={lastFmAction !== "idle"}
+                  >
+                    {lastFmAction === "finishing" ? <RefreshCw className="spin" size={15} /> : <Check size={15} />}
+                    {lastFmAction === "finishing" ? "Finishing…" : "Finish connection"}
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => void beginLastFm()}
+                  disabled={lastFmAction !== "idle"}
+                >
+                  {lastFmAction === "starting" ? <RefreshCw className="spin" size={15} /> : <ExternalLink size={15} />}
+                  {lastFmAction === "starting" ? "Opening Last.fm…" : "Connect Last.fm"}
+                </button>
+              )}
+            </div>
+          ) : (
+            <p className="lastfm-settings__unavailable">
+              Last.fm credentials have not been added to this Coda build yet.
+            </p>
+          )}
+          {lastFmError ? <div className="form-error">{lastFmError}</div> : null}
+          <small>The Last.fm session key is stored in your system credential vault. Coda never sees your Last.fm password.</small>
+        </section>
+        <small>Bandcamp’s Subsonic service is currently in beta. Coda is an independent client and is not affiliated with Bandcamp or Last.fm.</small>
       </section>
     </div>
   );
@@ -806,14 +1402,24 @@ function EmptyState({
 }
 
 export default function App() {
+  const queryClient = useQueryClient();
   const [albums, setAlbums] = useState<Album[]>(() => readLibraryCache());
+  const [localFavorites, setLocalFavorites] = useState<FavoriteCollection>(
+    () => readLocalFavorites(),
+  );
   const [connected, setConnected] = useState(false);
+  const [lastFmStatus, setLastFmStatus] = useState<LastFmStatus>({
+    configured: false,
+    connected: false,
+  });
   const [syncState, setSyncState] = useState<SyncState>("checking");
   const [libraryError, setLibraryError] = useState("");
   const [view, setView] = useState<LibraryView>("library");
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortMode>("recent");
   const [genre, setGenre] = useState("All");
+  const [browseMode, setBrowseMode] = useState<LibraryBrowseMode>("releases");
+  const [selectedArtist, setSelectedArtist] = useState<string>();
   const [albumLimit, setAlbumLimit] = useState(ALBUM_BATCH_SIZE);
   const [queue, setQueue] = useState<Track[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -821,21 +1427,103 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(0);
   const [volume, setVolume] = useState(0.72);
   const [repeat, setRepeat] = useState<RepeatMode>("off");
+  const [queueOpen, setQueueOpen] = useState(true);
+  const [queuePresent, setQueuePresent] = useState(true);
+  const [nowPlayingOpen, setNowPlayingOpen] = useState(false);
+  const [playerStateReady, setPlayerStateReady] = useState(false);
   const [selectedAlbum, setSelectedAlbum] = useState<Album>();
   const [albumLoading, setAlbumLoading] = useState(false);
   const [artworkRefreshing, setArtworkRefreshing] = useState(false);
+  const [artistAction, setArtistAction] = useState<"play" | "shuffle" | "queue">();
   const [queueSearchProgress, setQueueSearchProgress] = useState<{ done: number; total: number }>();
   const [libraryShuffleProgress, setLibraryShuffleProgress] = useState<{ done: number; total: number }>();
+  const [randomPickLoading, setRandomPickLoading] = useState(false);
   const [connectionOpen, setConnectionOpen] = useState(false);
+  const [playlistTarget, setPlaylistTarget] = useState<Track[]>();
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [streamUrl, setStreamUrl] = useState<string>();
   const [airPlayAvailable, setAirPlayAvailable] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const queuePanelRef = useRef<HTMLElement>(null);
+  const queueFocusRequestedRef = useRef(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const loadMoreRef = useRef<HTMLButtonElement>(null);
   const libraryShuffleActiveRef = useRef(false);
+  const randomPickActiveRef = useRef(false);
+  const restoreGenerationRef = useRef(0);
+  const restoredPlaybackSessionRef = useRef<PlaybackSession | undefined>(undefined);
+  const pendingRestorePositionRef = useRef<{ trackId: string; position: number } | undefined>(
+    undefined,
+  );
+
+  useEffect(() => {
+    if (queueOpen) {
+      setQueuePresent(true);
+      return;
+    }
+    const timer = window.setTimeout(() => setQueuePresent(false), QUEUE_PANEL_EXIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [queueOpen]);
+
+  useEffect(() => {
+    if (!queueOpen || !queuePresent || !queueFocusRequestedRef.current) return;
+    queueFocusRequestedRef.current = false;
+    const focusPanel = () => {
+      queuePanelRef.current?.focus({ preventScroll: true });
+    };
+    if (typeof window.requestAnimationFrame !== "function") {
+      const timer = window.setTimeout(focusPanel, 0);
+      return () => window.clearTimeout(timer);
+    }
+    const frame = window.requestAnimationFrame(focusPanel);
+    return () => window.cancelAnimationFrame(frame);
+  }, [queueOpen, queuePresent]);
+  const playerStateErrorNotifiedRef = useRef(false);
+  const playerStateWriteRef = useRef<Promise<void>>(Promise.resolve());
+  const playbackSessionRef = useRef<PlaybackSession>({
+    trackId: "",
+    startedAt: 0,
+    listenedSeconds: 0,
+    lastPosition: 0,
+    nowPlayingSent: false,
+    scrobbleState: "idle",
+  });
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
   const currentTrack = queue[currentIndex];
+  const latestPlayerStateRef = useRef({
+    queue,
+    currentIndex,
+    positionSeconds: currentTime,
+    volume,
+    repeatMode: repeat,
+    queueOpen,
+  });
+  latestPlayerStateRef.current = {
+    queue,
+    currentIndex,
+    positionSeconds: currentTime,
+    volume,
+    repeatMode: repeat,
+    queueOpen,
+  };
+
+  useEffect(() => {
+    if (nowPlayingOpen && !currentTrack) setNowPlayingOpen(false);
+  }, [currentTrack, nowPlayingOpen]);
+
+  useEffect(() => {
+    if (!isDesktop()) return;
+    void import("@tauri-apps/api/window")
+      .then(async ({ getCurrentWindow }) => {
+        const appWindow = getCurrentWindow();
+        await appWindow.unminimize();
+        await appWindow.show();
+        await appWindow.setFocus();
+      })
+      .catch(() => {
+        // The native startup hook is the primary path; this covers delayed WebView startup.
+      });
+  }, []);
 
   const notify = useCallback((message: string, tone?: Toast["tone"]) => {
     const id = Date.now();
@@ -843,13 +1531,146 @@ export default function App() {
     window.setTimeout(() => setToasts((items) => items.filter((item) => item.id !== id)), 2800);
   }, []);
 
+  const favoriteTrackIds = useMemo(
+    () => new Set(localFavorites.songIds),
+    [localFavorites.songIds],
+  );
+  const favoriteAlbumIds = useMemo(
+    () => new Set(localFavorites.albumIds),
+    [localFavorites.albumIds],
+  );
+  const localFavoriteTrackCandidates = useMemo(() => {
+    const existing = new Set(localFavorites.tracks.map((track) => track.id));
+    const missing = new Set(
+      localFavorites.songIds.filter((id) => !existing.has(id)),
+    );
+    if (!missing.size) return [];
+    const candidates: Track[] = [];
+    const collect = (tracks: readonly Track[]) => {
+      for (const track of tracks) {
+        if (!missing.delete(track.id)) continue;
+        candidates.push(track);
+        if (!missing.size) return true;
+      }
+      return false;
+    };
+    if (collect(queue) || collect(selectedAlbum?.tracks ?? [])) return candidates;
+    for (const album of albums) {
+      if (collect(album.tracks ?? [])) break;
+    }
+    return candidates;
+  }, [
+    albums,
+    localFavorites.songIds,
+    localFavorites.tracks,
+    queue,
+    selectedAlbum?.tracks,
+  ]);
+
+  useEffect(() => {
+    const repaired = repairLocalFavoriteMetadata(
+      localFavorites,
+      albums,
+      localFavoriteTrackCandidates,
+    );
+    if (repaired === localFavorites) return;
+    try {
+      setLocalFavorites(writeLocalFavorites(repaired));
+    } catch {
+      // A disabled/full local store should not interrupt collection loading.
+    }
+  }, [albums, localFavoriteTrackCandidates, localFavorites]);
+
+  const toggleFavorite = useCallback((
+    id: string,
+    kind: "song" | "album",
+    favorite?: boolean,
+  ) => {
+    const active =
+      kind === "song" ? favoriteTrackIds.has(id) : favoriteAlbumIds.has(id);
+    const input = { id, kind, favorite: favorite ?? !active };
+    const candidate = kind === "song"
+      ? queue.find((track) => track.id === id) ??
+        selectedAlbum?.tracks?.find((track) => track.id === id)
+      : albums.find((album) => album.id === id) ??
+        (selectedAlbum?.id === id ? selectedAlbum : undefined);
+    try {
+      const next = writeLocalFavorites(
+        updateLocalFavorites(localFavorites, input, candidate),
+      );
+      setLocalFavorites(next);
+      notify(
+        input.favorite ? "Saved to Favorites on this device" : "Removed from local Favorites",
+        "good",
+      );
+    } catch (cause) {
+      notify(String(cause).replace(/^Error:\s*/, ""), "bad");
+    }
+  }, [
+    albums,
+    favoriteAlbumIds,
+    favoriteTrackIds,
+    localFavorites,
+    notify,
+    queue,
+    selectedAlbum,
+  ]);
+
+  const enqueuePlayerStateWrite = useCallback((write: () => Promise<unknown>) => {
+    const result = playerStateWriteRef.current
+      .catch(() => undefined)
+      .then(write);
+    playerStateWriteRef.current = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const generation = restoreGenerationRef.current + 1;
+    restoreGenerationRef.current = generation;
+
+    loadPlayerState()
+      .then((state) => {
+        if (!active || restoreGenerationRef.current !== generation || !state) return;
+        const restoredQueue = state.queue as Track[];
+        const restoredTrack = restoredQueue[state.currentIndex];
+        restoredPlaybackSessionRef.current = state.lastFmProgress;
+        pendingRestorePositionRef.current =
+          restoredTrack && state.positionSeconds > 0
+            ? { trackId: restoredTrack.id, position: state.positionSeconds }
+            : undefined;
+        setQueue(restoredQueue);
+        setCurrentIndex(state.currentIndex);
+        setCurrentTime(state.positionSeconds);
+        setVolume(state.volume);
+        setRepeat(state.repeatMode);
+        setQueueOpen(state.queueOpen);
+        setPlaying(false);
+      })
+      .catch(() => {
+        if (active) notify("Coda could not restore the previous listening session.", "bad");
+      })
+      .finally(() => {
+        if (active && restoreGenerationRef.current === generation) {
+          setPlayerStateReady(true);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [notify]);
+
   const syncLibrary = useCallback(async (announce = true) => {
     setSyncState("syncing");
-    setLibraryError("");
     try {
       const library = await fetchLibrary();
       setAlbums(library);
       setConnected(true);
+      setLibraryError("");
       setSyncState("idle");
       if (announce) notify(`${library.length} albums synced`, "good");
     } catch (cause) {
@@ -886,7 +1707,115 @@ export default function App() {
   }, [syncLibrary]);
 
   useEffect(() => {
-    if (!currentTrack || (!currentTrack.streamUrl && !connected)) {
+    let active = true;
+    getLastFmStatus()
+      .then((status) => {
+        if (active) setLastFmStatus(status);
+      })
+      .catch(() => {
+        // Last.fm is optional; Bandcamp playback remains available.
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const restored = restoredPlaybackSessionRef.current;
+    if (currentTrack && restored?.trackId === currentTrack.id) {
+      playbackSessionRef.current = {
+        ...restored,
+        startedAt: 0,
+        nowPlayingSent: false,
+        lastPosition: currentTime,
+      };
+      restoredPlaybackSessionRef.current = undefined;
+      return;
+    }
+    playbackSessionRef.current = {
+      trackId: currentTrack?.id ?? "",
+      startedAt: 0,
+      listenedSeconds: 0,
+      lastPosition: currentTime,
+      nowPlayingSent: false,
+      scrobbleState: "idle",
+    };
+  }, [currentTrack?.id]);
+
+  const checkpointLatestPlayerState = useCallback(() => {
+    const state = latestPlayerStateRef.current;
+    const track = state.queue[state.currentIndex];
+    if (!track || isEphemeralTrackId(track.id)) return Promise.resolve(false);
+    const persistedIndex =
+      state.queue
+        .slice(0, state.currentIndex + 1)
+        .filter((item) => !isEphemeralTrackId(item.id))
+        .length - 1;
+    return enqueuePlayerStateWrite(() =>
+      checkpointPlayerState({
+        currentIndex: persistedIndex,
+        currentTrackId: track.id,
+        positionSeconds: state.positionSeconds,
+        lastFmProgress: persistedLastFmProgress(track, playbackSessionRef.current),
+      }),
+    );
+  }, [enqueuePlayerStateWrite]);
+
+  useEffect(() => {
+    if (!playerStateReady) return;
+    const timer = window.setTimeout(() => {
+      const track = queue[currentIndex];
+      void enqueuePlayerStateWrite(() =>
+        savePlayerState({
+          queue,
+          currentIndex,
+          positionSeconds: currentTime,
+          volume,
+          repeatMode: repeat,
+          queueOpen,
+          lastFmProgress: persistedLastFmProgress(track, playbackSessionRef.current),
+        }),
+      ).catch((cause) => {
+        if (!playerStateErrorNotifiedRef.current) {
+          playerStateErrorNotifiedRef.current = true;
+          notify(
+            `Coda could not preserve this queue: ${String(cause).replace(/^Error:\s*/, "")}`,
+            "bad",
+          );
+        }
+      });
+    }, PLAYER_STATE_SAVE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [
+    currentIndex,
+    enqueuePlayerStateWrite,
+    playerStateReady,
+    queue,
+    queueOpen,
+    repeat,
+    notify,
+    volume,
+  ]);
+
+  useEffect(() => {
+    if (!playerStateReady) return;
+    const interval = window.setInterval(() => {
+      void checkpointLatestPlayerState().catch(() => {
+        // A future checkpoint can recover from a transient filesystem failure.
+      });
+    }, PLAYER_STATE_CHECKPOINT_MS);
+    return () => window.clearInterval(interval);
+  }, [checkpointLatestPlayerState, playerStateReady]);
+
+  useEffect(() => {
+    if (!playerStateReady || playing) return;
+    void checkpointLatestPlayerState().catch(() => {
+      // Pausing should not fail because persistence is temporarily unavailable.
+    });
+  }, [checkpointLatestPlayerState, playerStateReady, playing]);
+
+  useEffect(() => {
+    if (!currentTrack) {
       setStreamUrl(undefined);
       return;
     }
@@ -894,6 +1823,57 @@ export default function App() {
       setStreamUrl(currentTrack.streamUrl);
       return;
     }
+
+    const radioShowId = radioShowIdFromTrackId(currentTrack.id);
+    if (radioShowId !== undefined) {
+      let active = true;
+      setStreamUrl(undefined);
+      queryClient.fetchQuery({
+        queryKey: ["bandcamp-radio-show", radioShowId],
+        queryFn: () => fetchRadioShow(radioShowId),
+        staleTime: 10 * 60 * 1_000,
+      })
+        .then((show) => {
+          if (!active) return;
+          const refreshedTrack: Track = {
+            ...currentTrack,
+            title: show.subtitle,
+            artist: "Bandcamp Radio",
+            album: show.title,
+            albumId: `radio:${show.id}`,
+            duration: show.duration,
+            artworkUrl: show.artworkUrl,
+            streamUrl: show.streamUrl,
+            radioChapters: boundRadioChapters(show.chapters),
+          };
+          setQueue((items) =>
+            items.map((item, index) =>
+              index === currentIndex && item.id === currentTrack.id
+                ? refreshedTrack
+                : item,
+            ),
+          );
+          setStreamUrl(show.streamUrl);
+        })
+        .catch((cause) => {
+          if (active) {
+            setPlaying(false);
+            notify(
+              `Coda could not resume this Radio show: ${String(cause).replace(/^Error:\s*/, "")}`,
+              "bad",
+            );
+          }
+        });
+      return () => {
+        active = false;
+      };
+    }
+
+    if (!connected) {
+      setStreamUrl(undefined);
+      return;
+    }
+
     let active = true;
     setStreamUrl(undefined);
     fetchStreamUrl(currentTrack.id)
@@ -901,12 +1881,22 @@ export default function App() {
         if (active) setStreamUrl(url);
       })
       .catch((cause) => {
-        if (active) notify(String(cause), "bad");
+        if (active) {
+          setPlaying(false);
+          notify(String(cause), "bad");
+        }
       });
     return () => {
       active = false;
     };
-  }, [currentTrack?.id, currentTrack?.streamUrl, connected, notify]);
+  }, [
+    connected,
+    currentIndex,
+    currentTrack?.id,
+    currentTrack?.streamUrl,
+    notify,
+    queryClient,
+  ]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -930,6 +1920,80 @@ export default function App() {
       notify("AirPlay is not available on this device.", "bad");
     }
   }, [notify]);
+
+  const handleAudioPlaying = useCallback(() => {
+    if (!currentTrack || currentTrack.id.startsWith("radio:")) return;
+    const session = playbackSessionRef.current;
+    if (session.trackId !== currentTrack.id) return;
+    if (!session.startedAt) {
+      session.startedAt = Math.floor(Date.now() / 1000);
+    }
+    if (!lastFmStatus.connected || session.nowPlayingSent) return;
+    session.nowPlayingSent = true;
+    updateLastFmNowPlaying(lastFmTrackInput(currentTrack)).catch(() => {
+      if (playbackSessionRef.current === session) {
+        notify("Last.fm could not update Now Playing.", "bad");
+      }
+    });
+  }, [currentTrack, lastFmStatus.connected, notify]);
+
+  const handleAudioSeeking = useCallback((event: SyntheticEvent<HTMLAudioElement>) => {
+    playbackSessionRef.current.lastPosition = event.currentTarget.currentTime;
+  }, []);
+
+  const handleAudioLoadedMetadata = useCallback((event: SyntheticEvent<HTMLAudioElement>) => {
+    const pending = pendingRestorePositionRef.current;
+    if (!pending || pending.trackId !== currentTrack?.id) return;
+    const duration = event.currentTarget.duration;
+    const maximum = Number.isFinite(duration) && duration > 0
+      ? Math.max(0, duration - 0.25)
+      : pending.position;
+    const position = Math.min(Math.max(0, pending.position), maximum);
+    playbackSessionRef.current.lastPosition = position;
+    event.currentTarget.currentTime = position;
+    setCurrentTime(position);
+    pendingRestorePositionRef.current = undefined;
+  }, [currentTrack?.id]);
+
+  const handleAudioTimeUpdate = useCallback((event: SyntheticEvent<HTMLAudioElement>) => {
+    const position = event.currentTarget.currentTime;
+    const second = Math.floor(position);
+    setCurrentTime((value) => Math.floor(value) === second ? value : second);
+
+    const track = currentTrack;
+    const session = playbackSessionRef.current;
+    if (!track || session.trackId !== track.id) return;
+    const delta = position - session.lastPosition;
+    session.lastPosition = position;
+    if (track.id.startsWith("radio:")) return;
+    if (playing && delta > 0 && delta <= 10) {
+      session.listenedSeconds += delta;
+    }
+    const threshold = Math.min(track.duration / 2, 240);
+    if (
+      !lastFmStatus.connected ||
+      track.duration <= 30 ||
+      !session.startedAt ||
+      session.listenedSeconds < threshold ||
+      session.scrobbleState !== "idle"
+    ) {
+      return;
+    }
+
+    session.scrobbleState = "pending";
+    scrobbleLastFm(lastFmTrackInput(track), session.startedAt)
+      .then(() => {
+        if (playbackSessionRef.current === session) {
+          session.scrobbleState = "sent";
+        }
+      })
+      .catch(() => {
+        if (playbackSessionRef.current === session) {
+          session.scrobbleState = "failed";
+          notify("Last.fm could not scrobble this track.", "bad");
+        }
+      });
+  }, [currentTrack, lastFmStatus.connected, notify, playing]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -968,8 +2032,19 @@ export default function App() {
 
   useEffect(() => {
     const keyboard = (event: KeyboardEvent) => {
-      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
-        if (event.key === "Escape") (event.target as HTMLElement).blur();
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      const interactiveTarget = target?.closest(
+        "button, input, textarea, select, a, [contenteditable='true'], [role='slider']",
+      );
+      if (interactiveTarget) {
+        if (
+          event.key === "Escape" &&
+          (target instanceof HTMLInputElement ||
+            target instanceof HTMLTextAreaElement ||
+            target?.isContentEditable)
+        ) {
+          target?.blur();
+        }
         return;
       }
       if (event.code === "Space") {
@@ -1012,10 +2087,12 @@ export default function App() {
     }
   }, [genre, genreSummary.all]);
 
-  const visibleAlbums = useMemo(() => {
+  const effectiveBrowseMode = view === "library" ? browseMode : "releases";
+  const matchingAlbums = useMemo(() => {
     const list = albums.filter((album) => {
       if (genre !== "All" && genreKey(album.genre) !== genreKey(genre)) return false;
       if (deferredQuery && !`${album.title} ${album.artist} ${album.genre ?? ""}`.toLowerCase().includes(deferredQuery)) return false;
+      if (!matchesBrowseMode(album, effectiveBrowseMode)) return false;
       return true;
     });
     const sorted = [...list].sort((a, b) => {
@@ -1025,12 +2102,65 @@ export default function App() {
       return (b.addedAt ?? "").localeCompare(a.addedAt ?? "");
     });
     return view === "recent" ? sorted.slice(0, 12) : sorted;
-  }, [albums, deferredQuery, genre, sort, view]);
+  }, [albums, deferredQuery, effectiveBrowseMode, genre, sort, view]);
+  const artistGroups = useMemo(() => groupAlbumsByArtist(matchingAlbums), [matchingAlbums]);
+  const visibleAlbums = useMemo(
+    () =>
+      effectiveBrowseMode === "artists" && selectedArtist
+        ? matchingAlbums.filter((album) => artistKey(album.artist) === selectedArtist)
+        : matchingAlbums,
+    [effectiveBrowseMode, matchingAlbums, selectedArtist],
+  );
+  const activeArtist = useMemo(
+    () => artistGroups.find((group) => group.key === selectedArtist),
+    [artistGroups, selectedArtist],
+  );
+  const currentRadioChapter = radioAiringAt(currentTrack?.radioChapters, currentTime).current;
+  const windowTitleSubject =
+    nowPlayingOpen && currentTrack
+      ? currentRadioChapter?.title ?? currentTrack.title
+      : selectedAlbum?.title ??
+        activeArtist?.name ??
+        (view === "discover"
+          ? "Discover"
+          : view === "radio"
+            ? "Bandcamp Radio"
+            : currentRadioChapter?.title ?? currentTrack?.title);
+  const windowTitle = windowTitleSubject ? `${windowTitleSubject} — Coda` : "Coda";
+
+  useEffect(() => {
+    document.title = windowTitle;
+    if (!isDesktop()) return;
+    void import("@tauri-apps/api/window")
+      .then(({ getCurrentWindow }) => getCurrentWindow().setTitle(windowTitle))
+      .catch(() => {
+        // The static native title remains a safe fallback.
+      });
+  }, [windowTitle]);
+
+  const libraryBrowseCounts = useMemo(
+    () => ({
+      artists: groupAlbumsByArtist(albums).length,
+      albums: albums.filter((album) => matchesBrowseMode(album, "albums")).length,
+      singles: albums.filter((album) => matchesBrowseMode(album, "singles")).length,
+    }),
+    [albums],
+  );
   const renderedAlbums = visibleAlbums.slice(0, albumLimit);
 
   useEffect(() => {
     setAlbumLimit(ALBUM_BATCH_SIZE);
-  }, [deferredQuery, genre, sort, view]);
+  }, [browseMode, deferredQuery, genre, selectedArtist, sort, view]);
+
+  useEffect(() => {
+    if (
+      effectiveBrowseMode === "artists" &&
+      selectedArtist &&
+      !artistGroups.some((group) => group.key === selectedArtist)
+    ) {
+      setSelectedArtist(undefined);
+    }
+  }, [artistGroups, effectiveBrowseMode, selectedArtist]);
 
   useEffect(() => {
     const target = loadMoreRef.current;
@@ -1077,13 +2207,31 @@ export default function App() {
   }, []);
 
   const openAlbum = useCallback(async (album: Album) => {
-    setSelectedAlbum(album);
+    void transitionCodaView(() => setSelectedAlbum(album), "page-forward");
     try {
       await ensureTracks(album);
     } catch (cause) {
       notify(String(cause), "bad");
     }
   }, [ensureTracks, notify]);
+
+  const openTrackAlbum = useCallback((track: Track) => {
+    if (track.id.startsWith("radio:")) {
+      setNowPlayingOpen(false);
+      setView("radio");
+      setSelectedAlbum(undefined);
+      setSelectedArtist(undefined);
+      return;
+    }
+    const album = albums.find((item) => item.id === track.albumId);
+    if (album) {
+      setNowPlayingOpen(false);
+      setView("library");
+      void openAlbum(album);
+      return;
+    }
+    notify(`Could not find ${track.album} in this library`, "bad");
+  }, [albums, notify, openAlbum]);
 
   const playAlbum = useCallback(async (album: Album) => {
     try {
@@ -1108,6 +2256,66 @@ export default function App() {
       notify(String(cause), "bad");
     }
   }, [ensureTracks, notify]);
+
+  const loadArtistTracks = useCallback(async (
+    group: ArtistGroup,
+    action: "play" | "shuffle" | "queue",
+  ) => {
+    if (artistAction) return;
+    setArtistAction(action);
+    const tracksByAlbum: Track[][] = Array.from({ length: group.albums.length }, () => []);
+    const hydrated = new Map<string, Album>();
+    let cursor = 0;
+
+    const worker = async () => {
+      while (cursor < group.albums.length) {
+        const index = cursor;
+        cursor += 1;
+        const album = group.albums[index];
+        try {
+          const tracks = album.tracks?.length ? album.tracks : await fetchAlbum(album);
+          tracksByAlbum[index] = tracks;
+          hydrated.set(album.id, albumWithTracks(album, tracks));
+        } catch {
+          // One unavailable purchase should not block the rest of an artist.
+        }
+      }
+    };
+
+    try {
+      await Promise.all(
+        Array.from(
+          { length: Math.min(SEARCH_QUEUE_CONCURRENCY, group.albums.length) },
+          () => worker(),
+        ),
+      );
+      const tracks = tracksByAlbum.flat();
+      if (!tracks.length) {
+        notify(`No playable tracks were returned for ${group.name}.`, "bad");
+        return;
+      }
+      setAlbums((items) =>
+        items.map((album) => hydrated.get(album.id) ?? album),
+      );
+      if (action === "play" || action === "shuffle") {
+        setQueue(action === "shuffle" ? shuffled(tracks) : tracks);
+        setCurrentIndex(0);
+        setCurrentTime(0);
+        setPlaying(true);
+        notify(
+          action === "shuffle"
+            ? `Shuffling ${tracks.length} tracks by ${group.name}`
+            : `Playing ${group.name}`,
+          "good",
+        );
+      } else {
+        setQueue((items) => appendUnique(items, tracks));
+        notify(`${tracks.length} ${group.name} tracks added to queue`, "good");
+      }
+    } finally {
+      setArtistAction(undefined);
+    }
+  }, [artistAction, notify]);
 
   const queueSearchResults = useCallback(async () => {
     if (queueSearchProgress || !visibleAlbums.length) return;
@@ -1168,10 +2376,13 @@ export default function App() {
     }
   }, [notify, queueSearchProgress, visibleAlbums]);
 
-  const shuffleLibrary = useCallback(async () => {
-    if (libraryShuffleActiveRef.current || !connected || !albums.length) return;
+  const shuffleLibrary = useCallback(async (
+    scopeAlbums: readonly Album[] = albums,
+    scopeName = "entire library",
+  ) => {
+    if (libraryShuffleActiveRef.current || !connected || !scopeAlbums.length) return;
     libraryShuffleActiveRef.current = true;
-    const targets = shuffled(albums);
+    const targets = shuffled([...scopeAlbums]);
     const hydrated = new Map<string, Album>();
     const loadedTracks: Track[][] = Array.from({ length: targets.length }, () => []);
     let cursor = 0;
@@ -1220,7 +2431,7 @@ export default function App() {
       setCurrentTime(0);
       setPlaying(true);
       notify(
-        `${tracks.length} tracks from ${hydrated.size} releases shuffled`,
+        `${tracks.length} tracks from ${scopeName} shuffled`,
         "good",
       );
     } finally {
@@ -1245,6 +2456,70 @@ export default function App() {
     setCurrentTime(0);
     setPlaying(true);
   }, [currentIndex]);
+
+  const playTrackAt = useCallback((track: Track, position: number) => {
+    const safePosition = Number.isFinite(position) ? Math.max(0, position) : 0;
+    const alreadyLoaded = currentTrack?.id === track.id && Boolean(audioRef.current);
+    if (!alreadyLoaded && safePosition > 0) {
+      pendingRestorePositionRef.current = { trackId: track.id, position: safePosition };
+    }
+    playTrack(track);
+    setCurrentTime(safePosition);
+    if (alreadyLoaded && audioRef.current) {
+      audioRef.current.currentTime = safePosition;
+    }
+  }, [currentTrack?.id, playTrack]);
+
+  const playTracks = useCallback((tracks: Track[]) => {
+    if (!tracks.length) return;
+    setQueue(tracks);
+    setCurrentIndex(0);
+    setCurrentTime(0);
+    setPlaying(true);
+    notify(`Playing ${tracks.length} ${tracks.length === 1 ? "track" : "tracks"}`, "good");
+  }, [notify]);
+
+  const queueTracks = useCallback((tracks: Track[]) => {
+    if (!tracks.length) return;
+    setQueue((items) => appendUnique(items, tracks));
+    notify(`${tracks.length} ${tracks.length === 1 ? "track" : "tracks"} added to queue`, "good");
+  }, [notify]);
+
+  const playRandomTrack = useCallback(async (
+    scopeAlbums: readonly Album[],
+    scopeName: string,
+  ) => {
+    if (randomPickActiveRef.current || !connected || !scopeAlbums.length) return;
+    randomPickActiveRef.current = true;
+    setRandomPickLoading(true);
+    const remaining = [...scopeAlbums];
+
+    try {
+      while (remaining.length) {
+        const album = pickWeightedItem(
+          remaining,
+          (item) => Math.max(1, item.songCount),
+        );
+        if (!album) break;
+        remaining.splice(remaining.findIndex((item) => item.id === album.id), 1);
+
+        try {
+          const ready = await ensureTracks(album);
+          const track = pickRandomItem(ready.tracks ?? []);
+          if (!track) continue;
+          playTrack(track);
+          notify(`Playing ${track.title} by ${track.artist}.`, "good");
+          return;
+        } catch {
+          // Keep trying when a purchased release is no longer playable.
+        }
+      }
+      notify(`No playable tracks were found in ${scopeName}.`, "bad");
+    } finally {
+      randomPickActiveRef.current = false;
+      setRandomPickLoading(false);
+    }
+  }, [connected, ensureTracks, notify, playTrack]);
 
   const removeQueueItem = useCallback((index: number) => {
     setQueue((items) => {
@@ -1345,6 +2620,8 @@ export default function App() {
 
   const handleDisconnect = useCallback(async () => {
     await disconnect();
+    restoreGenerationRef.current += 1;
+    setPlayerStateReady(false);
     clearRuntimeCaches();
     setConnected(false);
     setAlbums([]);
@@ -1352,14 +2629,25 @@ export default function App() {
     setCurrentIndex(0);
     setCurrentTime(0);
     setPlaying(false);
+    setNowPlayingOpen(false);
+    pendingRestorePositionRef.current = undefined;
+    restoredPlaybackSessionRef.current = undefined;
     setLibraryError("");
     setSyncState("idle");
+    queryClient.removeQueries({ queryKey: ["bandcamp"] });
+    await enqueuePlayerStateWrite(clearPlayerState).catch(() => {
+      notify("Bandcamp disconnected, but Coda could not clear the saved player session.", "bad");
+    });
     notify("Bandcamp credentials removed", "good");
     setConnectionOpen(false);
-  }, [notify]);
+  }, [enqueuePlayerStateWrite, notify, queryClient]);
 
-  const showQueue = useCallback(() => {
-    document.querySelector(".queue-panel")?.scrollIntoView({ behavior: "smooth" });
+  const toggleQueue = useCallback(() => {
+    setQueueOpen((open) => {
+      const next = !open;
+      if (next) queueFocusRequestedRef.current = true;
+      return next;
+    });
   }, []);
 
   const playQueueIndex = useCallback((index: number) => {
@@ -1382,7 +2670,28 @@ export default function App() {
 
   const openConnection = useCallback(() => setConnectionOpen(true), []);
   const closeConnection = useCallback(() => setConnectionOpen(false), []);
-  const closeAlbum = useCallback(() => setSelectedAlbum(undefined), []);
+  const closeAlbum = useCallback(() => {
+    void transitionCodaView(() => setSelectedAlbum(undefined), "page-back");
+  }, []);
+  const openNowPlaying = useCallback(() => {
+    if (currentTrack) {
+      void transitionCodaView(() => setNowPlayingOpen(true), "now-playing");
+    }
+  }, [currentTrack]);
+  const minimizeNowPlaying = useCallback(() => {
+    const restoreFocus = () => {
+      document.querySelector<HTMLButtonElement>(".player__art-link")?.focus({
+        preventScroll: true,
+      });
+    };
+    void transitionCodaView(() => setNowPlayingOpen(false), "now-playing").then(() => {
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(restoreFocus);
+      } else {
+        setTimeout(restoreFocus, 0);
+      }
+    });
+  }, []);
   const playSelectedAlbum = useCallback(() => {
     if (selectedAlbum) void playAlbum(selectedAlbum);
   }, [playAlbum, selectedAlbum]);
@@ -1396,10 +2705,74 @@ export default function App() {
   const handleConnected = useCallback((library: Album[]) => {
     setAlbums(library);
     setConnected(true);
+    setPlayerStateReady(true);
     setLibraryError("");
     setSyncState("idle");
     notify(`${library.length} albums synced`, "good");
   }, [notify]);
+  const chooseView = useCallback((nextView: LibraryView) => {
+    if (
+      nextView === view &&
+      !selectedAlbum &&
+      !selectedArtist &&
+      !nowPlayingOpen
+    ) {
+      return;
+    }
+    void transitionCodaView(() => {
+      setNowPlayingOpen(false);
+      setView(nextView);
+      setSelectedAlbum(undefined);
+      if (nextView !== "library") {
+        setBrowseMode("releases");
+        setSelectedArtist(undefined);
+      }
+    }, "page-crossfade");
+  }, [nowPlayingOpen, selectedAlbum, selectedArtist, view]);
+  const chooseBrowseMode = useCallback((mode: LibraryBrowseMode) => {
+    setNowPlayingOpen(false);
+    setBrowseMode(mode);
+    setSelectedArtist(undefined);
+    setSelectedAlbum(undefined);
+  }, []);
+  const openArtist = useCallback((group: ArtistGroup) => {
+    void transitionCodaView(() => setSelectedArtist(group.key), "page-forward");
+  }, []);
+  const backToArtists = useCallback(() => {
+    void transitionCodaView(() => setSelectedArtist(undefined), "page-back");
+  }, []);
+  const browseArtist = useCallback((artist: string) => {
+    void transitionCodaView(() => {
+      setNowPlayingOpen(false);
+      if (artist === "Bandcamp Radio") {
+        setView("radio");
+        setSelectedAlbum(undefined);
+        setSelectedArtist(undefined);
+        return;
+      }
+      setView("library");
+      setBrowseMode("artists");
+      setSelectedArtist(artistKey(artist));
+      setQuery("");
+      setGenre("All");
+      setSelectedAlbum(undefined);
+    }, "page-forward");
+  }, []);
+  const clearLibraryFilters = useCallback(() => {
+    setQuery("");
+    setGenre("All");
+    setBrowseMode("releases");
+    setSelectedArtist(undefined);
+  }, []);
+  const playArtist = useCallback((group: ArtistGroup) => {
+    void loadArtistTracks(group, "play");
+  }, [loadArtistTracks]);
+  const shuffleArtist = useCallback((group: ArtistGroup) => {
+    void loadArtistTracks(group, "shuffle");
+  }, [loadArtistTracks]);
+  const queueArtist = useCallback((group: ArtistGroup) => {
+    void loadArtistTracks(group, "queue");
+  }, [loadArtistTracks]);
 
   useEffect(() => {
     if (!isDesktop()) return;
@@ -1430,18 +2803,147 @@ export default function App() {
     };
   }, [next, previous, shuffleLibrary, togglePlayback]);
   const isInitialLoading =
-    syncState === "checking" || (connected && syncState === "syncing" && !albums.length);
-  const hasActiveFilters = Boolean(query.trim()) || genre !== "All";
+    syncState === "checking" ||
+    (connected && syncState === "syncing" && !albums.length && !libraryError);
+  const hasActiveFilters =
+    Boolean(query.trim()) ||
+    genre !== "All" ||
+    browseMode !== "releases" ||
+    Boolean(selectedArtist);
+  const browseTitle =
+    effectiveBrowseMode === "singles"
+      ? "Singles"
+      : effectiveBrowseMode === "albums"
+        ? "Albums & EPs"
+        : "All releases";
+  const releaseSectionTitle = activeArtist
+    ? "Releases"
+    : genre === "All"
+      ? browseTitle
+      : `${browseTitle} · ${genre}`;
+  const shuffleScopeAlbums = selectedAlbum ? [selectedAlbum] : visibleAlbums;
+  const shuffleActionLabel = selectedAlbum
+    ? "Shuffle album"
+    : activeArtist
+      ? "Shuffle artist"
+      : query.trim()
+        ? "Shuffle results"
+        : genre !== "All"
+          ? "Shuffle genre"
+          : view === "recent"
+            ? "Shuffle recent"
+            : effectiveBrowseMode === "singles"
+              ? "Shuffle singles"
+              : effectiveBrowseMode === "albums"
+                ? "Shuffle albums"
+                : effectiveBrowseMode === "artists"
+                  ? "Shuffle artists"
+                  : "Shuffle collection";
+  const shuffleScopeName = selectedAlbum
+    ? selectedAlbum.title
+    : activeArtist
+      ? activeArtist.name
+      : query.trim()
+        ? "the current results"
+        : genre !== "All"
+          ? genre
+          : view === "recent"
+            ? "recent additions"
+            : effectiveBrowseMode === "singles"
+              ? "the singles view"
+              : effectiveBrowseMode === "albums"
+                ? "the albums view"
+                : effectiveBrowseMode === "artists"
+                  ? "the visible artists"
+                  : "the collection";
+  const shuffleVisible = useCallback(() => {
+    void shuffleLibrary(shuffleScopeAlbums, shuffleScopeName);
+  }, [shuffleLibrary, shuffleScopeAlbums, shuffleScopeName]);
+  const playRandomVisible = useCallback(() => {
+    void playRandomTrack(shuffleScopeAlbums, shuffleScopeName);
+  }, [playRandomTrack, shuffleScopeAlbums, shuffleScopeName]);
 
   return (
-    <div className="app-shell">
-      <Titlebar />
-      <div className="app-body">
-        <Sidebar view={view} onView={setView} connected={connected} onConnect={openConnection} />
+    <div className={`app-shell ${nowPlayingOpen ? "app-shell--now-playing" : ""}`}>
+      <div className={`app-body ${queueOpen ? "" : "app-body--queue-closed"}`}>
+        <Sidebar
+          view={view}
+          onView={chooseView}
+          connected={connected}
+          onConnect={openConnection}
+        />
         <main className="library-pane">
-          {view === "discover" ? (
+          {nowPlayingOpen && currentTrack ? (
+            <NowPlayingView
+              track={currentTrack}
+              queue={queue}
+              currentIndex={currentIndex}
+              playing={playing}
+              currentTime={currentTime}
+              duration={currentTrack.duration}
+              volume={volume}
+              repeat={repeat}
+              artwork={(
+                <CoverArt
+                  size="large"
+                  album={{
+                    id: currentTrack.albumId,
+                    title: currentTrack.album,
+                    artist: currentTrack.artist,
+                    coverArt: currentTrack.coverArt,
+                    artworkUrl: currentTrack.artworkUrl,
+                    palette: currentTrack.palette,
+                  }}
+                />
+              )}
+              airPlayAvailable={airPlayAvailable}
+              queueOpen={queueOpen}
+              onMinimize={minimizeNowPlaying}
+              onToggle={togglePlayback}
+              onPrevious={previous}
+              onNext={next}
+              onSeek={seek}
+              onVolume={setVolume}
+              onRepeat={cycleRepeat}
+              onAirPlay={openAirPlay}
+              onToggleQueue={toggleQueue}
+              onArtist={browseArtist}
+              onAlbum={openTrackAlbum}
+              onPlayQueueIndex={playQueueIndex}
+              favorite={favoriteTrackIds.has(currentTrack.id)}
+              onToggleFavorite={() => toggleFavorite(currentTrack.id, "song")}
+              onAddToPlaylist={() => setPlaylistTarget([currentTrack])}
+            />
+          ) : view === "favorites" || view === "playlists" ? (
+            <Suspense fallback={<LibrarySkeleton />}>
+              <SavedLibraryView
+                mode={view}
+                connected={connected}
+                favorites={localFavorites}
+                favoritesLoading={false}
+                favoritesLocal
+                onRefreshFavorites={() => setLocalFavorites(readLocalFavorites())}
+                onToggleFavorite={(id, kind, favorite) => toggleFavorite(id, kind, favorite)}
+                onPlayTracks={playTracks}
+                onQueueTracks={queueTracks}
+                onPlayTrack={playTrack}
+                onQueueTrack={queueTrack}
+                onOpenAlbum={(album) => {
+                  setView("library");
+                  void openAlbum(album);
+                }}
+                onOpenTrackAlbum={openTrackAlbum}
+                onAddToPlaylist={setPlaylistTarget}
+                onNotify={notify}
+              />
+            </Suspense>
+          ) : view === "discover" ? (
             <Suspense fallback={<LibrarySkeleton />}>
               <DiscoverView onPlay={playTrack} onQueue={queueTrack} />
+            </Suspense>
+          ) : view === "radio" ? (
+            <Suspense fallback={<LibrarySkeleton />}>
+              <RadioView onPlay={playTrack} onPlayAt={playTrackAt} onQueue={queueTrack} />
             </Suspense>
           ) : (
             <>
@@ -1466,17 +2968,29 @@ export default function App() {
                   <kbd>/</kbd>
                 </label>
               ) : null}
-              {connected ? (
+              {connected && shuffleScopeAlbums.length ? (
                 <button
                   className="artwork-button"
-                  onClick={() => void shuffleLibrary()}
-                  disabled={Boolean(libraryShuffleProgress) || syncState === "syncing"}
-                  title="Load every release and shuffle the whole library"
+                  onClick={playRandomVisible}
+                  disabled={randomPickLoading || Boolean(libraryShuffleProgress) || syncState === "syncing"}
+                  title={`Play one random track from ${shuffleScopeName}`}
+                  aria-label={`Play a random track from ${shuffleScopeName}`}
+                >
+                  {randomPickLoading ? <RefreshCw size={15} className="spin" /> : <Dices size={15} />}
+                  {randomPickLoading ? "Picking…" : "Surprise me"}
+                </button>
+              ) : null}
+              {connected && shuffleScopeAlbums.length ? (
+                <button
+                  className="artwork-button"
+                  onClick={shuffleVisible}
+                  disabled={Boolean(libraryShuffleProgress) || randomPickLoading || syncState === "syncing"}
+                  title={`${shuffleActionLabel} and start playing`}
                 >
                   {libraryShuffleProgress ? <RefreshCw size={15} className="spin" /> : <Shuffle size={15} />}
                   {libraryShuffleProgress
                     ? `${libraryShuffleProgress.done}/${libraryShuffleProgress.total}`
-                    : "Shuffle all"}
+                    : shuffleActionLabel}
                 </button>
               ) : null}
               {connected ? (
@@ -1487,7 +3001,7 @@ export default function App() {
                   title="Retry artwork and recover missing covers"
                 >
                   {artworkRefreshing ? <RefreshCw size={15} className="spin" /> : <Images size={15} />}
-                  Artwork
+                  {artworkRefreshing ? "Refreshing…" : "Artwork"}
                 </button>
               ) : null}
               <button
@@ -1496,23 +3010,65 @@ export default function App() {
                 disabled={syncState === "checking" || syncState === "syncing"}
               >
                 {syncState === "checking" || syncState === "syncing" ? <RefreshCw size={16} className="spin" /> : connected ? <RefreshCw size={16} /> : <Radio size={16} />}
-                {connected ? "Sync" : "Connect"}
+                {syncState === "checking"
+                  ? "Checking…"
+                  : syncState === "syncing"
+                    ? "Syncing…"
+                    : connected
+                      ? "Sync"
+                      : "Connect"}
               </button>
             </div>
           </header>
 
-          {connected && syncState === "error" && albums.length ? (
+          {connected &&
+          (syncState === "error" || syncState === "syncing") &&
+          Boolean(libraryError) &&
+          albums.length ? (
             <section className="sync-notice" role="status">
               <div className="sync-notice__icon"><CircleAlert size={18} /></div>
               <div>
                 <strong>Showing your saved collection</strong>
                 <span>{libraryError || "Bandcamp could not be reached. Your cached library is still available."}</span>
               </div>
-              <button onClick={() => void syncLibrary()}>Try again <ChevronRight size={16} /></button>
+              <button
+                onClick={() => void syncLibrary()}
+                disabled={syncState === "syncing"}
+              >
+                {syncState === "syncing"
+                  ? <RefreshCw className="spin" size={16} />
+                  : <ChevronRight size={16} />}
+                {syncState === "syncing" ? "Syncing…" : "Try again"}
+              </button>
             </section>
           ) : null}
 
-          {connected && albums.length ? (
+          {connected && albums.length && view === "library" && !selectedAlbum ? (
+            <nav className="browse-tabs" aria-label="Browse collection">
+              {LIBRARY_BROWSE_OPTIONS.map(({ mode, label, title }) => {
+                const count =
+                  mode === "releases"
+                    ? albums.length
+                    : mode === "artists"
+                      ? libraryBrowseCounts.artists
+                      : libraryBrowseCounts[mode];
+                return (
+                  <button
+                    key={mode}
+                    className={browseMode === mode ? "active" : ""}
+                    onClick={() => chooseBrowseMode(mode)}
+                    aria-pressed={browseMode === mode}
+                    title={title}
+                  >
+                    {label}
+                    <span>{count}</span>
+                  </button>
+                );
+              })}
+            </nav>
+          ) : null}
+
+          {connected && albums.length && !selectedAlbum ? (
             <section className="filter-row">
               <div className="genre-filter">
                 <div className="genre-tabs">
@@ -1544,22 +3100,42 @@ export default function App() {
                   </label>
                 ) : null}
               </div>
-              <label className="sort-control">
-                <ArrowDownUp size={15} />
-                <span className="sr-only">Sort collection</span>
-                <select value={sort} onChange={(event) => setSort(event.target.value as SortMode)}>
-                  <option value="recent">Recently added</option>
-                  <option value="artist">Artist A–Z</option>
-                  <option value="title">Album A–Z</option>
-                  <option value="year">Release year</option>
-                </select>
-                <ChevronDown size={14} />
-              </label>
+              {effectiveBrowseMode === "artists" && !selectedArtist ? (
+                <span className="artist-sort-note"><ArrowDownUp size={14} /> Artist A–Z</span>
+              ) : (
+                <label className="sort-control">
+                  <ArrowDownUp size={15} />
+                  <span className="sr-only">Sort collection</span>
+                  <select value={sort} onChange={(event) => setSort(event.target.value as SortMode)}>
+                    <option value="recent">Recently added</option>
+                    <option value="artist">Artist A–Z</option>
+                    <option value="title">Album A–Z</option>
+                    <option value="year">Release year</option>
+                  </select>
+                  <ChevronDown size={14} />
+                </label>
+              )}
             </section>
           ) : null}
 
           <section className="album-section" aria-live="polite">
-            {isInitialLoading ? (
+            {selectedAlbum ? (
+              <AlbumDetailPage
+                album={selectedAlbum}
+                loading={albumLoading}
+                onBack={closeAlbum}
+                onPlayAlbum={playSelectedAlbum}
+                onQueueAlbum={queueSelectedAlbum}
+                onPlayTrack={playTrack}
+                onQueueTrack={queueTrack}
+                onArtist={browseArtist}
+                favoriteAlbum={favoriteAlbumIds.has(selectedAlbum.id)}
+                favoriteTrackIds={favoriteTrackIds}
+                onToggleFavoriteAlbum={() => toggleFavorite(selectedAlbum.id, "album")}
+                onToggleFavoriteTrack={(track) => toggleFavorite(track.id, "song")}
+                onAddToPlaylist={setPlaylistTarget}
+              />
+            ) : isInitialLoading ? (
               <LibrarySkeleton />
             ) : !connected ? (
               <EmptyState
@@ -1568,26 +3144,85 @@ export default function App() {
                 detail="Connect the separate Subsonic credentials from your Bandcamp fan settings. Your password stays in the system vault."
                 action={<button onClick={openConnection}>Connect Bandcamp <ChevronRight size={15} /></button>}
               />
-            ) : syncState === "error" && !albums.length ? (
+            ) : (syncState === "error" || syncState === "syncing") &&
+              Boolean(libraryError) &&
+              !albums.length ? (
               <EmptyState
                 icon={<CircleAlert size={28} />}
                 title="Your collection couldn’t load"
                 detail={libraryError || "Bandcamp could not be reached. Check your connection and try again."}
-                action={<button onClick={() => void syncLibrary()}>Try syncing again <RefreshCw size={14} /></button>}
+                action={(
+                  <button
+                    onClick={() => void syncLibrary()}
+                    disabled={syncState === "syncing"}
+                  >
+                    <RefreshCw
+                      className={syncState === "syncing" ? "spin" : ""}
+                      size={14}
+                    />
+                    {syncState === "syncing" ? "Syncing…" : "Try syncing again"}
+                  </button>
+                )}
               />
             ) : !albums.length ? (
               <EmptyState
                 icon={<Library size={28} />}
                 title="No releases found"
                 detail="Bandcamp connected successfully, but its Subsonic library returned no purchases yet."
-                action={<button onClick={() => void syncLibrary()}>Check again <RefreshCw size={14} /></button>}
+                action={(
+                  <button
+                    onClick={() => void syncLibrary()}
+                    disabled={syncState === "syncing"}
+                  >
+                    <RefreshCw
+                      className={syncState === "syncing" ? "spin" : ""}
+                      size={14}
+                    />
+                    {syncState === "syncing" ? "Checking…" : "Check again"}
+                  </button>
+                )}
               />
-            ) : (
+            ) : effectiveBrowseMode === "artists" && !selectedArtist ? (
               <>
                 <div className="section-heading">
-                  <h2>{genre === "All" ? "All releases" : genre}</h2>
+                  <h2>{genre === "All" ? "Artists" : `${genre} artists`}</h2>
+                  <span>
+                    {artistGroups.length} {artistGroups.length === 1 ? "artist" : "artists"}
+                  </span>
+                </div>
+                {artistGroups.length ? (
+                  <div className="artist-grid">
+                    {artistGroups.map((group) => (
+                      <ArtistCard key={group.key} group={group} onOpen={openArtist} />
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyState
+                    icon={<UsersRound size={28} />}
+                    title="No artists match those filters"
+                    detail="Try another artist name, release title, or genre."
+                    action={hasActiveFilters ? (
+                      <button onClick={clearLibraryFilters}>Clear filters</button>
+                    ) : undefined}
+                  />
+                )}
+              </>
+            ) : (
+              <>
+                {activeArtist ? (
+                  <ArtistHero
+                    group={activeArtist}
+                    loading={artistAction}
+                    onBack={backToArtists}
+                    onPlay={playArtist}
+                    onShuffle={shuffleArtist}
+                    onQueue={queueArtist}
+                  />
+                ) : null}
+                <div className="section-heading">
+                  <h2>{releaseSectionTitle}</h2>
                   <div className="section-heading__actions">
-                    <span>{visibleAlbums.length} {visibleAlbums.length === 1 ? "album" : "albums"}</span>
+                    <span>{visibleAlbums.length} {visibleAlbums.length === 1 ? "release" : "releases"}</span>
                     {deferredQuery && visibleAlbums.length ? (
                       <button
                         className="queue-results-button"
@@ -1607,7 +3242,14 @@ export default function App() {
                   <>
                     <div className="album-grid">
                       {renderedAlbums.map((album) => (
-                        <AlbumCard key={album.id} album={album} onOpen={openAlbum} onPlay={playAlbum} onQueue={queueAlbum} />
+                        <AlbumCard
+                          key={album.id}
+                          album={album}
+                          onOpen={openAlbum}
+                          onPlay={playAlbum}
+                          onQueue={queueAlbum}
+                          onArtist={browseArtist}
+                        />
                       ))}
                     </div>
                     {renderedAlbums.length < visibleAlbums.length ? (
@@ -1624,9 +3266,15 @@ export default function App() {
                   <EmptyState
                     icon={<Search size={28} />}
                     title="Nothing matches those filters"
-                    detail="Try a different artist, release title, or genre."
+                    detail={
+                      effectiveBrowseMode === "singles"
+                        ? "No one-track purchases match. Try another artist, title, or genre."
+                        : effectiveBrowseMode === "albums"
+                          ? "No multi-track purchases match. Try another artist, title, or genre."
+                          : "Try a different artist, release title, or genre."
+                    }
                     action={hasActiveFilters ? (
-                      <button onClick={() => { setQuery(""); setGenre("All"); }}>Clear filters</button>
+                      <button onClick={clearLibraryFilters}>Clear filters</button>
                     ) : undefined}
                   />
                 )}
@@ -1636,65 +3284,88 @@ export default function App() {
             </>
           )}
         </main>
-        <QueuePanel
-          queue={queue}
-          currentIndex={currentIndex}
-          currentTrack={currentTrack}
-          onPlay={playQueueIndex}
-          onRemove={removeQueueItem}
-          onClear={clearQueue}
-          onShuffle={shuffleQueue}
-          onMove={moveQueueItem}
-        />
+        {queuePresent ? (
+          <QueuePanel
+            open={queueOpen}
+            panelRef={queuePanelRef}
+            queue={queue}
+            currentIndex={currentIndex}
+            currentTrack={currentTrack}
+            currentTime={currentTime}
+            playing={playing}
+            onPlay={playQueueIndex}
+            onRemove={removeQueueItem}
+            onClear={clearQueue}
+            onShuffle={shuffleQueue}
+            onMove={moveQueueItem}
+            onArtist={browseArtist}
+            onAlbum={openTrackAlbum}
+            onNowPlaying={openNowPlaying}
+            onSeek={seek}
+          />
+        ) : null}
       </div>
-      <Player
-        track={currentTrack}
-        playing={playing}
-        currentTime={currentTime}
-        duration={currentTrack?.duration ?? 0}
-        volume={volume}
-        repeat={repeat}
-        onToggle={togglePlayback}
-        onPrevious={previous}
-        onNext={next}
-        onSeek={seek}
-        onVolume={setVolume}
-        onRepeat={cycleRepeat}
-        airPlayAvailable={airPlayAvailable}
-        onAirPlay={openAirPlay}
-        onShowQueue={showQueue}
-      />
+      {nowPlayingOpen && currentTrack ? null : (
+        <Player
+          track={currentTrack}
+          playing={playing}
+          currentTime={currentTime}
+          duration={currentTrack?.duration ?? 0}
+          volume={volume}
+          repeat={repeat}
+          onToggle={togglePlayback}
+          onPrevious={previous}
+          onNext={next}
+          onSeek={seek}
+          onVolume={setVolume}
+          onRepeat={cycleRepeat}
+          airPlayAvailable={airPlayAvailable}
+          onAirPlay={openAirPlay}
+          onArtist={browseArtist}
+          onAlbum={openTrackAlbum}
+          onNowPlaying={openNowPlaying}
+          favorite={currentTrack ? favoriteTrackIds.has(currentTrack.id) : false}
+          onToggleFavorite={() => {
+            if (currentTrack) toggleFavorite(currentTrack.id, "song");
+          }}
+          onAddToPlaylist={() => {
+            if (currentTrack) setPlaylistTarget([currentTrack]);
+          }}
+          queueOpen={queueOpen}
+          onToggleQueue={toggleQueue}
+        />
+      )}
       <audio
         ref={audioRef}
         src={streamUrl}
         preload="metadata"
-        onTimeUpdate={(event) => {
-          const second = Math.floor(event.currentTarget.currentTime);
-          setCurrentTime((value) => Math.floor(value) === second ? value : second);
-        }}
+        onPlaying={handleAudioPlaying}
+        onSeeking={handleAudioSeeking}
+        onLoadedMetadata={handleAudioLoadedMetadata}
+        onTimeUpdate={handleAudioTimeUpdate}
         onDurationChange={(event) => {
           if (Number.isFinite(event.currentTarget.duration)) setCurrentTime(event.currentTarget.currentTime);
         }}
         onEnded={next}
       />
-      {selectedAlbum ? (
-        <AlbumDialog
-          album={selectedAlbum}
-          loading={albumLoading}
-          onClose={closeAlbum}
-          onPlayAlbum={playSelectedAlbum}
-          onQueueAlbum={queueSelectedAlbum}
-          onPlayTrack={playTrack}
-          onQueueTrack={queueTrack}
-        />
-      ) : null}
       {connectionOpen ? (
         <ConnectionDialog
           connected={connected}
+          lastFmStatus={lastFmStatus}
           onClose={closeConnection}
           onConnected={handleConnected}
           onDisconnected={handleDisconnect}
+          onLastFmStatus={setLastFmStatus}
         />
+      ) : null}
+      {playlistTarget?.length ? (
+        <Suspense fallback={null}>
+          <AddToPlaylistDialog
+            tracks={playlistTarget}
+            onClose={() => setPlaylistTarget(undefined)}
+            onNotify={notify}
+          />
+        </Suspense>
       ) : null}
       <div className="toast-region" aria-live="polite">
         {toasts.map((toast) => <div key={toast.id} className={`toast toast--${toast.tone ?? "neutral"}`}>{toast.tone === "good" ? <Check size={16} /> : toast.tone === "bad" ? <X size={16} /> : null}{toast.message}</div>)}
