@@ -1,0 +1,55 @@
+{
+  "contractVersion": 2,
+  "snapshot": {
+    "version": 1,
+    "savedAt": 1700000000000,
+    "queue": [
+      {
+        "id": "radio:979",
+        "title": "The Coda Broadcast",
+        "artist": "Bandcamp Radio",
+        "album": "Bandcamp Weekly",
+        "albumId": "radio:979",
+        "duration": 3600,
+        "track": 1,
+        "palette": ["#ca6954", "#241b1a"]
+      }
+    ],
+    "currentIndex": 0,
+    "positionSeconds": 121,
+    "volume": 0.7,
+    "repeatMode": "off",
+    "queueOpen": false,
+    "radioScrobbleProgress": {
+      "showTrackId": "radio:979",
+      "activeChapterKey": "60:chapter",
+      "chapterStartedAt": 1700000000,
+      "chapterListenedSeconds": 61,
+      "lastPosition": 121,
+      "chapterNowPlayingSent": true,
+      "chapterScrobbleState": "pending",
+      "showStartedAt": 1700000000,
+      "showListenedSeconds": 121,
+      "showScrobbleState": "idle",
+      "scrobbledChapterKeys": []
+    }
+  },
+  "checkpoint": {
+    "currentIndex": 0,
+    "currentTrackId": "radio:979",
+    "positionSeconds": 125,
+    "radioScrobbleProgress": {
+      "showTrackId": "radio:979",
+      "activeChapterKey": "60:chapter",
+      "chapterStartedAt": 1700000000,
+      "chapterListenedSeconds": 65,
+      "lastPosition": 125,
+      "chapterNowPlayingSent": true,
+      "chapterScrobbleState": "pending",
+      "showStartedAt": 1700000000,
+      "showListenedSeconds": 125,
+      "showScrobbleState": "idle",
+      "scrobbledChapterKeys": []
+    }
+  }
+}

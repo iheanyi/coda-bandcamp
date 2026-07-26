@@ -4,17 +4,24 @@ import type {
   PlayerStateInput,
   PlayerStateSnapshot,
   PlayerStateTrack,
+  RadioScrobbleProgress,
   RepeatMode,
   Track,
 } from "./types";
 
 export const PLAYER_STATE_VERSION = 1 as const;
+// Increment this when the native IPC shape gains fields while the persisted
+// snapshot version remains backward compatible. The renderer uses it to avoid
+// sending a newer shape to an older Rust process during Tauri dev rebuilds.
+export const PLAYER_STATE_CONTRACT_VERSION = 2 as const;
 export const MAX_PERSISTED_QUEUE_LENGTH = 25_000;
 
 const MAX_TEXT_LENGTH = 1_024;
 const MAX_TRACK_SECONDS = 7 * 24 * 60 * 60;
 const MAX_TRACK_NUMBER = 100_000;
 const MAX_TIMESTAMP_MS = 8_640_000_000_000_000;
+const MAX_RADIO_SCROBBLED_CHAPTERS = 256;
+const MAX_RADIO_CHAPTER_KEY_LENGTH = 128;
 const REPEAT_MODES = new Set<RepeatMode>(["off", "all", "one"]);
 const SCROBBLE_STATES = new Set(["idle", "pending", "sent", "failed"]);
 
@@ -37,6 +44,15 @@ function isNonNegativeInteger(value: unknown): value is number {
 
 function isAbsent(value: unknown): value is null | undefined {
   return value === undefined || value === null;
+}
+
+function isRadioChapterKey(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= MAX_RADIO_CHAPTER_KEY_LENGTH &&
+    !/[\u0000-\u001f\u007f-\u009f]/u.test(value)
+  );
 }
 
 function isBoundedSeconds(value: unknown): value is number {
@@ -135,6 +151,64 @@ function parseLastFmProgress(value: unknown): LastFmPlaybackProgress | undefined
   };
 }
 
+function parseRadioScrobbleProgress(value: unknown): RadioScrobbleProgress | undefined {
+  if (!isRecord(value)) return undefined;
+  const activeChapterKey = isAbsent(value.activeChapterKey)
+    ? undefined
+    : value.activeChapterKey;
+  if (
+    !isBoundedText(value.showTrackId, true) ||
+    !/^radio:[1-9]\d{0,15}$/.test(value.showTrackId) ||
+    (!isAbsent(activeChapterKey) && !isRadioChapterKey(activeChapterKey)) ||
+    !isNonNegativeInteger(value.chapterStartedAt) ||
+    value.chapterStartedAt > MAX_TIMESTAMP_MS / 1_000 ||
+    !isBoundedSeconds(value.chapterListenedSeconds) ||
+    !isBoundedSeconds(value.lastPosition) ||
+    typeof value.chapterNowPlayingSent !== "boolean" ||
+    typeof value.chapterScrobbleState !== "string" ||
+    !SCROBBLE_STATES.has(value.chapterScrobbleState) ||
+    !isNonNegativeInteger(value.showStartedAt) ||
+    value.showStartedAt > MAX_TIMESTAMP_MS / 1_000 ||
+    !isBoundedSeconds(value.showListenedSeconds) ||
+    typeof value.showScrobbleState !== "string" ||
+    !SCROBBLE_STATES.has(value.showScrobbleState) ||
+    !Array.isArray(value.scrobbledChapterKeys) ||
+    value.scrobbledChapterKeys.length > MAX_RADIO_SCROBBLED_CHAPTERS ||
+    !value.scrobbledChapterKeys.every(isRadioChapterKey)
+  ) {
+    return undefined;
+  }
+
+  const pendingChapterWasAttempted =
+    value.chapterScrobbleState === "pending" && activeChapterKey;
+  const scrobbledChapterKeys = [
+    ...new Set([
+      ...value.scrobbledChapterKeys,
+      ...(pendingChapterWasAttempted ? [pendingChapterWasAttempted] : []),
+    ]),
+  ].slice(-MAX_RADIO_SCROBBLED_CHAPTERS);
+
+  return {
+    showTrackId: value.showTrackId,
+    ...(activeChapterKey ? { activeChapterKey } : {}),
+    // Restored sessions start paused. New playback establishes fresh Last.fm
+    // timestamps while retaining genuine listening time and dedupe markers.
+    chapterStartedAt: 0,
+    chapterListenedSeconds: value.chapterListenedSeconds,
+    lastPosition: value.lastPosition,
+    chapterNowPlayingSent: false,
+    chapterScrobbleState: value.chapterScrobbleState === "pending"
+      ? "sent"
+      : value.chapterScrobbleState as RadioScrobbleProgress["chapterScrobbleState"],
+    showStartedAt: 0,
+    showListenedSeconds: value.showListenedSeconds,
+    showScrobbleState: value.showScrobbleState === "pending"
+      ? "sent"
+      : value.showScrobbleState as RadioScrobbleProgress["showScrobbleState"],
+    scrobbledChapterKeys,
+  };
+}
+
 function queuePositionIsValid(
   queue: PlayerStateTrack[],
   currentIndex: number,
@@ -192,6 +266,7 @@ export function createPlayerState(input: PlayerStateInput, now = Date.now()): Pl
     currentIndex,
     positionSeconds: queue.length === 0 || currentWasOmitted ? 0 : input.positionSeconds,
     lastFmProgress: currentWasOmitted ? undefined : input.lastFmProgress,
+    radioScrobbleProgress: currentWasOmitted ? undefined : input.radioScrobbleProgress,
     version: PLAYER_STATE_VERSION,
     savedAt: now,
   });
@@ -229,15 +304,30 @@ export function parsePlayerState(value: unknown): PlayerStateSnapshot | undefine
 
   const lastFmProgress =
     value.lastFmProgress === undefined ? undefined : parseLastFmProgress(value.lastFmProgress);
+  const radioScrobbleProgress =
+    value.radioScrobbleProgress === undefined
+      ? undefined
+      : parseRadioScrobbleProgress(value.radioScrobbleProgress);
+  const currentTrack = tracks[value.currentIndex as number];
   if (
     value.lastFmProgress !== undefined &&
     (!lastFmProgress ||
       tracks.length === 0 ||
-      tracks[value.currentIndex as number]?.id.startsWith("radio:") ||
-      lastFmProgress.trackId !== tracks[value.currentIndex as number]?.id)
+      currentTrack?.id.startsWith("radio:") ||
+      lastFmProgress.trackId !== currentTrack?.id)
   ) {
     return undefined;
   }
+  if (
+    value.radioScrobbleProgress !== undefined &&
+    (!radioScrobbleProgress ||
+      tracks.length === 0 ||
+      !currentTrack?.id.startsWith("radio:") ||
+      radioScrobbleProgress.showTrackId !== currentTrack.id)
+  ) {
+    return undefined;
+  }
+  if (lastFmProgress && radioScrobbleProgress) return undefined;
 
   return {
     version: PLAYER_STATE_VERSION,
@@ -249,6 +339,7 @@ export function parsePlayerState(value: unknown): PlayerStateSnapshot | undefine
     repeatMode: value.repeatMode as RepeatMode,
     queueOpen: value.queueOpen,
     ...(lastFmProgress ? { lastFmProgress } : {}),
+    ...(radioScrobbleProgress ? { radioScrobbleProgress } : {}),
   };
 }
 
@@ -264,10 +355,27 @@ export function createPlayerStateCheckpoint(
   }
   const lastFmProgress =
     input.lastFmProgress === undefined ? undefined : parseLastFmProgress(input.lastFmProgress);
+  const radioScrobbleProgress =
+    input.radioScrobbleProgress === undefined
+      ? undefined
+      : parseRadioScrobbleProgress(input.radioScrobbleProgress);
   if (
     input.lastFmProgress !== undefined &&
-    (!lastFmProgress || lastFmProgress.trackId !== input.currentTrackId)
+    (!lastFmProgress ||
+      input.currentTrackId.startsWith("radio:") ||
+      lastFmProgress.trackId !== input.currentTrackId)
   ) {
+    throw new Error("The player checkpoint is invalid and was not saved.");
+  }
+  if (
+    input.radioScrobbleProgress !== undefined &&
+    (!radioScrobbleProgress ||
+      !input.currentTrackId.startsWith("radio:") ||
+      radioScrobbleProgress.showTrackId !== input.currentTrackId)
+  ) {
+    throw new Error("The player checkpoint is invalid and was not saved.");
+  }
+  if (lastFmProgress && radioScrobbleProgress) {
     throw new Error("The player checkpoint is invalid and was not saved.");
   }
   return {
@@ -275,6 +383,7 @@ export function createPlayerStateCheckpoint(
     currentTrackId: input.currentTrackId,
     positionSeconds: input.positionSeconds,
     ...(lastFmProgress ? { lastFmProgress } : {}),
+    ...(radioScrobbleProgress ? { radioScrobbleProgress } : {}),
   };
 }
 

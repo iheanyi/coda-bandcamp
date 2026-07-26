@@ -4,9 +4,15 @@ import {
   createPlayerStateCheckpoint,
   MAX_PERSISTED_QUEUE_LENGTH,
   parsePlayerState,
+  PLAYER_STATE_CONTRACT_VERSION,
   stripTrackForPersistence,
 } from "./playerState";
-import type { PlayerStateInput, Track } from "./types";
+import radioContract from "../test/fixtures/player-state-radio-contract.json";
+import type {
+  PlayerStateCheckpoint,
+  PlayerStateInput,
+  Track,
+} from "./types";
 
 const track: Track = {
   id: "track-1",
@@ -40,6 +46,29 @@ const input: PlayerStateInput = {
 };
 
 describe("player state persistence", () => {
+  it("matches the shared native Radio persistence contract", () => {
+    expect(radioContract.contractVersion).toBe(PLAYER_STATE_CONTRACT_VERSION);
+    const snapshot = parsePlayerState(radioContract.snapshot);
+    expect(snapshot).toMatchObject({
+      queue: [{ id: "radio:979" }],
+      positionSeconds: 121,
+      radioScrobbleProgress: {
+        showTrackId: "radio:979",
+        chapterStartedAt: 0,
+        chapterScrobbleState: "sent",
+        scrobbledChapterKeys: ["60:chapter"],
+      },
+    });
+    expect(
+      createPlayerStateCheckpoint(
+        radioContract.checkpoint as unknown as PlayerStateCheckpoint,
+      ),
+    ).toMatchObject({
+      currentTrackId: "radio:979",
+      radioScrobbleProgress: { showTrackId: "radio:979" },
+    });
+  });
+
   it("creates a versioned snapshot without signed stream URLs", () => {
     const state = createPlayerState(input, 1_700_000_000_000);
 
@@ -127,6 +156,40 @@ describe("player state persistence", () => {
     });
   });
 
+  it("restores bounded Radio scrobble progress without chapter metadata", () => {
+    const state = createPlayerState({
+      ...input,
+      queue: [{ ...track, id: "radio:979", radioChapters: [
+        { title: "First light", artist: "North Star", timecode: 60 },
+      ] }],
+      lastFmProgress: undefined,
+      radioScrobbleProgress: {
+        showTrackId: "radio:979",
+        activeChapterKey: "60:chapter",
+        chapterStartedAt: 1_700_000_000,
+        chapterListenedSeconds: 61,
+        lastPosition: 121,
+        chapterNowPlayingSent: true,
+        chapterScrobbleState: "pending",
+        showStartedAt: 1_700_000_000,
+        showListenedSeconds: 121,
+        showScrobbleState: "idle",
+        scrobbledChapterKeys: [],
+      },
+    });
+
+    expect(state.queue[0]).not.toHaveProperty("radioChapters");
+    expect(state.radioScrobbleProgress).toMatchObject({
+      showTrackId: "radio:979",
+      chapterStartedAt: 0,
+      chapterNowPlayingSent: false,
+      chapterScrobbleState: "sent",
+      showStartedAt: 0,
+      scrobbledChapterKeys: ["60:chapter"],
+    });
+    expect(JSON.stringify(state)).not.toContain("First light");
+  });
+
   it("rejects malformed, out-of-range, and mismatched snapshots", () => {
     const valid = createPlayerState(input);
     expect(parsePlayerState({ ...valid, version: 2 })).toBeUndefined();
@@ -177,6 +240,37 @@ describe("player state persistence", () => {
         currentTrackId: "track-2",
         positionSeconds: 48,
         lastFmProgress: input.lastFmProgress,
+      }),
+    ).toThrow(/invalid/);
+  });
+
+  it("accepts Radio progress only for the matching Radio checkpoint", () => {
+    const radioScrobbleProgress = {
+      showTrackId: "radio:979",
+      chapterStartedAt: 0,
+      chapterListenedSeconds: 25,
+      lastPosition: 85,
+      chapterNowPlayingSent: false,
+      chapterScrobbleState: "idle" as const,
+      showStartedAt: 0,
+      showListenedSeconds: 85,
+      showScrobbleState: "idle" as const,
+      scrobbledChapterKeys: [],
+    };
+    expect(
+      createPlayerStateCheckpoint({
+        currentIndex: 0,
+        currentTrackId: "radio:979",
+        positionSeconds: 85,
+        radioScrobbleProgress,
+      }),
+    ).toMatchObject({ currentTrackId: "radio:979", radioScrobbleProgress });
+    expect(() =>
+      createPlayerStateCheckpoint({
+        currentIndex: 0,
+        currentTrackId: "track-1",
+        positionSeconds: 85,
+        radioScrobbleProgress,
       }),
     ).toThrow(/invalid/);
   });

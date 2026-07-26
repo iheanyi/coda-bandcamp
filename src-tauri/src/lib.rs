@@ -61,6 +61,7 @@ const LASTFM_SHARED_SECRET: &str = match option_env!("CODA_LASTFM_SHARED_SECRET"
 const MAX_LASTFM_METADATA_LENGTH: usize = 1_024;
 const MAX_LASTFM_RESPONSE_BYTES: usize = 1024 * 1024;
 const PLAYER_STATE_VERSION: u8 = 1;
+const PLAYER_STATE_CONTRACT_VERSION: u8 = 2;
 const PLAYER_STATE_FILE: &str = "player-state.json";
 const PLAYER_CHECKPOINT_FILE: &str = "player-state-checkpoint.json";
 const MAX_PLAYER_STATE_BYTES: usize = 32 * 1024 * 1024;
@@ -70,6 +71,7 @@ const MAX_PLAYER_TEXT_LENGTH: usize = 1_024;
 const MAX_PLAYER_SECONDS: f64 = 7.0 * 24.0 * 60.0 * 60.0;
 const MAX_PLAYER_TRACK_NUMBER: u64 = 100_000;
 const MAX_PLAYER_TIMESTAMP_MS: u64 = 8_640_000_000_000_000;
+const MAX_RADIO_CHAPTER_KEY_LENGTH: usize = 128;
 
 static HTTP_CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
 static LASTFM_HTTP_CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
@@ -182,6 +184,22 @@ struct LastFmPlaybackProgress {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RadioScrobbleProgress {
+    show_track_id: String,
+    active_chapter_key: Option<String>,
+    chapter_started_at: u64,
+    chapter_listened_seconds: f64,
+    last_position: f64,
+    chapter_now_playing_sent: bool,
+    chapter_scrobble_state: String,
+    show_started_at: u64,
+    show_listened_seconds: f64,
+    show_scrobble_state: String,
+    scrobbled_chapter_keys: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct PlayerStateSnapshot {
     version: u8,
     saved_at: u64,
@@ -192,6 +210,7 @@ struct PlayerStateSnapshot {
     repeat_mode: String,
     queue_open: bool,
     last_fm_progress: Option<LastFmPlaybackProgress>,
+    radio_scrobble_progress: Option<RadioScrobbleProgress>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -201,6 +220,7 @@ struct PlayerStateCheckpoint {
     current_track_id: String,
     position_seconds: f64,
     last_fm_progress: Option<LastFmPlaybackProgress>,
+    radio_scrobble_progress: Option<RadioScrobbleProgress>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -233,6 +253,7 @@ struct LastFmTrackInput {
     album: String,
     duration: u64,
     track_number: u64,
+    chosen_by_user: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -468,6 +489,39 @@ fn validate_lastfm_progress(progress: &LastFmPlaybackProgress) -> Result<(), Str
     Ok(())
 }
 
+fn validate_radio_scrobble_progress(progress: &RadioScrobbleProgress) -> Result<(), String> {
+    if !progress.show_track_id.starts_with("radio:")
+        || !valid_radio_track_id(&progress.show_track_id)
+        || progress.active_chapter_key.as_deref().is_some_and(|value| {
+            value.is_empty()
+                || value.len() > MAX_RADIO_CHAPTER_KEY_LENGTH
+                || value.chars().any(char::is_control)
+        })
+        || progress.chapter_started_at > MAX_PLAYER_TIMESTAMP_MS / 1_000
+        || !valid_player_seconds(progress.chapter_listened_seconds)
+        || !valid_player_seconds(progress.last_position)
+        || !matches!(
+            progress.chapter_scrobble_state.as_str(),
+            "idle" | "pending" | "sent" | "failed"
+        )
+        || progress.show_started_at > MAX_PLAYER_TIMESTAMP_MS / 1_000
+        || !valid_player_seconds(progress.show_listened_seconds)
+        || !matches!(
+            progress.show_scrobble_state.as_str(),
+            "idle" | "pending" | "sent" | "failed"
+        )
+        || progress.scrobbled_chapter_keys.len() > MAX_RADIO_CHAPTERS
+        || progress.scrobbled_chapter_keys.iter().any(|value| {
+            value.is_empty()
+                || value.len() > MAX_RADIO_CHAPTER_KEY_LENGTH
+                || value.chars().any(char::is_control)
+        })
+    {
+        return Err("The saved Radio scrobble progress is invalid.".into());
+    }
+    Ok(())
+}
+
 fn validate_player_state(state: &PlayerStateSnapshot) -> Result<(), String> {
     if state.version != PLAYER_STATE_VERSION {
         return Err("The saved player state uses an unsupported version.".into());
@@ -513,6 +567,7 @@ fn validate_player_state(state: &PlayerStateSnapshot) -> Result<(), String> {
         if state.current_index != 0
             || state.position_seconds != 0.0
             || state.last_fm_progress.is_some()
+            || state.radio_scrobble_progress.is_some()
         {
             return Err("The saved empty queue has an invalid playback position.".into());
         }
@@ -526,6 +581,17 @@ fn validate_player_state(state: &PlayerStateSnapshot) -> Result<(), String> {
         {
             return Err("The saved Last.fm progress belongs to another track.".into());
         }
+    }
+    if let Some(progress) = &state.radio_scrobble_progress {
+        validate_radio_scrobble_progress(progress)?;
+        if !state.queue[state.current_index].id.starts_with("radio:")
+            || state.queue[state.current_index].id != progress.show_track_id
+        {
+            return Err("The saved Radio progress belongs to another show.".into());
+        }
+    }
+    if state.last_fm_progress.is_some() && state.radio_scrobble_progress.is_some() {
+        return Err("The saved player state has conflicting scrobble progress.".into());
     }
     Ok(())
 }
@@ -546,16 +612,51 @@ fn validate_player_checkpoint(checkpoint: &PlayerStateCheckpoint) -> Result<(), 
             return Err("The Last.fm checkpoint belongs to another track.".into());
         }
     }
+    if let Some(progress) = &checkpoint.radio_scrobble_progress {
+        validate_radio_scrobble_progress(progress)?;
+        if !checkpoint.current_track_id.starts_with("radio:")
+            || progress.show_track_id != checkpoint.current_track_id
+        {
+            return Err("The Radio checkpoint belongs to another show.".into());
+        }
+    }
+    if checkpoint.last_fm_progress.is_some() && checkpoint.radio_scrobble_progress.is_some() {
+        return Err("The player checkpoint has conflicting scrobble progress.".into());
+    }
     Ok(())
 }
 
-fn normalize_restored_lastfm_progress(state: &mut PlayerStateSnapshot) {
+fn normalize_restored_radio_scrobble_progress(progress: &mut RadioScrobbleProgress) {
+    progress.chapter_started_at = 0;
+    progress.chapter_now_playing_sent = false;
+    if progress.chapter_scrobble_state == "pending" {
+        if let Some(key) = &progress.active_chapter_key {
+            if !progress.scrobbled_chapter_keys.contains(key) {
+                progress.scrobbled_chapter_keys.push(key.clone());
+            }
+        }
+        progress.chapter_scrobble_state = "sent".into();
+    }
+    if progress.scrobbled_chapter_keys.len() > MAX_RADIO_CHAPTERS {
+        let excess = progress.scrobbled_chapter_keys.len() - MAX_RADIO_CHAPTERS;
+        progress.scrobbled_chapter_keys.drain(..excess);
+    }
+    progress.show_started_at = 0;
+    if progress.show_scrobble_state == "pending" {
+        progress.show_scrobble_state = "sent".into();
+    }
+}
+
+fn normalize_restored_player_progress(state: &mut PlayerStateSnapshot) {
     if let Some(progress) = &mut state.last_fm_progress {
         progress.started_at = 0;
         progress.now_playing_sent = false;
         if progress.scrobble_state == "pending" {
             progress.scrobble_state = "sent".into();
         }
+    }
+    if let Some(progress) = &mut state.radio_scrobble_progress {
+        normalize_restored_radio_scrobble_progress(progress);
     }
 }
 
@@ -571,6 +672,7 @@ fn apply_player_checkpoint(
     state.current_index = checkpoint.current_index;
     state.position_seconds = checkpoint.position_seconds;
     state.last_fm_progress = checkpoint.last_fm_progress;
+    state.radio_scrobble_progress = checkpoint.radio_scrobble_progress;
     true
 }
 
@@ -1313,6 +1415,12 @@ fn lastfm_track_parameters(input: &LastFmTrackInput) -> BTreeMap<String, String>
     if input.track_number > 0 {
         parameters.insert("trackNumber".into(), input.track_number.to_string());
     }
+    if let Some(chosen_by_user) = input.chosen_by_user {
+        parameters.insert(
+            "chosenByUser".into(),
+            if chosen_by_user { "1" } else { "0" }.into(),
+        );
+    }
     parameters
 }
 
@@ -1625,6 +1733,11 @@ fn disconnect() -> Result<(), String> {
 }
 
 #[tauri::command]
+fn player_state_contract_version() -> u8 {
+    PLAYER_STATE_CONTRACT_VERSION
+}
+
+#[tauri::command]
 async fn load_player_state(app: tauri::AppHandle) -> Result<Option<PlayerStateSnapshot>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let _guard = PLAYER_STATE_LOCK
@@ -1653,7 +1766,7 @@ async fn load_player_state(app: tauri::AppHandle) -> Result<Option<PlayerStateSn
             }
             Err(error) => return Err(error),
         }
-        normalize_restored_lastfm_progress(&mut state);
+        normalize_restored_player_progress(&mut state);
         validate_player_state(&state)?;
         Ok(Some(state))
     })
@@ -1671,7 +1784,7 @@ async fn save_player_state(
             .lock()
             .map_err(|_| "The player state lock is unavailable.".to_string())?;
         state.saved_at = player_timestamp_ms()?;
-        normalize_restored_lastfm_progress(&mut state);
+        normalize_restored_player_progress(&mut state);
         validate_player_state(&state)?;
         let state_path = player_state_path(&app)?;
         write_player_state(&state_path, &state)?;
@@ -1713,6 +1826,9 @@ async fn checkpoint_player_state(
             if progress.scrobble_state == "pending" {
                 progress.scrobble_state = "sent".into();
             }
+        }
+        if let Some(progress) = &mut checkpoint.radio_scrobble_progress {
+            normalize_restored_radio_scrobble_progress(progress);
         }
         let checkpoint_path = player_checkpoint_path(&app)?;
         write_player_checkpoint(&checkpoint_path, &checkpoint)?;
@@ -2251,6 +2367,7 @@ pub fn run() {
             has_connection,
             connect,
             disconnect,
+            player_state_contract_version,
             load_player_state,
             save_player_state,
             checkpoint_player_state,
@@ -2386,6 +2503,7 @@ mod tests {
                 now_playing_sent: true,
                 scrobble_state: "sent".into(),
             }),
+            radio_scrobble_progress: None,
         }
     }
 
@@ -2536,6 +2654,7 @@ mod tests {
             album: "Soft Focus".into(),
             duration: 210,
             track_number: 2,
+            chosen_by_user: None,
         };
         assert!(validate_lastfm_track(&valid).is_ok());
         assert!(validate_lastfm_track(&LastFmTrackInput {
@@ -2543,6 +2662,20 @@ mod tests {
             ..valid
         })
         .is_err());
+
+        let radio = LastFmTrackInput {
+            artist: "North Star".into(),
+            title: "First light".into(),
+            album: "Daybreak".into(),
+            duration: 120,
+            track_number: 2,
+            chosen_by_user: Some(false),
+        };
+        let parameters = lastfm_track_parameters(&radio);
+        assert_eq!(
+            parameters.get("chosenByUser").map(String::as_str),
+            Some("0")
+        );
     }
 
     #[test]
@@ -2565,7 +2698,26 @@ mod tests {
         let mut radio = valid.clone();
         radio.queue[0].id = "radio:979".into();
         radio.last_fm_progress = None;
+        radio.radio_scrobble_progress = Some(RadioScrobbleProgress {
+            show_track_id: "radio:979".into(),
+            active_chapter_key: Some("60:chapter".into()),
+            chapter_started_at: 1_700_000_000,
+            chapter_listened_seconds: 61.0,
+            last_position: 121.0,
+            chapter_now_playing_sent: true,
+            chapter_scrobble_state: "pending".into(),
+            show_started_at: 1_700_000_000,
+            show_listened_seconds: 121.0,
+            show_scrobble_state: "idle".into(),
+            scrobbled_chapter_keys: Vec::new(),
+        });
         assert!(validate_player_state(&radio).is_ok());
+        normalize_restored_player_progress(&mut radio);
+        let radio_progress = radio.radio_scrobble_progress.unwrap();
+        assert_eq!(radio_progress.chapter_started_at, 0);
+        assert!(!radio_progress.chapter_now_playing_sent);
+        assert_eq!(radio_progress.chapter_scrobble_state, "sent");
+        assert_eq!(radio_progress.scrobbled_chapter_keys, ["60:chapter"]);
 
         let mut implausible_track_number = valid.clone();
         implausible_track_number.queue[0].track = MAX_PLAYER_TRACK_NUMBER + 1;
@@ -2575,6 +2727,33 @@ mod tests {
         oversized.queue =
             vec![sample_player_track("track"); MAX_PLAYER_QUEUE_LENGTH.saturating_add(1)];
         assert!(validate_player_state(&oversized).is_err());
+    }
+
+    #[test]
+    fn matches_the_shared_renderer_radio_persistence_contract() {
+        let contract: Value = serde_json::from_str(include_str!(
+            "../../test/fixtures/player-state-radio-contract.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            contract["contractVersion"].as_u64(),
+            Some(u64::from(PLAYER_STATE_CONTRACT_VERSION))
+        );
+
+        let mut state: PlayerStateSnapshot =
+            serde_json::from_value(contract["snapshot"].clone()).unwrap();
+        let checkpoint: PlayerStateCheckpoint =
+            serde_json::from_value(contract["checkpoint"].clone()).unwrap();
+        assert!(validate_player_state(&state).is_ok());
+        assert!(validate_player_checkpoint(&checkpoint).is_ok());
+        assert!(apply_player_checkpoint(&mut state, checkpoint));
+        normalize_restored_player_progress(&mut state);
+
+        assert_eq!(state.position_seconds, 125.0);
+        let progress = state.radio_scrobble_progress.unwrap();
+        assert_eq!(progress.show_track_id, "radio:979");
+        assert_eq!(progress.chapter_scrobble_state, "sent");
+        assert_eq!(progress.scrobbled_chapter_keys, ["60:chapter"]);
     }
 
     #[test]
@@ -2622,9 +2801,10 @@ mod tests {
                 now_playing_sent: true,
                 scrobble_state: "pending".into(),
             }),
+            radio_scrobble_progress: None,
         };
         assert!(apply_player_checkpoint(&mut state, checkpoint));
-        normalize_restored_lastfm_progress(&mut state);
+        normalize_restored_player_progress(&mut state);
         assert_eq!(state.position_seconds, 90.0);
         let progress = state.last_fm_progress.unwrap();
         assert_eq!(progress.started_at, 0);
@@ -2637,6 +2817,7 @@ mod tests {
             current_track_id: "another-track".into(),
             position_seconds: 120.0,
             last_fm_progress: None,
+            radio_scrobble_progress: None,
         };
         assert!(!apply_player_checkpoint(&mut another_state, stale));
         assert_eq!(another_state.position_seconds, 42.0);

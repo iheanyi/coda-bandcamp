@@ -4,6 +4,7 @@ import {
   createPlayerState,
   createPlayerStateCheckpoint,
   parsePlayerState,
+  PLAYER_STATE_CONTRACT_VERSION,
 } from "./playerState";
 import type {
   Album,
@@ -40,6 +41,25 @@ type LibraryCache = {
 const coverUrlCache = new Map<string, Promise<string>>();
 const streamUrlCache = new Map<string, Promise<string>>();
 const albumRequestCache = new Map<string, Promise<Track[]>>();
+let playerStateContractVersionRequest: Promise<number> | undefined;
+
+async function nativePlayerStateContractVersion(): Promise<number> {
+  if (!playerStateContractVersionRequest) {
+    playerStateContractVersionRequest = invoke<number>("player_state_contract_version")
+      // An older native process will not know this command while Tauri is
+      // rebuilding. Keep the durable queue compatible until it restarts.
+      .catch(() => 1);
+  }
+  return playerStateContractVersionRequest;
+}
+
+function forNativePlayerStateContract<
+  T extends { radioScrobbleProgress?: unknown },
+>(value: T, contractVersion: number): T | Omit<T, "radioScrobbleProgress"> {
+  if (contractVersion >= PLAYER_STATE_CONTRACT_VERSION) return value;
+  const { radioScrobbleProgress: _unsupported, ...legacy } = value;
+  return legacy;
+}
 
 const palettes: [string, string][] = [
   ["#cf6046", "#2f2624"],
@@ -204,14 +224,24 @@ export async function loadPlayerState(): Promise<PlayerStateSnapshot | undefined
 }
 
 export async function savePlayerState(input: PlayerStateInput): Promise<void> {
-  return invoke("save_player_state", { state: createPlayerState(input) });
+  const [state, contractVersion] = await Promise.all([
+    Promise.resolve(createPlayerState(input)),
+    nativePlayerStateContractVersion(),
+  ]);
+  return invoke("save_player_state", {
+    state: forNativePlayerStateContract(state, contractVersion),
+  });
 }
 
 export async function checkpointPlayerState(
   checkpoint: PlayerStateCheckpoint,
 ): Promise<boolean> {
+  const [validated, contractVersion] = await Promise.all([
+    Promise.resolve(createPlayerStateCheckpoint(checkpoint)),
+    nativePlayerStateContractVersion(),
+  ]);
   return invoke<boolean>("checkpoint_player_state", {
-    checkpoint: createPlayerStateCheckpoint(checkpoint),
+    checkpoint: forNativePlayerStateContract(validated, contractVersion),
   });
 }
 

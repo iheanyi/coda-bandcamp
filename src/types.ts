@@ -90,10 +90,12 @@ export type LastFmTrackInput = {
   album: string;
   duration: number;
   trackNumber: number;
+  chosenByUser?: boolean;
 };
 
 export type RepeatMode = "off" | "all" | "one";
 export type SortMode = "recent" | "artist" | "title" | "year";
+export type ScrobbleState = "idle" | "pending" | "sent" | "failed";
 
 export type PlayerStateTrack = Omit<Track, "artworkUrl" | "streamUrl">;
 
@@ -103,7 +105,21 @@ export type LastFmPlaybackProgress = {
   listenedSeconds: number;
   lastPosition: number;
   nowPlayingSent: boolean;
-  scrobbleState: "idle" | "pending" | "sent" | "failed";
+  scrobbleState: ScrobbleState;
+};
+
+export type RadioScrobbleProgress = {
+  showTrackId: string;
+  activeChapterKey?: string;
+  chapterStartedAt: number;
+  chapterListenedSeconds: number;
+  lastPosition: number;
+  chapterNowPlayingSent: boolean;
+  chapterScrobbleState: ScrobbleState;
+  showStartedAt: number;
+  showListenedSeconds: number;
+  showScrobbleState: ScrobbleState;
+  scrobbledChapterKeys: string[];
 };
 
 export type PlayerStateSnapshot = {
@@ -116,6 +132,7 @@ export type PlayerStateSnapshot = {
   repeatMode: RepeatMode;
   queueOpen: boolean;
   lastFmProgress?: LastFmPlaybackProgress;
+  radioScrobbleProgress?: RadioScrobbleProgress;
 };
 
 export type PlayerStateInput = Omit<PlayerStateSnapshot, "savedAt" | "version">;
@@ -125,6 +142,7 @@ export type PlayerStateCheckpoint = {
   currentTrackId: string;
   positionSeconds: number;
   lastFmProgress?: LastFmPlaybackProgress;
+  radioScrobbleProgress?: RadioScrobbleProgress;
 };
 
 export type DiscoverSort = "top" | "new";
