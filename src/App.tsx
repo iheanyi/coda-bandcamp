@@ -1530,6 +1530,11 @@ export default function App() {
     setToasts((items) => [...items, { id, message, tone }]);
     window.setTimeout(() => setToasts((items) => items.filter((item) => item.id !== id)), 2800);
   }, []);
+  const reportPlayerStateError = useCallback((summary: string, cause: unknown) => {
+    if (playerStateErrorNotifiedRef.current) return;
+    playerStateErrorNotifiedRef.current = true;
+    notify(`${summary}: ${String(cause).replace(/^Error:\s*/, "")}`, "bad");
+  }, [notify]);
 
   const favoriteTrackIds = useMemo(
     () => new Set(localFavorites.songIds),
@@ -1650,8 +1655,13 @@ export default function App() {
         setQueueOpen(state.queueOpen);
         setPlaying(false);
       })
-      .catch(() => {
-        if (active) notify("Coda could not restore the previous listening session.", "bad");
+      .catch((cause) => {
+        if (active) {
+          reportPlayerStateError(
+            "Coda could not restore the previous listening session",
+            cause,
+          );
+        }
       })
       .finally(() => {
         if (active && restoreGenerationRef.current === generation) {
@@ -1662,7 +1672,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [notify]);
+  }, [reportPlayerStateError]);
 
   const syncLibrary = useCallback(async (announce = true) => {
     setSyncState("syncing");
@@ -1775,15 +1785,13 @@ export default function App() {
           queueOpen,
           lastFmProgress: persistedLastFmProgress(track, playbackSessionRef.current),
         }),
-      ).catch((cause) => {
-        if (!playerStateErrorNotifiedRef.current) {
-          playerStateErrorNotifiedRef.current = true;
-          notify(
-            `Coda could not preserve this queue: ${String(cause).replace(/^Error:\s*/, "")}`,
-            "bad",
-          );
-        }
-      });
+      )
+        .then(() => {
+          playerStateErrorNotifiedRef.current = false;
+        })
+        .catch((cause) => {
+          reportPlayerStateError("Coda could not preserve this queue", cause);
+        });
     }, PLAYER_STATE_SAVE_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [
@@ -1793,26 +1801,39 @@ export default function App() {
     queue,
     queueOpen,
     repeat,
-    notify,
+    reportPlayerStateError,
     volume,
   ]);
 
   useEffect(() => {
     if (!playerStateReady) return;
     const interval = window.setInterval(() => {
-      void checkpointLatestPlayerState().catch(() => {
-        // A future checkpoint can recover from a transient filesystem failure.
-      });
+      void checkpointLatestPlayerState()
+        .then((saved) => {
+          if (saved) playerStateErrorNotifiedRef.current = false;
+        })
+        .catch((cause) => {
+          reportPlayerStateError("Coda could not checkpoint playback", cause);
+        });
     }, PLAYER_STATE_CHECKPOINT_MS);
     return () => window.clearInterval(interval);
-  }, [checkpointLatestPlayerState, playerStateReady]);
+  }, [checkpointLatestPlayerState, playerStateReady, reportPlayerStateError]);
 
   useEffect(() => {
     if (!playerStateReady || playing) return;
-    void checkpointLatestPlayerState().catch(() => {
-      // Pausing should not fail because persistence is temporarily unavailable.
-    });
-  }, [checkpointLatestPlayerState, playerStateReady, playing]);
+    void checkpointLatestPlayerState()
+      .then((saved) => {
+        if (saved) playerStateErrorNotifiedRef.current = false;
+      })
+      .catch((cause) => {
+        reportPlayerStateError("Coda could not checkpoint paused playback", cause);
+      });
+  }, [
+    checkpointLatestPlayerState,
+    playerStateReady,
+    playing,
+    reportPlayerStateError,
+  ]);
 
   useEffect(() => {
     if (!currentTrack) {

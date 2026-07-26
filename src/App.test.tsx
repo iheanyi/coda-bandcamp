@@ -307,6 +307,18 @@ describe("Coda application flows", () => {
     expect(screen.getByRole("main")).toBe(libraryPane);
   });
 
+  it("reports the actual native restore failure instead of blaming a pause", async () => {
+    mocks.loadPlayerState.mockRejectedValue(
+      new Error("The native player-state contract is temporarily unavailable."),
+    );
+    renderApp();
+
+    expect(await screen.findByText(
+      "Coda could not restore the previous listening session: " +
+      "The native player-state contract is temporarily unavailable.",
+    )).toBeInTheDocument();
+  });
+
   it("connects Last.fm without asking Coda for a Last.fm password", async () => {
     mocks.beginLastFmAuthorization.mockResolvedValue({
       authorizationUrl: "https://www.last.fm/api/auth/?api_key=key&token=token",
