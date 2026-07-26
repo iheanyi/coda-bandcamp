@@ -1,12 +1,22 @@
-use futures_util::{stream, StreamExt};
+use governor::{DefaultDirectRateLimiter, Jitter, Quota, RateLimiter};
 use keyring::Entry;
+use moka::future::Cache;
 use rand::{distributions::Alphanumeric, Rng};
-use reqwest::{redirect::Policy, Client};
+use redb::{
+    Database, DatabaseError, ReadableDatabase, ReadableTable, ReadableTableMetadata, StorageError,
+    TableDefinition,
+};
+use reqwest::{
+    header::{HeaderMap, RETRY_AFTER},
+    redirect::Policy,
+    Client, RequestBuilder, Response, StatusCode,
+};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -34,6 +44,12 @@ const API_VERSION: &str = "1.16.1";
 const MAX_CREDENTIAL_LENGTH: usize = 512;
 const MAX_IDENTIFIER_LENGTH: usize = 512;
 const MAX_JSON_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+const BANDCAMP_REQUESTS_PER_SECOND: u32 = 2;
+const BANDCAMP_MAX_READ_RETRIES: u32 = 2;
+const BANDCAMP_RETRY_BASE_MS: u64 = 400;
+const BANDCAMP_RETRY_JITTER_MS: u64 = 180;
+const BANDCAMP_MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
+const BANDCAMP_RATE_LIMIT_JITTER: Duration = Duration::from_millis(80);
 const MAX_PLAYLISTS: usize = 5_000;
 const MAX_PLAYLIST_TRACKS: usize = 25_000;
 const MAX_PLAYLIST_MUTATION_ITEMS: usize = 5_000;
@@ -51,8 +67,21 @@ const MAX_RADIO_DURATION_SECONDS: f64 = 24.0 * 60.0 * 60.0;
 const LIBRARY_CACHE_VERSION: u8 = 1;
 const LIBRARY_CACHE_FILE: &str = "library-cache-v1.json";
 const LIBRARY_CACHE_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
+const LIBRARY_FULL_RECONCILE_INTERVAL_MS: u64 = 24 * 60 * 60 * 1_000;
 const MAX_LIBRARY_ALBUMS: usize = 5_000;
 const MAX_LIBRARY_CACHE_BYTES: usize = 32 * 1024 * 1024;
+const MAX_NATIVE_ALBUM_TRACK_CACHE_WEIGHT: u64 = 4_096;
+const NATIVE_ALBUM_TRACK_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
+const NATIVE_ALBUM_TRACK_CACHE_TTI: Duration = Duration::from_secs(10 * 60);
+const ALBUM_METADATA_CACHE_FILE: &str = "album-metadata-cache-v1.redb";
+const ALBUM_TRACK_CACHE_ENTRY_VERSION: u8 = 1;
+const PERSISTED_ALBUM_TRACK_CACHE_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
+const MAX_PERSISTED_ALBUM_TRACK_CACHE_ENTRIES: usize = 256;
+const MAX_PERSISTED_ALBUM_TRACK_CACHE_WEIGHT: usize = 4_096;
+const MAX_PERSISTED_ALBUM_TRACK_CACHE_BYTES: usize = 32 * 1024 * 1024;
+const MAX_PERSISTED_ALBUM_TRACK_ENTRY_BYTES: usize = 8 * 1024 * 1024;
+const MAX_PERSISTED_ALBUM_TRACK_CACHE_FILE_BYTES: u64 = 128 * 1024 * 1024;
+const REDB_ALBUM_METADATA_MEMORY_CACHE_BYTES: usize = 8 * 1024 * 1024;
 const LASTFM_SERVICE_NAME: &str = "com.coda.lastfm";
 const LASTFM_SESSION_KEY: &str = "session";
 const LASTFM_API_ENDPOINT: &str = "https://ws.audioscrobbler.com/2.0/";
@@ -87,10 +116,17 @@ const MAX_RADIO_CHAPTER_KEY_LENGTH: usize = 128;
 
 static HTTP_CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
 static LASTFM_HTTP_CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
+static BANDCAMP_RATE_LIMITER: OnceLock<DefaultDirectRateLimiter> = OnceLock::new();
 static PLAYER_STATE_LOCK: Mutex<()> = Mutex::new(());
 static LIBRARY_CACHE_LOCK: Mutex<()> = Mutex::new(());
+static ALBUM_METADATA_CACHE_WRITE_LOCK: Mutex<()> = Mutex::new(());
+static ALBUM_METADATA_DATABASE_INIT_LOCK: Mutex<()> = Mutex::new(());
 static CONNECTION_GENERATION: AtomicU64 = AtomicU64::new(0);
 static LIBRARY_SYNC_GENERATION: AtomicU64 = AtomicU64::new(0);
+static ALBUM_TRACK_CACHE: OnceLock<Cache<(u64, String, u64), Vec<Track>>> = OnceLock::new();
+static ALBUM_METADATA_DATABASE: OnceLock<Database> = OnceLock::new();
+static ALBUM_REFRESH_GENERATIONS: OnceLock<Mutex<BTreeMap<String, u64>>> = OnceLock::new();
+const ALBUM_TRACKS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("album_tracks_v1");
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -118,6 +154,8 @@ struct Album {
 struct LibraryCacheSnapshot {
     version: u8,
     saved_at: u64,
+    #[serde(default)]
+    last_full_sync_at: u64,
     albums: Vec<Album>,
 }
 
@@ -135,8 +173,8 @@ enum LibrarySyncEvent {
     },
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Track {
     id: String,
     title: String,
@@ -149,6 +187,429 @@ struct Track {
     album_artist: Option<String>,
     music_brainz_id: Option<String>,
     cover_art: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PersistedAlbumTracks {
+    version: u8,
+    saved_at: u64,
+    album_id: String,
+    tracks: Vec<Track>,
+}
+
+fn build_album_track_cache() -> Cache<(u64, String, u64), Vec<Track>> {
+    // Keep this cache metadata-only. Signed media URLs and credentials must
+    // remain outside both the in-memory and durable library caches.
+    Cache::builder()
+        .name("album-tracks")
+        .weigher(|_key, tracks: &Vec<Track>| tracks.len().max(1).try_into().unwrap_or(u32::MAX))
+        .max_capacity(MAX_NATIVE_ALBUM_TRACK_CACHE_WEIGHT)
+        .time_to_live(NATIVE_ALBUM_TRACK_CACHE_TTL)
+        .time_to_idle(NATIVE_ALBUM_TRACK_CACHE_TTI)
+        .build()
+}
+
+fn album_track_cache() -> &'static Cache<(u64, String, u64), Vec<Track>> {
+    ALBUM_TRACK_CACHE.get_or_init(build_album_track_cache)
+}
+
+fn invalidate_album_track_cache() {
+    if let Some(cache) = ALBUM_TRACK_CACHE.get() {
+        cache.invalidate_all();
+    }
+}
+
+fn album_refresh_generations() -> &'static Mutex<BTreeMap<String, u64>> {
+    ALBUM_REFRESH_GENERATIONS.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+fn album_refresh_generation(album_id: &str) -> Result<u64, String> {
+    album_refresh_generations()
+        .lock()
+        .map_err(|_| "The album refresh state is unavailable.".to_string())
+        .map(|generations| generations.get(album_id).copied().unwrap_or(0))
+}
+
+fn bump_album_refresh_generation(album_id: &str) -> Result<u64, String> {
+    let mut generations = album_refresh_generations()
+        .lock()
+        .map_err(|_| "The album refresh state is unavailable.".to_string())?;
+    let generation = generations.entry(album_id.to_string()).or_default();
+    *generation = generation.saturating_add(1);
+    Ok(*generation)
+}
+
+fn clear_album_refresh_generations() {
+    if let Some(generations) = ALBUM_REFRESH_GENERATIONS.get() {
+        if let Ok(mut generations) = generations.lock() {
+            generations.clear();
+        }
+    }
+}
+
+fn album_metadata_cache_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|directory| directory.join(ALBUM_METADATA_CACHE_FILE))
+        .map_err(|error| format!("Could not locate Coda's application data directory: {error}"))
+}
+
+fn open_album_metadata_database(path: &Path) -> Result<Database, String> {
+    let directory = path
+        .parent()
+        .ok_or_else(|| "The album metadata cache path is invalid.".to_string())?;
+    fs::create_dir_all(directory)
+        .map_err(|error| format!("Could not create Coda's application data directory: {error}"))?;
+    match fs::metadata(path) {
+        Ok(metadata) if metadata.len() > MAX_PERSISTED_ALBUM_TRACK_CACHE_FILE_BYTES => {
+            fs::remove_file(path).map_err(|error| {
+                format!("Could not replace the oversized album metadata cache: {error}")
+            })?;
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "Could not inspect the album metadata cache: {error}"
+            ))
+        }
+    }
+
+    let create_database = || {
+        let mut builder = Database::builder();
+        builder.set_cache_size(REDB_ALBUM_METADATA_MEMORY_CACHE_BYTES);
+        builder.create(path)
+    };
+    let database = match create_database() {
+        Ok(database) => database,
+        Err(
+            open_error @ (DatabaseError::Storage(StorageError::Corrupted(_))
+            | DatabaseError::UpgradeRequired(_)),
+        ) => {
+            fs::remove_file(path).map_err(|remove_error| {
+                format!("Could not recover the album metadata cache ({open_error}; {remove_error})")
+            })?;
+            create_database()
+                .map_err(|error| format!("Could not recreate the album metadata cache: {error}"))?
+        }
+        Err(error) => return Err(format!("Could not open the album metadata cache: {error}")),
+    };
+    let transaction = database
+        .begin_write()
+        .map_err(|error| format!("Could not prepare the album metadata cache: {error}"))?;
+    {
+        transaction
+            .open_table(ALBUM_TRACKS_TABLE)
+            .map_err(|error| format!("Could not initialize the album metadata cache: {error}"))?;
+    }
+    transaction
+        .commit()
+        .map_err(|error| format!("Could not initialize the album metadata cache: {error}"))?;
+    Ok(database)
+}
+
+fn album_metadata_database(app: &tauri::AppHandle) -> Result<&'static Database, String> {
+    if let Some(database) = ALBUM_METADATA_DATABASE.get() {
+        return Ok(database);
+    }
+    // Do not memoize transient filesystem failures for the lifetime of the
+    // process. A later cache access can recover after a lock or permission
+    // issue clears.
+    let _guard = ALBUM_METADATA_DATABASE_INIT_LOCK
+        .lock()
+        .map_err(|_| "The album metadata cache initializer is unavailable.".to_string())?;
+    if let Some(database) = ALBUM_METADATA_DATABASE.get() {
+        return Ok(database);
+    }
+    let path = album_metadata_cache_path(app)?;
+    let database = open_album_metadata_database(&path)?;
+    let _ = ALBUM_METADATA_DATABASE.set(database);
+    ALBUM_METADATA_DATABASE
+        .get()
+        .ok_or_else(|| "Could not initialize the album metadata cache.".to_string())
+}
+
+fn album_track_cache_namespace(credentials: &ConnectionInput) -> String {
+    // This is an opaque, stable cache namespace rather than a security
+    // boundary. The password is deliberately excluded so neither credential
+    // is persisted and password rotation does not strand valid metadata.
+    format!("{:x}", md5::compute(credentials.username.as_bytes()))
+}
+
+fn persisted_album_track_cache_key(credentials: &ConnectionInput, album_id: &str) -> String {
+    format!("{}:{album_id}", album_track_cache_namespace(credentials))
+}
+
+fn album_id_from_persisted_cache_key(key: &str) -> Option<&str> {
+    let (namespace, album_id) = key.split_once(':')?;
+    if namespace.len() != 32
+        || !namespace
+            .bytes()
+            .all(|character| character.is_ascii_hexdigit())
+        || validate_identifier(album_id).is_err()
+    {
+        return None;
+    }
+    Some(album_id)
+}
+
+fn validate_persisted_album_tracks(
+    entry: &PersistedAlbumTracks,
+    album_id: &str,
+    now: u64,
+) -> Result<(), String> {
+    if entry.version != ALBUM_TRACK_CACHE_ENTRY_VERSION
+        || entry.saved_at > now
+        || now.saturating_sub(entry.saved_at) > PERSISTED_ALBUM_TRACK_CACHE_TTL_MS
+        || entry.album_id != album_id
+        || entry.tracks.len().max(1) > MAX_PERSISTED_ALBUM_TRACK_CACHE_WEIGHT
+    {
+        return Err("The saved album metadata is stale or incompatible.".into());
+    }
+    if entry.tracks.iter().any(|track| {
+        track.album_id != album_id
+            || validate_subsonic_id(&track.id, "song").is_err()
+            || validate_subsonic_id(&track.album_id, "album").is_err()
+            || !valid_subsonic_text(&track.title, MAX_SUBSONIC_TEXT_LENGTH, true)
+            || !valid_subsonic_text(&track.artist, MAX_SUBSONIC_TEXT_LENGTH, true)
+            || !valid_subsonic_text(&track.album, MAX_SUBSONIC_TEXT_LENGTH, true)
+            || track.duration > MAX_SUBSONIC_DURATION_SECONDS
+            || track.track > MAX_PLAYER_TRACK_NUMBER
+            || track
+                .disc
+                .is_some_and(|disc| disc > MAX_PLAYER_TRACK_NUMBER)
+            || track
+                .album_artist
+                .as_deref()
+                .is_some_and(|artist| !valid_subsonic_text(artist, MAX_SUBSONIC_TEXT_LENGTH, false))
+            || track
+                .music_brainz_id
+                .as_deref()
+                .is_some_and(|identifier| !valid_musicbrainz_id(identifier))
+            || track
+                .cover_art
+                .as_deref()
+                .is_some_and(|cover| validate_subsonic_id(cover, "cover artwork").is_err())
+    }) {
+        return Err("The saved album metadata contains an invalid track.".into());
+    }
+    Ok(())
+}
+
+fn remove_persisted_album_tracks(database: &Database, cache_key: &str) -> Result<(), String> {
+    let _guard = ALBUM_METADATA_CACHE_WRITE_LOCK
+        .lock()
+        .map_err(|_| "The album metadata cache lock is unavailable.".to_string())?;
+    let transaction = database
+        .begin_write()
+        .map_err(|error| format!("Could not update the album metadata cache: {error}"))?;
+    {
+        let mut table = transaction
+            .open_table(ALBUM_TRACKS_TABLE)
+            .map_err(|error| format!("Could not open the album metadata cache: {error}"))?;
+        drop(
+            table
+                .remove(cache_key)
+                .map_err(|error| format!("Could not prune the album metadata cache: {error}"))?,
+        );
+    }
+    transaction
+        .commit()
+        .map_err(|error| format!("Could not prune the album metadata cache: {error}"))
+}
+
+fn read_persisted_album_tracks(
+    database: &Database,
+    cache_key: &str,
+    album_id: &str,
+    now: u64,
+) -> Result<Option<Vec<Track>>, String> {
+    let serialized = {
+        let transaction = database
+            .begin_read()
+            .map_err(|error| format!("Could not read the album metadata cache: {error}"))?;
+        let table = transaction
+            .open_table(ALBUM_TRACKS_TABLE)
+            .map_err(|error| format!("Could not open the album metadata cache: {error}"))?;
+        let value = table
+            .get(cache_key)
+            .map_err(|error| format!("Could not read the album metadata cache: {error}"))?;
+        value.map(|value| value.value().to_vec())
+    };
+    let Some(serialized) = serialized else {
+        return Ok(None);
+    };
+    if serialized.len() > MAX_PERSISTED_ALBUM_TRACK_ENTRY_BYTES {
+        remove_persisted_album_tracks(database, cache_key)?;
+        return Ok(None);
+    }
+    let entry = match serde_json::from_slice::<PersistedAlbumTracks>(&serialized) {
+        Ok(entry) if validate_persisted_album_tracks(&entry, album_id, now).is_ok() => entry,
+        _ => {
+            remove_persisted_album_tracks(database, cache_key)?;
+            return Ok(None);
+        }
+    };
+    Ok(Some(entry.tracks))
+}
+
+#[derive(Debug)]
+struct PersistedAlbumTrackIndex {
+    key: String,
+    saved_at: u64,
+    bytes: usize,
+}
+
+fn write_persisted_album_tracks(
+    database: &Database,
+    cache_key: &str,
+    album_id: &str,
+    tracks: &[Track],
+    now: u64,
+    expected_connection: Option<(u64, &ConnectionInput)>,
+    expected_refresh: Option<(&str, u64)>,
+) -> Result<bool, String> {
+    let _guard = ALBUM_METADATA_CACHE_WRITE_LOCK
+        .lock()
+        .map_err(|_| "The album metadata cache lock is unavailable.".to_string())?;
+    if expected_connection.is_some_and(|(expected_generation, expected_credentials)| {
+        CONNECTION_GENERATION.load(Ordering::Acquire) != expected_generation
+            || load_credentials().ok().as_ref() != Some(expected_credentials)
+    }) || expected_refresh.is_some_and(|(expected_album_id, expected_generation)| {
+        album_refresh_generation(expected_album_id).ok() != Some(expected_generation)
+    }) {
+        return Ok(false);
+    }
+    let entry = PersistedAlbumTracks {
+        version: ALBUM_TRACK_CACHE_ENTRY_VERSION,
+        saved_at: now,
+        album_id: album_id.to_string(),
+        tracks: tracks.to_vec(),
+    };
+    if tracks.is_empty() || validate_persisted_album_tracks(&entry, album_id, now).is_err() {
+        return Ok(false);
+    }
+    let serialized = serde_json::to_vec(&entry)
+        .map_err(|error| format!("Could not prepare the album metadata cache: {error}"))?;
+    if serialized.len() > MAX_PERSISTED_ALBUM_TRACK_ENTRY_BYTES
+        || serialized.len() > MAX_PERSISTED_ALBUM_TRACK_CACHE_BYTES
+    {
+        return Ok(false);
+    }
+
+    let transaction = database
+        .begin_write()
+        .map_err(|error| format!("Could not update the album metadata cache: {error}"))?;
+    {
+        let mut table = transaction
+            .open_table(ALBUM_TRACKS_TABLE)
+            .map_err(|error| format!("Could not open the album metadata cache: {error}"))?;
+        drop(table.remove(cache_key).map_err(|error| {
+            format!("Could not replace the album metadata cache entry: {error}")
+        })?);
+        table
+            .insert(cache_key, serialized.as_slice())
+            .map_err(|error| format!("Could not save the album metadata cache: {error}"))?;
+        let exceeds_entry_limit = table
+            .len()
+            .map_err(|error| format!("Could not inspect the album metadata cache: {error}"))?
+            > MAX_PERSISTED_ALBUM_TRACK_CACHE_ENTRIES as u64;
+        drop(table);
+
+        let exceeds_byte_limit = transaction
+            .stats()
+            .map_err(|error| format!("Could not inspect the album metadata cache: {error}"))?
+            .stored_bytes()
+            > MAX_PERSISTED_ALBUM_TRACK_CACHE_BYTES as u64;
+        if exceeds_entry_limit || exceeds_byte_limit {
+            let mut table = transaction
+                .open_table(ALBUM_TRACKS_TABLE)
+                .map_err(|error| format!("Could not open the album metadata cache: {error}"))?;
+            let mut retained = Vec::new();
+            let mut discard = Vec::new();
+            {
+                let iterator = table.iter().map_err(|error| {
+                    format!("Could not inspect the album metadata cache: {error}")
+                })?;
+                for item in iterator {
+                    let (key, value) = item.map_err(|error| {
+                        format!("Could not inspect the album metadata cache: {error}")
+                    })?;
+                    let key = key.value().to_string();
+                    let bytes = value.value();
+                    let indexed = album_id_from_persisted_cache_key(&key)
+                        .and_then(|cached_album_id| {
+                            serde_json::from_slice::<PersistedAlbumTracks>(bytes)
+                                .ok()
+                                .filter(|entry| {
+                                    validate_persisted_album_tracks(entry, cached_album_id, now)
+                                        .is_ok()
+                                })
+                        })
+                        .map(|entry| PersistedAlbumTrackIndex {
+                            key: key.clone(),
+                            saved_at: entry.saved_at,
+                            bytes: key.len().saturating_add(bytes.len()),
+                        });
+                    match indexed {
+                        Some(indexed) => retained.push(indexed),
+                        None => discard.push(key),
+                    }
+                }
+            }
+            for key in discard {
+                drop(table.remove(key.as_str()).map_err(|error| {
+                    format!("Could not prune the album metadata cache: {error}")
+                })?);
+            }
+            retained.sort_by(|left, right| {
+                left.saved_at
+                    .cmp(&right.saved_at)
+                    .then_with(|| left.key.cmp(&right.key))
+            });
+            let mut total_bytes = retained.iter().map(|entry| entry.bytes).sum::<usize>();
+            let mut total_entries = retained.len();
+            for entry in retained {
+                if total_entries <= MAX_PERSISTED_ALBUM_TRACK_CACHE_ENTRIES
+                    && total_bytes <= MAX_PERSISTED_ALBUM_TRACK_CACHE_BYTES
+                {
+                    break;
+                }
+                drop(
+                    table
+                        .remove(entry.key.as_str())
+                        .map_err(|error| format!("Could not evict old album metadata: {error}"))?,
+                );
+                total_entries = total_entries.saturating_sub(1);
+                total_bytes = total_bytes.saturating_sub(entry.bytes);
+            }
+        }
+    }
+    transaction
+        .commit()
+        .map_err(|error| format!("Could not save the album metadata cache: {error}"))?;
+    Ok(true)
+}
+
+fn clear_persisted_album_tracks(database: &Database) -> Result<(), String> {
+    let _guard = ALBUM_METADATA_CACHE_WRITE_LOCK
+        .lock()
+        .map_err(|_| "The album metadata cache lock is unavailable.".to_string())?;
+    let transaction = database
+        .begin_write()
+        .map_err(|error| format!("Could not clear the album metadata cache: {error}"))?;
+    {
+        let mut table = transaction
+            .open_table(ALBUM_TRACKS_TABLE)
+            .map_err(|error| format!("Could not open the album metadata cache: {error}"))?;
+        table
+            .retain(|_, _| false)
+            .map_err(|error| format!("Could not clear the album metadata cache: {error}"))?;
+    }
+    transaction
+        .commit()
+        .map_err(|error| format!("Could not clear the album metadata cache: {error}"))
 }
 
 #[derive(Debug, Serialize)]
@@ -915,6 +1376,9 @@ fn validate_library_cache(snapshot: &LibraryCacheSnapshot, now: u64) -> Result<(
     if snapshot.saved_at > now {
         return Err("The saved library timestamp is in the future.".into());
     }
+    if snapshot.last_full_sync_at > snapshot.saved_at {
+        return Err("The saved library reconciliation timestamp is invalid.".into());
+    }
     if now.saturating_sub(snapshot.saved_at) > LIBRARY_CACHE_TTL_MS {
         return Err("The saved library has expired.".into());
     }
@@ -955,13 +1419,19 @@ fn read_library_cache(path: &Path, now: u64) -> Result<Option<LibraryCacheSnapsh
     Ok(Some(snapshot))
 }
 
-fn write_library_cache(path: &Path, albums: &[Album], saved_at: u64) -> Result<(), String> {
+fn write_library_cache(
+    path: &Path,
+    albums: &[Album],
+    saved_at: u64,
+    last_full_sync_at: u64,
+) -> Result<(), String> {
     if albums.len() > MAX_LIBRARY_ALBUMS {
         return Err("The library is too large to cache safely.".into());
     }
     let snapshot = LibraryCacheSnapshot {
         version: LIBRARY_CACHE_VERSION,
         saved_at,
+        last_full_sync_at,
         albums: albums.to_vec(),
     };
     validate_library_cache(&snapshot, saved_at)?;
@@ -1009,6 +1479,7 @@ fn save_library_cache_if_connection_current(
     expected_sync_generation: u64,
     expected_credentials: &ConnectionInput,
     replace_connection: bool,
+    last_full_sync_at: u64,
 ) -> Result<bool, String> {
     let _guard = LIBRARY_CACHE_LOCK
         .lock()
@@ -1031,7 +1502,7 @@ fn save_library_cache_if_connection_current(
             }
         }
     }
-    write_library_cache(&path, albums, player_timestamp_ms()?)?;
+    write_library_cache(&path, albums, player_timestamp_ms()?, last_full_sync_at)?;
     Ok(true)
 }
 
@@ -1594,13 +2065,116 @@ fn radio_show_from_raw(value: RawRadioShow) -> Result<RadioShow, String> {
     })
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BandcampRetryPolicy {
+    Never,
+    SafeRead,
+}
+
+fn bandcamp_rate_limiter() -> &'static DefaultDirectRateLimiter {
+    BANDCAMP_RATE_LIMITER.get_or_init(|| {
+        let requests_per_second = NonZeroU32::new(BANDCAMP_REQUESTS_PER_SECOND)
+            .expect("the Bandcamp request rate must be non-zero");
+        let burst = NonZeroU32::new(1).expect("the Bandcamp request burst must be non-zero");
+        RateLimiter::direct(Quota::per_second(requests_per_second).allow_burst(burst))
+    })
+}
+
+async fn wait_for_bandcamp_request_slot() {
+    bandcamp_rate_limiter()
+        .until_ready_with_jitter(Jitter::up_to(BANDCAMP_RATE_LIMIT_JITTER))
+        .await;
+}
+
+fn retry_after_duration(headers: &HeaderMap, now: SystemTime) -> Option<Duration> {
+    let value = headers.get(RETRY_AFTER)?.to_str().ok()?.trim();
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(Duration::from_secs(seconds).min(BANDCAMP_MAX_RETRY_DELAY));
+    }
+    httpdate::parse_http_date(value)
+        .ok()?
+        .duration_since(now)
+        .ok()
+        .map(|duration| duration.min(BANDCAMP_MAX_RETRY_DELAY))
+}
+
+fn bandcamp_retry_delay(
+    headers: Option<&HeaderMap>,
+    retry_number: u32,
+    now: SystemTime,
+    jitter_ms: u64,
+) -> Duration {
+    let exponential_ms = BANDCAMP_RETRY_BASE_MS.saturating_mul(1_u64 << retry_number.min(6));
+    let base = headers
+        .and_then(|headers| retry_after_duration(headers, now))
+        .unwrap_or_else(|| Duration::from_millis(exponential_ms));
+    base.saturating_add(Duration::from_millis(jitter_ms))
+        .min(BANDCAMP_MAX_RETRY_DELAY)
+}
+
+fn is_retryable_bandcamp_status(status: StatusCode) -> bool {
+    matches!(
+        status,
+        StatusCode::REQUEST_TIMEOUT
+            | StatusCode::TOO_MANY_REQUESTS
+            | StatusCode::BAD_GATEWAY
+            | StatusCode::SERVICE_UNAVAILABLE
+            | StatusCode::GATEWAY_TIMEOUT
+    )
+}
+
+async fn send_bandcamp_request(
+    request: RequestBuilder,
+    context: &str,
+    retry_policy: BandcampRetryPolicy,
+) -> Result<Response, String> {
+    let mut retry_number = 0;
+    loop {
+        wait_for_bandcamp_request_slot().await;
+        let attempt = request
+            .try_clone()
+            .ok_or_else(|| format!("Could not prepare a retry-safe request for {context}."))?;
+        match attempt.send().await {
+            Ok(response)
+                if retry_policy == BandcampRetryPolicy::SafeRead
+                    && retry_number < BANDCAMP_MAX_READ_RETRIES
+                    && is_retryable_bandcamp_status(response.status()) =>
+            {
+                let jitter_ms = rand::thread_rng().gen_range(0..=BANDCAMP_RETRY_JITTER_MS);
+                let delay = bandcamp_retry_delay(
+                    Some(response.headers()),
+                    retry_number,
+                    SystemTime::now(),
+                    jitter_ms,
+                );
+                retry_number += 1;
+                tokio::time::sleep(delay).await;
+            }
+            Ok(response) => return Ok(response),
+            Err(error)
+                if retry_policy == BandcampRetryPolicy::SafeRead
+                    && retry_number < BANDCAMP_MAX_READ_RETRIES
+                    && (error.is_connect() || error.is_timeout()) =>
+            {
+                let jitter_ms = rand::thread_rng().gen_range(0..=BANDCAMP_RETRY_JITTER_MS);
+                let delay = bandcamp_retry_delay(None, retry_number, SystemTime::now(), jitter_ms);
+                retry_number += 1;
+                tokio::time::sleep(delay).await;
+            }
+            Err(error) => return Err(format!("Could not reach {context}: {error}")),
+        }
+    }
+}
+
 async fn fetch_bounded_json<T: DeserializeOwned>(url: Url, context: &str) -> Result<T, String> {
-    let response = http_client()?
-        .get(url)
-        .header(reqwest::header::ACCEPT, "application/json")
-        .send()
-        .await
-        .map_err(|error| format!("Could not reach {context}: {error}"))?;
+    let response = send_bandcamp_request(
+        http_client()?
+            .get(url)
+            .header(reqwest::header::ACCEPT, "application/json"),
+        context,
+        BandcampRetryPolicy::SafeRead,
+    )
+    .await?;
     if !response.status().is_success() {
         return Err(format!(
             "{context} returned HTTP {}.",
@@ -1823,11 +2397,12 @@ async fn request_json(
     extra: &[(&str, String)],
 ) -> Result<Value, String> {
     let url = authenticated_url(endpoint, credentials, extra)?;
-    let response = http_client()?
-        .get(url)
-        .send()
-        .await
-        .map_err(|error| format!("Could not reach Bandcamp: {error}"))?;
+    let response = send_bandcamp_request(
+        http_client()?.get(url),
+        "Bandcamp",
+        BandcampRetryPolicy::SafeRead,
+    )
+    .await?;
     parse_subsonic_response(response).await
 }
 
@@ -1837,12 +2412,12 @@ async fn request_mutation_json(
     extra: &[(String, String)],
 ) -> Result<Value, String> {
     let url = authenticated_url(endpoint, credentials, &[])?;
-    let response = http_client()?
-        .post(url)
-        .form(extra)
-        .send()
-        .await
-        .map_err(|error| format!("Could not reach Bandcamp: {error}"))?;
+    let response = send_bandcamp_request(
+        http_client()?.post(url).form(extra),
+        "Bandcamp",
+        BandcampRetryPolicy::Never,
+    )
+    .await?;
     parse_subsonic_response(response).await
 }
 
@@ -2142,6 +2717,11 @@ fn disconnect(app: tauri::AppHandle) -> Result<(), String> {
         Ok(()) | Err(keyring::Error::NoEntry) => {
             CONNECTION_GENERATION.fetch_add(1, Ordering::AcqRel);
             LIBRARY_SYNC_GENERATION.fetch_add(1, Ordering::AcqRel);
+            invalidate_album_track_cache();
+            clear_album_refresh_generations();
+            if let Ok(database) = album_metadata_database(&app) {
+                let _ = clear_persisted_album_tracks(database);
+            }
             Ok(())
         }
         Err(error) => Err(format!("Could not remove credentials: {error}")),
@@ -2481,17 +3061,59 @@ async fn fetch_library_page(
     credentials: &ConnectionInput,
     page_index: u64,
 ) -> Result<(usize, Vec<Album>), String> {
+    fetch_album_list_page(credentials, "alphabeticalByArtist", 500, page_index * 500).await
+}
+
+async fn fetch_newest_library_album(
+    credentials: &ConnectionInput,
+) -> Result<Option<Album>, String> {
+    let (_, albums) = fetch_album_list_page(credentials, "newest", 1, 0).await?;
+    Ok(albums.into_iter().next())
+}
+
+async fn fetch_album_list_page(
+    credentials: &ConnectionInput,
+    list_type: &str,
+    size: u64,
+    offset: u64,
+) -> Result<(usize, Vec<Album>), String> {
     let body = request_json(
         "getAlbumList2",
         credentials,
         &[
-            ("type", "alphabeticalByArtist".into()),
-            ("size", "500".into()),
-            ("offset", (page_index * 500).to_string()),
+            ("type", list_type.into()),
+            ("size", size.to_string()),
+            ("offset", offset.to_string()),
         ],
     )
     .await?;
     albums_from_library_page(&body)
+}
+
+fn newest_cached_album(albums: &[Album]) -> Option<&Album> {
+    albums
+        .iter()
+        .filter_map(|album| album.added_at.as_deref().map(|added_at| (added_at, album)))
+        .max_by(|(left_added, left), (right_added, right)| {
+            left_added
+                .cmp(right_added)
+                .then_with(|| left.id.cmp(&right.id))
+        })
+        .map(|(_, album)| album)
+}
+
+fn newest_probe_matches_cache(snapshot: &LibraryCacheSnapshot, newest: Option<&Album>) -> bool {
+    match (newest_cached_album(&snapshot.albums), newest) {
+        (None, None) => snapshot.albums.is_empty(),
+        (Some(cached), Some(incoming)) => cached == incoming,
+        _ => false,
+    }
+}
+
+fn cache_requires_full_reconciliation(snapshot: &LibraryCacheSnapshot, now: u64) -> bool {
+    snapshot.last_full_sync_at == 0
+        || snapshot.last_full_sync_at > now
+        || now.saturating_sub(snapshot.last_full_sync_at) >= LIBRARY_FULL_RECONCILE_INTERVAL_MS
 }
 
 fn albums_from_library_page(body: &Value) -> Result<(usize, Vec<Album>), String> {
@@ -2581,18 +3203,9 @@ async fn fetch_library_with_credentials(
         return Ok(albums);
     }
 
-    let mut pages = stream::iter(1..10_u64)
-        .map(|page_index| async move {
-            ensure_library_sync_current(expected_sync_generation, expected_connection_generation)?;
-            Ok::<_, String>((
-                page_index,
-                fetch_library_page(credentials, page_index).await,
-            ))
-        })
-        .buffered(3);
-    while let Some(page) = pages.next().await {
-        let (page_index, result) = page?;
-        let (item_count, page_albums) = result?;
+    for page_index in 1..10_u64 {
+        ensure_library_sync_current(expected_sync_generation, expected_connection_generation)?;
+        let (item_count, page_albums) = fetch_library_page(credentials, page_index).await?;
         ensure_library_sync_current(expected_sync_generation, expected_connection_generation)?;
         let appended = append_library_page(&mut albums, &mut album_ids, page_albums);
         emit_library_page(on_progress, page_index, albums.len(), appended);
@@ -2618,6 +3231,7 @@ async fn connect(
     on_progress: Channel<LibrarySyncEvent>,
 ) -> Result<Vec<Album>, String> {
     validate_credentials(&input)?;
+    let previous_credentials = load_credentials().ok();
     let sync_generation = LIBRARY_SYNC_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
     let albums = fetch_library_with_credentials(&input, &on_progress, None, sync_generation)
         .await
@@ -2637,9 +3251,20 @@ async fn connect(
     }
 
     let connection_generation = CONNECTION_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
+    invalidate_album_track_cache();
+    clear_album_refresh_generations();
+    if previous_credentials
+        .as_ref()
+        .is_some_and(|credentials| credentials.username != input.username)
+    {
+        if let Ok(database) = album_metadata_database(&app) {
+            let _ = clear_persisted_album_tracks(database);
+        }
+    }
     let cache_app = app.clone();
     let cached_albums = albums.clone();
     let cached_credentials = input.clone();
+    let full_sync_at = player_timestamp_ms()?;
     let cache_result = tauri::async_runtime::spawn_blocking(move || {
         save_library_cache_if_connection_current(
             &cache_app,
@@ -2648,10 +3273,12 @@ async fn connect(
             sync_generation,
             &cached_credentials,
             true,
+            full_sync_at,
         )
     })
-    .await;
-    if matches!(cache_result, Ok(Ok(false))) {
+    .await
+    .map_err(|error| format!("Could not save the library cache: {error}"))??;
+    if !cache_result {
         return Err("The Bandcamp connection changed before sync completed.".into());
     }
 
@@ -2662,10 +3289,58 @@ async fn connect(
 async fn fetch_library(
     app: tauri::AppHandle,
     on_progress: Channel<LibrarySyncEvent>,
+    force_full: bool,
 ) -> Result<Vec<Album>, String> {
     let credentials = load_credentials()?;
     let connection_generation = CONNECTION_GENERATION.load(Ordering::Acquire);
     let sync_generation = LIBRARY_SYNC_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
+    let now = player_timestamp_ms()?;
+    let cached_snapshot = if force_full {
+        None
+    } else {
+        let cache_app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let _guard = LIBRARY_CACHE_LOCK
+                .lock()
+                .map_err(|_| "The library cache lock is unavailable.".to_string())?;
+            load_library_cache_or_clear_invalid(&library_cache_path(&cache_app)?, now)
+        })
+        .await
+        .map_err(|error| format!("Could not inspect the library cache: {error}"))??
+    };
+
+    if let Some(snapshot) = cached_snapshot {
+        if !cache_requires_full_reconciliation(&snapshot, now) {
+            ensure_library_sync_current(sync_generation, Some(connection_generation))?;
+            let newest = fetch_newest_library_album(&credentials).await?;
+            ensure_library_sync_current(sync_generation, Some(connection_generation))?;
+            if newest_probe_matches_cache(&snapshot, newest.as_ref()) {
+                let cached_albums = snapshot.albums;
+                let response_albums = cached_albums.clone();
+                let cache_app = app.clone();
+                let cached_credentials = credentials.clone();
+                let last_full_sync_at = snapshot.last_full_sync_at;
+                let cache_result = tauri::async_runtime::spawn_blocking(move || {
+                    save_library_cache_if_connection_current(
+                        &cache_app,
+                        &cached_albums,
+                        connection_generation,
+                        sync_generation,
+                        &cached_credentials,
+                        false,
+                        last_full_sync_at,
+                    )
+                })
+                .await
+                .map_err(|error| format!("Could not refresh the library cache: {error}"))??;
+                if !cache_result {
+                    return Err("The Bandcamp connection changed before sync completed.".into());
+                }
+                return Ok(response_albums);
+            }
+        }
+    }
+
     let albums = fetch_library_with_credentials(
         &credentials,
         &on_progress,
@@ -2676,6 +3351,7 @@ async fn fetch_library(
     let cache_app = app.clone();
     let cached_albums = albums.clone();
     let cached_credentials = credentials.clone();
+    let full_sync_at = player_timestamp_ms()?;
     let cache_result = tauri::async_runtime::spawn_blocking(move || {
         save_library_cache_if_connection_current(
             &cache_app,
@@ -2684,29 +3360,192 @@ async fn fetch_library(
             sync_generation,
             &cached_credentials,
             false,
+            full_sync_at,
         )
     })
-    .await;
-    if matches!(cache_result, Ok(Ok(false))) {
+    .await
+    .map_err(|error| format!("Could not save the library cache: {error}"))??;
+    if !cache_result {
         return Err("The Bandcamp connection changed before sync completed.".into());
     }
     Ok(albums)
 }
 
-#[tauri::command]
-async fn fetch_album(album_id: String) -> Result<Vec<Track>, String> {
-    validate_identifier(&album_id)?;
-    let credentials = load_credentials()?;
-    let body = request_json("getAlbum", &credentials, &[("id", album_id.clone())]).await?;
-    let songs = body
-        .pointer("/subsonic-response/album/song")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
-    Ok(songs
+fn album_tracks_from_response(body: &Value, album_id: &str) -> Result<Vec<Track>, String> {
+    let album = body
+        .pointer("/subsonic-response/album")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "Bandcamp returned an unexpected album response.".to_string())?;
+    let returned_album_id = album
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|value| validate_identifier(value).is_ok())
+        .ok_or_else(|| "Bandcamp returned an invalid album identifier.".to_string())?;
+    if returned_album_id != album_id {
+        return Err("Bandcamp returned a different album than Coda requested.".into());
+    }
+    let songs = match album.get("song") {
+        None => &[][..],
+        Some(value) => value
+            .as_array()
+            .map(Vec::as_slice)
+            .ok_or_else(|| "Bandcamp returned an unexpected album response.".to_string())?,
+    };
+    if songs.len() > MAX_PLAYLIST_TRACKS {
+        return Err("Bandcamp returned an unexpectedly large album.".into());
+    }
+    songs
         .iter()
-        .filter_map(|value| track_from_value(value, &album_id))
-        .collect())
+        .map(|value| {
+            bounded_track_from_value(value, album_id)
+                .filter(|track| track.album_id == album_id)
+                .ok_or_else(|| "Bandcamp returned invalid track metadata.".to_string())
+        })
+        .collect()
+}
+
+async fn fetch_album_from_bandcamp(
+    album_id: &str,
+    credentials: &ConnectionInput,
+) -> Result<Vec<Track>, String> {
+    let body = request_json("getAlbum", credentials, &[("id", album_id.to_string())]).await?;
+    album_tracks_from_response(&body, album_id)
+}
+
+fn schedule_persist_album_tracks(
+    app: tauri::AppHandle,
+    cache_key: String,
+    album_id: String,
+    tracks: Vec<Track>,
+    expected_generation: u64,
+    expected_credentials: ConnectionInput,
+    expected_refresh_generation: u64,
+) {
+    drop(tauri::async_runtime::spawn_blocking(move || {
+        let Ok(database) = album_metadata_database(&app) else {
+            return;
+        };
+        let Ok(now) = player_timestamp_ms() else {
+            return;
+        };
+        let _ = write_persisted_album_tracks(
+            database,
+            &cache_key,
+            &album_id,
+            &tracks,
+            now,
+            Some((expected_generation, &expected_credentials)),
+            Some((&album_id, expected_refresh_generation)),
+        );
+    }));
+}
+
+async fn load_persisted_album_tracks(
+    app: tauri::AppHandle,
+    cache_key: String,
+    album_id: String,
+) -> Option<Vec<Track>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let database = album_metadata_database(&app).ok()?;
+        let now = player_timestamp_ms().ok()?;
+        read_persisted_album_tracks(database, &cache_key, &album_id, now)
+            .ok()
+            .flatten()
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+fn ensure_album_request_current(
+    connection_generation: u64,
+    album_id: &str,
+    refresh_generation: u64,
+) -> Result<(), String> {
+    if CONNECTION_GENERATION.load(Ordering::Acquire) != connection_generation {
+        return Err("The Bandcamp connection changed while the album was loading.".into());
+    }
+    if album_refresh_generation(album_id)? != refresh_generation {
+        return Err("The album was refreshed while an older request was loading.".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn fetch_album(
+    app: tauri::AppHandle,
+    album_id: String,
+    force_refresh: bool,
+) -> Result<Vec<Track>, String> {
+    validate_identifier(&album_id)?;
+    let connection_generation = CONNECTION_GENERATION.load(Ordering::Acquire);
+    let refresh_generation = if force_refresh {
+        bump_album_refresh_generation(&album_id)?
+    } else {
+        album_refresh_generation(&album_id)?
+    };
+    let credentials = load_credentials()?;
+    let persistent_key = persisted_album_track_cache_key(&credentials, &album_id);
+    let memory_key = (connection_generation, album_id.clone(), refresh_generation);
+
+    if force_refresh {
+        let tracks = fetch_album_from_bandcamp(&album_id, &credentials).await?;
+        ensure_album_request_current(connection_generation, &album_id, refresh_generation)?;
+        schedule_persist_album_tracks(
+            app,
+            persistent_key,
+            album_id,
+            tracks.clone(),
+            connection_generation,
+            credentials,
+            refresh_generation,
+        );
+        album_track_cache().insert(memory_key, tracks.clone()).await;
+        return Ok(tracks);
+    }
+
+    let request_album_id = album_id.clone();
+    let persistent_album_id = album_id.clone();
+    let persistent_app = app.clone();
+    let persistent_cache_key = persistent_key.clone();
+    let tracks = album_track_cache()
+        .try_get_with(memory_key, async move {
+            if let Some(tracks) = load_persisted_album_tracks(
+                persistent_app,
+                persistent_cache_key.clone(),
+                persistent_album_id.clone(),
+            )
+            .await
+            {
+                ensure_album_request_current(
+                    connection_generation,
+                    &persistent_album_id,
+                    refresh_generation,
+                )?;
+                return Ok(tracks);
+            }
+            let tracks = fetch_album_from_bandcamp(&request_album_id, &credentials).await?;
+            ensure_album_request_current(
+                connection_generation,
+                &request_album_id,
+                refresh_generation,
+            )?;
+            schedule_persist_album_tracks(
+                app,
+                persistent_cache_key,
+                persistent_album_id,
+                tracks.clone(),
+                connection_generation,
+                credentials,
+                refresh_generation,
+            );
+            Ok::<Vec<Track>, String>(tracks)
+        })
+        .await
+        .map_err(|error| error.as_ref().clone())?;
+
+    ensure_album_request_current(connection_generation, &album_id, refresh_generation)?;
+    Ok(tracks)
 }
 
 #[tauri::command]
@@ -2845,13 +3684,15 @@ async fn discover(input: DiscoverInput) -> Result<DiscoverPage, String> {
         include_result_types: ["a", "s"],
         followed_bands: false,
     };
-    let response = http_client()?
-        .post(DISCOVER_ENDPOINT)
-        .header(reqwest::header::ACCEPT, "application/json")
-        .json(&request)
-        .send()
-        .await
-        .map_err(|error| format!("Could not reach Bandcamp Discover: {error}"))?;
+    let response = send_bandcamp_request(
+        http_client()?
+            .post(DISCOVER_ENDPOINT)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .json(&request),
+        "Bandcamp Discover",
+        BandcampRetryPolicy::Never,
+    )
+    .await?;
 
     if !response.status().is_success() {
         return Err(format!(
@@ -3208,6 +4049,22 @@ mod tests {
         }
     }
 
+    fn sample_track(id: &str) -> Track {
+        Track {
+            id: id.into(),
+            title: "Afterimage".into(),
+            artist: "Night Archive".into(),
+            album: "Soft Focus".into(),
+            album_id: "album-1".into(),
+            duration: 210,
+            track: 1,
+            disc: Some(1),
+            album_artist: Some("Night Archive".into()),
+            music_brainz_id: None,
+            cover_art: Some("cover-1".into()),
+        }
+    }
+
     fn temporary_library_cache_path(label: &str) -> PathBuf {
         let suffix: String = rand::thread_rng()
             .sample_iter(&Alphanumeric)
@@ -3217,6 +4074,17 @@ mod tests {
         std::env::temp_dir()
             .join(format!("coda-library-cache-{label}-{suffix}"))
             .join(LIBRARY_CACHE_FILE)
+    }
+
+    fn temporary_album_metadata_cache_path(label: &str) -> PathBuf {
+        let suffix: String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(16)
+            .map(char::from)
+            .collect();
+        std::env::temp_dir()
+            .join(format!("coda-album-metadata-cache-{label}-{suffix}"))
+            .join(ALBUM_METADATA_CACHE_FILE)
     }
 
     #[test]
@@ -3297,7 +4165,7 @@ mod tests {
     fn atomically_round_trips_bounded_library_cache_without_media_urls() {
         let path = temporary_library_cache_path("roundtrip");
         let now = 1_800_000_000_000;
-        write_library_cache(&path, &[sample_album("album-1")], now).unwrap();
+        write_library_cache(&path, &[sample_album("album-1")], now, now).unwrap();
 
         let serialized = fs::read_to_string(&path).unwrap();
         assert!(!serialized.contains("artworkUrl"));
@@ -3306,6 +4174,7 @@ mod tests {
 
         let restored = read_library_cache(&path, now + 1_000).unwrap().unwrap();
         assert_eq!(restored.version, LIBRARY_CACHE_VERSION);
+        assert_eq!(restored.last_full_sync_at, now);
         assert_eq!(restored.albums.len(), 1);
         assert_eq!(restored.albums[0].id, "album-1");
 
@@ -3319,12 +4188,21 @@ mod tests {
         let valid = LibraryCacheSnapshot {
             version: LIBRARY_CACHE_VERSION,
             saved_at: now,
+            last_full_sync_at: now,
             albums: vec![sample_album("album-1")],
         };
         assert!(validate_library_cache(&valid, now).is_ok());
         assert!(validate_library_cache(
             &LibraryCacheSnapshot {
                 saved_at: now + 1,
+                ..valid.clone()
+            },
+            now
+        )
+        .is_err());
+        assert!(validate_library_cache(
+            &LibraryCacheSnapshot {
+                last_full_sync_at: now + 1,
                 ..valid.clone()
             },
             now
@@ -3355,6 +4233,310 @@ mod tests {
             .is_none());
         assert!(!path.exists());
         fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn newest_probe_skips_only_unchanged_recent_full_caches() {
+        let now = 1_800_000_000_000;
+        let mut older = sample_album("album-older");
+        older.added_at = Some("2026-07-24T02:00:00Z".into());
+        let newest = sample_album("album-newest");
+        let snapshot = LibraryCacheSnapshot {
+            version: LIBRARY_CACHE_VERSION,
+            saved_at: now - 60_000,
+            last_full_sync_at: now - 60_000,
+            albums: vec![newest.clone(), older],
+        };
+
+        assert_eq!(
+            newest_cached_album(&snapshot.albums).map(|album| album.id.as_str()),
+            Some("album-newest")
+        );
+        assert!(newest_probe_matches_cache(&snapshot, Some(&newest)));
+        assert!(!newest_probe_matches_cache(
+            &snapshot,
+            Some(&sample_album("album-unseen"))
+        ));
+        assert!(!cache_requires_full_reconciliation(&snapshot, now));
+        assert!(cache_requires_full_reconciliation(
+            &LibraryCacheSnapshot {
+                last_full_sync_at: now - LIBRARY_FULL_RECONCILE_INTERVAL_MS,
+                ..snapshot
+            },
+            now
+        ));
+    }
+
+    #[test]
+    fn moka_album_cache_reuses_metadata_and_scopes_it_to_the_connection() {
+        use std::sync::{atomic::AtomicUsize, Arc};
+
+        tauri::async_runtime::block_on(async {
+            let cache = build_album_track_cache();
+            let initializations = Arc::new(AtomicUsize::new(0));
+            let key = (7, "album-1".to_string(), 0);
+
+            let first_count = Arc::clone(&initializations);
+            let first = cache
+                .try_get_with(key.clone(), async move {
+                    first_count.fetch_add(1, Ordering::AcqRel);
+                    Ok::<Vec<Track>, String>(vec![sample_track("track-1")])
+                })
+                .await
+                .unwrap();
+
+            let repeated_count = Arc::clone(&initializations);
+            let repeated = cache
+                .try_get_with(key, async move {
+                    repeated_count.fetch_add(1, Ordering::AcqRel);
+                    Ok::<Vec<Track>, String>(vec![sample_track("unexpected")])
+                })
+                .await
+                .unwrap();
+
+            let next_connection_count = Arc::clone(&initializations);
+            let next_connection = cache
+                .try_get_with((8, "album-1".to_string(), 0), async move {
+                    next_connection_count.fetch_add(1, Ordering::AcqRel);
+                    Ok::<Vec<Track>, String>(vec![sample_track("track-2")])
+                })
+                .await
+                .unwrap();
+
+            let refreshed_count = Arc::clone(&initializations);
+            let refreshed = cache
+                .try_get_with((8, "album-1".to_string(), 1), async move {
+                    refreshed_count.fetch_add(1, Ordering::AcqRel);
+                    Ok::<Vec<Track>, String>(vec![sample_track("track-3")])
+                })
+                .await
+                .unwrap();
+
+            assert_eq!(first[0].id, "track-1");
+            assert_eq!(repeated[0].id, "track-1");
+            assert_eq!(next_connection[0].id, "track-2");
+            assert_eq!(refreshed[0].id, "track-3");
+            assert_eq!(initializations.load(Ordering::Acquire), 3);
+
+            cache.invalidate_all();
+            assert!(cache.get(&(8, "album-1".to_string(), 0)).await.is_none());
+        });
+    }
+
+    #[test]
+    fn redb_round_trips_bounded_album_metadata_without_credentials_or_media_urls() {
+        let path = temporary_album_metadata_cache_path("roundtrip");
+        let database = open_album_metadata_database(&path).unwrap();
+        let credentials = ConnectionInput {
+            username: "generated-user".into(),
+            password: "generated-password".into(),
+        };
+        let another_account = ConnectionInput {
+            username: "another-generated-user".into(),
+            password: "another-generated-password".into(),
+        };
+        let cache_key = persisted_album_track_cache_key(&credentials, "album-1");
+        let another_cache_key = persisted_album_track_cache_key(&another_account, "album-1");
+        let now = 1_800_000_000_000;
+
+        assert_ne!(cache_key, another_cache_key);
+        assert!(write_persisted_album_tracks(
+            &database,
+            &cache_key,
+            "album-1",
+            &[sample_track("track-1")],
+            now,
+            None,
+            None,
+        )
+        .unwrap());
+        let restored =
+            read_persisted_album_tracks(&database, &cache_key, "album-1", now + 1).unwrap();
+        assert_eq!(restored.unwrap()[0].id, "track-1");
+        assert!(
+            read_persisted_album_tracks(&database, &another_cache_key, "album-1", now + 1,)
+                .unwrap()
+                .is_none()
+        );
+
+        let transaction = database.begin_read().unwrap();
+        let table = transaction.open_table(ALBUM_TRACKS_TABLE).unwrap();
+        let serialized = table.get(cache_key.as_str()).unwrap().unwrap();
+        let serialized = String::from_utf8(serialized.value().to_vec()).unwrap();
+        assert!(!cache_key.contains("generated-user"));
+        assert!(!cache_key.contains("generated-password"));
+        assert!(!serialized.contains("generated-user"));
+        assert!(!serialized.contains("generated-password"));
+        assert!(!serialized.contains("streamUrl"));
+        assert!(!serialized.contains("artworkUrl"));
+        drop(table);
+        drop(transaction);
+        drop(database);
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn redb_discards_expired_and_incompatible_album_metadata() {
+        let path = temporary_album_metadata_cache_path("expiry");
+        let database = open_album_metadata_database(&path).unwrap();
+        let credentials = ConnectionInput {
+            username: "generated-user".into(),
+            password: "generated-password".into(),
+        };
+        let cache_key = persisted_album_track_cache_key(&credentials, "album-1");
+        let now = 1_800_000_000_000;
+
+        assert!(write_persisted_album_tracks(
+            &database,
+            &cache_key,
+            "album-1",
+            &[sample_track("track-1")],
+            now,
+            None,
+            None,
+        )
+        .unwrap());
+        assert!(read_persisted_album_tracks(
+            &database,
+            &cache_key,
+            "album-1",
+            now + PERSISTED_ALBUM_TRACK_CACHE_TTL_MS + 1,
+        )
+        .unwrap()
+        .is_none());
+
+        let incompatible = serde_json::to_vec(&PersistedAlbumTracks {
+            version: ALBUM_TRACK_CACHE_ENTRY_VERSION + 1,
+            saved_at: now,
+            album_id: "album-1".into(),
+            tracks: vec![sample_track("track-1")],
+        })
+        .unwrap();
+        let transaction = database.begin_write().unwrap();
+        {
+            let mut table = transaction.open_table(ALBUM_TRACKS_TABLE).unwrap();
+            table
+                .insert(cache_key.as_str(), incompatible.as_slice())
+                .unwrap();
+        }
+        transaction.commit().unwrap();
+        assert!(
+            read_persisted_album_tracks(&database, &cache_key, "album-1", now)
+                .unwrap()
+                .is_none()
+        );
+
+        let transaction = database.begin_read().unwrap();
+        let table = transaction.open_table(ALBUM_TRACKS_TABLE).unwrap();
+        assert!(table.get(cache_key.as_str()).unwrap().is_none());
+        drop(table);
+        drop(transaction);
+        drop(database);
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn album_track_responses_require_bounded_valid_metadata() {
+        let valid = serde_json::json!({
+            "subsonic-response": {
+                "album": {
+                    "id": "album-1",
+                    "song": [{
+                        "id": "track-1",
+                        "title": "Afterimage",
+                        "artist": "Night Archive",
+                        "album": "Soft Focus",
+                        "albumId": "album-1",
+                        "duration": 210,
+                        "track": 1
+                    }]
+                }
+            }
+        });
+        assert_eq!(
+            album_tracks_from_response(&valid, "album-1").unwrap().len(),
+            1
+        );
+
+        let wrong_shape = serde_json::json!({
+            "subsonic-response": { "album": { "song": {} } }
+        });
+        assert!(album_tracks_from_response(&wrong_shape, "album-1").is_err());
+
+        let wrong_album = serde_json::json!({
+            "subsonic-response": {
+                "album": {
+                    "id": "album-1",
+                    "song": [{
+                        "id": "track-1",
+                        "title": "Afterimage",
+                        "artist": "Night Archive",
+                        "album": "Soft Focus",
+                        "albumId": "another-album"
+                    }]
+                }
+            }
+        });
+        assert!(album_tracks_from_response(&wrong_album, "album-1").is_err());
+    }
+
+    #[test]
+    fn bandcamp_read_retries_are_bounded_and_retry_after_aware() {
+        let now = UNIX_EPOCH + Duration::from_secs(1_000);
+        let mut headers = HeaderMap::new();
+        headers.insert(RETRY_AFTER, reqwest::header::HeaderValue::from_static("5"));
+        assert_eq!(
+            bandcamp_retry_delay(Some(&headers), 0, now, 100),
+            Duration::from_millis(5_100)
+        );
+
+        let retry_at = httpdate::fmt_http_date(now + Duration::from_secs(7));
+        headers.insert(
+            RETRY_AFTER,
+            reqwest::header::HeaderValue::from_str(&retry_at).unwrap(),
+        );
+        assert_eq!(
+            bandcamp_retry_delay(Some(&headers), 0, now, 0),
+            Duration::from_secs(7)
+        );
+
+        headers.insert(
+            RETRY_AFTER,
+            reqwest::header::HeaderValue::from_static("120"),
+        );
+        assert_eq!(
+            bandcamp_retry_delay(Some(&headers), 0, now, 100),
+            BANDCAMP_MAX_RETRY_DELAY
+        );
+        assert_eq!(
+            bandcamp_retry_delay(None, 0, now, 0),
+            Duration::from_millis(BANDCAMP_RETRY_BASE_MS)
+        );
+        assert_eq!(
+            bandcamp_retry_delay(None, 1, now, 0),
+            Duration::from_millis(BANDCAMP_RETRY_BASE_MS * 2)
+        );
+    }
+
+    #[test]
+    fn bandcamp_read_retries_only_transient_statuses() {
+        for status in [
+            StatusCode::REQUEST_TIMEOUT,
+            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::BAD_GATEWAY,
+            StatusCode::SERVICE_UNAVAILABLE,
+            StatusCode::GATEWAY_TIMEOUT,
+        ] {
+            assert!(is_retryable_bandcamp_status(status));
+        }
+        for status in [
+            StatusCode::BAD_REQUEST,
+            StatusCode::UNAUTHORIZED,
+            StatusCode::NOT_FOUND,
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ] {
+            assert!(!is_retryable_bandcamp_status(status));
+        }
     }
 
     #[test]
