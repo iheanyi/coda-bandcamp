@@ -171,7 +171,11 @@ export default function DiscoverView({
     setFilters((value) => ({ ...value, sort }));
 
   return (
-    <section className="discover-view" aria-live="polite">
+    <section
+      className="discover-view"
+      aria-live="polite"
+      aria-busy={query.isFetching}
+    >
       <div className="discover-intro">
         <div>
           <span className="eyebrow"><Sparkles size={13} /> Find something new</span>
@@ -188,7 +192,10 @@ export default function DiscoverView({
             onChange={(event) => setDraftTag(event.target.value)}
             placeholder="Try shoegaze, house, Lagos…"
           />
-          <button type="submit">Explore</button>
+          <button type="submit" disabled={query.isPending}>
+            {query.isPending ? <LoaderCircle className="spin" size={14} /> : null}
+            {query.isPending ? "Exploring…" : "Explore"}
+          </button>
         </form>
       </div>
 
@@ -197,6 +204,7 @@ export default function DiscoverView({
           <button
             className={!filters.tag ? "active" : ""}
             onClick={() => chooseGenre("all")}
+            disabled={query.isPending}
           >
             All genres
           </button>
@@ -205,6 +213,7 @@ export default function DiscoverView({
               key={tag}
               className={selectedGenre === tag ? "active" : ""}
               onClick={() => chooseGenre(tag)}
+              disabled={query.isPending}
             >
               {normalizeGenre(tag)}
             </button>
@@ -215,6 +224,7 @@ export default function DiscoverView({
               value={selectedExtraGenre}
               aria-label="More Discover genres"
               onChange={(event) => chooseGenre(event.target.value)}
+              disabled={query.isPending}
             >
               <option value="" disabled>More genres</option>
               {EXTRA_GENRES.map((tag) => (
@@ -228,12 +238,14 @@ export default function DiscoverView({
           <button
             className={filters.sort === "top" ? "active" : ""}
             onClick={() => chooseSort("top")}
+            disabled={query.isPending}
           >
             Best-selling
           </button>
           <button
             className={filters.sort === "new" ? "active" : ""}
             onClick={() => chooseSort("new")}
+            disabled={query.isPending}
           >
             New arrivals
           </button>
@@ -251,8 +263,14 @@ export default function DiscoverView({
           <Disc3 size={28} />
           <strong>Discover is taking a break</strong>
           <span>{String(query.error).replace(/^Error:\s*/, "")}</span>
-          <button onClick={() => void query.refetch()}>
-            Try again <RefreshCw size={14} />
+          <button
+            onClick={() => void query.refetch()}
+            disabled={query.isFetching}
+          >
+            {query.isFetching
+              ? <LoaderCircle className="spin" size={14} />
+              : <RefreshCw size={14} />}
+            {query.isFetching ? "Trying again…" : "Try again"}
           </button>
         </div>
       ) : releases.length ? (

@@ -55,6 +55,25 @@ beforeEach(() => {
 });
 
 describe("Discover", () => {
+  it("disables Discover controls while the initiating request is pending", async () => {
+    let resolveDiscover!: (value: {
+      results: [];
+      resultCount: number;
+      hasMore: boolean;
+    }) => void;
+    mocks.fetchDiscover.mockReturnValue(new Promise((resolve) => {
+      resolveDiscover = resolve;
+    }));
+    renderDiscover();
+
+    expect(await screen.findByRole("button", { name: "Exploring…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "All genres" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Best-selling" })).toBeDisabled();
+
+    resolveDiscover({ results: [], resultCount: 0, hasMore: false });
+    expect(await screen.findByText("No releases found")).toBeInTheDocument();
+  });
+
   it("loads previews, queues a result, and supports the full genre selector", async () => {
     const { onQueue } = renderDiscover();
 
