@@ -8,12 +8,26 @@ missing.
 
 - Secure Subsonic connection to `https://bandcamp.com/api/subsonic`
 - Album library sync, search, normalized genre filters, and sorting
+- Collection browsing by artist, multi-track album/EP, or one-track single
+- In-app artist pages with release counts and whole-artist play/queue actions
+- Release artwork and titles open track lists from the library, queue, or player
 - Bulk **Add results to queue** for the current collection search
 - Album track lists and real streaming
-- Persistent on-screen queue with reorder, remove, clear, and shuffle actions
+- Floating, non-reflowing queue drawer with reorder, remove, clear, and shuffle
+  actions
+- Device-local Favorites plus Bandcamp-synced playlist creation, renaming,
+  editing, and deletion
+- **Add to playlist** from release tracks, Favorites, playlists, and the player
+- Crash-safe restoration for queue order, current track, playhead, volume,
+  repeat mode, and queue visibility
+- Immersive **Now Playing** view with large artwork, full controls, metadata
+  navigation, and an Up Next preview
+- Context-aware **Surprise me** action that picks and plays one random track
 - Whole-library shuffle with bounded background album loading
 - Public Bandcamp Discover browsing with tags, cached pagination, playable
   previews, and direct Bandcamp links
+- Bandcamp Radio with a latest-show feature, browsable archive, chapter-aware
+  playback, show tracklists, direct Bandcamp links, and queue actions
 - Keyboard playback controls
 - Native system tray/status-menu controls for Show, Play/Pause, Previous, Next,
   Shuffle Entire Library, and Quit
@@ -21,6 +35,8 @@ missing.
   Linux Secret Service)
 - Artwork retry and missing-cover recovery from album track metadata
 - Native AirPlay route picker on supported Apple WebKit hosts
+- Last.fm desktop authorization, Now Playing updates, and standards-compliant
+  scrobbling without collecting a Last.fm password
 
 ## Development
 
@@ -29,8 +45,16 @@ in the Tauri documentation.
 
 ```sh
 npm install
-npm run desktop:dev
+npm run dev
 ```
+
+`npm run dev` opens the native Tauri window and keeps both layers live: React
+and CSS update through Vite hot reload, while Rust changes trigger an automatic
+native rebuild and relaunch. The first Rust debug compile takes longer; later
+frontend edits appear almost immediately and never require reinstalling Coda.
+Queue changes become durable after a short debounce and the playhead
+checkpoints every five seconds, so native rebuild/relaunch cycles restore the
+saved session paused instead of starting from an empty queue.
 
 Run all checks:
 
@@ -54,6 +78,23 @@ The `Cross-platform` GitHub Actions workflow runs the frontend suite, Rust tests
 Clippy, and a native Tauri build on Windows, macOS, and Ubuntu. Local Windows
 success does not replace those host-native CI builds.
 
+### Last.fm build credentials
+
+Coda uses Last.fm's desktop authentication protocol. The issued API key and
+shared application secret are compiled into the desktop binary; they are app
+identifiers, not a user's Last.fm password or session. Keep them out of source
+history by setting these environment variables before building:
+
+```text
+CODA_LASTFM_API_KEY
+CODA_LASTFM_SHARED_SECRET
+```
+
+On Windows, store them for the current user with
+`[Environment]::SetEnvironmentVariable(..., "User")`, then start a new terminal
+before running `npm run dev` or a release build. Release CI should provide the
+same names through encrypted repository secrets.
+
 ## Connecting Bandcamp
 
 Bandcamp added Subsonic support in July 2026. Choose **Connect** in Coda, then
@@ -64,6 +105,18 @@ credentials, and return to Coda with the generated username and password.
 Coda never asks for your normal Bandcamp password. It supports only Bandcamp's
 HTTPS Subsonic endpoint and will never send the generated app credentials to
 another host.
+
+## Connecting Last.fm
+
+Open **Settings**, choose **Connect Last.fm**, and approve Coda on Last.fm's
+official authorization page. Return to Coda and choose **Finish connection**.
+Coda never receives your Last.fm password. The resulting account session key is
+stored in the operating system credential vault.
+
+When playback starts, Coda sends a Now Playing update. A track is scrobbled
+after real listening reaches half its duration or four minutes, whichever comes
+first, following Last.fm's desktop-client guidance. Tracks of 30 seconds or less
+are not scrobbled, and seeking does not manufacture listening time.
 
 ## Discover
 
@@ -76,6 +129,11 @@ keeps recently viewed filters warm for five minutes, and releases inactive data
 after 30 minutes. Playback state, the queue, and the authenticated collection
 remain local React/native state so changing a filter cannot reset listening.
 
+Discover preview URLs are anonymous but transient and cannot be reacquired by
+track ID through Subsonic. Coda omits Discover previews from restored sessions
+instead of persisting stale media URLs; purchased library tracks remain fully
+restorable.
+
 Coda normalizes collection genre labels case-insensitively, ranks the most common
 ones as quick filters, and keeps every remaining genre available under **More
 genres**. Discover exposes Bandcamp's broader genre set through the same compact
@@ -85,20 +143,91 @@ To reload artwork, choose **Artwork** beside **Sync**. Coda invalidates temporar
 cover links, retries visible images, and checks missing album art against the
 release's track metadata in bounded batches.
 
+## Favorites and playlists
+
+Bandcamp's Subsonic beta does not currently return a valid `getStarred2`
+response, so Coda labels Favorites as device-local instead of implying that
+hearts sync to Bandcamp. The local store is versioned and bounded; it contains
+stable IDs and display metadata only. Signed artwork and stream URLs are never
+persisted. Coda resolves fresh artwork from the stored cover ID and links saved
+tracks/releases back to their internal album detail pages.
+
+Playlists continue to use Bandcamp's authenticated Subsonic playlist endpoints.
+Playlist server state is cached and deduplicated with TanStack Query. Opening
+the Queue, switching collection views, or navigating back from a playlist does
+not refetch unchanged data or disturb playback. Credentials never enter the
+query cache: authenticated requests remain in the Rust backend and read
+credentials from the operating-system vault.
+
+## Bandcamp Radio
+
+Radio uses Bandcamp's anonymous public show feed and direct episode streams.
+Shows are cached briefly in memory with TanStack Query, while the audio itself
+is never downloaded or cached by Coda. No Subsonic or Last.fm credentials are
+attached to Radio requests.
+
+Bandcamp does not currently document Radio in its supported developer API, so
+this integration is deliberately isolated behind typed, size-bounded native
+commands. If Bandcamp changes the public feed shape, Radio can fail closed
+without affecting the authenticated collection. Coda preserves a Radio show's
+bounded identifier, display metadata, queue position, and playhead, then
+reacquires a fresh anonymous stream when a session is restored. Signed episode
+and artwork URLs are never written to disk, and whole shows are not submitted
+to Last.fm as tracks.
+
+When a show includes chapter metadata, Coda resolves the current song from the
+audio playhead and surfaces it in the compact player, Queue, window title, and
+Now Playing view. The show remains one honest queue item. Its tracklist is a
+seekable chapter timeline instead of a collection of fake standalone songs;
+linked chapter titles open verified Bandcamp HTTPS pages in the default browser
+so a listener can save or buy the release. Restored sessions start paused at
+the saved chapter and timestamp.
+
 ## Desktop behavior
 
-Drag anywhere on Coda's custom top bar except the window-control buttons to move
-the window, including across monitors. Coda remembers its last normal position,
-size, and maximized state instead of re-centering on every launch. If that
-monitor is later disconnected, Coda safely returns to the primary display.
+Use Coda's native title bar to move the window, including across monitors. Each
+platform owns its window controls and conventions: Windows provides
+maximize/restore on title-bar double-click, its system menu, and Snap Layouts;
+macOS provides native traffic lights and system-configured title-bar behavior;
+Linux follows the active desktop environment and window manager. Coda remembers
+its last normal position, size, and maximized state instead of re-centering on
+every launch. If that monitor is later disconnected, Coda safely returns to the
+primary display.
 Closing the main window keeps playback alive and hides Coda in the system tray
 (Windows/Linux) or status area (macOS). Left-click the icon to restore Coda, or
 use its native menu for playback controls. Choose **Quit Coda** from that menu
 when you want to exit completely.
 
-Choose **Shuffle all** in the collection header—or **Shuffle Entire Library**
-from the tray—to load the collection with six bounded workers, randomize every
-playable track, replace the queue, and begin playback.
+The shuffle action follows the current screen: an artist, album, search result
+set, genre, Recent, singles, albums, or the full collection. Artist pages also
+provide a one-click **Shuffle** action beside **Play all** and **Add all**. Coda
+loads only that scope with six bounded workers, randomizes its playable tracks,
+replaces the queue, and begins playback. **Shuffle Entire Library** in the tray
+remains explicitly global.
+
+Click the artwork in the compact player to open **Now Playing**. The full view
+uses the same audio element and playback state while adding large artwork,
+elapsed/remaining time, transport and output controls, metadata links, and a
+bounded Up Next preview. Supporting WebViews use a shared-element transition so
+the compact cover expands into the detail artwork; other hosts receive a
+transform-and-opacity fallback, and reduced-motion preferences bypass the
+animation. **Minimize** reverses the spatial transition, restores the compact
+player, and returns to the exact album, artist, Discover, or collection context
+underneath it.
+
+Major navigation also uses restrained View Transitions when the host supports
+them. Sidebar destinations crossfade while artist, album, playlist, and Radio
+show detail pages use short directional transitions that reverse on Back.
+Search, filtering, sorting, queue operations, and playback remain immediate so
+motion never slows routine interactions. Reduced-motion preferences bypass
+these transitions.
+
+Player state is a versioned, bounded snapshot in Coda's platform-native
+application-data directory. Structural changes save after a short debounce;
+the playhead and Last.fm progress use a lightweight five-second checkpoint so
+large queues are not rewritten continuously. Relaunch restores paused and
+fetches fresh Bandcamp media/artwork URLs. Very large queues render in batches
+while remaining complete in memory and on disk.
 
 On macOS, Coda shows an AirPlay button when the system WebKit media element
 reports a native playback-target picker. The picker and routing are owned by the
@@ -117,4 +246,4 @@ installation and is not currently reported.
 ## Independent software
 
 Coda is an independent client and is not affiliated with or endorsed by
-Bandcamp.
+Bandcamp or Last.fm.
