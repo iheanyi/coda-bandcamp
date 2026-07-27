@@ -41,6 +41,14 @@ const track: Track = {
   palette: ["#a66", "#222"],
 };
 
+const secondTrack: Track = {
+  ...track,
+  id: "song-2",
+  title: "Lanterns",
+  duration: 204,
+  track: 2,
+};
+
 const summary: PlaylistSummary = {
   id: "playlist-1",
   name: "Night drive",
@@ -81,7 +89,20 @@ function withQueryClient(node: React.ReactNode) {
       mutations: { retry: false },
     },
   });
-  return render(<QueryClientProvider client={queryClient}>{node}</QueryClientProvider>);
+  return {
+    ...render(<QueryClientProvider client={queryClient}>{node}</QueryClientProvider>),
+    queryClient,
+  };
+}
+
+function deferred<Value>() {
+  let resolve!: (value: Value) => void;
+  let reject!: (cause: unknown) => void;
+  const promise = new Promise<Value>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
 }
 
 const commonProps = {
@@ -181,6 +202,124 @@ describe("saved Bandcamp library views", () => {
 
     resolveCreate(detail);
     await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it("shows a newly created playlist immediately and removes it on failure", async () => {
+    const pendingCreate = deferred<PlaylistDetail>();
+    mocks.createPlaylist.mockReturnValue(pendingCreate.promise);
+    withQueryClient(<SavedLibraryView mode="playlists" {...commonProps} />);
+
+    await screen.findByText("Create a playlist");
+    fireEvent.change(screen.getByPlaceholderText("Late-night rotation"), {
+      target: { value: "Fresh finds" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    expect(await screen.findByRole("button", { name: /Fresh finds/ }))
+      .toBeInTheDocument();
+    pendingCreate.reject(new Error("Create failed"));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /Fresh finds/ }))
+        .not.toBeInTheDocument(),
+    );
+    expect(commonProps.onNotify).toHaveBeenCalledWith("Create failed", "bad");
+  });
+
+  it("optimistically renames a playlist and restores its name on failure", async () => {
+    const pendingUpdate = deferred<PlaylistDetail>();
+    mocks.updatePlaylist.mockReturnValue(pendingUpdate.promise);
+    withQueryClient(<SavedLibraryView mode="playlists" {...commonProps} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Night drive/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Rename Night drive" }));
+    fireEvent.change(screen.getByLabelText("Playlist name"), {
+      target: { value: "After hours" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save playlist name" }));
+
+    expect(await screen.findByRole("heading", { name: "After hours" }))
+      .toBeInTheDocument();
+    pendingUpdate.reject(new Error("Rename failed"));
+
+    expect(await screen.findByRole("heading", { name: "Night drive" }))
+      .toBeInTheDocument();
+    expect(commonProps.onNotify).toHaveBeenCalledWith("Rename failed", "bad");
+  });
+
+  it("optimistically removes a playlist track and rolls it back on failure", async () => {
+    const twoTrackDetail: PlaylistDetail = {
+      ...detail,
+      duration: track.duration + secondTrack.duration,
+      songCount: 2,
+      tracks: [track, secondTrack],
+    };
+    const pendingUpdate = deferred<PlaylistDetail>();
+    mocks.fetchPlaylist.mockResolvedValue(twoTrackDetail);
+    mocks.updatePlaylist.mockReturnValue(pendingUpdate.promise);
+    withQueryClient(<SavedLibraryView mode="playlists" {...commonProps} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Night drive/ }));
+    const remove = await screen.findByRole("button", {
+      name: "Remove Lanterns from Night drive",
+    });
+    fireEvent.click(remove);
+    await waitFor(() =>
+      expect(screen.queryByText("Lanterns")).not.toBeInTheDocument(),
+    );
+
+    pendingUpdate.reject(new Error("Remove failed"));
+    expect(await screen.findByText("Lanterns")).toBeInTheDocument();
+    expect(commonProps.onNotify).toHaveBeenCalledWith("Remove failed", "bad");
+  });
+
+  it("optimistically removes a deleted playlist summary and restores it on failure", async () => {
+    const pendingDelete = deferred<void>();
+    mocks.deletePlaylist.mockReturnValue(pendingDelete.promise);
+    const { queryClient } = withQueryClient(
+      <SavedLibraryView mode="playlists" {...commonProps} />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /Night drive/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete playlist" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete playlist" }));
+
+    await waitFor(() =>
+      expect(queryClient.getQueryData<PlaylistSummary[]>(["bandcamp", "playlists"]))
+        .toEqual([]),
+    );
+    pendingDelete.reject(new Error("Delete failed"));
+
+    await waitFor(() =>
+      expect(queryClient.getQueryData<PlaylistSummary[]>(["bandcamp", "playlists"]))
+        .toEqual([summary]),
+    );
+    expect(screen.getByRole("heading", { name: "Night drive" })).toBeInTheDocument();
+    expect(commonProps.onNotify).toHaveBeenCalledWith("Delete failed", "bad");
+  });
+
+  it("optimistically updates Add-to-playlist counts and rolls back on failure", async () => {
+    const pendingUpdate = deferred<PlaylistDetail>();
+    mocks.updatePlaylist.mockReturnValue(pendingUpdate.promise);
+    const onClose = vi.fn();
+    const onNotify = vi.fn();
+    withQueryClient(
+      <AddToPlaylistDialog
+        tracks={[secondTrack]}
+        onClose={onClose}
+        onNotify={onNotify}
+      />,
+    );
+
+    const target = await screen.findByRole("button", { name: /Night drive/ });
+    expect(within(target).getByText("1 track")).toBeInTheDocument();
+    fireEvent.click(target);
+    expect(await within(target).findByText("2 tracks")).toBeInTheDocument();
+
+    pendingUpdate.reject(new Error("Add failed"));
+    expect(await within(target).findByText("1 track")).toBeInTheDocument();
+    expect(onNotify).toHaveBeenCalledWith("Add failed", "bad");
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("renders favorites and removes a starred track through the supplied action", () => {

@@ -18,7 +18,12 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  type QueryClient,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import {
   createPlaylist,
@@ -39,6 +44,7 @@ import type {
   LocalFavoriteCollection,
   PlaylistDetail,
   PlaylistSummary,
+  PlaylistUpdateInput,
   RadioShow,
   RadioShowSummary,
   Track,
@@ -47,6 +53,8 @@ import { transitionCodaView } from "./viewTransitions";
 import { VirtualizedSavedTrackList } from "./VirtualizedSavedTrackList";
 
 export const PLAYLISTS_QUERY_KEY = ["bandcamp", "playlists"] as const;
+const playlistQueryKey = (playlistId: string) =>
+  [...PLAYLISTS_QUERY_KEY, playlistId] as const;
 
 type SavedLibraryViewProps = {
   mode: "favorites" | "playlists";
@@ -79,6 +87,114 @@ const radioDateFormatter = new Intl.DateTimeFormat(undefined, {
   day: "numeric",
   year: "numeric",
 });
+
+type PlaylistListMutationContext = {
+  optimisticId?: string;
+  previousPlaylists?: PlaylistSummary[];
+};
+
+type PlaylistDetailMutationContext = PlaylistListMutationContext & {
+  previousPlaylist?: PlaylistDetail;
+};
+
+function playlistSummary(playlist: PlaylistDetail): PlaylistSummary {
+  const { tracks: _tracks, ...summary } = playlist;
+  return summary;
+}
+
+function upsertPlaylistSummary(
+  playlists: PlaylistSummary[] | undefined,
+  playlist: PlaylistSummary,
+): PlaylistSummary[] {
+  const current = playlists ?? [];
+  const existing = current.findIndex((item) => item.id === playlist.id);
+  if (existing < 0) return [playlist, ...current];
+  return current.map((item, index) => index === existing ? playlist : item);
+}
+
+function replaceOptimisticPlaylist(
+  playlists: PlaylistSummary[] | undefined,
+  optimisticId: string | undefined,
+  playlist: PlaylistSummary,
+): PlaylistSummary[] {
+  if (!optimisticId) return upsertPlaylistSummary(playlists, playlist);
+  const current = playlists ?? [];
+  const optimisticIndex = current.findIndex((item) => item.id === optimisticId);
+  if (optimisticIndex < 0) return upsertPlaylistSummary(current, playlist);
+  return current.map((item, index) => index === optimisticIndex ? playlist : item);
+}
+
+function optimisticPlaylistId(): string {
+  const randomId = globalThis.crypto?.randomUUID?.();
+  return `optimistic:${randomId ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+}
+
+function isOptimisticPlaylist(playlist: PlaylistSummary): boolean {
+  return playlist.id.startsWith("optimistic:");
+}
+
+function restorePlaylistList(
+  queryClient: QueryClient,
+  previousPlaylists: PlaylistSummary[] | undefined,
+): void {
+  if (previousPlaylists === undefined) {
+    queryClient.removeQueries({
+      queryKey: PLAYLISTS_QUERY_KEY,
+      exact: true,
+    });
+    return;
+  }
+  queryClient.setQueryData(PLAYLISTS_QUERY_KEY, previousPlaylists);
+}
+
+function restorePlaylistMutation(
+  queryClient: QueryClient,
+  playlistId: string,
+  context: PlaylistDetailMutationContext,
+): void {
+  restorePlaylistList(queryClient, context.previousPlaylists);
+  const detailKey = playlistQueryKey(playlistId);
+  if (context.previousPlaylist === undefined) {
+    queryClient.removeQueries({ queryKey: detailKey, exact: true });
+    return;
+  }
+  queryClient.setQueryData(detailKey, context.previousPlaylist);
+}
+
+function removedPlaylistTracks(
+  playlist: PlaylistDetail,
+  indexes: readonly number[],
+): PlaylistDetail {
+  const removals = new Set(
+    indexes.filter((index) => Number.isInteger(index) && index >= 0),
+  );
+  const tracks = playlist.tracks.filter((_track, index) => !removals.has(index));
+  return {
+    ...playlist,
+    duration: tracks.reduce((total, track) => total + track.duration, 0),
+    songCount: tracks.length,
+    tracks,
+  };
+}
+
+function addedPlaylistTracks(
+  playlist: PlaylistDetail,
+  tracksToAdd: readonly Track[],
+): PlaylistDetail {
+  const existing = new Set(playlist.tracks.map((track) => track.id));
+  const additions = tracksToAdd.filter((track) => {
+    if (existing.has(track.id)) return false;
+    existing.add(track.id);
+    return true;
+  });
+  const tracks = [...playlist.tracks, ...additions];
+  return {
+    ...playlist,
+    duration: tracks.reduce((total, track) => total + track.duration, 0),
+    songCount: tracks.length,
+    tracks,
+  };
+}
 
 function mutationError(cause: unknown): string {
   return String(cause).replace(/^Error:\s*/, "");
@@ -219,7 +335,9 @@ function PlaylistList({
         <div className="playlist-grid">
           {playlists.map((playlist) => (
             <button
+              aria-busy={isOptimisticPlaylist(playlist)}
               className="playlist-card"
+              disabled={isOptimisticPlaylist(playlist)}
               key={playlist.id}
               onClick={() => onOpen(playlist)}
             >
@@ -234,7 +352,9 @@ function PlaylistList({
                 </span>
                 {playlist.comment ? <small>{playlist.comment}</small> : null}
               </span>
-              <span className="playlist-card__open">Open</span>
+              <span className="playlist-card__open">
+                {isOptimisticPlaylist(playlist) ? "Creating…" : "Open"}
+              </span>
             </button>
           ))}
         </div>
@@ -526,21 +646,92 @@ export function AddToPlaylistDialog({
   const addMutation = useMutation({
     mutationFn: async (playlist: PlaylistSummary) =>
       updatePlaylist({ playlistId: playlist.id, songIdsToAdd: songIds }),
-    onSuccess: async (playlist) => {
-      await queryClient.invalidateQueries({ queryKey: PLAYLISTS_QUERY_KEY });
-      onNotify(`${countLabel(tracks.length, "track")} added to ${playlist.name}`, "good");
+    onMutate: async (target): Promise<PlaylistDetailMutationContext> => {
+      const detailKey = playlistQueryKey(target.id);
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: PLAYLISTS_QUERY_KEY, exact: true }),
+        queryClient.cancelQueries({ queryKey: detailKey, exact: true }),
+      ]);
+      const previousPlaylists =
+        queryClient.getQueryData<PlaylistSummary[]>(PLAYLISTS_QUERY_KEY);
+      const previousPlaylist =
+        queryClient.getQueryData<PlaylistDetail>(detailKey);
+      const optimisticDetail = previousPlaylist
+        ? addedPlaylistTracks(previousPlaylist, tracks)
+        : undefined;
+      const uniqueTrackCount = new Set(tracks.map((track) => track.id)).size;
+      const optimisticSummary = optimisticDetail
+        ? playlistSummary(optimisticDetail)
+        : {
+            ...target,
+            duration: target.duration + tracks.reduce(
+              (total, track) => total + track.duration,
+              0,
+            ),
+            songCount: target.songCount + uniqueTrackCount,
+          };
+      queryClient.setQueryData<PlaylistSummary[]>(
+        PLAYLISTS_QUERY_KEY,
+        (current) => upsertPlaylistSummary(current, optimisticSummary),
+      );
+      if (optimisticDetail) {
+        queryClient.setQueryData(detailKey, optimisticDetail);
+      }
+      return { previousPlaylist, previousPlaylists };
+    },
+    onSuccess: (updated) => {
+      queryClient.setQueryData(playlistQueryKey(updated.id), updated);
+      queryClient.setQueryData<PlaylistSummary[]>(
+        PLAYLISTS_QUERY_KEY,
+        (current) => upsertPlaylistSummary(current, playlistSummary(updated)),
+      );
+      onNotify(`${countLabel(tracks.length, "track")} added to ${updated.name}`, "good");
       onClose();
     },
-    onError: (cause) => onNotify(mutationError(cause), "bad"),
+    onError: (cause, target, context) => {
+      if (context) restorePlaylistMutation(queryClient, target.id, context);
+      onNotify(mutationError(cause), "bad");
+    },
   });
   const createMutation = useMutation({
     mutationFn: (playlistName: string) => createPlaylist(playlistName, songIds),
-    onSuccess: async (playlist) => {
-      await queryClient.invalidateQueries({ queryKey: PLAYLISTS_QUERY_KEY });
-      onNotify(`${playlist.name} created with ${countLabel(tracks.length, "track")}`, "good");
+    onMutate: async (playlistName): Promise<PlaylistListMutationContext> => {
+      await queryClient.cancelQueries({
+        queryKey: PLAYLISTS_QUERY_KEY,
+        exact: true,
+      });
+      const previousPlaylists =
+        queryClient.getQueryData<PlaylistSummary[]>(PLAYLISTS_QUERY_KEY);
+      const optimisticId = optimisticPlaylistId();
+      const optimisticSummary: PlaylistSummary = {
+        duration: tracks.reduce((total, track) => total + track.duration, 0),
+        id: optimisticId,
+        name: playlistName,
+        songCount: songIds.length,
+      };
+      queryClient.setQueryData<PlaylistSummary[]>(
+        PLAYLISTS_QUERY_KEY,
+        (current) => [optimisticSummary, ...(current ?? [])],
+      );
+      return { optimisticId, previousPlaylists };
+    },
+    onSuccess: (created, _playlistName, context) => {
+      queryClient.setQueryData(playlistQueryKey(created.id), created);
+      queryClient.setQueryData<PlaylistSummary[]>(
+        PLAYLISTS_QUERY_KEY,
+        (current) => replaceOptimisticPlaylist(
+          current,
+          context?.optimisticId,
+          playlistSummary(created),
+        ),
+      );
+      onNotify(`${created.name} created with ${countLabel(tracks.length, "track")}`, "good");
       onClose();
     },
-    onError: (cause) => onNotify(mutationError(cause), "bad"),
+    onError: (cause, _playlistName, context) => {
+      if (context) restorePlaylistList(queryClient, context.previousPlaylists);
+      onNotify(mutationError(cause), "bad");
+    },
   });
   const pending = addMutation.isPending || createMutation.isPending;
   useEffect(() => {
@@ -672,42 +863,145 @@ export default function SavedLibraryView({
     enabled: connected && mode === "playlists",
   });
   const playlist = useQuery({
-    queryKey: [...PLAYLISTS_QUERY_KEY, selectedPlaylistId],
+    queryKey: playlistQueryKey(selectedPlaylistId ?? ""),
     queryFn: () => fetchPlaylist(selectedPlaylistId!),
     enabled: connected && mode === "playlists" && Boolean(selectedPlaylistId),
   });
   const createMutation = useMutation({
     mutationFn: (name: string) => createPlaylist(name),
-    onSuccess: async (created) => {
-      queryClient.setQueryData([...PLAYLISTS_QUERY_KEY, created.id], created);
-      await queryClient.invalidateQueries({ queryKey: PLAYLISTS_QUERY_KEY });
+    onMutate: async (name): Promise<PlaylistListMutationContext> => {
+      await queryClient.cancelQueries({
+        queryKey: PLAYLISTS_QUERY_KEY,
+        exact: true,
+      });
+      const previousPlaylists =
+        queryClient.getQueryData<PlaylistSummary[]>(PLAYLISTS_QUERY_KEY);
+      const optimisticId = optimisticPlaylistId();
+      queryClient.setQueryData<PlaylistSummary[]>(
+        PLAYLISTS_QUERY_KEY,
+        (current) => [{
+          duration: 0,
+          id: optimisticId,
+          name,
+          songCount: 0,
+        }, ...(current ?? [])],
+      );
+      return { optimisticId, previousPlaylists };
+    },
+    onSuccess: (created, _name, context) => {
+      queryClient.setQueryData(playlistQueryKey(created.id), created);
+      queryClient.setQueryData<PlaylistSummary[]>(
+        PLAYLISTS_QUERY_KEY,
+        (current) => replaceOptimisticPlaylist(
+          current,
+          context?.optimisticId,
+          playlistSummary(created),
+        ),
+      );
       void transitionCodaView(
         () => setSelectedPlaylistId(created.id),
         "page-forward",
       );
       onNotify(`${created.name} created`, "good");
     },
-    onError: (cause) => onNotify(mutationError(cause), "bad"),
+    onError: (cause, _name, context) => {
+      if (context) restorePlaylistList(queryClient, context.previousPlaylists);
+      onNotify(mutationError(cause), "bad");
+    },
   });
   const updateMutation = useMutation({
     mutationFn: updatePlaylist,
-    onSuccess: async (updated) => {
-      queryClient.setQueryData([...PLAYLISTS_QUERY_KEY, updated.id], updated);
-      await queryClient.invalidateQueries({ queryKey: PLAYLISTS_QUERY_KEY });
+    onMutate: async (
+      input: PlaylistUpdateInput,
+    ): Promise<PlaylistDetailMutationContext> => {
+      const detailKey = playlistQueryKey(input.playlistId);
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: PLAYLISTS_QUERY_KEY, exact: true }),
+        queryClient.cancelQueries({ queryKey: detailKey, exact: true }),
+      ]);
+      const previousPlaylists =
+        queryClient.getQueryData<PlaylistSummary[]>(PLAYLISTS_QUERY_KEY);
+      const previousPlaylist =
+        queryClient.getQueryData<PlaylistDetail>(detailKey);
+      let optimisticPlaylist = previousPlaylist;
+      if (optimisticPlaylist && input.name !== undefined) {
+        optimisticPlaylist = { ...optimisticPlaylist, name: input.name };
+      }
+      if (optimisticPlaylist && input.songIndexesToRemove?.length) {
+        optimisticPlaylist = removedPlaylistTracks(
+          optimisticPlaylist,
+          input.songIndexesToRemove,
+        );
+      }
+      if (optimisticPlaylist) {
+        queryClient.setQueryData(detailKey, optimisticPlaylist);
+        queryClient.setQueryData<PlaylistSummary[]>(
+          PLAYLISTS_QUERY_KEY,
+          (current) => upsertPlaylistSummary(
+            current,
+            playlistSummary(optimisticPlaylist),
+          ),
+        );
+      } else if (input.name !== undefined) {
+        const nextName = input.name;
+        queryClient.setQueryData<PlaylistSummary[]>(
+          PLAYLISTS_QUERY_KEY,
+          (current) => current?.map((item) =>
+            item.id === input.playlistId
+              ? { ...item, name: nextName }
+              : item
+          ),
+        );
+      }
+      return { previousPlaylist, previousPlaylists };
     },
-    onError: (cause) => onNotify(mutationError(cause), "bad"),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(playlistQueryKey(updated.id), updated);
+      queryClient.setQueryData<PlaylistSummary[]>(
+        PLAYLISTS_QUERY_KEY,
+        (current) => upsertPlaylistSummary(current, playlistSummary(updated)),
+      );
+    },
+    onError: (cause, input, context) => {
+      if (context) {
+        restorePlaylistMutation(queryClient, input.playlistId, context);
+      }
+      onNotify(mutationError(cause), "bad");
+    },
   });
   const deleteMutation = useMutation({
     mutationFn: deletePlaylist,
-    onSuccess: async () => {
+    onMutate: async (playlistId): Promise<PlaylistDetailMutationContext> => {
+      const detailKey = playlistQueryKey(playlistId);
+      await Promise.all([
+        queryClient.cancelQueries({ queryKey: PLAYLISTS_QUERY_KEY, exact: true }),
+        queryClient.cancelQueries({ queryKey: detailKey, exact: true }),
+      ]);
+      const previousPlaylists =
+        queryClient.getQueryData<PlaylistSummary[]>(PLAYLISTS_QUERY_KEY);
+      const previousPlaylist =
+        queryClient.getQueryData<PlaylistDetail>(detailKey);
+      queryClient.setQueryData<PlaylistSummary[]>(
+        PLAYLISTS_QUERY_KEY,
+        (current) => current?.filter((item) => item.id !== playlistId),
+      );
+      return { previousPlaylist, previousPlaylists };
+    },
+    onSuccess: (_result, playlistId) => {
+      queryClient.removeQueries({
+        queryKey: playlistQueryKey(playlistId),
+        exact: true,
+      });
       void transitionCodaView(
         () => setSelectedPlaylistId(undefined),
         "page-back",
       );
-      await queryClient.invalidateQueries({ queryKey: PLAYLISTS_QUERY_KEY });
       onNotify("Playlist deleted", "good");
     },
-    onError: (cause) => onNotify(mutationError(cause), "bad"),
+    onError: (cause, playlistId, context) => {
+      if (context) restorePlaylistMutation(queryClient, playlistId, context);
+      onNotify(mutationError(cause), "bad");
+    },
   });
   const actOnFavoriteRadioShow = async (
     show: RadioShowSummary,

@@ -165,7 +165,10 @@ Playlist server state is cached and deduplicated with TanStack Query. Opening
 the Queue, switching collection views, or navigating back from a playlist does
 not refetch unchanged data or disturb playback. Credentials never enter the
 query cache: authenticated requests remain in the Rust backend and read
-credentials from the operating-system vault.
+credentials from the operating-system vault. Create, rename, delete, add, and
+remove actions update the visible playlist immediately, reconcile with the
+server response, and roll back to the exact previous data when Bandcamp rejects
+the mutation.
 
 ## Bandcamp Radio
 
