@@ -43,8 +43,10 @@ const measurements = {
 const budgets = {
   entryJavaScriptRaw: 360 * 1024,
   entryJavaScriptGzip: 112 * 1024,
-  totalJavaScriptRaw: 440 * 1024,
-  totalJavaScriptGzip: 135 * 1024,
+  // Complete radio-series browsing is lazy-loaded, so keep its cost out of the
+  // startup ceiling while allowing a narrow budget for the on-demand archive UI.
+  totalJavaScriptRaw: 455 * 1024,
+  totalJavaScriptGzip: 140 * 1024,
   totalCssRaw: 90 * 1024,
   totalCssGzip: 18 * 1024,
 };
