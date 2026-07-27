@@ -2,12 +2,14 @@ import {
   Airplay,
   ArrowLeft,
   Clock3,
+  Dices,
   ExternalLink,
   Heart,
   ListPlus,
   ListMusic,
   Pause,
   Play,
+  LoaderCircle,
   Repeat,
   Repeat1,
   SkipBack,
@@ -38,6 +40,8 @@ import {
   radioAiringIndexesAt,
   radioShowIdFromTrackId,
 } from "./radioPlayback";
+import { radioSeriesByTitle } from "./radioSeries";
+import type { QueueRecommendation } from "./queueRecommendation";
 import type { PlaybackClock } from "./playbackClock";
 import type { RadioChapter, RepeatMode, Track } from "./types";
 
@@ -68,6 +72,12 @@ type NowPlayingViewProps = {
   onArtist: (artist: string) => void;
   onAlbum: (track: Track) => void;
   onPlayQueueIndex: (index: number) => void;
+  onRadioSeries: (seriesId?: number) => void;
+  recommendation?: QueueRecommendation;
+  recommendationArtwork?: ReactNode;
+  recommendationLoading: boolean;
+  onPlayRecommendation: () => void;
+  onAnotherRecommendation: () => void;
   getRadioChapterLocalLinks?: (chapter: RadioChapter) => RadioChapterLocalLinks;
   favorite?: boolean;
   onToggleFavorite?: () => void;
@@ -390,6 +400,12 @@ function NowPlayingViewComponent({
   onArtist,
   onAlbum,
   onPlayQueueIndex,
+  onRadioSeries,
+  recommendation,
+  recommendationArtwork,
+  recommendationLoading,
+  onPlayRecommendation,
+  onAnotherRecommendation,
   getRadioChapterLocalLinks,
   favorite = false,
   onToggleFavorite,
@@ -404,6 +420,7 @@ function NowPlayingViewComponent({
   const radioShowUrl = radioShowId
     ? `https://bandcamp.com/radio?show=${radioShowId}`
     : undefined;
+  const radioSeries = radioShowUrl ? radioSeriesByTitle(track.album) : undefined;
 
   const openRadioChapter = useCallback((url: string) => {
     setRadioLinkError("");
@@ -473,14 +490,14 @@ function NowPlayingViewComponent({
               <>
                 <button
                   className="metadata-link"
-                  onClick={() => openRadioChapter("https://bandcamp.com/radio")}
+                  onClick={() => onRadioSeries()}
                 >
                   Bandcamp Radio
                 </button>
                 <span aria-hidden="true">·</span>
                 <button
                   className="metadata-link"
-                  onClick={() => openRadioChapter(radioShowUrl)}
+                  onClick={() => onRadioSeries(radioSeries?.id)}
                 >
                   {track.album}
                 </button>
@@ -600,8 +617,12 @@ function NowPlayingViewComponent({
       <section className="now-playing__up-next" aria-labelledby="up-next-heading">
         <div className="now-playing__up-next-heading">
           <div>
-            <span className="eyebrow">In this session</span>
-            <h2 id="up-next-heading">Up next</h2>
+            <span className="eyebrow">
+              {upcoming.length ? "In this session" : "Queue complete"}
+            </span>
+            <h2 id="up-next-heading">
+              {upcoming.length ? "Up next" : "Keep listening"}
+            </h2>
           </div>
           <button onClick={onToggleQueue}>
             {queueOpen ? "Hide full queue" : "Show full queue"}
@@ -628,9 +649,46 @@ function NowPlayingViewComponent({
               );
             })}
           </div>
+        ) : recommendation ? (
+          <div className="now-playing__continuation">
+            <div className="now-playing__continuation-art">
+              {recommendationArtwork}
+            </div>
+            <div className="now-playing__continuation-copy">
+              <span>Picked from your collection</span>
+              <strong>{recommendation.album.title}</strong>
+              <small>
+                {recommendation.album.artist} · {recommendation.reason}
+              </small>
+            </div>
+            <div className="now-playing__continuation-actions">
+              <button
+                className="primary-button"
+                onClick={onPlayRecommendation}
+                disabled={recommendationLoading}
+                aria-label={`Play something from ${recommendation.album.title}`}
+              >
+                {recommendationLoading ? (
+                  <LoaderCircle className="spin" size={15} />
+                ) : (
+                  <Play size={15} fill="currentColor" />
+                )}
+                {recommendationLoading ? "Picking…" : "Play something"}
+              </button>
+              <button
+                className="secondary-button"
+                onClick={onAnotherRecommendation}
+                disabled={recommendationLoading}
+              >
+                <Dices size={15} />
+                Another pick
+              </button>
+            </div>
+          </div>
         ) : (
           <div className="now-playing__up-next-empty">
-            This is the last track in the queue.
+            <strong>You reached the end.</strong>
+            <span>Open the queue or browse your collection to keep listening.</span>
           </div>
         )}
         {moreUpcoming ? (

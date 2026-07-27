@@ -44,6 +44,11 @@ const radioShow: RadioShowSummary = {
   description: "New independent hip-hop from around the world.",
   publishedAt: "24 Jul 2026 00:00:00 GMT",
   artworkUrl: "https://f4.bcbits.com/img/0046240870_10.jpg",
+  series: {
+    id: 5,
+    title: "The Hip Hop Show",
+    slug: "the-hip-hop-show",
+  },
 };
 
 beforeEach(() => {
@@ -210,6 +215,11 @@ describe("local favorites", () => {
         subtitle: "The Hip Hop Show",
         description: "New independent hip-hop from around the world.",
         publishedAt: "24 Jul 2026 00:00:00 GMT",
+        series: {
+          id: 5,
+          title: "The Hip Hop Show",
+          slug: "the-hip-hop-show",
+        },
       },
     ]);
     expect(updateLocalRadioFavorite(favorites, radioShow, false).radioShowIds)

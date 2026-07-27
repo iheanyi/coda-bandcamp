@@ -37,6 +37,7 @@ const CREDENTIAL_KEY: &str = "subsonic";
 const SERVER_BASE: &str = "https://bandcamp.com/api/subsonic";
 const DISCOVER_ENDPOINT: &str = "https://bandcamp.com/api/discover/1/discover_web";
 const RADIO_LIST_ENDPOINT: &str = "https://bandcamp.com/api/bcweekly/2/list";
+const RADIO_SHOWS_ENDPOINT: &str = "https://bandcamp.com/api/radio_api/1/get_radio_shows";
 const RADIO_SHOW_ENDPOINT: &str = "https://bandcamp.com/api/bcweekly/2/get";
 const CLIENT_NAME: &str = "Coda";
 const API_VERSION: &str = "1.16.1";
@@ -60,9 +61,19 @@ const DISCOVER_PAGE_SIZE: usize = 40;
 const MAX_DISCOVER_TAG_LENGTH: usize = 64;
 const MAX_DISCOVER_CURSOR_LENGTH: usize = 2_048;
 const MAX_RADIO_SHOWS: usize = 1_000;
+const RADIO_SHOW_PAGE_SIZE: u64 = 24;
+const MAX_RADIO_CURSOR_LENGTH: usize = 128;
 const MAX_RADIO_CHAPTERS: usize = 256;
 const MAX_RADIO_TEXT_LENGTH: usize = 4_096;
 const MAX_RADIO_DURATION_SECONDS: f64 = 24.0 * 60.0 * 60.0;
+const RADIO_SERIES_CATALOG: &[(u64, &str, &str)] = &[
+    (1, "Bandcamp Electronic", "bandcamp-electronic"),
+    (2, "Bandcamp Selects", "bandcamp-selects"),
+    (4, "The Game Show", "the-game-show"),
+    (5, "The Hip Hop Show", "the-hip-hop-show"),
+    (6, "The Indie Show", "the-indie-show"),
+    (7, "The Metal Show", "the-metal-show"),
+];
 const LIBRARY_CACHE_VERSION: u8 = 1;
 const LIBRARY_CACHE_FILE: &str = "library-cache-v1.json";
 const LIBRARY_CACHE_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
@@ -827,6 +838,7 @@ struct RadioShowSummary {
     description: String,
     published_at: String,
     artwork_url: Option<String>,
+    series: Option<RadioSeries>,
 }
 
 #[derive(Debug, Serialize)]
@@ -841,6 +853,23 @@ struct RadioShow {
     duration: u64,
     stream_url: String,
     chapters: Vec<RadioChapter>,
+    series: Option<RadioSeries>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RadioSeries {
+    id: u64,
+    title: String,
+    slug: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RadioShowsPage {
+    results: Vec<RadioShowSummary>,
+    cursor: Option<String>,
+    has_more: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -860,6 +889,35 @@ struct RadioChapter {
 struct RawRadioList {
     #[serde(default)]
     results: Vec<RawRadioSummary>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawRadioShowsPage {
+    #[serde(default)]
+    items: Vec<RawRadioSeriesShow>,
+    next_cursor: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawRadioSeriesShow {
+    item_id: u64,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    date: String,
+    image_id: Option<u64>,
+    franchise_name: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct RadioShowsRequest {
+    page_size: u64,
+    next_cursor: Option<String>,
+    radio_franchise_id: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1920,6 +1978,43 @@ fn radio_track_artwork_url(image_id: Option<u64>) -> Option<String> {
         .map(|id| format!("https://f4.bcbits.com/img/a{id}_10.jpg"))
 }
 
+fn radio_series_by_id(id: u64) -> Option<RadioSeries> {
+    RADIO_SERIES_CATALOG
+        .iter()
+        .find(|(series_id, _, _)| *series_id == id)
+        .map(|(series_id, title, slug)| RadioSeries {
+            id: *series_id,
+            title: (*title).into(),
+            slug: (*slug).into(),
+        })
+}
+
+fn radio_series_by_title(title: &str) -> Option<RadioSeries> {
+    RADIO_SERIES_CATALOG
+        .iter()
+        .find(|(_, series_title, _)| series_title.eq_ignore_ascii_case(title.trim()))
+        .map(|(id, series_title, slug)| RadioSeries {
+            id: *id,
+            title: (*series_title).into(),
+            slug: (*slug).into(),
+        })
+}
+
+fn validate_radio_cursor(cursor: Option<String>) -> Result<Option<String>, String> {
+    let Some(cursor) = cursor else {
+        return Ok(None);
+    };
+    if cursor.is_empty()
+        || cursor.len() > MAX_RADIO_CURSOR_LENGTH
+        || !cursor
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'.' | b'_' | b'-'))
+    {
+        return Err("The Bandcamp Radio page cursor is invalid.".into());
+    }
+    Ok(Some(cursor))
+}
+
 fn radio_artist_url(hints: Option<&RawRadioUrlHints>, item_url: Option<&str>) -> Option<String> {
     let hinted = hints
         .and_then(|value| value.subdomain.as_deref())
@@ -1960,6 +2055,29 @@ fn radio_summary_from_raw(value: RawRadioSummary) -> Option<RadioShowSummary> {
                 .or(value.screen_image_id)
                 .or(value.image_id),
         ),
+        series: None,
+    })
+}
+
+fn radio_summary_from_series_raw(
+    value: RawRadioSeriesShow,
+    requested_series: Option<&RadioSeries>,
+) -> Option<RadioShowSummary> {
+    if value.item_id == 0 {
+        return None;
+    }
+    let series = value
+        .franchise_name
+        .as_deref()
+        .and_then(radio_series_by_title)
+        .or_else(|| requested_series.cloned());
+    Some(RadioShowSummary {
+        id: value.item_id,
+        subtitle: clean_radio_text(&value.title, "Untitled episode"),
+        description: clean_radio_text(&value.description, "A Bandcamp-curated radio show."),
+        published_at: clean_radio_text(&value.date, "Date unavailable"),
+        artwork_url: radio_artwork_url(value.image_id),
+        series,
     })
 }
 
@@ -2020,9 +2138,11 @@ fn radio_show_from_raw(value: RawRadioShow) -> Result<RadioShow, String> {
         })
         .collect();
 
+    let title = clean_radio_text(&value.title, "Bandcamp Radio");
     Ok(RadioShow {
         id: value.show_id,
-        title: clean_radio_text(&value.title, "Bandcamp Radio"),
+        series: radio_series_by_title(&title),
+        title,
         subtitle: clean_radio_text(&value.subtitle, "Untitled episode"),
         description: clean_radio_text(&value.desc, "A Bandcamp-curated radio show."),
         published_at: clean_radio_text(&value.published_date, "Date unavailable"),
@@ -2139,11 +2259,12 @@ async fn send_bandcamp_request(
     }
 }
 
-async fn fetch_bounded_json<T: DeserializeOwned>(url: Url, context: &str) -> Result<T, String> {
+async fn fetch_bounded_json_request<T: DeserializeOwned>(
+    request: RequestBuilder,
+    context: &str,
+) -> Result<T, String> {
     let response = send_bandcamp_request(
-        http_client()?
-            .get(url)
-            .header(reqwest::header::ACCEPT, "application/json"),
+        request.header(reqwest::header::ACCEPT, "application/json"),
         context,
         BandcampRetryPolicy::SafeRead,
     )
@@ -2181,6 +2302,10 @@ async fn fetch_bounded_json<T: DeserializeOwned>(url: Url, context: &str) -> Res
     }
     serde_json::from_slice(&bytes)
         .map_err(|_| format!("{context} returned an unexpected response."))
+}
+
+async fn fetch_bounded_json<T: DeserializeOwned>(url: Url, context: &str) -> Result<T, String> {
+    fetch_bounded_json_request(http_client()?.get(url), context).await
 }
 
 fn load_credentials() -> Result<ConnectionInput, String> {
@@ -3690,16 +3815,63 @@ async fn discover(input: DiscoverInput) -> Result<DiscoverPage, String> {
 }
 
 #[tauri::command]
-async fn radio_shows() -> Result<Vec<RadioShowSummary>, String> {
-    let url = Url::parse(RADIO_LIST_ENDPOINT)
+async fn radio_shows(
+    series_id: Option<u64>,
+    cursor: Option<String>,
+) -> Result<RadioShowsPage, String> {
+    let requested_series = match series_id {
+        Some(id) => Some(
+            radio_series_by_id(id)
+                .ok_or_else(|| "The Bandcamp Radio series is invalid.".to_string())?,
+        ),
+        None => None,
+    };
+    let cursor = validate_radio_cursor(cursor)?;
+    let url = Url::parse(RADIO_SHOWS_ENDPOINT)
         .map_err(|_| "Coda's Bandcamp Radio endpoint is invalid.".to_string())?;
-    let body: RawRadioList = fetch_bounded_json(url, "Bandcamp Radio").await?;
-    Ok(body
-        .results
+    let request = RadioShowsRequest {
+        page_size: RADIO_SHOW_PAGE_SIZE,
+        next_cursor: cursor.clone(),
+        radio_franchise_id: requested_series.as_ref().map(|series| series.id),
+    };
+    let response = fetch_bounded_json_request::<RawRadioShowsPage>(
+        http_client()?.post(url).json(&request),
+        "Bandcamp Radio",
+    )
+    .await;
+
+    let body = match response {
+        Ok(body) => body,
+        Err(_error) if requested_series.is_none() && cursor.is_none() => {
+            let fallback_url = Url::parse(RADIO_LIST_ENDPOINT)
+                .map_err(|_| "Coda's Bandcamp Radio endpoint is invalid.".to_string())?;
+            let fallback: RawRadioList = fetch_bounded_json(fallback_url, "Bandcamp Radio").await?;
+            return Ok(RadioShowsPage {
+                results: fallback
+                    .results
+                    .into_iter()
+                    .take(MAX_RADIO_SHOWS)
+                    .filter_map(radio_summary_from_raw)
+                    .collect(),
+                cursor: None,
+                has_more: false,
+            });
+        }
+        Err(error) => return Err(error),
+    };
+    let next_cursor = validate_radio_cursor(body.next_cursor).ok().flatten();
+    let results = body
+        .items
         .into_iter()
-        .take(MAX_RADIO_SHOWS)
-        .filter_map(radio_summary_from_raw)
-        .collect())
+        .take(RADIO_SHOW_PAGE_SIZE as usize)
+        .filter_map(|show| radio_summary_from_series_raw(show, requested_series.as_ref()))
+        .collect::<Vec<_>>();
+    let has_more = next_cursor.is_some() && !results.is_empty();
+    Ok(RadioShowsPage {
+        results,
+        cursor: next_cursor,
+        has_more,
+    })
 }
 
 #[tauri::command]
@@ -5002,6 +5174,7 @@ mod tests {
             summary.artwork_url.as_deref(),
             Some("https://f4.bcbits.com/img/0046240870_10.jpg")
         );
+        assert!(summary.series.is_none());
 
         let show = radio_show_from_raw(
             serde_json::from_value(serde_json::json!({
@@ -5031,6 +5204,7 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
+        assert_eq!(show.series, radio_series_by_id(5));
         assert_eq!(show.duration, 4937);
         assert_eq!(show.chapters.len(), 1);
         assert_eq!(show.chapters[0].timecode, 92);
@@ -5046,6 +5220,32 @@ mod tests {
             show.chapters[0].artwork_url.as_deref(),
             Some("https://f4.bcbits.com/img/a12345_10.jpg")
         );
+    }
+
+    #[test]
+    fn parses_series_radio_pages_and_validates_opaque_cursors() {
+        let series = radio_series_by_id(5).unwrap();
+        let summary = radio_summary_from_series_raw(
+            serde_json::from_value(serde_json::json!({
+                "itemId": 979,
+                "title": "Kinrose",
+                "description": "Episode notes",
+                "date": "24 Jul 2026 00:00:00 GMT",
+                "imageId": 46240870,
+                "franchiseName": "The Hip Hop Show"
+            }))
+            .unwrap(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(summary.series, Some(series));
+        assert_eq!(
+            validate_radio_cursor(Some("1770336000:901".into())).unwrap(),
+            Some("1770336000:901".into())
+        );
+        assert!(validate_radio_cursor(Some("../not-a-cursor".into())).is_err());
+        assert!(validate_radio_cursor(Some("".into())).is_err());
+        assert!(radio_series_by_id(3).is_none());
     }
 
     #[test]

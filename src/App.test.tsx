@@ -533,6 +533,12 @@ describe("Coda application flows", () => {
     expect(await screen.findByText("Now playing")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Clear next" }));
     expect(await screen.findByText("End of the queue")).toBeInTheDocument();
+    expect(screen.getByRole("button", {
+      name: "Play something from Soft Focus",
+    })).toBeInTheDocument();
+    expect(screen.getByRole("button", {
+      name: "Suggest another album",
+    })).toBeInTheDocument();
     expect(screen.getAllByText("First Light").length).toBeGreaterThan(0);
     expect(screen.queryByText("Afterimage")).not.toBeInTheDocument();
   });
@@ -1311,7 +1317,7 @@ describe("Coda application flows", () => {
     fireEvent.click(screen.getByRole("button", { name: "Favorites" }));
     expect(await screen.findByText("Local")).toBeInTheDocument();
     expect(screen.getByText("Soft Focus")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Soft Focus.*Night Archive/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Soft Focus" }));
     const reopenedAlbum = await screen.findByRole("article", {
       name: "Soft Focus release details",
     });
@@ -1347,7 +1353,7 @@ describe("Coda application flows", () => {
     });
 
     try {
-      fireEvent.click(screen.getByRole("button", { name: /Soft Focus.*Night Archive/ }));
+      fireEvent.click(screen.getByRole("button", { name: "Soft Focus" }));
       applyTransitionUpdate?.();
 
       albumPage = await screen.findByRole("article", {

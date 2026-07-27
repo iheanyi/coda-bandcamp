@@ -16,13 +16,13 @@ vi.mock("./lib", async (importOriginal) => {
 import { NowPlayingView } from "./NowPlayingView";
 import { createPlaybackClock } from "./playbackClock";
 import { boundRadioChapters } from "./radioPlayback";
-import type { Track } from "./types";
+import type { Album, Track } from "./types";
 
 const radioTrack: Track = {
   id: "radio:979",
-  title: "The Hip Hop Show",
+  title: "Kinrose",
   artist: "Bandcamp Radio",
-  album: "Kinrose",
+  album: "The Hip Hop Show",
   albumId: "radio:979",
   duration: 4_937,
   track: 1,
@@ -42,11 +42,21 @@ const radioTrack: Track = {
   ],
 };
 const radioTimeline = boundRadioChapters(radioTrack.radioChapters ?? []);
+const continuationAlbum: Album = {
+  id: "album-22",
+  title: "Soft Focus",
+  artist: "Night Archive",
+  songCount: 8,
+  duration: 2_104,
+  genre: "Ambient",
+  palette: ["#6f6d86", "#1a1b25"],
+};
 
 describe("NowPlayingView Radio metadata", () => {
   it("announces the currently airing chapter and its successor", () => {
     const noOp = vi.fn();
     const onSeek = vi.fn();
+    const onRadioSeries = vi.fn();
     render(
       <NowPlayingView
         track={radioTrack}
@@ -75,6 +85,10 @@ describe("NowPlayingView Radio metadata", () => {
         onArtist={noOp}
         onAlbum={noOp}
         onPlayQueueIndex={noOp}
+        onRadioSeries={onRadioSeries}
+        recommendationLoading={false}
+        onPlayRecommendation={noOp}
+        onAnotherRecommendation={noOp}
       />,
     );
 
@@ -96,11 +110,15 @@ describe("NowPlayingView Radio metadata", () => {
     );
 
     fireEvent.click(screen.getByRole("button", {
-      name: "Open The Hip Hop Show on Bandcamp Radio",
+      name: "Open Kinrose on Bandcamp Radio",
     }));
     expect(mocks.openBandcampUrl).toHaveBeenCalledWith(
       "https://bandcamp.com/radio?show=979",
     );
+    fireEvent.click(screen.getByRole("button", { name: "Bandcamp Radio" }));
+    fireEvent.click(screen.getByRole("button", { name: "The Hip Hop Show" }));
+    expect(onRadioSeries).toHaveBeenNthCalledWith(1);
+    expect(onRadioSeries).toHaveBeenNthCalledWith(2, 5);
 
     const chapterList = document.querySelector(".now-playing__radio-chapters");
     expect(chapterList).not.toBeNull();
@@ -171,6 +189,10 @@ describe("NowPlayingView Radio metadata", () => {
         onArtist={noOp}
         onAlbum={noOp}
         onPlayQueueIndex={noOp}
+        onRadioSeries={noOp}
+        recommendationLoading={false}
+        onPlayRecommendation={noOp}
+        onAnotherRecommendation={noOp}
         getRadioChapterLocalLinks={getRadioChapterLocalLinks}
       />,
     );
@@ -188,5 +210,64 @@ describe("NowPlayingView Radio metadata", () => {
     expect(getRadioChapterLocalLinks.mock.calls.length).toBeGreaterThan(
       initialMetadataReads,
     );
+  });
+
+  it("turns an empty session into a useful continuation choice", () => {
+    const noOp = vi.fn();
+    const onPlayRecommendation = vi.fn();
+    const onAnotherRecommendation = vi.fn();
+    render(
+      <NowPlayingView
+        track={radioTrack}
+        radioTimeline={radioTimeline}
+        queue={[radioTrack]}
+        currentIndex={0}
+        playing={false}
+        playbackClock={createPlaybackClock(radioTrack.duration)}
+        duration={radioTrack.duration}
+        volume={0.7}
+        repeat="off"
+        artwork={<span>Artwork</span>}
+        airPlayAvailable={false}
+        queueOpen={false}
+        onBack={noOp}
+        onToggle={noOp}
+        onPrevious={noOp}
+        onNext={noOp}
+        canPrevious={false}
+        canNext={false}
+        onSeek={noOp}
+        onVolume={noOp}
+        onRepeat={noOp}
+        onAirPlay={noOp}
+        onToggleQueue={noOp}
+        onArtist={noOp}
+        onAlbum={noOp}
+        onPlayQueueIndex={noOp}
+        onRadioSeries={noOp}
+        recommendation={{
+          album: continuationAlbum,
+          reason: "Another Ambient pick",
+        }}
+        recommendationArtwork={<span>Suggested artwork</span>}
+        recommendationLoading={false}
+        onPlayRecommendation={onPlayRecommendation}
+        onAnotherRecommendation={onAnotherRecommendation}
+      />,
+    );
+
+    expect(screen.getByText("Queue complete")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Keep listening" }))
+      .toBeInTheDocument();
+    expect(screen.getByText("Soft Focus")).toBeInTheDocument();
+    expect(document.querySelector(".now-playing__continuation-copy"))
+      .toHaveTextContent("Night Archive · Another Ambient pick");
+
+    fireEvent.click(screen.getByRole("button", {
+      name: "Play something from Soft Focus",
+    }));
+    fireEvent.click(screen.getByRole("button", { name: "Another pick" }));
+    expect(onPlayRecommendation).toHaveBeenCalledOnce();
+    expect(onAnotherRecommendation).toHaveBeenCalledOnce();
   });
 });

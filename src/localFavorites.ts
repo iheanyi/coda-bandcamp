@@ -144,6 +144,17 @@ function sanitizeAlbum(value: unknown): Album | undefined {
 }
 
 function sanitizeRadioShow(value: unknown): RadioShowSummary | undefined {
+  const series = isRecord(value) && isRecord(value.series) &&
+    Number.isSafeInteger(value.series.id) &&
+    Number(value.series.id) > 0 &&
+    isText(value.series.title) &&
+    isText(value.series.slug)
+    ? {
+        id: Number(value.series.id),
+        title: value.series.title,
+        slug: value.series.slug,
+      }
+    : undefined;
   if (
     !isRecord(value) ||
     !Number.isSafeInteger(value.id) ||
@@ -159,6 +170,7 @@ function sanitizeRadioShow(value: unknown): RadioShowSummary | undefined {
     subtitle: value.subtitle,
     description: value.description,
     publishedAt: value.publishedAt,
+    ...(series ? { series } : {}),
   };
 }
 

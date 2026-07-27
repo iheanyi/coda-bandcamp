@@ -120,6 +120,10 @@ import {
   type PlaybackClock,
 } from "./playbackClock";
 import { appendUnique, keepCurrentTrack, moveItem, shuffled } from "./queue";
+import {
+  recommendQueueAlbum,
+  type QueueRecommendation,
+} from "./queueRecommendation";
 import { pickRandomItem, pickWeightedItem } from "./random";
 import {
   boundRadioChapters,
@@ -128,6 +132,7 @@ import {
   radioAiringIndexesAt,
   radioShowIdFromTrackId,
 } from "./radioPlayback";
+import { radioSeriesByTitle } from "./radioSeries";
 import {
   advanceRadioScrobblingWithTimeline,
   completeRadioShowScrobble,
@@ -782,6 +787,10 @@ const QueuePanel = memo(function QueuePanel({
   onOpenRadioItem,
   getRadioChapterLocalLinks,
   onSeek,
+  recommendation,
+  recommendationLoading,
+  onPlayRecommendation,
+  onAnotherRecommendation,
 }: {
   open: boolean;
   panelRef: RefObject<HTMLElement | null>;
@@ -802,6 +811,10 @@ const QueuePanel = memo(function QueuePanel({
   onOpenRadioItem: (url: string) => void;
   getRadioChapterLocalLinks: (chapter: RadioChapter) => RadioChapterLocalLinks;
   onSeek: (position: number) => void;
+  recommendation?: QueueRecommendation;
+  recommendationLoading: boolean;
+  onPlayRecommendation: () => void;
+  onAnotherRecommendation: () => void;
 }) {
   const upcoming = queue.slice(currentIndex + 1);
   const remaining = upcoming.reduce((total, item) => total + item.duration, 0);
@@ -822,7 +835,51 @@ const QueuePanel = memo(function QueuePanel({
     <div className="queue-empty">
       <Music2 size={25} />
       <strong>{currentTrack ? "End of the queue" : "Your queue is empty"}</strong>
-      <span>{currentTrack ? "Add another album or track to keep listening." : "Use the + button on any release to line up music."}</span>
+      <span>
+        {recommendation
+          ? "Not sure what comes next? Let Coda pick from your collection."
+          : currentTrack
+            ? "Add another album or track to keep listening."
+            : "Use the + button on any release to line up music."}
+      </span>
+      {recommendation ? (
+        <div className="queue-recommendation">
+          <CoverArt size="small" album={recommendation.album} />
+          <div className="queue-recommendation__copy">
+            <span>Try this next</span>
+            <strong>{recommendation.album.title}</strong>
+            <small>
+              {recommendation.album.artist} · {recommendation.reason}
+            </small>
+          </div>
+          <div className="queue-recommendation__actions">
+            <button
+              type="button"
+              className="queue-recommendation__play"
+              onClick={onPlayRecommendation}
+              disabled={recommendationLoading}
+              aria-label={`Play something from ${recommendation.album.title}`}
+            >
+              {recommendationLoading ? (
+                <RefreshCw className="spin" size={14} />
+              ) : (
+                <Play size={14} fill="currentColor" />
+              )}
+              {recommendationLoading ? "Picking…" : "Play something"}
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              onClick={onAnotherRecommendation}
+              disabled={recommendationLoading}
+              aria-label="Suggest another album"
+              title="Suggest another"
+            >
+              <Dices size={15} />
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 
@@ -1471,12 +1528,20 @@ function AlbumDetailPage({
                     ? <Pause size={13} fill="currentColor" />
                     : <Play size={13} fill="currentColor" />}
                 </button>
-                <button
-                  className="track-row__title"
-                  onClick={activeTrack ? onTogglePlayback : () => onPlayTrack(track)}
-                >
-                  <strong>{track.title}</strong><span>{track.artist}</span>
-                </button>
+                <div className="track-row__copy">
+                  <button
+                    className="track-row__title"
+                    onClick={activeTrack ? onTogglePlayback : () => onPlayTrack(track)}
+                  >
+                    <strong>{track.title}</strong>
+                  </button>
+                  <button
+                    className="track-row__artist metadata-link"
+                    onClick={() => onArtist(track.artist)}
+                  >
+                    {track.artist}
+                  </button>
+                </div>
                 <span className="track-row__duration">{formatTime(track.duration)}</span>
                 <div className="track-row__actions">
                   <button className="icon-button" onClick={() => onQueueTrack(track)} title="Add to queue" aria-label={`Add ${track.title} to queue`}>
@@ -1835,6 +1900,8 @@ export default function App() {
   const [syncState, setSyncState] = useState<SyncState>("checking");
   const [libraryError, setLibraryError] = useState("");
   const [view, setView] = useState<LibraryView>("library");
+  const [radioSeriesId, setRadioSeriesId] = useState<number>();
+  const [radioRequestedShowId, setRadioRequestedShowId] = useState<number>();
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortMode>("recent");
   const [genre, setGenre] = useState("All");
@@ -1857,6 +1924,7 @@ export default function App() {
   const [queueSearchProgress, setQueueSearchProgress] = useState<{ done: number; total: number }>();
   const [libraryShuffleProgress, setLibraryShuffleProgress] = useState<{ done: number; total: number }>();
   const [randomPickLoading, setRandomPickLoading] = useState(false);
+  const [queueRecommendationNonce, setQueueRecommendationNonce] = useState(0);
   const [connectionOpen, setConnectionOpen] = useState(false);
   const [playlistTarget, setPlaylistTarget] = useState<Track[]>();
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -1873,6 +1941,7 @@ export default function App() {
   const librarySyncGenerationRef = useRef(0);
   const bandcampSessionGenerationRef = useRef(0);
   const restoredPlaybackSessionRef = useRef<PlaybackSession | undefined>(undefined);
+  const lastPlayedTrackRef = useRef<Track | undefined>(undefined);
   const restoredRadioScrobbleProgressRef = useRef<RadioScrobbleProgress | undefined>(
     undefined,
   );
@@ -1917,6 +1986,9 @@ export default function App() {
   );
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
   const currentTrack = queue[currentIndex];
+  useEffect(() => {
+    if (currentTrack) lastPlayedTrackRef.current = currentTrack;
+  }, [currentTrack]);
   const currentRadioTimeline = useMemo(
     () => boundRadioChapters(currentTrack?.radioChapters ?? []),
     [currentTrack?.radioChapters],
@@ -1991,6 +2063,16 @@ export default function App() {
   const favoriteRadioShowIds = useMemo(
     () => new Set(localFavorites.radioShowIds),
     [localFavorites.radioShowIds],
+  );
+  const queueRecommendation = useMemo(
+    () =>
+      recommendQueueAlbum(
+        albums,
+        currentTrack ?? lastPlayedTrackRef.current,
+        favoriteAlbumIds,
+        queueRecommendationNonce,
+      ),
+    [albums, currentTrack, favoriteAlbumIds, queueRecommendationNonce],
   );
   const localFavoriteTrackCandidates = useMemo(() => {
     const existing = new Set(localFavorites.tracks.map((track) => track.id));
@@ -3043,8 +3125,11 @@ export default function App() {
 
   const openTrackAlbum = useCallback((track: Track) => {
     if (track.id.startsWith("radio:")) {
+      const series = radioSeriesByTitle(track.album);
       setNowPlayingOpen(false);
       setView("radio");
+      setRadioSeriesId(series?.id);
+      setRadioRequestedShowId(radioShowIdFromTrackId(track.id));
       setSelectedAlbum(undefined);
       setSelectedArtist(undefined);
       return;
@@ -3621,6 +3706,10 @@ export default function App() {
       setNowPlayingOpen(false);
       setView(nextView);
       setSelectedAlbum(undefined);
+      if (nextView === "radio") {
+        setRadioSeriesId(undefined);
+        setRadioRequestedShowId(undefined);
+      }
       if (nextView !== "library") {
         setBrowseMode("releases");
         setSelectedArtist(undefined);
@@ -3644,6 +3733,8 @@ export default function App() {
       setNowPlayingOpen(false);
       if (artist === "Bandcamp Radio") {
         setView("radio");
+        setRadioSeriesId(undefined);
+        setRadioRequestedShowId(undefined);
         setSelectedAlbum(undefined);
         setSelectedArtist(undefined);
         return;
@@ -3654,6 +3745,26 @@ export default function App() {
       setQuery("");
       setGenre("All");
       setSelectedAlbum(undefined);
+    }, "page-forward");
+  }, []);
+  const browseRadioSeries = useCallback((seriesId?: number) => {
+    void transitionCodaView(() => {
+      setRadioSeriesId(seriesId);
+      setRadioRequestedShowId(undefined);
+      setNowPlayingOpen(false);
+      setView("radio");
+      setSelectedAlbum(undefined);
+      setSelectedArtist(undefined);
+    }, "page-forward");
+  }, []);
+  const openRadioShow = useCallback((show: RadioShowSummary) => {
+    void transitionCodaView(() => {
+      setRadioSeriesId(show.series?.id);
+      setRadioRequestedShowId(show.id);
+      setNowPlayingOpen(false);
+      setView("radio");
+      setSelectedAlbum(undefined);
+      setSelectedArtist(undefined);
     }, "page-forward");
   }, []);
   const getRadioChapterLocalLinks = useCallback(
@@ -3782,6 +3893,16 @@ export default function App() {
   const playRandomVisible = useCallback(() => {
     void playRandomTrack(shuffleScopeAlbums, shuffleScopeName);
   }, [playRandomTrack, shuffleScopeAlbums, shuffleScopeName]);
+  const playQueueRecommendation = useCallback(() => {
+    if (!queueRecommendation) return;
+    void playRandomTrack(
+      [queueRecommendation.album],
+      queueRecommendation.album.title,
+    );
+  }, [playRandomTrack, queueRecommendation]);
+  const showAnotherQueueRecommendation = useCallback(() => {
+    setQueueRecommendationNonce((nonce) => nonce + 1);
+  }, []);
 
   return (
     <div className={`app-shell ${nowPlayingOpen ? "app-shell--now-playing" : ""}`}>
@@ -3827,6 +3948,19 @@ export default function App() {
               onArtist={browseArtist}
               onAlbum={openTrackAlbum}
               onPlayQueueIndex={playQueueIndex}
+              onRadioSeries={browseRadioSeries}
+              recommendation={queueRecommendation}
+              recommendationArtwork={
+                queueRecommendation ? (
+                  <CoverArt
+                    album={queueRecommendation.album}
+                    size="small"
+                  />
+                ) : undefined
+              }
+              recommendationLoading={randomPickLoading}
+              onPlayRecommendation={playQueueRecommendation}
+              onAnotherRecommendation={showAnotherQueueRecommendation}
               getRadioChapterLocalLinks={getRadioChapterLocalLinks}
               favorite={
                 currentRadioShowId !== undefined
@@ -3864,6 +3998,9 @@ export default function App() {
                   void openAlbum(album);
                 }}
                 onOpenTrackAlbum={openTrackAlbum}
+                onOpenArtist={browseArtist}
+                onOpenRadioShow={openRadioShow}
+                onOpenRadioSeries={browseRadioSeries}
                 onAddToPlaylist={setPlaylistTarget}
                 onNotify={notify}
               />
@@ -3890,6 +4027,10 @@ export default function App() {
                 onTogglePlayback={togglePlayback}
                 favoriteShowIds={favoriteRadioShowIds}
                 onToggleFavorite={toggleRadioFavorite}
+                selectedSeriesId={radioSeriesId}
+                onSelectSeries={setRadioSeriesId}
+                requestedShowId={radioRequestedShowId}
+                onRequestedShowChange={setRadioRequestedShowId}
               />
             </Suspense>
           ) : (
@@ -4259,6 +4400,10 @@ export default function App() {
             onOpenRadioItem={openRadioItem}
             getRadioChapterLocalLinks={getRadioChapterLocalLinks}
             onSeek={seek}
+            recommendation={queueRecommendation}
+            recommendationLoading={randomPickLoading}
+            onPlayRecommendation={playQueueRecommendation}
+            onAnotherRecommendation={showAnotherQueueRecommendation}
           />
         ) : null}
       </div>

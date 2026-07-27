@@ -21,7 +21,7 @@ import type {
   PlayerStateInput,
   PlayerStateSnapshot,
   RadioShow,
-  RadioShowSummary,
+  RadioShowsPage,
   Track,
 } from "./types";
 
@@ -530,11 +530,17 @@ export async function fetchDiscover(
   });
 }
 
-export async function fetchRadioShows(): Promise<RadioShowSummary[]> {
+export async function fetchRadioShows({
+  seriesId,
+  cursor,
+}: {
+  seriesId?: number;
+  cursor?: string;
+} = {}): Promise<RadioShowsPage> {
   if (!isDesktop()) {
     throw new Error("Bandcamp Radio is available in the Coda desktop app.");
   }
-  return invoke<RadioShowSummary[]>("radio_shows");
+  return invoke<RadioShowsPage>("radio_shows", { seriesId, cursor });
 }
 
 export async function fetchRadioShow(showId: number): Promise<RadioShow> {

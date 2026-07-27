@@ -1,4 +1,7 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   ArrowLeft,
   CalendarDays,
@@ -17,9 +20,12 @@ import {
 import {
   memo,
   useCallback,
+  useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
+  useTransition,
 } from "react";
 import { countLabel } from "./countLabel";
 import {
@@ -40,10 +46,12 @@ import {
 } from "./radioPlayback";
 import type { PlaybackClock } from "./playbackClock";
 import type { RadioShow, RadioShowSummary, Track } from "./types";
+import {
+  BANDCAMP_RADIO_SERIES,
+  radioEpisodeUrl,
+} from "./radioSeries";
 import { transitionCodaView } from "./viewTransitions";
 
-const INITIAL_SHOW_LIMIT = 24;
-const SHOW_PAGE_SIZE = 24;
 const RADIO_STALE_TIME_MS = 10 * 60 * 1_000;
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
   month: "short",
@@ -96,6 +104,72 @@ const RadioArtwork = memo(function RadioArtwork({
   );
 });
 
+const RadioSeriesLink = memo(function RadioSeriesLink({
+  show,
+  onBrowse,
+}: {
+  show: RadioShowSummary;
+  onBrowse: (seriesId: number) => void;
+}) {
+  if (!show.series) {
+    return <span className="radio-series-link is-static">Bandcamp Radio</span>;
+  }
+  const series = show.series;
+  return (
+    <button
+      type="button"
+      className="radio-series-link"
+      onClick={() => onBrowse(series.id)}
+      aria-label={`Browse ${series.title} episodes`}
+      title={`Browse ${series.title} in Coda`}
+    >
+      {series.title}
+    </button>
+  );
+});
+
+const RadioSeriesNav = memo(function RadioSeriesNav({
+  selectedSeriesId,
+  pending,
+  onSelect,
+}: {
+  selectedSeriesId?: number;
+  pending: boolean;
+  onSelect: (seriesId?: number) => void;
+}) {
+  return (
+    <nav className="radio-series-nav" aria-label="Bandcamp Radio shows">
+      <div className="radio-series-nav__copy">
+        <span className="eyebrow">Browse by show</span>
+        <strong>Bandcamp Radio</strong>
+      </div>
+      <div className="radio-series-nav__tabs">
+        <button
+          type="button"
+          className={selectedSeriesId === undefined ? "is-active" : ""}
+          onClick={() => onSelect()}
+          aria-pressed={selectedSeriesId === undefined}
+          disabled={pending}
+        >
+          All shows
+        </button>
+        {BANDCAMP_RADIO_SERIES.map((series) => (
+          <button
+            type="button"
+            key={series.id}
+            className={selectedSeriesId === series.id ? "is-active" : ""}
+            onClick={() => onSelect(series.id)}
+            aria-pressed={selectedSeriesId === series.id}
+            disabled={pending}
+          >
+            {series.title}
+          </button>
+        ))}
+      </div>
+    </nav>
+  );
+});
+
 const RadioCard = memo(function RadioCard({
   show,
   busyAction,
@@ -107,6 +181,8 @@ const RadioCard = memo(function RadioCard({
   onDetails,
   favorite,
   onToggleFavorite,
+  onOpenItem,
+  onBrowseSeries,
 }: {
   show: RadioShowSummary;
   busyAction?: "play" | "queue" | "detail";
@@ -118,12 +194,19 @@ const RadioCard = memo(function RadioCard({
   onDetails: (show: RadioShowSummary) => void;
   favorite: boolean;
   onToggleFavorite: (show: RadioShowSummary) => void;
+  onOpenItem: (url: string) => void;
+  onBrowseSeries: (seriesId: number) => void;
 }) {
   return (
     <article className="radio-card">
       <RadioArtwork show={show} />
       <div className="radio-card__body">
-        <span className="radio-card__series">Bandcamp Radio</span>
+        <div className="radio-card__series">
+          <RadioSeriesLink
+            show={show}
+            onBrowse={onBrowseSeries}
+          />
+        </div>
         <h3 title={show.subtitle}>{show.subtitle}</h3>
         <time dateTime={show.publishedAt}>{showDate(show.publishedAt)}</time>
         <p>{show.description}</p>
@@ -190,7 +273,7 @@ const RadioCard = memo(function RadioCard({
           </button>
           <button
             className="icon-button"
-            onClick={() => void openBandcampUrl(`https://bandcamp.com/radio?show=${show.id}`)}
+            onClick={() => onOpenItem(radioEpisodeUrl(show.id))}
             aria-label={`Open ${show.subtitle} on Bandcamp`}
             title="Open on Bandcamp"
           >
@@ -216,6 +299,7 @@ const RadioDetail = memo(function RadioDetail({
   onOpenItem,
   favorite,
   onToggleFavorite,
+  onBrowseSeries,
 }: {
   show: RadioShow;
   actionError: string;
@@ -230,6 +314,7 @@ const RadioDetail = memo(function RadioDetail({
   onOpenItem: (url: string) => void;
   favorite: boolean;
   onToggleFavorite: (show: RadioShowSummary) => void;
+  onBrowseSeries: (seriesId: number) => void;
 }) {
   const track = useMemo(() => radioTrack(show), [show]);
   const chapters = track.radioChapters ?? [];
@@ -260,7 +345,13 @@ const RadioDetail = memo(function RadioDetail({
           <RadioArtwork show={show} eager />
         </div>
         <div className="radio-detail__copy">
-          <span className="eyebrow"><Radio size={13} /> Bandcamp Radio</span>
+          <div className="eyebrow radio-detail__series">
+            <Radio size={13} />
+            <RadioSeriesLink
+              show={show}
+              onBrowse={onBrowseSeries}
+            />
+          </div>
           <h1 id="radio-detail-title">{show.subtitle}</h1>
           <div className="radio-feature__meta">
             <span><CalendarDays size={13} /> {showDate(show.publishedAt)}</span>
@@ -297,11 +388,18 @@ const RadioDetail = memo(function RadioDetail({
               <Heart size={16} fill={favorite ? "currentColor" : "none"} />
               {favorite ? "Favorited" : "Favorite"}
             </button>
+            {show.series ? (
+              <button
+                className="secondary-button"
+                onClick={() => onBrowseSeries(show.series!.id)}
+              >
+                <Radio size={16} />
+                Browse all episodes
+              </button>
+            ) : null}
             <button
               className="icon-button"
-              onClick={() =>
-                onOpenItem(`https://bandcamp.com/radio?show=${show.id}`)
-              }
+              onClick={() => onOpenItem(radioEpisodeUrl(show.id))}
               aria-label={`Open ${show.subtitle} on Bandcamp`}
               title="Open on Bandcamp"
             >
@@ -380,6 +478,10 @@ export default function RadioView({
   onTogglePlayback,
   favoriteShowIds,
   onToggleFavorite,
+  selectedSeriesId,
+  onSelectSeries,
+  requestedShowId,
+  onRequestedShowChange,
 }: {
   onPlay: (track: Track) => void;
   onQueue: (track: Track) => void;
@@ -390,23 +492,46 @@ export default function RadioView({
   onTogglePlayback: () => void;
   favoriteShowIds: ReadonlySet<number>;
   onToggleFavorite: (show: RadioShowSummary) => void;
+  selectedSeriesId?: number;
+  onSelectSeries: (seriesId?: number) => void;
+  requestedShowId?: number;
+  onRequestedShowChange: (showId?: number) => void;
 }) {
   const queryClient = useQueryClient();
-  const showsQuery = useQuery({
-    queryKey: ["bandcamp-radio"],
-    queryFn: fetchRadioShows,
+  const [seriesPending, startSeriesTransition] = useTransition();
+  const paginationRef = useRef<HTMLDivElement>(null);
+  const showsQuery = useInfiniteQuery({
+    queryKey: ["bandcamp-radio", selectedSeriesId ?? "all"],
+    queryFn: ({ pageParam }) =>
+      fetchRadioShows({
+        seriesId: selectedSeriesId,
+        cursor: pageParam ?? undefined,
+      }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (page) =>
+      page.hasMore && page.cursor ? page.cursor : undefined,
     staleTime: RADIO_STALE_TIME_MS,
   });
-  const [showLimit, setShowLimit] = useState(INITIAL_SHOW_LIMIT);
   const [busy, setBusy] = useState<{
     id: number;
     action: "play" | "queue" | "detail";
   }>();
   const [selectedShow, setSelectedShow] = useState<RadioShow>();
   const [actionError, setActionError] = useState("");
-  const shows = showsQuery.data ?? [];
+  const selectedSeries = BANDCAMP_RADIO_SERIES.find(
+    (series) => series.id === selectedSeriesId,
+  );
+  const shows = useMemo(() => {
+    const uniqueShows = new Map<number, RadioShowSummary>();
+    for (const page of showsQuery.data?.pages ?? []) {
+      for (const show of page.results) {
+        if (!uniqueShows.has(show.id)) uniqueShows.set(show.id, show);
+      }
+    }
+    return [...uniqueShows.values()];
+  }, [showsQuery.data?.pages]);
   const featured = shows[0];
-  const visibleShows = shows.slice(1, showLimit + 1);
+  const visibleShows = shows.slice(1);
 
   const loadShow = useCallback(
     (id: number) =>
@@ -424,7 +549,10 @@ export default function RadioView({
       setBusy({ id: show.id, action });
       setActionError("");
       try {
-        const details = await loadShow(show.id);
+        const loaded = await loadShow(show.id);
+        const details = loaded.series || !show.series
+          ? loaded
+          : { ...loaded, series: show.series };
         const track = radioTrack(details);
         if (action === "play") onPlay(track);
         else onQueue(track);
@@ -443,15 +571,21 @@ export default function RadioView({
       setBusy({ id: show.id, action: "detail" });
       setActionError("");
       try {
-        const details = await loadShow(show.id);
-        void transitionCodaView(() => setSelectedShow(details), "page-forward");
+        const loaded = await loadShow(show.id);
+        const details = loaded.series || !show.series
+          ? loaded
+          : { ...loaded, series: show.series };
+        void transitionCodaView(() => {
+          onRequestedShowChange(show.id);
+          setSelectedShow(details);
+        }, "page-forward");
       } catch (cause) {
         setActionError(String(cause).replace(/^Error:\s*/, ""));
       } finally {
         setBusy(undefined);
       }
     },
-    [busy, loadShow],
+    [busy, loadShow, onRequestedShowChange],
   );
 
   const openItem = useCallback((url: string) => {
@@ -464,9 +598,85 @@ export default function RadioView({
   const actionFor = (show: RadioShowSummary) =>
     busy?.id === show.id ? busy.action : undefined;
 
+  const selectSeries = useCallback((seriesId?: number) => {
+    startSeriesTransition(() => {
+      onSelectSeries(seriesId);
+      onRequestedShowChange(undefined);
+      setSelectedShow(undefined);
+      setActionError("");
+    });
+  }, [onRequestedShowChange, onSelectSeries]);
+
+  useEffect(() => {
+    if (!requestedShowId || selectedShow?.id === requestedShowId) return;
+    let active = true;
+    setBusy({ id: requestedShowId, action: "detail" });
+    setActionError("");
+    void loadShow(requestedShowId)
+      .then((show) => {
+        if (active) setSelectedShow(show);
+      })
+      .catch((cause) => {
+        if (!active) return;
+        setActionError(String(cause).replace(/^Error:\s*/, ""));
+        onRequestedShowChange(undefined);
+      })
+      .finally(() => {
+        if (!active) return;
+        setBusy((current) =>
+          current?.id === requestedShowId && current.action === "detail"
+            ? undefined
+            : current,
+        );
+      });
+    return () => {
+      active = false;
+    };
+  }, [
+    loadShow,
+    onRequestedShowChange,
+    requestedShowId,
+    selectedShow?.id,
+  ]);
+
+  const seriesNavigation = (
+    <RadioSeriesNav
+      selectedSeriesId={selectedSeriesId}
+      pending={seriesPending}
+      onSelect={selectSeries}
+    />
+  );
+
+  useEffect(() => {
+    const target = paginationRef.current;
+    if (
+      !target ||
+      selectedShow ||
+      !showsQuery.hasNextPage ||
+      showsQuery.isFetchingNextPage ||
+      typeof IntersectionObserver === "undefined"
+    ) {
+      return;
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) void showsQuery.fetchNextPage();
+      },
+      { rootMargin: "420px 0px" },
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [
+    selectedShow,
+    showsQuery.fetchNextPage,
+    showsQuery.hasNextPage,
+    showsQuery.isFetchingNextPage,
+  ]);
+
   if (showsQuery.isPending) {
     return (
       <section className="radio-view">
+        {seriesNavigation}
         <div className="radio-status">
           <LoaderCircle className="spin" size={28} />
           <strong>Tuning Bandcamp Radio…</strong>
@@ -479,6 +689,7 @@ export default function RadioView({
   if (showsQuery.isError) {
     return (
       <section className="radio-view">
+        {seriesNavigation}
         <div className="radio-status">
           <Radio size={30} />
           <strong>Bandcamp Radio is off the air</strong>
@@ -500,10 +711,15 @@ export default function RadioView({
   if (!featured) {
     return (
       <section className="radio-view">
+        {seriesNavigation}
         <div className="radio-status">
           <Radio size={30} />
-          <strong>No shows are broadcasting yet</strong>
-          <span>Bandcamp did not return any Radio episodes.</span>
+          <strong>No episodes found</strong>
+          <span>
+            {selectedSeries
+              ? `Bandcamp did not return any ${selectedSeries.title} episodes.`
+              : "Bandcamp did not return any Radio episodes."}
+          </span>
         </div>
       </section>
     );
@@ -517,6 +733,7 @@ export default function RadioView({
         onBack={() => {
           void transitionCodaView(() => {
             setSelectedShow(undefined);
+            onRequestedShowChange(undefined);
             setActionError("");
           }, "page-back");
         }}
@@ -530,21 +747,32 @@ export default function RadioView({
         onOpenItem={openItem}
         favorite={favoriteShowIds.has(selectedShow.id)}
         onToggleFavorite={onToggleFavorite}
+        onBrowseSeries={selectSeries}
       />
     );
   }
 
   return (
     <section className="radio-view" aria-live="polite" aria-busy={Boolean(busy)}>
+      {seriesNavigation}
       <article className="radio-feature">
         <div className="radio-feature__art">
           <RadioArtwork show={featured} eager />
         </div>
         <div className="radio-feature__copy">
-          <span className="eyebrow"><Headphones size={13} /> Latest broadcast</span>
+          <span className="eyebrow">
+            <Headphones size={13} />
+            {selectedSeries ? "Latest episode" : "Latest broadcast"}
+          </span>
           <h1>{featured.subtitle}</h1>
           <div className="radio-feature__meta">
-            <span><Radio size={13} /> Bandcamp Radio</span>
+            <span>
+              <Radio size={13} />
+              <RadioSeriesLink
+                show={featured}
+                onBrowse={selectSeries}
+              />
+            </span>
             <span><CalendarDays size={13} /> {showDate(featured.publishedAt)}</span>
           </div>
           <p>{featured.description}</p>
@@ -622,7 +850,7 @@ export default function RadioView({
             </button>
             <button
               className="icon-button"
-              onClick={() => openItem(`https://bandcamp.com/radio?show=${featured.id}`)}
+              onClick={() => openItem(radioEpisodeUrl(featured.id))}
               aria-label={`Open ${featured.subtitle} on Bandcamp`}
               title="Open on Bandcamp"
             >
@@ -635,10 +863,14 @@ export default function RadioView({
 
       <div className="section-heading radio-heading">
         <div>
-          <span className="eyebrow">From the archive</span>
-          <h2>More shows</h2>
+          <span className="eyebrow">
+            {selectedSeries ? "Series archive" : "From the archive"}
+          </span>
+          <h2>
+            {selectedSeries ? `More from ${selectedSeries.title}` : "More shows"}
+          </h2>
         </div>
-        <span>{countLabel(shows.length, "broadcast")}</span>
+        <span>{countLabel(shows.length, "broadcast")} loaded</span>
       </div>
       <div className="radio-grid">
         {visibleShows.map((show) => (
@@ -654,18 +886,27 @@ export default function RadioView({
             onDetails={(item) => void viewShow(item)}
             favorite={favoriteShowIds.has(show.id)}
             onToggleFavorite={onToggleFavorite}
+            onOpenItem={openItem}
+            onBrowseSeries={selectSeries}
           />
         ))}
       </div>
-      {visibleShows.length < Math.max(0, shows.length - 1) ? (
-        <button
-          className="load-more"
-          onClick={() =>
-            setShowLimit((limit) => Math.min(limit + SHOW_PAGE_SIZE, shows.length))
-          }
-        >
-          Load more radio shows
-        </button>
+      {showsQuery.hasNextPage ? (
+        <div className="radio-pagination" ref={paginationRef}>
+          <button
+            className="load-more"
+            onClick={() => void showsQuery.fetchNextPage()}
+            disabled={showsQuery.isFetchingNextPage}
+          >
+            {showsQuery.isFetchingNextPage ? (
+              <LoaderCircle className="spin" size={14} />
+            ) : null}
+            {showsQuery.isFetchingNextPage
+              ? "Loading more shows…"
+              : "Load more radio shows"}
+          </button>
+          <span>More episodes load automatically as you scroll.</span>
+        </div>
       ) : null}
       <p className="radio-source-note">
         <Clock3 size={13} />

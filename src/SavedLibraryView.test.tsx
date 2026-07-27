@@ -79,6 +79,11 @@ const favorites: LocalFavoriteCollection = {
     subtitle: "The Hip Hop Show",
     description: "New independent hip-hop.",
     publishedAt: "24 Jul 2026 00:00:00 GMT",
+    series: {
+      id: 5,
+      title: "The Hip Hop Show",
+      slug: "the-hip-hop-show",
+    },
   }],
 };
 
@@ -121,6 +126,9 @@ const commonProps = {
   onQueueTrack: vi.fn(),
   onOpenAlbum: vi.fn(),
   onOpenTrackAlbum: vi.fn(),
+  onOpenArtist: vi.fn(),
+  onOpenRadioShow: vi.fn(),
+  onOpenRadioSeries: vi.fn(),
   onAddToPlaylist: vi.fn(),
   onNotify: vi.fn(),
 };
@@ -152,6 +160,14 @@ describe("saved Bandcamp library views", () => {
     expect(await screen.findByRole("heading", { name: "Night drive" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Play" }));
     expect(commonProps.onPlayTracks).toHaveBeenCalledWith([track]);
+    const playlistTracks = screen.getByLabelText("Night drive tracks");
+    fireEvent.click(within(playlistTracks).getByRole("button", { name: "Sweeps" }));
+    expect(commonProps.onOpenArtist).toHaveBeenCalledWith("Sweeps");
+    const playlistAlbumLink = within(playlistTracks)
+      .getAllByRole("button", { name: "Mirage" })
+      .find((button) => button.classList.contains("metadata-link"));
+    fireEvent.click(playlistAlbumLink!);
+    expect(commonProps.onOpenTrackAlbum).toHaveBeenCalledWith(track);
 
     fireEvent.click(screen.getByRole("button", { name: "Rename Night drive" }));
     fireEvent.change(screen.getByLabelText("Playlist name"), { target: { value: "After hours" } });
@@ -328,10 +344,23 @@ describe("saved Bandcamp library views", () => {
     const favoriteTracks = screen.getByLabelText("Favorite tracks");
     fireEvent.click(within(favoriteTracks).getByRole("button", { name: "Remove Mirage from favorites" }));
     expect(commonProps.onToggleFavorite).toHaveBeenCalledWith("song-1", "song", false);
-    fireEvent.click(within(favoriteTracks).getByRole("button", {
-      name: "Sweeps · Mirage",
-    }));
+    fireEvent.click(within(favoriteTracks).getByRole("button", { name: "Sweeps" }));
+    expect(commonProps.onOpenArtist).toHaveBeenCalledWith("Sweeps");
+    const favoriteAlbumLink = within(favoriteTracks)
+      .getAllByRole("button", { name: "Mirage" })
+      .find((button) => button.classList.contains("metadata-link"));
+    fireEvent.click(favoriteAlbumLink!);
     expect(commonProps.onOpenTrackAlbum).toHaveBeenCalledWith(track);
+    fireEvent.click(screen.getByRole("button", {
+      name: "Browse The Hip Hop Show",
+    }));
+    expect(commonProps.onOpenRadioSeries).toHaveBeenCalledWith(5);
+    fireEvent.click(screen.getByRole("button", {
+      name: "Open The Hip Hop Show details",
+    }));
+    expect(commonProps.onOpenRadioShow).toHaveBeenCalledWith(
+      favorites.radioShows[0],
+    );
     expect(screen.getByText("Local")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", {
       name: "Remove The Hip Hop Show from favorites",

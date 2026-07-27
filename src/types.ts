@@ -182,12 +182,25 @@ export type DiscoverPage = {
   hasMore: boolean;
 };
 
+export type RadioSeries = {
+  id: number;
+  title: string;
+  slug: string;
+};
+
 export type RadioShowSummary = {
   id: number;
   subtitle: string;
   description: string;
   publishedAt: string;
   artworkUrl?: string;
+  series?: RadioSeries;
+};
+
+export type RadioShowsPage = {
+  results: RadioShowSummary[];
+  cursor?: string;
+  hasMore: boolean;
 };
 
 export type LocalFavoriteCollection = FavoriteCollection & {

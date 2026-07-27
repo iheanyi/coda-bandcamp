@@ -75,6 +75,9 @@ type SavedLibraryViewProps = {
   onQueueTrack: (track: Track) => void;
   onOpenAlbum: (album: Album) => void;
   onOpenTrackAlbum: (track: Track) => void;
+  onOpenArtist: (artist: string) => void;
+  onOpenRadioShow: (show: RadioShowSummary) => void;
+  onOpenRadioSeries: (seriesId?: number) => void;
   onAddToPlaylist: (tracks: Track[]) => void;
   onNotify: (message: string, tone?: "good" | "bad") => void;
 };
@@ -379,6 +382,8 @@ function PlaylistDetailView({
   playing,
   onTogglePlayback,
   onAddToPlaylist,
+  onOpenTrackAlbum,
+  onOpenArtist,
   onRename,
   onRemove,
   onDelete,
@@ -396,6 +401,8 @@ function PlaylistDetailView({
   playing: boolean;
   onTogglePlayback: () => void;
   onAddToPlaylist: (tracks: Track[]) => void;
+  onOpenTrackAlbum: (track: Track) => void;
+  onOpenArtist: (artist: string) => void;
   onRename: (name: string) => void;
   onRemove: (index: number) => void;
   onDelete: () => void;
@@ -566,8 +573,27 @@ function PlaylistDetailView({
                   : <Play size={13} fill="currentColor" />}
               </button>
               <div className="saved-track__copy">
-                <strong>{track.title}</strong>
-                <span>{track.artist} · {track.album}</span>
+                <button
+                  className="saved-track__title-link"
+                  onClick={activeTrack ? onTogglePlayback : () => onPlay([track])}
+                >
+                  {track.title}
+                </button>
+                <span className="saved-track__metadata">
+                  <button
+                    className="metadata-link"
+                    onClick={() => onOpenArtist(track.artist)}
+                  >
+                    {track.artist}
+                  </button>
+                  <span aria-hidden="true">·</span>
+                  <button
+                    className="metadata-link"
+                    onClick={() => onOpenTrackAlbum(track)}
+                  >
+                    {track.album}
+                  </button>
+                </span>
               </div>
               <span className="saved-track__duration">{formatTime(track.duration)}</span>
               <button
@@ -848,6 +874,9 @@ export default function SavedLibraryView({
   onQueueTrack,
   onOpenAlbum,
   onOpenTrackAlbum,
+  onOpenArtist,
+  onOpenRadioShow,
+  onOpenRadioSeries,
   onAddToPlaylist,
   onNotify,
 }: SavedLibraryViewProps) {
@@ -1073,6 +1102,8 @@ export default function SavedLibraryView({
             playing={playing}
             onTogglePlayback={onTogglePlayback}
             onAddToPlaylist={onAddToPlaylist}
+            onOpenTrackAlbum={onOpenTrackAlbum}
+            onOpenArtist={onOpenArtist}
             onRename={(name) => updateMutation.mutate({ playlistId: selectedPlaylistId, name })}
             onRemove={(index) => updateMutation.mutate({
               playlistId: selectedPlaylistId,
@@ -1291,12 +1322,21 @@ export default function SavedLibraryView({
                       >
                         {track.title}
                       </button>
-                      <button
-                        className="metadata-link saved-track__album-link"
-                        onClick={() => onOpenTrackAlbum(track)}
-                      >
-                        {track.artist} · {track.album}
-                      </button>
+                      <span className="saved-track__metadata">
+                        <button
+                          className="metadata-link"
+                          onClick={() => onOpenArtist(track.artist)}
+                        >
+                          {track.artist}
+                        </button>
+                        <span aria-hidden="true">·</span>
+                        <button
+                          className="metadata-link"
+                          onClick={() => onOpenTrackAlbum(track)}
+                        >
+                          {track.album}
+                        </button>
+                      </span>
                     </div>
                     <span className="saved-track__duration"><Clock3 size={12} /> {formatTime(track.duration)}</span>
                     <button className="icon-button" onClick={() => onQueueTrack(track)} aria-label={`Add ${track.title} to queue`} title="Add to queue">
@@ -1331,17 +1371,34 @@ export default function SavedLibraryView({
                       className={`favorite-radio ${activeShow ? "is-current" : ""}`}
                       key={show.id}
                     >
-                      <FavoriteArtwork
-                        item={{
-                          title: show.subtitle,
-                          palette: paletteFor(`radio:${show.id}`),
-                        }}
-                      />
+                      <button
+                        className="favorite-radio__art"
+                        onClick={() => onOpenRadioShow(show)}
+                        aria-label={`Open ${show.subtitle} episode`}
+                      >
+                        <FavoriteArtwork
+                          item={{
+                            title: show.subtitle,
+                            palette: paletteFor(`radio:${show.id}`),
+                          }}
+                        />
+                      </button>
                       <div className="favorite-radio__copy">
-                        <span className="eyebrow">
-                          <Radio size={12} /> Bandcamp Radio
-                        </span>
-                        <strong>{show.subtitle}</strong>
+                        <button
+                          className="eyebrow favorite-radio__series"
+                          onClick={() => onOpenRadioSeries(show.series?.id)}
+                          aria-label={`Browse ${show.series?.title ?? "Bandcamp Radio"}`}
+                        >
+                          <Radio size={12} />
+                          {show.series?.title ?? "Bandcamp Radio"}
+                        </button>
+                        <button
+                          className="favorite-radio__title"
+                          onClick={() => onOpenRadioShow(show)}
+                          aria-label={`Open ${show.subtitle} details`}
+                        >
+                          {show.subtitle}
+                        </button>
                         <time dateTime={show.publishedAt}>
                           {radioShowDate(show.publishedAt)}
                         </time>
@@ -1405,13 +1462,29 @@ export default function SavedLibraryView({
               <div className="favorite-album-grid">
                 {favoriteAlbums.map((album) => (
                   <article className="favorite-album" key={album.id}>
-                    <button className="favorite-album__open" onClick={() => onOpenAlbum(album)}>
-                      <FavoriteArtwork item={album} />
+                    <div className="favorite-album__open">
+                      <button
+                        className="favorite-album__art-button"
+                        onClick={() => onOpenAlbum(album)}
+                        aria-label={`Open ${album.title}`}
+                      >
+                        <FavoriteArtwork item={album} />
+                      </button>
                       <span>
-                        <strong>{album.title}</strong>
-                        <small>{album.artist}</small>
+                        <button
+                          className="favorite-album__title"
+                          onClick={() => onOpenAlbum(album)}
+                        >
+                          {album.title}
+                        </button>
+                        <button
+                          className="favorite-album__artist metadata-link"
+                          onClick={() => onOpenArtist(album.artist)}
+                        >
+                          {album.artist}
+                        </button>
                       </span>
-                    </button>
+                    </div>
                     <button
                       className="icon-button favorite-button is-favorite"
                       onClick={() => onToggleFavorite(album.id, "album", false)}
