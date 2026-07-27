@@ -213,9 +213,9 @@ overhead should not exceed the work being parallelized.
 
 - Use React state for playback, queue, navigation, authenticated library data,
   and other local application state.
-- TanStack Query owns Discover, Radio, and playlist server state. Local
-  Favorites, the player, and the queue remain React/local application state;
-  authenticated credentials never enter the query cache.
+- TanStack Query owns album metadata, Discover, Radio, and playlist server
+  state. Local Favorites, the player, and the queue remain React/local
+  application state; authenticated credentials never enter the query cache.
 - Preserve lazy loading for Discover, Radio, and other code that is not needed
   for the initial library/player view.
 - Use `useMemo`, `useCallback`, and `memo` where they prevent measured or
@@ -251,19 +251,23 @@ Queue, test both transitions and the player-control/keyboard recovery path.
 - Bulk album/track hydration must remain bounded. The current concurrency limit
   is six; changing it requires evidence from profiling and network behavior.
 - Batch progress updates during bulk work rather than rendering once per item.
-- A failed cached promise must be evicted so artwork, albums, and stream URLs can
-  recover on retry.
+- A failed signed-URL promise must be evicted so artwork and streams can recover
+  on retry. Failed TanStack revalidation must retain the last usable album or
+  playlist data.
 - Artwork refresh must invalidate the relevant cache and retry the source; a
   broken image should not be cached permanently.
 - Treat one-track release classification as a known API limitation, not a data
   quality bug.
 
-The renderer caches a stripped library snapshot in local storage under
-`coda.library.v1` for up to seven days and at most 5,000 albums. Tracks are
-deliberately omitted from that snapshot. Runtime promise caches are bounded
-(cover and stream URLs: 512 each; albums: 128), deduplicate concurrent requests,
-and evict failures. Cache writes are idle/background work and must never block
-playback. Disconnecting clears authenticated runtime caches.
+Desktop builds persist a stripped library snapshot in the native app-data
+directory for up to seven days and at most 5,000 albums; the web fallback uses
+local storage under `coda.library.v1`. Tracks are deliberately omitted from
+that snapshot. TanStack Query is the sole in-session album metadata cache and
+redb is the sole restart-safe album metadata cache. Runtime Promise maps exist
+only for signed cover and stream URLs (512 each); they deduplicate concurrent
+requests and evict failures. Cache writes are idle/background work and must
+never block playback. Disconnecting clears authenticated query and durable
+cache data.
 
 ## Native, network, and security boundaries
 
@@ -388,7 +392,8 @@ Preserve these established performance characteristics:
 
 - Fast initial render from a stripped cached library snapshot.
 - Lazy Discover code and paginated server-state caching.
-- Promise deduplication for covers, streams, and album hydration.
+- Promise deduplication for signed cover and stream URLs, with TanStack Query
+  deduplication for album hydration.
 - Bounded cache sizes and deterministic eviction.
 - Bounded network concurrency.
 - Batched progress updates during bulk operations.

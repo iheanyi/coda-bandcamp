@@ -1,6 +1,5 @@
 use governor::{DefaultDirectRateLimiter, Jitter, Quota, RateLimiter};
 use keyring::Entry;
-use moka::future::Cache;
 use rand::{distributions::Alphanumeric, Rng};
 use redb::{
     Database, DatabaseError, ReadableDatabase, ReadableTable, ReadableTableMetadata, StorageError,
@@ -70,9 +69,6 @@ const LIBRARY_CACHE_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
 const LIBRARY_FULL_RECONCILE_INTERVAL_MS: u64 = 24 * 60 * 60 * 1_000;
 const MAX_LIBRARY_ALBUMS: usize = 5_000;
 const MAX_LIBRARY_CACHE_BYTES: usize = 32 * 1024 * 1024;
-const MAX_NATIVE_ALBUM_TRACK_CACHE_WEIGHT: u64 = 4_096;
-const NATIVE_ALBUM_TRACK_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
-const NATIVE_ALBUM_TRACK_CACHE_TTI: Duration = Duration::from_secs(10 * 60);
 const ALBUM_METADATA_CACHE_FILE: &str = "album-metadata-cache-v1.redb";
 const ALBUM_TRACK_CACHE_ENTRY_VERSION: u8 = 1;
 const PERSISTED_ALBUM_TRACK_CACHE_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
@@ -123,7 +119,6 @@ static ALBUM_METADATA_CACHE_WRITE_LOCK: Mutex<()> = Mutex::new(());
 static ALBUM_METADATA_DATABASE_INIT_LOCK: Mutex<()> = Mutex::new(());
 static CONNECTION_GENERATION: AtomicU64 = AtomicU64::new(0);
 static LIBRARY_SYNC_GENERATION: AtomicU64 = AtomicU64::new(0);
-static ALBUM_TRACK_CACHE: OnceLock<Cache<(u64, String, u64), Vec<Track>>> = OnceLock::new();
 static ALBUM_METADATA_DATABASE: OnceLock<Database> = OnceLock::new();
 static ALBUM_REFRESH_GENERATIONS: OnceLock<Mutex<BTreeMap<String, u64>>> = OnceLock::new();
 const ALBUM_TRACKS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("album_tracks_v1");
@@ -196,28 +191,6 @@ struct PersistedAlbumTracks {
     saved_at: u64,
     album_id: String,
     tracks: Vec<Track>,
-}
-
-fn build_album_track_cache() -> Cache<(u64, String, u64), Vec<Track>> {
-    // Keep this cache metadata-only. Signed media URLs and credentials must
-    // remain outside both the in-memory and durable library caches.
-    Cache::builder()
-        .name("album-tracks")
-        .weigher(|_key, tracks: &Vec<Track>| tracks.len().max(1).try_into().unwrap_or(u32::MAX))
-        .max_capacity(MAX_NATIVE_ALBUM_TRACK_CACHE_WEIGHT)
-        .time_to_live(NATIVE_ALBUM_TRACK_CACHE_TTL)
-        .time_to_idle(NATIVE_ALBUM_TRACK_CACHE_TTI)
-        .build()
-}
-
-fn album_track_cache() -> &'static Cache<(u64, String, u64), Vec<Track>> {
-    ALBUM_TRACK_CACHE.get_or_init(build_album_track_cache)
-}
-
-fn invalidate_album_track_cache() {
-    if let Some(cache) = ALBUM_TRACK_CACHE.get() {
-        cache.invalidate_all();
-    }
 }
 
 fn album_refresh_generations() -> &'static Mutex<BTreeMap<String, u64>> {
@@ -2717,7 +2690,6 @@ fn disconnect(app: tauri::AppHandle) -> Result<(), String> {
         Ok(()) | Err(keyring::Error::NoEntry) => {
             CONNECTION_GENERATION.fetch_add(1, Ordering::AcqRel);
             LIBRARY_SYNC_GENERATION.fetch_add(1, Ordering::AcqRel);
-            invalidate_album_track_cache();
             clear_album_refresh_generations();
             if let Ok(database) = album_metadata_database(&app) {
                 let _ = clear_persisted_album_tracks(database);
@@ -3251,7 +3223,6 @@ async fn connect(
     }
 
     let connection_generation = CONNECTION_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
-    invalidate_album_track_cache();
     clear_album_refresh_generations();
     if previous_credentials
         .as_ref()
@@ -3486,7 +3457,6 @@ async fn fetch_album(
     };
     let credentials = load_credentials()?;
     let persistent_key = persisted_album_track_cache_key(&credentials, &album_id);
-    let memory_key = (connection_generation, album_id.clone(), refresh_generation);
 
     if force_refresh {
         let tracks = fetch_album_from_bandcamp(&album_id, &credentials).await?;
@@ -3500,51 +3470,27 @@ async fn fetch_album(
             credentials,
             refresh_generation,
         );
-        album_track_cache().insert(memory_key, tracks.clone()).await;
         return Ok(tracks);
     }
 
-    let request_album_id = album_id.clone();
-    let persistent_album_id = album_id.clone();
-    let persistent_app = app.clone();
-    let persistent_cache_key = persistent_key.clone();
-    let tracks = album_track_cache()
-        .try_get_with(memory_key, async move {
-            if let Some(tracks) = load_persisted_album_tracks(
-                persistent_app,
-                persistent_cache_key.clone(),
-                persistent_album_id.clone(),
-            )
-            .await
-            {
-                ensure_album_request_current(
-                    connection_generation,
-                    &persistent_album_id,
-                    refresh_generation,
-                )?;
-                return Ok(tracks);
-            }
-            let tracks = fetch_album_from_bandcamp(&request_album_id, &credentials).await?;
-            ensure_album_request_current(
-                connection_generation,
-                &request_album_id,
-                refresh_generation,
-            )?;
-            schedule_persist_album_tracks(
-                app,
-                persistent_cache_key,
-                persistent_album_id,
-                tracks.clone(),
-                connection_generation,
-                credentials,
-                refresh_generation,
-            );
-            Ok::<Vec<Track>, String>(tracks)
-        })
-        .await
-        .map_err(|error| error.as_ref().clone())?;
+    if let Some(tracks) =
+        load_persisted_album_tracks(app.clone(), persistent_key.clone(), album_id.clone()).await
+    {
+        ensure_album_request_current(connection_generation, &album_id, refresh_generation)?;
+        return Ok(tracks);
+    }
 
+    let tracks = fetch_album_from_bandcamp(&album_id, &credentials).await?;
     ensure_album_request_current(connection_generation, &album_id, refresh_generation)?;
+    schedule_persist_album_tracks(
+        app,
+        persistent_key,
+        album_id,
+        tracks.clone(),
+        connection_generation,
+        credentials,
+        refresh_generation,
+    );
     Ok(tracks)
 }
 
@@ -4268,59 +4214,80 @@ mod tests {
     }
 
     #[test]
-    fn moka_album_cache_reuses_metadata_and_scopes_it_to_the_connection() {
-        use std::sync::{atomic::AtomicUsize, Arc};
+    fn forced_album_refresh_supersedes_older_cache_and_network_requests() {
+        let suffix: String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(16)
+            .map(char::from)
+            .collect();
+        let album_id = format!("album-refresh-{suffix}");
+        let connection_generation = CONNECTION_GENERATION.load(Ordering::Acquire);
+        let original_generation = album_refresh_generation(&album_id).unwrap();
 
-        tauri::async_runtime::block_on(async {
-            let cache = build_album_track_cache();
-            let initializations = Arc::new(AtomicUsize::new(0));
-            let key = (7, "album-1".to_string(), 0);
+        assert!(ensure_album_request_current(
+            connection_generation,
+            &album_id,
+            original_generation,
+        )
+        .is_ok());
 
-            let first_count = Arc::clone(&initializations);
-            let first = cache
-                .try_get_with(key.clone(), async move {
-                    first_count.fetch_add(1, Ordering::AcqRel);
-                    Ok::<Vec<Track>, String>(vec![sample_track("track-1")])
-                })
-                .await
-                .unwrap();
+        let refreshed_generation = bump_album_refresh_generation(&album_id).unwrap();
+        assert!(ensure_album_request_current(
+            connection_generation,
+            &album_id,
+            original_generation,
+        )
+        .is_err());
+        assert!(ensure_album_request_current(
+            connection_generation,
+            &album_id,
+            refreshed_generation,
+        )
+        .is_ok());
 
-            let repeated_count = Arc::clone(&initializations);
-            let repeated = cache
-                .try_get_with(key, async move {
-                    repeated_count.fetch_add(1, Ordering::AcqRel);
-                    Ok::<Vec<Track>, String>(vec![sample_track("unexpected")])
-                })
-                .await
-                .unwrap();
+        let path = temporary_album_metadata_cache_path("refresh-generation");
+        let database = open_album_metadata_database(&path).unwrap();
+        let credentials = ConnectionInput {
+            username: format!("generated-user-{suffix}"),
+            password: "generated-password".into(),
+        };
+        let cache_key = persisted_album_track_cache_key(&credentials, &album_id);
+        let mut track = sample_track("track-refreshed");
+        track.album_id = album_id.clone();
+        let now = 1_800_000_000_000;
 
-            let next_connection_count = Arc::clone(&initializations);
-            let next_connection = cache
-                .try_get_with((8, "album-1".to_string(), 0), async move {
-                    next_connection_count.fetch_add(1, Ordering::AcqRel);
-                    Ok::<Vec<Track>, String>(vec![sample_track("track-2")])
-                })
-                .await
-                .unwrap();
+        assert!(!write_persisted_album_tracks(
+            &database,
+            &cache_key,
+            &album_id,
+            std::slice::from_ref(&track),
+            now,
+            None,
+            Some((&album_id, original_generation)),
+        )
+        .unwrap());
+        assert!(write_persisted_album_tracks(
+            &database,
+            &cache_key,
+            &album_id,
+            std::slice::from_ref(&track),
+            now,
+            None,
+            Some((&album_id, refreshed_generation)),
+        )
+        .unwrap());
+        let restored = read_persisted_album_tracks(&database, &cache_key, &album_id, now + 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].id, track.id);
 
-            let refreshed_count = Arc::clone(&initializations);
-            let refreshed = cache
-                .try_get_with((8, "album-1".to_string(), 1), async move {
-                    refreshed_count.fetch_add(1, Ordering::AcqRel);
-                    Ok::<Vec<Track>, String>(vec![sample_track("track-3")])
-                })
-                .await
-                .unwrap();
-
-            assert_eq!(first[0].id, "track-1");
-            assert_eq!(repeated[0].id, "track-1");
-            assert_eq!(next_connection[0].id, "track-2");
-            assert_eq!(refreshed[0].id, "track-3");
-            assert_eq!(initializations.load(Ordering::Acquire), 3);
-
-            cache.invalidate_all();
-            assert!(cache.get(&(8, "album-1".to_string(), 0)).await.is_none());
-        });
+        album_refresh_generations()
+            .lock()
+            .unwrap()
+            .remove(&album_id);
+        drop(database);
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
     #[test]

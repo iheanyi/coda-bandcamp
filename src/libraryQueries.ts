@@ -11,8 +11,11 @@ import {
 } from "./lib";
 import type { Album, Track } from "./types";
 
-export const libraryQueryKey = ["bandcamp", "library"] as const;
+export const bandcampQueryKey = ["bandcamp"] as const;
+export const libraryQueryKey = [...bandcampQueryKey, "library"] as const;
 export const LIBRARY_AUTO_REVALIDATE_INTERVAL_MS = 15 * 60 * 1_000;
+const ALBUM_QUERY_STALE_TIME_MS = 10 * 60 * 1_000;
+const ALBUM_QUERY_GC_TIME_MS = 30 * 60 * 1_000;
 
 export const libraryStateQueryOptions = queryOptions({
   queryKey: libraryQueryKey,
@@ -23,13 +26,91 @@ export const libraryStateQueryOptions = queryOptions({
   staleTime: Infinity,
 });
 
+export function albumQueryKey(albumId: string) {
+  return [...bandcampQueryKey, "album", albumId] as const;
+}
+
+function albumRefreshQueryKey(albumId: string) {
+  return [...albumQueryKey(albumId), "refresh"] as const;
+}
+
 export function albumQueryOptions(album: Album) {
   return queryOptions({
-    queryKey: ["bandcamp", "album", album.id] as const,
+    queryKey: albumQueryKey(album.id),
     queryFn: (): Promise<Track[]> => fetchAlbum(album),
-    gcTime: 30 * 60 * 1_000,
-    staleTime: 10 * 60 * 1_000,
+    gcTime: ALBUM_QUERY_GC_TIME_MS,
+    staleTime: ALBUM_QUERY_STALE_TIME_MS,
   });
+}
+
+function seedLocalAlbumTracks(queryClient: QueryClient, album: Album): boolean {
+  const queryKey = albumQueryKey(album.id);
+  if (
+    queryClient.getQueryData<Track[]>(queryKey) === undefined &&
+    album.tracks?.length
+  ) {
+    // Detail views can render restored/favorite metadata immediately. Their
+    // explicit revalidation path refreshes this zero-timestamp seed once.
+    queryClient.setQueryData(queryKey, album.tracks, { updatedAt: 0 });
+    return true;
+  }
+  return false;
+}
+
+export function ensureAlbumQueryData(
+  queryClient: QueryClient,
+  album: Album,
+): Promise<Track[]> {
+  if (seedLocalAlbumTracks(queryClient, album)) {
+    return Promise.resolve(album.tracks!);
+  }
+  return queryClient.ensureQueryData({
+    ...albumQueryOptions(album),
+    revalidateIfStale: true,
+  });
+}
+
+async function invalidateAlbumQuery(
+  queryClient: QueryClient,
+  album: Album,
+): Promise<void> {
+  await queryClient.invalidateQueries({
+    queryKey: albumQueryKey(album.id),
+    exact: true,
+    refetchType: "none",
+  });
+}
+
+export async function revalidateAlbumQueryData(
+  queryClient: QueryClient,
+  album: Album,
+): Promise<Track[]> {
+  seedLocalAlbumTracks(queryClient, album);
+  await invalidateAlbumQuery(queryClient, album);
+  return queryClient.fetchQuery(albumQueryOptions(album));
+}
+
+export async function refreshAlbumQueryData(
+  queryClient: QueryClient,
+  album: Album,
+): Promise<Track[]> {
+  const refreshKey = albumRefreshQueryKey(album.id);
+  try {
+    const tracks = await queryClient.fetchQuery({
+      queryKey: refreshKey,
+      queryFn: () => fetchAlbum(album, { forceRefresh: true }),
+      gcTime: 0,
+      staleTime: Infinity,
+    });
+    queryClient.setQueryData(albumQueryKey(album.id), tracks);
+    return tracks;
+  } finally {
+    queryClient.removeQueries({ queryKey: refreshKey, exact: true });
+  }
+}
+
+export function clearBandcampQueryData(queryClient: QueryClient): void {
+  queryClient.removeQueries({ queryKey: bandcampQueryKey });
 }
 
 export function updateLibraryData(
@@ -38,10 +119,19 @@ export function updateLibraryData(
 ): Album[] {
   let next: Album[] = [];
   queryClient.setQueryData<Album[]>(libraryQueryKey, (current = []) => {
-    next = typeof update === "function" ? update(current) : update;
+    const updated = typeof update === "function" ? update(current) : update;
+    next = toLibrarySummaries(updated);
     return next;
   });
   return next;
+}
+
+export function toLibrarySummaries(albums: readonly Album[]): Album[] {
+  return albums.map((album) => {
+    if (!album.tracks) return album;
+    const { tracks: _tracks, ...summary } = album;
+    return summary;
+  });
 }
 
 export async function hydrateLibraryQuery(

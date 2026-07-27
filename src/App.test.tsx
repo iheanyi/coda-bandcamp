@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Album, Track } from "./types";
@@ -70,11 +70,12 @@ function renderApp() {
       mutations: { retry: false },
     },
   });
-  return render(
+  const view = render(
     <QueryClientProvider client={queryClient}>
       <App />
     </QueryClientProvider>,
   );
+  return { ...view, queryClient };
 }
 
 const tracks: Track[] = [
@@ -350,6 +351,126 @@ describe("Coda application flows", () => {
     expect(screen.queryByText("Soft Focus")).not.toBeInTheDocument();
   });
 
+  it("clears authenticated album queries after a successful disconnect", async () => {
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    const { queryClient } = renderApp();
+
+    await screen.findByText("Soft Focus");
+    queryClient.setQueryData(["bandcamp", "album", album.id], tracks);
+    queryClient.setQueryData(["bandcamp-radio-show", 979], { id: 979 });
+    fireEvent.click(screen.getByRole("button", { name: "Connection settings" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Bandcamp is connected",
+    });
+    fireEvent.click(within(dialog).getByRole("button", {
+      name: "Disconnect and remove Bandcamp credentials",
+    }));
+
+    expect(await screen.findByText("Your collection starts here")).toBeInTheDocument();
+    expect(queryClient.getQueryData(["bandcamp", "album", album.id]))
+      .toBeUndefined();
+    expect(queryClient.getQueryData(["bandcamp-radio-show", 979])).toEqual({
+      id: 979,
+    });
+  });
+
+  it("does not let a bulk artist load restore playback after disconnect", async () => {
+    const firstAlbum: Album = {
+      ...album,
+      tracks: undefined,
+    };
+    const secondTrack: Track = {
+      ...tracks[1],
+      id: "track-3",
+      album: "Night Signals",
+      albumId: "album-2",
+      track: 1,
+    };
+    const secondAlbum: Album = {
+      ...album,
+      id: "album-2",
+      title: "Night Signals",
+      tracks: undefined,
+    };
+    let resolveFirstAlbum!: (value: Track[]) => void;
+    let resolveSecondAlbum!: (value: Track[]) => void;
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([firstAlbum, secondAlbum]);
+    mocks.fetchAlbum
+      .mockReturnValueOnce(new Promise((resolve) => {
+        resolveFirstAlbum = resolve;
+      }))
+      .mockReturnValueOnce(new Promise((resolve) => {
+        resolveSecondAlbum = resolve;
+      }));
+    const { queryClient } = renderApp();
+
+    await screen.findByText("Soft Focus");
+    fireEvent.click(screen.getAllByTitle("Browse Night Archive")[0]);
+    fireEvent.click(await screen.findByRole("button", { name: "Play all" }));
+    await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledTimes(2));
+    const firstRequestedAlbum = mocks.fetchAlbum.mock.calls[0][0] as Album;
+
+    await act(async () => {
+      resolveFirstAlbum([tracks[0]]);
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(queryClient.getQueryData(["bandcamp", "album", firstRequestedAlbum.id]))
+        .toEqual([tracks[0]]),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Connection settings" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Bandcamp is connected",
+    });
+    fireEvent.click(within(dialog).getByRole("button", {
+      name: "Disconnect and remove Bandcamp credentials",
+    }));
+    expect(await screen.findByText("Your collection starts here")).toBeInTheDocument();
+
+    await act(async () => {
+      resolveSecondAlbum([secondTrack]);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Your collection starts here")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Now Playing" }))
+      .not.toBeInTheDocument();
+    expect(screen.queryByText("Playing Night Archive")).not.toBeInTheDocument();
+    expect(queryClient.getQueryCache().findAll({
+      queryKey: ["bandcamp", "album"],
+    })).toHaveLength(0);
+  });
+
+  it("force-refreshes missing artwork through the album query", async () => {
+    const missingArtworkAlbum: Album = {
+      ...album,
+      tracks: undefined,
+      coverArt: undefined,
+    };
+    const recoveredTracks = tracks.map((track) => ({
+      ...track,
+      coverArt: "recovered-cover",
+    }));
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([missingArtworkAlbum]);
+    mocks.fetchAlbum.mockResolvedValue(recoveredTracks);
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    fireEvent.click(screen.getByRole("button", { name: "Artwork" }));
+
+    await waitFor(() =>
+      expect(mocks.fetchAlbum).toHaveBeenCalledWith(
+        expect.objectContaining({ id: album.id }),
+        { forceRefresh: true },
+      ),
+    );
+    expect(await screen.findByText("1 missing cover recovered")).toBeInTheDocument();
+  });
+
   it("keeps an active sync valid when native disconnect fails", async () => {
     let resolveRefresh!: (albums: Album[]) => void;
     const staleAt = Date.now() - 16 * 60 * 1_000;
@@ -589,14 +710,18 @@ describe("Coda application flows", () => {
       ...album,
       tracks: [enrichedTrack, tracks[1]],
     }]);
+    mocks.fetchAlbum.mockResolvedValue([enrichedTrack, tracks[1]]);
     mocks.getLastFmStatus.mockResolvedValue({
       configured: true,
       connected: true,
       username: "nightlistener",
     });
-    const { container } = renderApp();
+    const { container, queryClient } = renderApp();
 
     await screen.findByText("Soft Focus");
+    expect(
+      queryClient.getQueryData<Album[]>(["bandcamp", "library"])?.[0].tracks,
+    ).toBeUndefined();
     fireEvent.click(screen.getByRole("button", { name: "Connection settings" }));
     const settings = await screen.findByRole("dialog");
     expect(await within(settings).findByText("nightlistener")).toBeInTheDocument();
@@ -1207,11 +1332,7 @@ describe("Coda application flows", () => {
     fireEvent.click(screen.getByRole("button", { name: "Favorites" }));
     await screen.findByText("Local");
 
-    let resolveRefresh!: (tracks: Track[]) => void;
     mocks.fetchAlbum.mockClear();
-    mocks.fetchAlbum.mockReturnValueOnce(new Promise((resolve) => {
-      resolveRefresh = resolve;
-    }));
     const originalDescriptor = Object.getOwnPropertyDescriptor(
       document,
       "startViewTransition",
@@ -1232,18 +1353,10 @@ describe("Coda application flows", () => {
       albumPage = await screen.findByRole("article", {
         name: "Soft Focus release details",
       });
-      expect(within(albumPage).getByText("Loading tracks…")).toBeInTheDocument();
-      await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledWith(
-        expect.objectContaining({ id: album.id }),
-      ));
-
-      resolveRefresh([
-        { ...tracks[0], title: "First Light (Bandcamp refresh)" },
-        tracks[1],
-      ]);
-      expect(await within(albumPage).findByText("First Light (Bandcamp refresh)"))
-        .toBeInTheDocument();
+      expect(within(albumPage).getByText("First Light")).toBeInTheDocument();
+      expect(within(albumPage).queryByText("Loading tracks…")).not.toBeInTheDocument();
       expect(within(albumPage).getByText("Afterimage")).toBeInTheDocument();
+      expect(mocks.fetchAlbum).not.toHaveBeenCalled();
     } finally {
       if (originalDescriptor) {
         Object.defineProperty(document, "startViewTransition", originalDescriptor);

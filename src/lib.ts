@@ -31,10 +31,8 @@ const LIBRARY_CACHE_KEY = "coda.library.v1";
 const LIBRARY_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_CACHED_ALBUMS = 5_000;
 const MAX_MEDIA_URLS = 512;
-const MAX_ALBUM_REQUESTS = 128;
 const STREAM_URL_CACHE_TTL_MS = 10 * 60 * 1_000;
 const COVER_URL_CACHE_TTL_MS = 60 * 60 * 1_000;
-const ALBUM_REQUEST_CACHE_TTL_MS = 10 * 60 * 1_000;
 
 type LibraryCache = {
   savedAt: number;
@@ -67,8 +65,6 @@ type RuntimeCacheEntry<T> = {
 
 const coverUrlCache = new Map<string, RuntimeCacheEntry<string>>();
 const streamUrlCache = new Map<string, RuntimeCacheEntry<string>>();
-const albumRequestCache = new Map<string, RuntimeCacheEntry<Track[]>>();
-const albumRefreshRequestCache = new Map<string, Promise<Track[]>>();
 let playerStateContractVersionRequest: Promise<number> | undefined;
 
 async function nativePlayerStateContractVersion(): Promise<number> {
@@ -243,8 +239,6 @@ export function writeLibraryCache(albums: Album[]): void {
 export function clearRuntimeCaches(): void {
   coverUrlCache.clear();
   streamUrlCache.clear();
-  albumRequestCache.clear();
-  albumRefreshRequestCache.clear();
   try {
     window.localStorage.removeItem(LIBRARY_CACHE_KEY);
   } catch {
@@ -313,8 +307,6 @@ export async function connectBandcamp(
   });
   coverUrlCache.clear();
   streamUrlCache.clear();
-  albumRequestCache.clear();
-  albumRefreshRequestCache.clear();
   return albums.map(hydrateAlbum);
 }
 
@@ -446,47 +438,11 @@ export async function fetchAlbum(
   album: Album,
   options: { forceRefresh?: boolean } = {},
 ): Promise<Track[]> {
-  const load = async (forceRefresh: boolean) => {
-    const tracks = await invoke<Omit<Track, "palette">[]>("fetch_album", {
-      albumId: album.id,
-      forceRefresh,
-    });
-    return tracks.map((track) => hydrateTrack(track, album.palette));
-  };
-  if (options.forceRefresh) {
-    const existing = albumRefreshRequestCache.get(album.id);
-    if (existing) return existing;
-    albumRequestCache.delete(album.id);
-    const request = load(true);
-    albumRefreshRequestCache.set(album.id, request);
-    albumRequestCache.set(album.id, {
-      promise: request,
-      expiresAt: Date.now() + ALBUM_REQUEST_CACHE_TTL_MS,
-    });
-    void request.then(
-      () => {
-        if (albumRefreshRequestCache.get(album.id) === request) {
-          albumRefreshRequestCache.delete(album.id);
-        }
-      },
-      () => {
-        if (albumRefreshRequestCache.get(album.id) === request) {
-          albumRefreshRequestCache.delete(album.id);
-        }
-        if (albumRequestCache.get(album.id)?.promise === request) {
-          albumRequestCache.delete(album.id);
-        }
-      },
-    );
-    return request;
-  }
-  return rememberPromise(
-    albumRequestCache,
-    album.id,
-    () => load(false),
-    MAX_ALBUM_REQUESTS,
-    ALBUM_REQUEST_CACHE_TTL_MS,
-  );
+  const tracks = await invoke<Omit<Track, "palette">[]>("fetch_album", {
+    albumId: album.id,
+    forceRefresh: options.forceRefresh ?? false,
+  });
+  return tracks.map((track) => hydrateTrack(track, album.palette));
 }
 
 function hydratePlaylist(

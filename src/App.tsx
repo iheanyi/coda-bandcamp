@@ -63,7 +63,6 @@ import {
   connectBandcamp,
   disconnect,
   disconnectLastFm,
-  fetchAlbum,
   fetchCoverUrl,
   fetchLibrary,
   fetchRadioShow,
@@ -89,12 +88,16 @@ import {
   type LibraryBrowseMode,
 } from "./libraryBrowse";
 import {
-  albumQueryOptions,
+  clearBandcampQueryData,
+  ensureAlbumQueryData,
   hydrateLibraryQuery,
   libraryQueryKey,
   libraryStateQueryOptions,
   mergeLibraryProgress,
+  refreshAlbumQueryData,
+  revalidateAlbumQueryData,
   shouldAutoRevalidateLibrary,
+  toLibrarySummaries,
   updateLibraryData,
 } from "./libraryQueries";
 import {
@@ -231,6 +234,12 @@ function albumWithTracks(album: Album, tracks: Track[]): Album {
     coverArt: album.coverArt ?? tracks.find((track) => track.coverArt)?.coverArt,
     tracks,
   };
+}
+
+function albumWithRecoveredCover(album: Album, tracks: readonly Track[]): Album {
+  if (album.coverArt) return album;
+  const coverArt = tracks.find((track) => track.coverArt)?.coverArt;
+  return coverArt ? { ...album, coverArt } : album;
 }
 
 function lastFmTrackInput(track: Track): LastFmTrackInput {
@@ -1862,6 +1871,7 @@ export default function App() {
   const randomPickActiveRef = useRef(false);
   const restoreGenerationRef = useRef(0);
   const librarySyncGenerationRef = useRef(0);
+  const bandcampSessionGenerationRef = useRef(0);
   const restoredPlaybackSessionRef = useRef<PlaybackSession | undefined>(undefined);
   const restoredRadioScrobbleProgressRef = useRef<RadioScrobbleProgress | undefined>(
     undefined,
@@ -2211,7 +2221,7 @@ export default function App() {
             librarySyncGenerationRef.current !== generation
           ) return;
           if (snapshot) {
-            queryClient.setQueryData(libraryQueryKey, snapshot.albums, {
+            queryClient.setQueryData(libraryQueryKey, toLibrarySummaries(snapshot.albums), {
               updatedAt: snapshot.savedAt,
             });
             if (!shouldAutoRevalidateLibrary(snapshot)) {
@@ -2959,45 +2969,65 @@ export default function App() {
     }
   }, [artistGroups, effectiveBrowseMode, selectedArtist]);
 
-  const ensureTracks = useCallback(async (album: Album): Promise<Album> => {
-    if (album.tracks?.length) {
-      const hydrated = albumWithTracks(album, album.tracks);
-      if (hydrated.coverArt !== album.coverArt) {
-        setAlbums((items) =>
-          items.map((item) => item.id === album.id ? hydrated : item),
-        );
-        setSelectedAlbum((item) => item?.id === album.id ? hydrated : item);
-      }
-      return hydrated;
-    }
-    setAlbumLoading(true);
+  const ensureTracks = useCallback(async (
+    album: Album,
+    sessionGeneration = bandcampSessionGenerationRef.current,
+  ): Promise<Album | undefined> => {
+    if (bandcampSessionGenerationRef.current !== sessionGeneration) return undefined;
+    const hasLocalTracklist = Boolean(album.tracks?.length);
+    if (!hasLocalTracklist) setAlbumLoading(true);
     try {
-      const tracks = await queryClient.ensureQueryData(albumQueryOptions(album));
+      const tracks = await ensureAlbumQueryData(queryClient, album);
+      if (bandcampSessionGenerationRef.current !== sessionGeneration) return undefined;
       const hydrated = albumWithTracks(album, tracks);
       setAlbums((items) =>
-        items.map((item) => item.id === album.id ? hydrated : item),
+        items.map((item) =>
+          item.id === album.id ? albumWithRecoveredCover(item, tracks) : item
+        ),
       );
       setSelectedAlbum((item) => item?.id === album.id ? hydrated : item);
       return hydrated;
+    } catch (cause) {
+      if (bandcampSessionGenerationRef.current !== sessionGeneration) return undefined;
+      throw cause;
     } finally {
-      setAlbumLoading(false);
+      if (
+        !hasLocalTracklist &&
+        bandcampSessionGenerationRef.current === sessionGeneration
+      ) {
+        setAlbumLoading(false);
+      }
     }
   }, [queryClient, setAlbums]);
 
   const openAlbum = useCallback(async (album: Album) => {
+    const sessionGeneration = bandcampSessionGenerationRef.current;
     const hasLocalTracklist = Boolean(album.tracks?.length);
     let albumForDetail = album;
     void transitionCodaView(() => setSelectedAlbum(albumForDetail), "page-forward");
     try {
-      albumForDetail = await ensureTracks(album);
+      const ready = await ensureTracks(album, sessionGeneration);
+      if (
+        !ready ||
+        bandcampSessionGenerationRef.current !== sessionGeneration
+      ) return;
+      albumForDetail = ready;
       setSelectedAlbum((item) => item?.id === album.id ? albumForDetail : item);
-      if (hasLocalTracklist) {
-        void fetchAlbum(album)
+      if (
+        hasLocalTracklist &&
+        bandcampSessionGenerationRef.current === sessionGeneration
+      ) {
+        void revalidateAlbumQueryData(queryClient, album)
           .then((tracks) => {
+            if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
             if (!tracks.length && albumForDetail.tracks?.length) return;
             const refreshed = albumWithTracks(albumForDetail, tracks);
             setAlbums((items) =>
-              items.map((item) => item.id === album.id ? refreshed : item),
+              items.map((item) =>
+                item.id === album.id
+                  ? albumWithRecoveredCover(item, tracks)
+                  : item
+              ),
             );
             setSelectedAlbum((item) => item?.id === album.id ? refreshed : item);
           })
@@ -3006,9 +3036,10 @@ export default function App() {
           });
       }
     } catch (cause) {
+      if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
       notify(String(cause), "bad");
     }
-  }, [ensureTracks, notify]);
+  }, [ensureTracks, notify, queryClient, setAlbums]);
 
   const openTrackAlbum = useCallback((track: Track) => {
     if (track.id.startsWith("radio:")) {
@@ -3029,25 +3060,35 @@ export default function App() {
   }, [albums, notify, openAlbum]);
 
   const playAlbum = useCallback(async (album: Album) => {
+    const sessionGeneration = bandcampSessionGenerationRef.current;
     try {
-      const ready = await ensureTracks(album);
-      if (!ready.tracks?.length) return;
+      const ready = await ensureTracks(album, sessionGeneration);
+      if (
+        !ready?.tracks?.length ||
+        bandcampSessionGenerationRef.current !== sessionGeneration
+      ) return;
       setQueue(ready.tracks);
       setCurrentIndex(0);
       playbackClock.reset();
       setPlaying(true);
     } catch (cause) {
+      if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
       notify(String(cause), "bad");
     }
   }, [ensureTracks, notify, playbackClock]);
 
   const queueAlbum = useCallback(async (album: Album) => {
+    const sessionGeneration = bandcampSessionGenerationRef.current;
     try {
-      const ready = await ensureTracks(album);
-      if (!ready.tracks) return;
+      const ready = await ensureTracks(album, sessionGeneration);
+      if (
+        !ready?.tracks ||
+        bandcampSessionGenerationRef.current !== sessionGeneration
+      ) return;
       setQueue((items) => appendUnique(items, ready.tracks!));
       notify(`${album.title} added to queue`, "good");
     } catch (cause) {
+      if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
       notify(String(cause), "bad");
     }
   }, [ensureTracks, notify]);
@@ -3056,22 +3097,29 @@ export default function App() {
     group: ArtistGroup,
     action: "play" | "shuffle" | "queue",
   ) => {
-    if (artistAction) return;
+    if (artistAction || !connected) return;
+    const sessionGeneration = bandcampSessionGenerationRef.current;
     setArtistAction(action);
     const tracksByAlbum: Track[][] = Array.from({ length: group.albums.length }, () => []);
-    const hydrated = new Map<string, Album>();
+    const recoveredCovers = new Map<string, Album>();
     let cursor = 0;
 
     const worker = async () => {
-      while (cursor < group.albums.length) {
+      while (
+        bandcampSessionGenerationRef.current === sessionGeneration &&
+        cursor < group.albums.length
+      ) {
         const index = cursor;
         cursor += 1;
         const album = group.albums[index];
         try {
-          const tracks = album.tracks?.length ? album.tracks : await fetchAlbum(album);
+          if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
+          const tracks = await ensureAlbumQueryData(queryClient, album);
+          if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
           tracksByAlbum[index] = tracks;
-          hydrated.set(album.id, albumWithTracks(album, tracks));
+          recoveredCovers.set(album.id, albumWithRecoveredCover(album, tracks));
         } catch {
+          if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
           // One unavailable purchase should not block the rest of an artist.
         }
       }
@@ -3084,13 +3132,14 @@ export default function App() {
           () => worker(),
         ),
       );
+      if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
       const tracks = tracksByAlbum.flat();
       if (!tracks.length) {
         notify(`No playable tracks were returned for ${group.name}.`, "bad");
         return;
       }
       setAlbums((items) =>
-        items.map((album) => hydrated.get(album.id) ?? album),
+        items.map((album) => recoveredCovers.get(album.id) ?? album),
       );
       if (action === "play" || action === "shuffle") {
         setQueue(action === "shuffle" ? shuffled(tracks) : tracks);
@@ -3108,35 +3157,45 @@ export default function App() {
         notify(`${countLabel(tracks.length, `${group.name} track`)} added to queue`, "good");
       }
     } finally {
-      setArtistAction(undefined);
+      if (bandcampSessionGenerationRef.current === sessionGeneration) {
+        setArtistAction(undefined);
+      }
     }
-  }, [artistAction, notify, playbackClock]);
+  }, [artistAction, connected, notify, playbackClock, queryClient, setAlbums]);
 
   const queueSearchResults = useCallback(async () => {
-    if (queueSearchProgress || !visibleAlbums.length) return;
+    if (!connected || queueSearchProgress || !visibleAlbums.length) return;
+    const sessionGeneration = bandcampSessionGenerationRef.current;
     const targets = [...visibleAlbums];
-    const hydrated = new Map<string, Album>();
+    const recoveredCovers = new Map<string, Album>();
     const tracksByAlbum: Track[][] = Array.from({ length: targets.length }, () => []);
     let cursor = 0;
     let completed = 0;
     setQueueSearchProgress({ done: 0, total: targets.length });
 
     const worker = async () => {
-      while (cursor < targets.length) {
+      while (
+        bandcampSessionGenerationRef.current === sessionGeneration &&
+        cursor < targets.length
+      ) {
         const index = cursor;
         cursor += 1;
         const album = targets[index];
         try {
-          const tracks = album.tracks?.length ? album.tracks : await fetchAlbum(album);
-          const ready = albumWithTracks(album, tracks);
-          hydrated.set(album.id, ready);
+          if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
+          const tracks = await ensureAlbumQueryData(queryClient, album);
+          if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
+          recoveredCovers.set(album.id, albumWithRecoveredCover(album, tracks));
           tracksByAlbum[index] = tracks;
         } catch {
+          if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
           // Keep loading the rest when an individual release is unavailable.
         } finally {
-          completed += 1;
-          if (completed === targets.length || completed % 4 === 0) {
-            setQueueSearchProgress({ done: completed, total: targets.length });
+          if (bandcampSessionGenerationRef.current === sessionGeneration) {
+            completed += 1;
+            if (completed === targets.length || completed % 4 === 0) {
+              setQueueSearchProgress({ done: completed, total: targets.length });
+            }
           }
         }
       }
@@ -3149,52 +3208,64 @@ export default function App() {
           () => worker(),
         ),
       );
+      if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
       const tracks = tracksByAlbum.flat();
-      if (hydrated.size) {
+      if (recoveredCovers.size) {
         setAlbums((items) =>
-          items.map((album) => hydrated.get(album.id) ?? album),
+          items.map((album) => recoveredCovers.get(album.id) ?? album),
         );
       }
       setQueue((items) => appendUnique(items, tracks));
       notify(
         tracks.length
-          ? `${countLabel(tracks.length, "track")} from ${countLabel(hydrated.size, "search result")} added`
+          ? `${countLabel(tracks.length, "track")} from ${countLabel(recoveredCovers.size, "search result")} added`
           : "No playable tracks were returned for those results.",
         tracks.length ? "good" : "bad",
       );
     } finally {
-      setQueueSearchProgress(undefined);
+      if (bandcampSessionGenerationRef.current === sessionGeneration) {
+        setQueueSearchProgress(undefined);
+      }
     }
-  }, [notify, queueSearchProgress, visibleAlbums]);
+  }, [connected, notify, queryClient, queueSearchProgress, setAlbums, visibleAlbums]);
 
   const shuffleLibrary = useCallback(async (
     scopeAlbums: readonly Album[] = albums,
     scopeName = "entire library",
   ) => {
     if (libraryShuffleActiveRef.current || !connected || !scopeAlbums.length) return;
+    const sessionGeneration = bandcampSessionGenerationRef.current;
     libraryShuffleActiveRef.current = true;
     const targets = shuffled([...scopeAlbums]);
-    const hydrated = new Map<string, Album>();
+    const recoveredCovers = new Map<string, Album>();
     const loadedTracks: Track[][] = Array.from({ length: targets.length }, () => []);
     let cursor = 0;
     let completed = 0;
     setLibraryShuffleProgress({ done: 0, total: targets.length });
 
     const worker = async () => {
-      while (cursor < targets.length) {
+      while (
+        bandcampSessionGenerationRef.current === sessionGeneration &&
+        cursor < targets.length
+      ) {
         const index = cursor;
         cursor += 1;
         const album = targets[index];
         try {
-          const tracks = album.tracks?.length ? album.tracks : await fetchAlbum(album);
-          hydrated.set(album.id, albumWithTracks(album, tracks));
+          if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
+          const tracks = await ensureAlbumQueryData(queryClient, album);
+          if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
+          recoveredCovers.set(album.id, albumWithRecoveredCover(album, tracks));
           loadedTracks[index] = tracks;
         } catch {
+          if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
           // A removed or unavailable release should not block the rest of the shuffle.
         } finally {
-          completed += 1;
-          if (completed === targets.length || completed % 5 === 0) {
-            setLibraryShuffleProgress({ done: completed, total: targets.length });
+          if (bandcampSessionGenerationRef.current === sessionGeneration) {
+            completed += 1;
+            if (completed === targets.length || completed % 5 === 0) {
+              setLibraryShuffleProgress({ done: completed, total: targets.length });
+            }
           }
         }
       }
@@ -3207,13 +3278,14 @@ export default function App() {
           () => worker(),
         ),
       );
+      if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
       const tracks = shuffled(loadedTracks.flat());
       if (!tracks.length) {
         notify("Bandcamp did not return any playable tracks.", "bad");
         return;
       }
       setAlbums((items) =>
-        items.map((album) => hydrated.get(album.id) ?? album),
+        items.map((album) => recoveredCovers.get(album.id) ?? album),
       );
       setQueue(tracks);
       setCurrentIndex(0);
@@ -3224,10 +3296,12 @@ export default function App() {
         "good",
       );
     } finally {
-      libraryShuffleActiveRef.current = false;
-      setLibraryShuffleProgress(undefined);
+      if (bandcampSessionGenerationRef.current === sessionGeneration) {
+        libraryShuffleActiveRef.current = false;
+        setLibraryShuffleProgress(undefined);
+      }
     }
-  }, [albums, connected, notify, playbackClock]);
+  }, [albums, connected, notify, playbackClock, queryClient, setAlbums]);
 
   const playTrack = useCallback((track: Track) => {
     setQueue((items) => {
@@ -3279,12 +3353,16 @@ export default function App() {
     scopeName: string,
   ) => {
     if (randomPickActiveRef.current || !connected || !scopeAlbums.length) return;
+    const sessionGeneration = bandcampSessionGenerationRef.current;
     randomPickActiveRef.current = true;
     setRandomPickLoading(true);
     const remaining = [...scopeAlbums];
 
     try {
-      while (remaining.length) {
+      while (
+        bandcampSessionGenerationRef.current === sessionGeneration &&
+        remaining.length
+      ) {
         const album = pickWeightedItem(
           remaining,
           (item) => Math.max(1, item.songCount),
@@ -3293,20 +3371,29 @@ export default function App() {
         remaining.splice(remaining.findIndex((item) => item.id === album.id), 1);
 
         try {
-          const ready = await ensureTracks(album);
+          if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
+          const ready = await ensureTracks(album, sessionGeneration);
+          if (
+            !ready ||
+            bandcampSessionGenerationRef.current !== sessionGeneration
+          ) return;
           const track = pickRandomItem(ready.tracks ?? []);
           if (!track) continue;
           playTrack(track);
           notify(`Playing ${track.title} by ${track.artist}.`, "good");
           return;
         } catch {
+          if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
           // Keep trying when a purchased release is no longer playable.
         }
       }
+      if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
       notify(`No playable tracks were found in ${scopeName}.`, "bad");
     } finally {
-      randomPickActiveRef.current = false;
-      setRandomPickLoading(false);
+      if (bandcampSessionGenerationRef.current === sessionGeneration) {
+        randomPickActiveRef.current = false;
+        setRandomPickLoading(false);
+      }
     }
   }, [connected, ensureTracks, notify, playTrack]);
 
@@ -3350,7 +3437,8 @@ export default function App() {
   }, []);
 
   const refreshArtwork = useCallback(async () => {
-    if (artworkRefreshing) return;
+    if (!connected || artworkRefreshing) return;
+    const sessionGeneration = bandcampSessionGenerationRef.current;
     setArtworkRefreshing(true);
     clearCoverUrlCache();
     window.dispatchEvent(new Event("coda:refresh-artwork"));
@@ -3362,14 +3450,20 @@ export default function App() {
     let cursor = 0;
 
     const worker = async () => {
-      while (cursor < missing.length) {
+      while (
+        bandcampSessionGenerationRef.current === sessionGeneration &&
+        cursor < missing.length
+      ) {
         const album = missing[cursor];
         cursor += 1;
         try {
-          const tracks = await fetchAlbum(album, { forceRefresh: true });
-          const hydrated = albumWithTracks(album, tracks);
+          if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
+          const tracks = await refreshAlbumQueryData(queryClient, album);
+          if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
+          const hydrated = albumWithRecoveredCover(album, tracks);
           if (hydrated.coverArt) recovered.set(album.id, hydrated);
         } catch {
+          if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
           // A single unavailable release should not stop the artwork refresh.
         }
       }
@@ -3382,6 +3476,7 @@ export default function App() {
           () => worker(),
         ),
       );
+      if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
       if (recovered.size) {
         setAlbums((items) =>
           items.map((album) => recovered.get(album.id) ?? album),
@@ -3401,18 +3496,29 @@ export default function App() {
         notify("Artwork refreshed", "good");
       }
     } finally {
-      setArtworkRefreshing(false);
+      if (bandcampSessionGenerationRef.current === sessionGeneration) {
+        setArtworkRefreshing(false);
+      }
     }
-  }, [albums, artworkRefreshing, notify]);
+  }, [albums, artworkRefreshing, connected, notify, queryClient, setAlbums]);
 
   const handleDisconnect = useCallback(async () => {
     await disconnect();
+    bandcampSessionGenerationRef.current += 1;
     librarySyncGenerationRef.current += 1;
     restoreGenerationRef.current += 1;
+    libraryShuffleActiveRef.current = false;
+    randomPickActiveRef.current = false;
     setPlayerStateReady(false);
     clearRuntimeCaches();
     setConnected(false);
     setAlbums([]);
+    setAlbumLoading(false);
+    setArtworkRefreshing(false);
+    setArtistAction(undefined);
+    setQueueSearchProgress(undefined);
+    setLibraryShuffleProgress(undefined);
+    setRandomPickLoading(false);
     setQueue([]);
     setCurrentIndex(0);
     playbackClock.reset();
@@ -3424,7 +3530,7 @@ export default function App() {
     radioScrobbleProgressRef.current = undefined;
     setLibraryError("");
     setSyncState("idle");
-    queryClient.removeQueries({ queryKey: ["bandcamp"] });
+    clearBandcampQueryData(queryClient);
     await enqueuePlayerStateWrite(clearPlayerState).catch(() => {
       notify("Bandcamp disconnected, but Coda could not clear the saved player session.", "bad");
     });
@@ -3493,6 +3599,7 @@ export default function App() {
     notify(`${track.title} added to queue`, "good");
   }, [notify]);
   const handleConnected = useCallback((library: Album[]) => {
+    bandcampSessionGenerationRef.current += 1;
     librarySyncGenerationRef.current += 1;
     setAlbums(library);
     setConnected(true);
