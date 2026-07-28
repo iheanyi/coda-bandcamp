@@ -54,6 +54,7 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
   "NSArray",
   "NSObject",
   "NSString",
+  "NSUserDefaults",
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

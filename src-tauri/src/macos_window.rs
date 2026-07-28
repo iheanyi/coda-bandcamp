@@ -1,10 +1,101 @@
-use objc2::MainThreadMarker;
+use objc2::runtime::AnyObject;
+use objc2::{define_class, msg_send, ClassType, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSAccessibility, NSColor, NSFont, NSFontWeightSemibold, NSLayoutConstraint, NSLineBreakMode,
     NSObjectNSKeyValueBindingCreation, NSTextAlignment, NSTextField, NSValueBinding, NSWindow,
     NSWindowButton, NSWindowTitleVisibility,
 };
-use objc2_foundation::{NSArray, NSString};
+use objc2_foundation::{NSArray, NSInteger, NSString, NSUserDefaults};
+
+const MACOS_TITLE_DOUBLE_CLICK_ACTION_KEY: &str = "AppleActionOnDoubleClick";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TitleDoubleClickAction {
+    Zoom,
+    Minimize,
+    None,
+}
+
+fn title_double_click_action(preference: Option<&str>) -> TitleDoubleClickAction {
+    match preference {
+        Some("Minimize") => TitleDoubleClickAction::Minimize,
+        Some("None") => TitleDoubleClickAction::None,
+        _ => TitleDoubleClickAction::Zoom,
+    }
+}
+
+fn current_title_double_click_action() -> TitleDoubleClickAction {
+    let defaults = NSUserDefaults::standardUserDefaults();
+    let preference =
+        defaults.stringForKey(&NSString::from_str(MACOS_TITLE_DOUBLE_CLICK_ACTION_KEY));
+    let preference = preference.as_ref().map(|value| value.to_string());
+
+    title_double_click_action(preference.as_deref())
+}
+
+fn perform_title_double_click_action(window: &NSWindow) {
+    match current_title_double_click_action() {
+        TitleDoubleClickAction::Zoom => {
+            // SAFETY: `performZoom:` is an NSWindow action that accepts a nil sender.
+            unsafe {
+                let _: () = msg_send![window, performZoom: Option::<&AnyObject>::None];
+            }
+        }
+        TitleDoubleClickAction::Minimize => {
+            // SAFETY: `performMiniaturize:` is an NSWindow action that accepts a nil sender.
+            unsafe {
+                let _: () = msg_send![window, performMiniaturize: Option::<&AnyObject>::None];
+            }
+        }
+        TitleDoubleClickAction::None => {}
+    }
+}
+
+define_class!(
+    // SAFETY: This subclass only overrides mouse handling for the title label and
+    // adds no ivars, so it preserves NSTextField's layout and lifetime rules.
+    #[unsafe(super = NSTextField)]
+    #[thread_kind = MainThreadOnly]
+    struct CodaTitleTextField;
+
+    impl CodaTitleTextField {
+        #[unsafe(method(mouseDown:))]
+        fn mouse_down(&self, event: &AnyObject) {
+            // SAFETY: AppKit sends an NSEvent for mouseDown:, and clickCount is
+            // available on mouse events.
+            let click_count: NSInteger = unsafe { msg_send![event, clickCount] };
+            // SAFETY: The field is installed in an NSWindow-owned title-bar view.
+            let window: *mut NSWindow = unsafe { msg_send![self, window] };
+
+            if click_count == 2 {
+                if let Some(window) = unsafe { window.as_ref() } {
+                    perform_title_double_click_action(window);
+                }
+                return;
+            }
+
+            if let Some(window) = unsafe { window.as_ref() } {
+                // SAFETY: AppKit permits forwarding the original mouse-down
+                // event to preserve native title-bar dragging.
+                unsafe {
+                    let _: () = msg_send![window, performWindowDragWithEvent: event];
+                }
+                return;
+            }
+
+            // SAFETY: Falling back to NSTextField keeps default event handling if
+            // the view is ever detached from a window.
+            unsafe {
+                let _: () = msg_send![super(self), mouseDown: event];
+            }
+        }
+
+        #[unsafe(method(mouseDownCanMoveWindow))]
+        fn mouse_down_can_move_window(&self) -> bool {
+            true
+        }
+    }
+);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SystemTitleVisibility {
@@ -57,6 +148,13 @@ pub(crate) fn install_centered_title(window: &tauri::WebviewWindow) -> Result<()
         &NSString::from_str(centered_title_text(&semantic_title)),
         marker,
     );
+    // SAFETY: `CodaTitleTextField` is an NSTextField subclass with no ivars, so
+    // the label instance keeps the same layout while gaining native title-bar
+    // double-click handling.
+    unsafe {
+        let title_object: &AnyObject = (&*title).as_ref();
+        AnyObject::set_class(title_object, CodaTitleTextField::class());
+    }
     title.setAlignment(NSTextAlignment::Center);
     title.setLineBreakMode(NSLineBreakMode::ByTruncatingTail);
     title.setMaximumNumberOfLines(1);
@@ -124,5 +222,25 @@ mod tests {
 
         assert_eq!(centered_title_text(current_title), current_title);
         assert_eq!(centered_title_binding_key_path(), "title");
+    }
+
+    #[test]
+    fn title_double_click_action_matches_macos_preference() {
+        assert_eq!(
+            title_double_click_action(Some("Minimize")),
+            TitleDoubleClickAction::Minimize
+        );
+        assert_eq!(
+            title_double_click_action(Some("None")),
+            TitleDoubleClickAction::None
+        );
+        assert_eq!(
+            title_double_click_action(Some("Maximize")),
+            TitleDoubleClickAction::Zoom
+        );
+        assert_eq!(
+            title_double_click_action(None),
+            TitleDoubleClickAction::Zoom
+        );
     }
 }
