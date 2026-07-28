@@ -66,8 +66,9 @@ window is resized or enters and exits full screen.
 
 `NSTextField(labelWithString:)` is noneditable and reports
 `mouseDownCanMoveWindow = true`, so dragging over the title continues to move
-the window. The label will not become a duplicate accessibility stop; the
-window's dynamic `AXTitle` remains the semantic title.
+the window. The centered label remains discoverable as native static text for
+assistive technology and visual validation, while the window's dynamic
+`AXTitle` remains the contextual semantic title.
 
 The AppKit bindings will be declared only in the macOS target dependency
 section. Other platforms will neither compile nor link the macOS module.

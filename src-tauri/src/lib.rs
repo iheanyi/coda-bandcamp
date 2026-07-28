@@ -28,6 +28,10 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, WindowEvent,
 };
+
+#[cfg(target_os = "macos")]
+mod macos_window;
+
 #[cfg(desktop)]
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 use url::Url;
@@ -3917,6 +3921,13 @@ pub fn run() {
                         .build(),
                 )?;
                 ensure_window_is_visible(app);
+
+                #[cfg(target_os = "macos")]
+                if let Some(window) = app.get_webview_window("main") {
+                    if let Err(error) = macos_window::install_centered_title(&window) {
+                        eprintln!("Could not install Coda's centered native title: {error}");
+                    }
+                }
 
                 let show = MenuItem::with_id(app, "show", "Show Coda", true, None::<&str>)?;
                 let play_pause =
