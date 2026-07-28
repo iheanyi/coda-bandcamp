@@ -36,8 +36,8 @@ describe("Coda mini player", () => {
       .toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "First Light" }))
       .toBeInTheDocument();
-    expect(screen.getByText("Night Archive")).toBeInTheDocument();
-    expect(screen.getByText("Soft Focus")).toBeInTheDocument();
+    expect(screen.getByText("Night Archive · Soft Focus"))
+      .toBeInTheDocument();
     expect(screen.getByRole("img", { name: "Soft Focus cover" }))
       .toHaveAttribute("src", snapshot.track?.artworkUrl);
 

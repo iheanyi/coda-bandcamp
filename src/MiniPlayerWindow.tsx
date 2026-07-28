@@ -126,8 +126,10 @@ export function MiniPlayerView({
               <MiniArtwork key={`${track.id}:${track.artworkUrl ?? ""}`} track={track} />
               <div className="mini-player__metadata" aria-live="polite">
                 <h1>{track.title}</h1>
-                <p>{track.artist}</p>
-                {track.album ? <span>{track.album}</span> : null}
+                <p>
+                  {track.artist}
+                  {track.album ? ` · ${track.album}` : ""}
+                </p>
               </div>
             </>
           ) : (
