@@ -15,6 +15,7 @@ const scriptPath = join(
   dirname(fileURLToPath(import.meta.url)),
   "prepare-release.mjs",
 );
+const gitIntegrationTestTimeout = 20_000;
 const temporaryDirectories = [];
 
 afterEach(() => {
@@ -254,7 +255,7 @@ test("creates the first stable release from the existing manifest version", () =
     run("git", ["--git-dir", remote, "rev-parse", "refs/tags/v0.1.0^{commit}"])
       .stdout,
   ).toContain(originalCommit);
-});
+}, gitIntegrationTestTimeout);
 
 test("applies patch, minor, and major bumps across every Coda manifest", () => {
   const { root } = createRepository();
@@ -291,7 +292,7 @@ test("applies patch, minor, and major bumps across every Coda manifest", () => {
   expect(
     readFileSync(join(root, "src-tauri", "Cargo.lock"), "utf8"),
   ).toContain(`name = "unrelated-fixture"\nversion = "0.1.0"`);
-});
+}, gitIntegrationTestTimeout);
 
 test("reuses the exact tag and commit when the same workflow run is rerun", () => {
   const { root } = createRepository();
@@ -317,7 +318,7 @@ test("reuses the exact tag and commit when the same workflow run is rerun", () =
   });
   expect(supersededRerun.status).not.toBe(0);
   expect(supersededRerun.stderr).toMatch(/superseded/i);
-});
+}, gitIntegrationTestTimeout);
 
 test("validates exact pushed tags without changing repository state", () => {
   const { root } = createRepository();
@@ -337,7 +338,7 @@ test("validates exact pushed tags without changing repository state", () => {
     commit_sha: commit,
   });
   expect(git(root, "status", "--short", "--untracked-files=no")).toBe("");
-});
+}, gitIntegrationTestTimeout);
 
 test("rejects superseded tags and tags whose commits are not on main", () => {
   const { root } = createRepository();
@@ -368,7 +369,7 @@ test("rejects superseded tags and tags whose commits are not on main", () => {
   });
   expect(featureTag.status).not.toBe(0);
   expect(featureTag.stderr).toMatch(/main/i);
-});
+}, gitIntegrationTestTimeout);
 
 test("rejects invalid inputs and manifest drift without moving refs", () => {
   const invalidCases = [
@@ -417,4 +418,4 @@ test("rejects invalid inputs and manifest drift without moving refs", () => {
   expect(driftResult.status).not.toBe(0);
   expect(driftResult.stderr).toMatch(/version mismatch/i);
   expect(run("git", ["--git-dir", remote, "tag", "--list"]).stdout).toBe("");
-});
+}, gitIntegrationTestTimeout);
