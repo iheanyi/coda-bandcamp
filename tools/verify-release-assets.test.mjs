@@ -43,16 +43,26 @@ function createReleaseFiles(transformLatest = (latest) => latest) {
   );
   const latestPath = join(root, "latest.json");
   const releasePath = join(root, "release.json");
+  const releaseAssets = assets.map((name, index) => ({
+    apiUrl: `https://api.github.com/repos/iheanyi/coda-bandcamp/releases/assets/${10_000 + index}`,
+    name,
+  }));
+  const assetApiUrls = new Map(
+    releaseAssets.map((asset) => [asset.name, asset.apiUrl]),
+  );
 
   writeFileSync(
     latestPath,
     JSON.stringify(
-      transformLatest({
-        version: "1.2.3",
-        notes: "Release notes",
-        pub_date: "2026-07-28T00:00:00Z",
-        platforms,
-      }),
+      transformLatest(
+        {
+          version: "1.2.3",
+          notes: "Release notes",
+          pub_date: "2026-07-28T00:00:00Z",
+          platforms,
+        },
+        assetApiUrls,
+      ),
     ),
   );
   writeFileSync(
@@ -60,7 +70,7 @@ function createReleaseFiles(transformLatest = (latest) => latest) {
     JSON.stringify({
       isDraft: true,
       tagName: "v1.2.3",
-      assets: assets.map((name) => ({ name })),
+      assets: releaseAssets,
     }),
   );
 
@@ -86,6 +96,24 @@ test("accepts a complete draft with every signed updater platform", () => {
   );
 });
 
+test("accepts updater API URLs owned by assets in the same draft", () => {
+  const { latestPath, releasePath } = createReleaseFiles(
+    (latest, assetApiUrls) => {
+      for (const entry of Object.values(latest.platforms)) {
+        const assetName = decodeURIComponent(
+          new URL(entry.url).pathname.split("/").at(-1),
+        );
+        entry.url = assetApiUrls.get(assetName);
+      }
+      return latest;
+    },
+  );
+
+  const result = runVerifier(latestPath, releasePath);
+
+  expect(result.status, result.stderr).toBe(0);
+});
+
 test("rejects a missing platform before publication", () => {
   const { latestPath, releasePath } = createReleaseFiles((latest) => {
     delete latest.platforms["windows-x86_64"];
@@ -105,6 +133,8 @@ test("rejects unsigned, missing, or off-repository updater assets", () => {
     latest.platforms["darwin-aarch64"].signature = "";
     latest.platforms["linux-x86_64"].url =
       "https://example.test/Coda_1.2.3_linux-x86_64.AppImage";
+    latest.platforms["darwin-x86_64"].url =
+      "https://api.github.com/repos/iheanyi/coda-bandcamp/releases/assets/999999";
     latest.platforms["windows-x86_64"].url =
       "https://github.com/iheanyi/coda-bandcamp/releases/download/v1.2.3/missing.exe";
     return latest;
@@ -118,6 +148,9 @@ test("rejects unsigned, missing, or off-repository updater assets", () => {
   );
   expect(result.stderr).toContain(
     "linux-x86_64 does not reference this repository and tag",
+  );
+  expect(result.stderr).toContain(
+    "darwin-x86_64 does not reference this repository and tag",
   );
   expect(result.stderr).toContain(
     "windows-x86_64 references missing release asset missing.exe",

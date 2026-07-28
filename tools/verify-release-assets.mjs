@@ -10,6 +10,8 @@ const REQUIRED_PLATFORMS = [
   "windows-x86_64",
 ];
 const RELEASE_PATH_PREFIX = "/iheanyi/coda-bandcamp/releases/download/";
+const RELEASE_ASSET_API_PATH_PREFIX =
+  "/repos/iheanyi/coda-bandcamp/releases/assets/";
 const MAX_SIGNATURE_LENGTH = 32_768;
 
 const [, , tag, latestArgument, releaseArgument, ...extraArguments] =
@@ -82,7 +84,7 @@ function verifyRelease(tag, latest, release) {
     errors.push(`- latest.json version must be ${tag.slice(1)}`);
   }
 
-  const assetNames = releaseAssetNames(release.assets, errors);
+  const { assetNames, assetApiUrls } = releaseAssets(release.assets, errors);
   if (!assetNames.has("latest.json")) {
     errors.push("- release is missing latest.json");
   }
@@ -107,7 +109,7 @@ function verifyRelease(tag, latest, release) {
       errors.push(`- ${platform} does not have a valid updater signature`);
     }
 
-    const assetName = updaterAssetName(entry.url, tag);
+    const assetName = updaterAssetName(entry.url, tag, assetApiUrls);
     if (!assetName) {
       errors.push(`- ${platform} does not reference this repository and tag`);
       continue;
@@ -123,25 +125,35 @@ function verifyRelease(tag, latest, release) {
   return errors;
 }
 
-function releaseAssetNames(assets, errors) {
+function releaseAssets(assets, errors) {
   if (!Array.isArray(assets)) {
     errors.push("- release assets must be an array");
-    return new Set();
+    return { assetNames: new Set(), assetApiUrls: new Map() };
   }
 
-  return new Set(
-    assets.flatMap((asset) =>
-      isRecord(asset) &&
-      typeof asset.name === "string" &&
-      asset.name.length > 0 &&
-      asset.name.length <= 512
-        ? [asset.name]
-        : [],
-    ),
-  );
+  const assetNames = new Set();
+  const assetApiUrls = new Map();
+  for (const asset of assets) {
+    if (
+      !isRecord(asset) ||
+      typeof asset.name !== "string" ||
+      asset.name.length === 0 ||
+      asset.name.length > 512
+    ) {
+      continue;
+    }
+
+    assetNames.add(asset.name);
+    const apiUrl = releaseAssetApiUrl(asset.apiUrl);
+    if (apiUrl) {
+      assetApiUrls.set(apiUrl, asset.name);
+    }
+  }
+
+  return { assetNames, assetApiUrls };
 }
 
-function updaterAssetName(value, tag) {
+function updaterAssetName(value, tag, assetApiUrls) {
   if (typeof value !== "string" || value.length > 2_048) return undefined;
 
   try {
@@ -152,12 +164,38 @@ function updaterAssetName(value, tag) {
       url.hostname !== "github.com" ||
       !url.pathname.startsWith(expectedPrefix)
     ) {
-      return undefined;
+      const apiUrl = releaseAssetApiUrl(value);
+      return apiUrl ? assetApiUrls.get(apiUrl) : undefined;
     }
 
     const encodedName = url.pathname.slice(expectedPrefix.length);
     if (!encodedName || encodedName.includes("/")) return undefined;
     return decodeURIComponent(encodedName);
+  } catch {
+    return undefined;
+  }
+}
+
+function releaseAssetApiUrl(value) {
+  if (typeof value !== "string" || value.length > 2_048) return undefined;
+
+  try {
+    const url = new URL(value);
+    const assetId = url.pathname.slice(RELEASE_ASSET_API_PATH_PREFIX.length);
+    if (
+      url.protocol !== "https:" ||
+      url.hostname !== "api.github.com" ||
+      url.port ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      !url.pathname.startsWith(RELEASE_ASSET_API_PATH_PREFIX) ||
+      !/^[1-9]\d*$/.test(assetId)
+    ) {
+      return undefined;
+    }
+    return url.href;
   } catch {
     return undefined;
   }

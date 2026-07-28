@@ -217,6 +217,8 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: ./src-tauri -> target
+          shared-key: coda-${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install Linux system dependencies
         if: matrix.platform == 'ubuntu-22.04'
@@ -265,7 +267,6 @@ jobs:
       - prepare-draft
       - build-release
     runs-on: ubuntu-22.04
-    environment: release
     permissions:
       contents: write
 
@@ -327,6 +328,63 @@ jobs:
           "$RELEASE_TAG"
           "$RUNNER_TEMP/coda-release/latest.json"
           "$RUNNER_TEMP/coda-release/release.json"
+
+      - name: Cryptographically verify updater signatures
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
+          SIGNED_ASSET_DIR: ${{ runner.temp }}/coda-release/signed-assets
+          UPDATER_PUBLIC_KEY_PATH: ${{ runner.temp }}/coda-release/updater.pub
+        run: |
+          set -euo pipefail
+
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends minisign
+
+          mkdir -p "$SIGNED_ASSET_DIR"
+          gh release download "$RELEASE_TAG" \
+            --pattern '*.sig' \
+            --pattern '*.app.tar.gz' \
+            --pattern '*.AppImage' \
+            --pattern '*.deb' \
+            --pattern '*.rpm' \
+            --pattern '*.exe' \
+            --pattern '*.msi' \
+            --dir "$SIGNED_ASSET_DIR"
+
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from "node:fs";
+
+          const config = JSON.parse(
+            readFileSync("src-tauri/tauri.conf.json", "utf8"),
+          );
+          writeFileSync(
+            process.env.UPDATER_PUBLIC_KEY_PATH,
+            Buffer.from(config.plugins.updater.pubkey, "base64"),
+          );
+          NODE
+
+          verified_count=0
+          for encoded_signature in "$SIGNED_ASSET_DIR"/*.sig; do
+            artifact="${encoded_signature%.sig}"
+            decoded_signature="$encoded_signature.minisig"
+            if [[ ! -f "$artifact" ]]; then
+              echo "Missing updater artifact for $encoded_signature" >&2
+              exit 1
+            fi
+
+            base64 --decode "$encoded_signature" > "$decoded_signature"
+            minisign -Vm "$artifact" -x "$decoded_signature" -p "$UPDATER_PUBLIC_KEY_PATH"
+            verified_count=$((verified_count + 1))
+          done
+
+          if (( verified_count < 4 )); then
+            echo "Expected at least four signed updater artifacts, verified $verified_count" >&2
+            exit 1
+          fi
+
+          echo "Cryptographically verified $verified_count updater artifacts."
 
       - name: Publish GitHub release
         shell: bash
