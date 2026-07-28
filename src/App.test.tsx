@@ -10,9 +10,11 @@ const mocks = vi.hoisted(() => ({
   clearPlayerState: vi.fn(),
   completeLastFmAuthorization: vi.fn(),
   connectBandcamp: vi.fn(),
+  createSystemArtworkDataUrl: vi.fn(),
   disconnect: vi.fn(),
   disconnectLastFm: vi.fn(),
   fetchAlbum: vi.fn(),
+  fetchCoverUrl: vi.fn(),
   fetchLibrary: vi.fn(),
   fetchFavorites: vi.fn(),
   fetchRadioShow: vi.fn(),
@@ -30,6 +32,10 @@ const mocks = vi.hoisted(() => ({
   updateLastFmNowPlaying: vi.fn(),
 }));
 
+vi.mock("./systemArtwork", () => ({
+  createSystemArtworkDataUrl: mocks.createSystemArtworkDataUrl,
+}));
+
 vi.mock("./lib", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./lib")>();
   return {
@@ -42,6 +48,7 @@ vi.mock("./lib", async (importOriginal) => {
     disconnect: mocks.disconnect,
     disconnectLastFm: mocks.disconnectLastFm,
     fetchAlbum: mocks.fetchAlbum,
+    fetchCoverUrl: mocks.fetchCoverUrl,
     fetchLibrary: mocks.fetchLibrary,
     fetchFavorites: mocks.fetchFavorites,
     fetchRadioShow: mocks.fetchRadioShow,
@@ -146,9 +153,15 @@ beforeEach(() => {
   mocks.clearPlayerState.mockReset().mockResolvedValue(undefined);
   mocks.completeLastFmAuthorization.mockReset();
   mocks.connectBandcamp.mockReset();
+  mocks.createSystemArtworkDataUrl
+    .mockReset()
+    .mockReturnValue("data:image/png;base64,Y29kYS1jb3Zlcg==");
   mocks.disconnect.mockReset().mockResolvedValue(undefined);
   mocks.disconnectLastFm.mockReset();
   mocks.fetchAlbum.mockReset().mockResolvedValue(tracks);
+  mocks.fetchCoverUrl
+    .mockReset()
+    .mockResolvedValue("https://t4.bcbits.com/img/restored-cover.jpg");
   mocks.fetchLibrary.mockReset();
   mocks.fetchFavorites.mockReset().mockResolvedValue({
     albumIds: [],
@@ -618,7 +631,7 @@ describe("Coda application flows", () => {
     expect(within(player!).getByText("First Light")).toBeInTheDocument();
   });
 
-  it("routes the system media skip control to the next queue track", async () => {
+  it("publishes rich WebKit media state and routes next-track controls", async () => {
     const handlers = new Map<
       MediaSessionAction,
       MediaSessionActionHandler | null
@@ -631,18 +644,39 @@ describe("Coda application flows", () => {
         handlers.set(action, handler);
       },
     );
+    const setPositionState = vi.fn();
+    const mediaSession = {
+      metadata: null as MediaMetadata | null,
+      playbackState: "none" as MediaSessionPlaybackState,
+      setActionHandler,
+      setPositionState,
+    };
     const descriptor = Object.getOwnPropertyDescriptor(
       navigator,
       "mediaSession",
     );
+    const metadataDescriptor = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "MediaMetadata",
+    );
+    class MockMediaMetadata {
+      constructor(readonly init: MediaMetadataInit) {}
+    }
     Object.defineProperty(navigator, "mediaSession", {
       configurable: true,
-      value: { setActionHandler },
+      value: mediaSession,
+    });
+    Object.defineProperty(globalThis, "MediaMetadata", {
+      configurable: true,
+      value: MockMediaMetadata,
     });
     mocks.loadPlayerState.mockResolvedValue({
       version: 1,
       savedAt: Date.now(),
-      queue: tracks.map(({ streamUrl: _streamUrl, ...track }) => track),
+      queue: tracks.map(({ streamUrl: _streamUrl, ...track }, index) => ({
+        ...track,
+        ...(index === 0 ? { coverArt: "ca:496796527" } : {}),
+      })),
       currentIndex: 0,
       positionSeconds: 0,
       volume: 0.72,
@@ -665,6 +699,26 @@ describe("Coda application flows", () => {
       ).toHaveLength(1);
       const skipTrack = handlers.get("nexttrack");
       expect(skipTrack).toBeTypeOf("function");
+      await waitFor(() =>
+        expect(
+          (mediaSession.metadata as unknown as MockMediaMetadata | null)?.init,
+        ).toEqual({
+          title: "First Light",
+          artist: "Night Archive",
+          album: "Soft Focus",
+          artwork: [{
+            src: "https://t4.bcbits.com/img/restored-cover.jpg",
+          }],
+        }),
+      );
+      expect(mocks.fetchCoverUrl).toHaveBeenCalledExactlyOnceWith(
+        "ca:496796527",
+      );
+      expect(setPositionState).toHaveBeenCalledWith({
+        duration: 180,
+        playbackRate: 1,
+        position: 0,
+      });
       act(() => skipTrack?.({ action: "nexttrack" }));
 
       const player = view.container.querySelector<HTMLElement>(".player");
@@ -677,6 +731,16 @@ describe("Coda application flows", () => {
         Object.defineProperty(navigator, "mediaSession", descriptor);
       } else {
         Reflect.deleteProperty(navigator, "mediaSession");
+      }
+      if (metadataDescriptor) {
+        Object.defineProperty(
+          globalThis,
+          "MediaMetadata",
+          metadataDescriptor,
+        );
+      } else {
+        delete (globalThis as { MediaMetadata?: typeof MediaMetadata })
+          .MediaMetadata;
       }
     }
   });

@@ -8,8 +8,6 @@ import {
 import {
   fetchCoverUrl,
   isDesktop,
-  type SystemMediaSessionInput,
-  updateSystemMediaSession,
 } from "./lib";
 import {
   createMiniPlayerSnapshot,
@@ -20,10 +18,6 @@ import {
   type MiniPlayerSnapshot,
 } from "./miniPlayer";
 import type { PlaybackClock } from "./playbackClock";
-import {
-  createSystemArtworkDataUrl,
-  type SystemArtworkInput,
-} from "./systemArtwork";
 import {
   nextRadioChapterTimeInTimeline,
   previousRadioChapterTimeInTimeline,
@@ -55,12 +49,6 @@ type MiniPlayerBridgeProps = {
   onSetVolume: (volume: number) => void;
   onShowMain: () => void;
   loadArtworkUrl?: (coverArt: string) => Promise<string>;
-  syncSystemMediaSession?: (
-    input: SystemMediaSessionInput,
-  ) => Promise<void>;
-  createFallbackArtwork?: (
-    track: SystemArtworkInput,
-  ) => string | undefined;
 };
 
 let nativeEventBridgeRequest: Promise<MiniPlayerEventBridge> | undefined;
@@ -102,8 +90,6 @@ export function MiniPlayerBridge({
   onSetVolume,
   onShowMain,
   loadArtworkUrl = fetchCoverUrl,
-  syncSystemMediaSession = updateSystemMediaSession,
-  createFallbackArtwork = createSystemArtworkDataUrl,
 }: MiniPlayerBridgeProps) {
   const bridgeEnabled = Boolean(eventBridge) || isDesktop();
   const positionSeconds = useSyncExternalStore(
@@ -200,19 +186,6 @@ export function MiniPlayerBridge({
   );
   const latestSnapshotRef = useRef(snapshot);
   latestSnapshotRef.current = snapshot;
-  const fallbackArtworkDataUrl = useMemo(
-    () => snapshot.track
-      ? createFallbackArtwork(snapshot.track)
-      : undefined,
-    [
-      createFallbackArtwork,
-      snapshot.track?.artist,
-      snapshot.track?.id,
-      snapshot.track?.palette[0],
-      snapshot.track?.palette[1],
-      snapshot.track?.title,
-    ],
-  );
   const handlersRef = useRef({
     onTogglePlayback,
     onPrevious,
@@ -229,45 +202,6 @@ export function MiniPlayerBridge({
     onSetVolume,
     onShowMain,
   };
-
-  useEffect(() => {
-    if (!bridgeEnabled) return;
-    const miniTrack = snapshot.track;
-    void syncSystemMediaSession({
-      track: miniTrack
-        ? {
-            title: miniTrack.title,
-            artist: miniTrack.artist,
-            album: miniTrack.album,
-            albumId: track?.albumId,
-            coverArtId,
-            artworkUrl: miniTrack.artworkUrl,
-            fallbackArtworkDataUrl,
-          }
-        : undefined,
-      playing: snapshot.playing,
-      positionSeconds: latestSnapshotRef.current.positionSeconds,
-      durationSeconds: snapshot.durationSeconds,
-      canPrevious: snapshot.canPrevious,
-      canNext: snapshot.canNext,
-    }).catch(() => {
-      // Native system controls are optional; Coda's player remains authoritative.
-    });
-  }, [
-    bridgeEnabled,
-    snapshot.canNext,
-    snapshot.canPrevious,
-    snapshot.durationSeconds,
-    snapshot.playing,
-    snapshot.track?.album,
-    snapshot.track?.artist,
-    snapshot.track?.artworkUrl,
-    snapshot.track?.id,
-    snapshot.track?.title,
-    syncSystemMediaSession,
-    coverArtId,
-    fallbackArtworkDataUrl,
-  ]);
 
   const bridgeRequest = useMemo(
     () =>

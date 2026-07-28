@@ -78,7 +78,6 @@ import {
   loadPlayerState,
   savePlayerState,
   scrobbleLastFm,
-  supportsNativeSystemMedia,
   updateLastFmNowPlaying,
 } from "./lib";
 import {
@@ -117,6 +116,7 @@ import {
 } from "./media";
 import { MiniPlayerBridge } from "./MiniPlayerBridge";
 import { NowPlayingView } from "./NowPlayingView";
+import { createSystemArtworkDataUrl } from "./systemArtwork";
 import {
   RadioChapterCopy,
   type RadioChapterLocalLinks,
@@ -1943,7 +1943,6 @@ export default function App() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [streamUrl, setStreamUrl] = useState<string>();
   const [airPlayAvailable, setAirPlayAvailable] = useState(false);
-  const [nativeSystemMedia, setNativeSystemMedia] = useState<boolean>();
   const audioRef = useRef<HTMLAudioElement>(null);
   const queuePanelRef = useRef<HTMLElement>(null);
   const queueFocusRequestedRef = useRef(false);
@@ -1962,16 +1961,6 @@ export default function App() {
   const pendingRestorePositionRef = useRef<{ trackId: string; position: number } | undefined>(
     undefined,
   );
-
-  useEffect(() => {
-    let active = true;
-    void supportsNativeSystemMedia().then((supported) => {
-      if (active) setNativeSystemMedia(supported);
-    });
-    return () => {
-      active = false;
-    };
-  }, []);
 
   useEffect(() => {
     if (queueOpen) {
@@ -2024,6 +2013,84 @@ export default function App() {
     () => boundRadioChapters(currentTrack?.radioChapters ?? []),
     [currentTrack?.radioChapters],
   );
+  const { current: currentSystemMediaChapter } = useCurrentRadioChapter(
+    playbackClock,
+    currentRadioTimeline,
+  );
+  const directSystemMediaArtworkUrl =
+    currentSystemMediaChapter?.artworkUrl ??
+    currentTrack?.artworkUrl ??
+    currentAlbum?.artworkUrl;
+  const systemMediaCoverArtId =
+    currentTrack?.coverArt ?? currentAlbum?.coverArt;
+  const systemMediaArtworkIdentity = currentTrack
+    ? [
+        currentTrack.id,
+        currentSystemMediaChapter?.timecode ?? "track",
+        systemMediaCoverArtId ?? "",
+      ].join(":")
+    : "";
+  const [resolvedSystemMediaArtwork, setResolvedSystemMediaArtwork] =
+    useState<{ identity: string; url: string }>();
+  useEffect(() => {
+    if (
+      !systemMediaArtworkIdentity ||
+      directSystemMediaArtworkUrl ||
+      !systemMediaCoverArtId
+    ) {
+      return;
+    }
+    let active = true;
+    fetchCoverUrl(systemMediaCoverArtId)
+      .then((url) => {
+        if (active) {
+          setResolvedSystemMediaArtwork({
+            identity: systemMediaArtworkIdentity,
+            url,
+          });
+        }
+      })
+      .catch(() => {
+        // The generated cover remains available if signed artwork refresh fails.
+      });
+    return () => {
+      active = false;
+    };
+  }, [
+    directSystemMediaArtworkUrl,
+    systemMediaArtworkIdentity,
+    systemMediaCoverArtId,
+  ]);
+  const systemMediaDisplay = useMemo(
+    () => currentTrack
+      ? {
+          title: currentSystemMediaChapter?.title ?? currentTrack.title,
+          artist: currentSystemMediaChapter?.artist ?? currentTrack.artist,
+          album:
+            currentSystemMediaChapter?.album ??
+            currentTrack.album,
+          artworkUrl:
+            directSystemMediaArtworkUrl,
+          palette: currentTrack.palette,
+        }
+      : undefined,
+    [currentSystemMediaChapter, currentTrack, directSystemMediaArtworkUrl],
+  );
+  const systemMediaArtworkUrl = useMemo(
+    () =>
+      systemMediaDisplay?.artworkUrl ??
+      (resolvedSystemMediaArtwork?.identity === systemMediaArtworkIdentity
+        ? resolvedSystemMediaArtwork.url
+        : undefined) ??
+      (systemMediaDisplay
+        ? createSystemArtworkDataUrl(systemMediaDisplay)
+        : undefined),
+    [
+      resolvedSystemMediaArtwork,
+      systemMediaArtworkIdentity,
+      systemMediaDisplay,
+    ],
+  );
   const currentRadioScrobbleTimeline = useMemo(
     () =>
       currentTrack?.id.startsWith("radio:")
@@ -2035,21 +2102,23 @@ export default function App() {
     ? radioShowIdFromTrackId(currentTrack.id)
     : undefined;
   useEffect(() => {
-    if (nativeSystemMedia !== false) return;
     syncMediaSessionPlayback({
-      title: currentTrack?.title,
-      artist: currentTrack?.artist,
-      album: currentTrack?.album,
-      artworkUrl: currentTrack?.artworkUrl,
+      title: systemMediaDisplay?.title,
+      artist: systemMediaDisplay?.artist,
+      album: systemMediaDisplay?.album,
+      artworkUrl: systemMediaArtworkUrl,
       playing,
+      positionSeconds: playbackClock.readExact(),
+      durationSeconds: currentTrack?.duration,
     });
   }, [
-    currentTrack?.album,
-    currentTrack?.artist,
-    currentTrack?.artworkUrl,
-    currentTrack?.title,
-    nativeSystemMedia,
+    currentTrack?.duration,
     playing,
+    playbackClock,
+    systemMediaArtworkUrl,
+    systemMediaDisplay?.album,
+    systemMediaDisplay?.artist,
+    systemMediaDisplay?.title,
   ]);
   const latestPlayerStateRef = useRef({
     queue,
@@ -2997,7 +3066,6 @@ export default function App() {
   ]);
   useEffect(
     () => {
-      if (nativeSystemMedia !== false) return;
       return installMediaSessionTrackHandlers({
         onPlay: () => systemMediaHandlersRef.current.onPlay(),
         onPause: () => systemMediaHandlersRef.current.onPause(),
@@ -3006,7 +3074,7 @@ export default function App() {
         onNextTrack: () => systemMediaHandlersRef.current.onNextTrack(),
       });
     },
-    [nativeSystemMedia],
+    [],
   );
 
   useEffect(() => {

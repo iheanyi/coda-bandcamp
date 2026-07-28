@@ -16,6 +16,8 @@ export type MediaSessionPlayback = {
   album?: string;
   artworkUrl?: string;
   playing: boolean;
+  positionSeconds?: number;
+  durationSeconds?: number;
 };
 
 const CODA_MEDIA_SESSION_ACTIONS: readonly MediaSessionAction[] = [
@@ -72,6 +74,8 @@ export function syncMediaSessionPlayback({
   album,
   artworkUrl,
   playing,
+  positionSeconds,
+  durationSeconds,
 }: MediaSessionPlayback) {
   if (typeof navigator === "undefined" || !("mediaSession" in navigator)) {
     return;
@@ -99,10 +103,41 @@ export function syncMediaSessionPlayback({
       title,
       artist,
       album,
-      ...(artworkUrl ? { artwork: [{ src: artworkUrl }] } : {}),
+      ...(artworkUrl
+        ? {
+            artwork: [{
+              src: artworkUrl,
+              ...(artworkUrl.startsWith("data:image/png;base64,")
+                ? { sizes: "600x600", type: "image/png" }
+                : {}),
+            }],
+          }
+        : {}),
     });
   } catch {
-    // Native media metadata is optional; in-app playback remains authoritative.
+    // System media metadata is optional; in-app playback remains authoritative.
+  }
+
+  if (
+    typeof mediaSession.setPositionState !== "function" ||
+    !Number.isFinite(durationSeconds) ||
+    !Number.isFinite(positionSeconds) ||
+    !durationSeconds ||
+    durationSeconds <= 0 ||
+    positionSeconds === undefined ||
+    positionSeconds < 0 ||
+    positionSeconds > durationSeconds
+  ) {
+    return;
+  }
+  try {
+    mediaSession.setPositionState({
+      duration: durationSeconds,
+      playbackRate: 1,
+      position: positionSeconds,
+    });
+  } catch {
+    // Position donation is optional and varies across WebKit versions.
   }
 }
 

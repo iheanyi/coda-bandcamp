@@ -32,8 +32,6 @@ use tauri::{
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 use url::Url;
 
-mod system_media;
-
 const SERVICE_NAME: &str = "com.coda.bandcamp";
 const CREDENTIAL_KEY: &str = "subsonic";
 const SERVER_BASE: &str = "https://bandcamp.com/api/subsonic";
@@ -4033,25 +4031,10 @@ pub fn run() {
             get_cover_url,
             discover,
             radio_shows,
-            radio_show,
-            supports_native_system_media,
-            update_system_media_session
+            radio_show
         ])
         .run(tauri::generate_context!())
         .expect("error while running Coda");
-}
-
-#[tauri::command]
-fn supports_native_system_media() -> bool {
-    system_media::native_supported()
-}
-
-#[tauri::command]
-async fn update_system_media_session(
-    app: tauri::AppHandle,
-    input: system_media::SystemMediaSessionInput,
-) -> Result<(), String> {
-    system_media::update_session(app, input).await
 }
 
 #[cfg(desktop)]

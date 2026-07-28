@@ -83,10 +83,12 @@ describe("system media controls", () => {
   });
 
   it("publishes the active Coda track and playback state", () => {
+    const setPositionState = vi.fn();
     const mediaSession = {
       metadata: null as MediaMetadata | null,
       playbackState: "none" as MediaSessionPlaybackState,
       setActionHandler: vi.fn(),
+      setPositionState,
     };
     const navigatorDescriptor = Object.getOwnPropertyDescriptor(
       navigator,
@@ -115,6 +117,8 @@ describe("system media controls", () => {
         album: "Soft Focus",
         artworkUrl: "https://t4.bcbits.com/img/cover.jpg",
         playing: true,
+        positionSeconds: 42,
+        durationSeconds: 180,
       });
 
       expect(mediaSession.playbackState).toBe("playing");
@@ -125,6 +129,11 @@ describe("system media controls", () => {
         artist: "Night Archive",
         album: "Soft Focus",
         artwork: [{ src: "https://t4.bcbits.com/img/cover.jpg" }],
+      });
+      expect(setPositionState).toHaveBeenCalledExactlyOnceWith({
+        duration: 180,
+        playbackRate: 1,
+        position: 42,
       });
     } finally {
       if (navigatorDescriptor) {

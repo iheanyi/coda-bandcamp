@@ -14,7 +14,6 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-base64 = "0.22"
 governor = { version = "0.10", default-features = false, features = ["jitter", "std"] }
 httpdate = "1"
 md5 = "0.7"
@@ -32,13 +31,7 @@ url = "2"
 keyring = { version = "3", features = ["windows-native"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-block2 = "0.6.2"
 keyring = { version = "3", features = ["apple-native"] }
-objc2 = "0.6.4"
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSImage", "std"] }
-objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["CFCGTypes", "objc2", "std"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSData", "NSDictionary", "NSGeometry", "NSObject", "NSString", "NSURL", "std"] }
-objc2-media-player = { version = "0.3.2", default-features = false, features = ["MPMediaItem", "MPNowPlayingInfoCenter", "MPRemoteCommand", "MPRemoteCommandCenter", "MPRemoteCommandEvent", "block2", "objc2-app-kit", "objc2-core-foundation", "std"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3", features = ["linux-native-sync-persistent", "crypto-rust"] }
