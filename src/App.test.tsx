@@ -1242,6 +1242,35 @@ describe("Coda application flows", () => {
     }
   });
 
+  it("switches primary destinations without waiting for a WebView snapshot", async () => {
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      document,
+      "startViewTransition",
+    );
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: vi.fn(() => ({ finished: Promise.resolve() })),
+    });
+
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "Recently added" }));
+
+      expect(screen.getByRole("heading", { name: "Recently added" }))
+        .toBeInTheDocument();
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(document, "startViewTransition", originalDescriptor);
+      } else {
+        Reflect.deleteProperty(document, "startViewTransition");
+      }
+    }
+  });
+
   it("links Now Playing metadata to artist and album pages", async () => {
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);

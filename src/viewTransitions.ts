@@ -10,6 +10,10 @@ type CodaViewTransition = {
   finished: Promise<void>;
 };
 
+type CodaViewTransitionOptions = {
+  skipSnapshot?: boolean;
+};
+
 type ViewTransitionDocument = Document & {
   startViewTransition?: (update: () => void) => CodaViewTransition;
 };
@@ -24,7 +28,13 @@ const TRANSITION_CLASSES: Record<CodaViewTransitionKind, string> = {
 export function transitionCodaView(
   update: () => void,
   kind: CodaViewTransitionKind,
+  options: CodaViewTransitionOptions = {},
 ): Promise<void> {
+  if (options.skipSnapshot) {
+    update();
+    return Promise.resolve();
+  }
+
   const transitionDocument = document as ViewTransitionDocument;
   const prefersReducedMotion =
     typeof window.matchMedia === "function" &&

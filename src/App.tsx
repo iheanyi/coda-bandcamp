@@ -3714,7 +3714,7 @@ export default function App() {
         setBrowseMode("releases");
         setSelectedArtist(undefined);
       }
-    }, "page-crossfade");
+    }, "page-crossfade", { skipSnapshot: true });
   }, [nowPlayingOpen, selectedAlbum, selectedArtist, view]);
   const chooseBrowseMode = useCallback((mode: LibraryBrowseMode) => {
     setNowPlayingOpen(false);
