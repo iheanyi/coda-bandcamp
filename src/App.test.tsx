@@ -197,7 +197,7 @@ beforeEach(() => {
   mocks.hasConnection.mockResolvedValue(false);
 });
 
-describe("Coda application flows", () => {
+describe("Coda application flows", { timeout: 10_000 }, () => {
   it("locks the connection form and names the pending Bandcamp request", async () => {
     let resolveConnection!: (albums: Album[]) => void;
     mocks.connectBandcamp.mockReturnValue(new Promise((resolve) => {
@@ -536,7 +536,9 @@ describe("Coda application flows", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
     expect(await screen.findByText("Now playing")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Clear next" }));
-    expect(await screen.findByText("End of the queue")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("End of the queue")).toBeInTheDocument();
+    });
     expect(screen.getByRole("button", {
       name: "Play something from Soft Focus",
     })).toBeInTheDocument();

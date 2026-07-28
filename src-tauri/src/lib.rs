@@ -28,6 +28,10 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, WindowEvent,
 };
+
+#[cfg(target_os = "macos")]
+mod macos_window;
+
 #[cfg(desktop)]
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 use url::Url;
@@ -3918,6 +3922,13 @@ pub fn run() {
                 )?;
                 ensure_window_is_visible(app);
 
+                #[cfg(target_os = "macos")]
+                if let Some(window) = app.get_webview_window("main") {
+                    if let Err(error) = macos_window::install_centered_title(&window) {
+                        eprintln!("Could not install Coda's centered native title: {error}");
+                    }
+                }
+
                 let show = MenuItem::with_id(app, "show", "Show Coda", true, None::<&str>)?;
                 let play_pause =
                     MenuItem::with_id(app, "play-pause", "Play / Pause", true, None::<&str>)?;
@@ -4104,6 +4115,30 @@ fn ensure_window_is_visible(app: &tauri::App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn main_window_keeps_native_chrome_enabled() {
+        let config: Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("valid Tauri config");
+        let main_window = config["app"]["windows"]
+            .as_array()
+            .and_then(|windows| {
+                windows
+                    .iter()
+                    .find(|window| window["label"].as_str() == Some("main"))
+            })
+            .expect("main window config");
+
+        assert_eq!(main_window["decorations"], Value::Bool(true));
+        assert_eq!(
+            main_window["titleBarStyle"],
+            Value::String("Visible".into())
+        );
+        assert_eq!(main_window["closable"], Value::Bool(true));
+        assert_eq!(main_window["minimizable"], Value::Bool(true));
+        assert_eq!(main_window["maximizable"], Value::Bool(true));
+        assert_eq!(main_window["resizable"], Value::Bool(true));
+    }
 
     fn sample_player_track(id: &str) -> PlayerStateTrack {
         PlayerStateTrack {

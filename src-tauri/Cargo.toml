@@ -32,6 +32,31 @@ keyring = { version = "3", features = ["windows-native"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }
+objc2 = { version = "0.6.2", default-features = false, features = ["std"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+  "NSAccessibilityProtocols",
+  "NSColor",
+  "NSControl",
+  "NSFont",
+  "NSFontDescriptor",
+  "NSKeyValueBinding",
+  "NSLayoutAnchor",
+  "NSLayoutConstraint",
+  "NSParagraphStyle",
+  "NSResponder",
+  "NSScreen",
+  "NSText",
+  "NSTextField",
+  "NSView",
+  "NSWindow",
+  "objc2-core-foundation",
+] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+  "NSArray",
+  "NSObject",
+  "NSString",
+  "NSUserDefaults",
+] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3", features = ["linux-native-sync-persistent", "crypto-rust"] }
