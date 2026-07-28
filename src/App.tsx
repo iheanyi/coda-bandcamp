@@ -108,8 +108,15 @@ import {
   writeLocalFavorites,
 } from "./localFavorites";
 import { countLabel } from "./countLabel";
-import { showAirPlayPicker, supportsAirPlayPicker } from "./media";
+import {
+  installMediaSessionTrackHandlers,
+  showAirPlayPicker,
+  supportsAirPlayPicker,
+  syncMediaSessionPlayback,
+} from "./media";
+import { MiniPlayerBridge } from "./MiniPlayerBridge";
 import { NowPlayingView } from "./NowPlayingView";
+import { createSystemArtworkDataUrl } from "./systemArtwork";
 import {
   RadioChapterCopy,
   type RadioChapterLocalLinks,
@@ -1996,12 +2003,97 @@ export default function App() {
   );
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
   const currentTrack = queue[currentIndex];
+  const currentAlbum = useMemo(
+    () =>
+      currentTrack
+        ? albums.find((album) => album.id === currentTrack.albumId)
+        : undefined,
+    [albums, currentTrack],
+  );
   useEffect(() => {
     if (currentTrack) lastPlayedTrackRef.current = currentTrack;
   }, [currentTrack]);
   const currentRadioTimeline = useMemo(
     () => boundRadioChapters(currentTrack?.radioChapters ?? []),
     [currentTrack?.radioChapters],
+  );
+  const { current: currentSystemMediaChapter } = useCurrentRadioChapter(
+    playbackClock,
+    currentRadioTimeline,
+  );
+  const directSystemMediaArtworkUrl =
+    currentSystemMediaChapter?.artworkUrl ??
+    currentTrack?.artworkUrl ??
+    currentAlbum?.artworkUrl;
+  const systemMediaCoverArtId =
+    currentTrack?.coverArt ?? currentAlbum?.coverArt;
+  const systemMediaArtworkIdentity = currentTrack
+    ? [
+        currentTrack.id,
+        currentSystemMediaChapter?.timecode ?? "track",
+        systemMediaCoverArtId ?? "",
+      ].join(":")
+    : "";
+  const [resolvedSystemMediaArtwork, setResolvedSystemMediaArtwork] =
+    useState<{ identity: string; url: string }>();
+  useEffect(() => {
+    if (
+      !systemMediaArtworkIdentity ||
+      directSystemMediaArtworkUrl ||
+      !systemMediaCoverArtId
+    ) {
+      return;
+    }
+    let active = true;
+    fetchCoverUrl(systemMediaCoverArtId)
+      .then((url) => {
+        if (active) {
+          setResolvedSystemMediaArtwork({
+            identity: systemMediaArtworkIdentity,
+            url,
+          });
+        }
+      })
+      .catch(() => {
+        // The generated cover remains available if signed artwork refresh fails.
+      });
+    return () => {
+      active = false;
+    };
+  }, [
+    directSystemMediaArtworkUrl,
+    systemMediaArtworkIdentity,
+    systemMediaCoverArtId,
+  ]);
+  const systemMediaDisplay = useMemo(
+    () => currentTrack
+      ? {
+          title: currentSystemMediaChapter?.title ?? currentTrack.title,
+          artist: currentSystemMediaChapter?.artist ?? currentTrack.artist,
+          album:
+            currentSystemMediaChapter?.album ??
+            currentTrack.album,
+          artworkUrl:
+            directSystemMediaArtworkUrl,
+          palette: currentTrack.palette,
+        }
+      : undefined,
+    [currentSystemMediaChapter, currentTrack, directSystemMediaArtworkUrl],
+  );
+  const systemMediaArtworkUrl = useMemo(
+    () =>
+      systemMediaDisplay?.artworkUrl ??
+      (resolvedSystemMediaArtwork?.identity === systemMediaArtworkIdentity
+        ? resolvedSystemMediaArtwork.url
+        : undefined) ??
+      (systemMediaDisplay
+        ? createSystemArtworkDataUrl(systemMediaDisplay)
+        : undefined),
+    [
+      resolvedSystemMediaArtwork,
+      systemMediaArtworkIdentity,
+      systemMediaDisplay,
+    ],
   );
   const currentRadioScrobbleTimeline = useMemo(
     () =>
@@ -2013,6 +2105,25 @@ export default function App() {
   const currentRadioShowId = currentTrack
     ? radioShowIdFromTrackId(currentTrack.id)
     : undefined;
+  useEffect(() => {
+    syncMediaSessionPlayback({
+      title: systemMediaDisplay?.title,
+      artist: systemMediaDisplay?.artist,
+      album: systemMediaDisplay?.album,
+      artworkUrl: systemMediaArtworkUrl,
+      playing,
+      positionSeconds: playbackClock.readExact(),
+      durationSeconds: currentTrack?.duration,
+    });
+  }, [
+    currentTrack?.duration,
+    playing,
+    playbackClock,
+    systemMediaArtworkUrl,
+    systemMediaDisplay?.album,
+    systemMediaDisplay?.artist,
+    systemMediaDisplay?.title,
+  ]);
   const latestPlayerStateRef = useRef({
     queue,
     currentIndex,
@@ -2043,6 +2154,20 @@ export default function App() {
       })
       .catch(() => {
         // The native startup hook is the primary path; this covers delayed WebView startup.
+      });
+  }, []);
+
+  const showMainWindow = useCallback(() => {
+    if (!isDesktop()) return;
+    void import("@tauri-apps/api/window")
+      .then(async ({ getCurrentWindow }) => {
+        const appWindow = getCurrentWindow();
+        await appWindow.unminimize();
+        await appWindow.show();
+        await appWindow.setFocus();
+      })
+      .catch(() => {
+        // Native tray restore is optional; the main window stays usable.
       });
   }, []);
 
@@ -2782,6 +2907,12 @@ export default function App() {
   const togglePlayback = useCallback(() => {
     if (currentTrack) setPlaying((value) => !value);
   }, [currentTrack]);
+  const playFromSystemMediaControls = useCallback(() => {
+    if (currentTrack) setPlaying(true);
+  }, [currentTrack]);
+  const pauseFromSystemMediaControls = useCallback(() => {
+    setPlaying(false);
+  }, []);
 
   const advanceQueue = useCallback(() => {
     playbackClock.reset();
@@ -2917,6 +3048,38 @@ export default function App() {
     queue.length,
     repeat,
   ]);
+
+  const systemMediaHandlersRef = useRef({
+    onPlay: playFromSystemMediaControls,
+    onPause: pauseFromSystemMediaControls,
+    onPreviousTrack: previous,
+    onNextTrack: next,
+  });
+  useEffect(() => {
+    systemMediaHandlersRef.current = {
+      onPlay: playFromSystemMediaControls,
+      onPause: pauseFromSystemMediaControls,
+      onPreviousTrack: previous,
+      onNextTrack: next,
+    };
+  }, [
+    next,
+    pauseFromSystemMediaControls,
+    playFromSystemMediaControls,
+    previous,
+  ]);
+  useEffect(
+    () => {
+      return installMediaSessionTrackHandlers({
+        onPlay: () => systemMediaHandlersRef.current.onPlay(),
+        onPause: () => systemMediaHandlersRef.current.onPause(),
+        onPreviousTrack: () =>
+          systemMediaHandlersRef.current.onPreviousTrack(),
+        onNextTrack: () => systemMediaHandlersRef.current.onNextTrack(),
+      });
+    },
+    [],
+  );
 
   useEffect(() => {
     const keyboard = (event: KeyboardEvent) => {
@@ -3816,22 +3979,59 @@ export default function App() {
     void loadArtistTracks(group, "queue");
   }, [loadArtistTracks]);
 
+  const desktopControlHandlersRef = useRef({
+    onPlay: playFromSystemMediaControls,
+    onPause: pauseFromSystemMediaControls,
+    onTogglePlayback: togglePlayback,
+    onPrevious: previous,
+    onNext: next,
+    onShuffleLibrary: shuffleLibrary,
+  });
+  useEffect(() => {
+    desktopControlHandlersRef.current = {
+      onPlay: playFromSystemMediaControls,
+      onPause: pauseFromSystemMediaControls,
+      onTogglePlayback: togglePlayback,
+      onPrevious: previous,
+      onNext: next,
+      onShuffleLibrary: shuffleLibrary,
+    };
+  }, [
+    next,
+    pauseFromSystemMediaControls,
+    playFromSystemMediaControls,
+    previous,
+    shuffleLibrary,
+    togglePlayback,
+  ]);
   useEffect(() => {
     if (!isDesktop()) return;
     let unlisten: (() => void) | undefined;
     let disposed = false;
+    const safelyUnlisten = (dispose: () => void) => {
+      try {
+        void Promise.resolve(dispose()).catch(() => undefined);
+      } catch {
+        // A rebuilding WebView may have already removed the native listener.
+      }
+    };
     void import("@tauri-apps/api/event")
       .then(({ listen }) =>
         listen<string>("coda://tray-control", ({ payload }) => {
-          if (payload === "play-pause") togglePlayback();
-          if (payload === "previous") previous();
-          if (payload === "next") next();
-          if (payload === "shuffle-library") void shuffleLibrary();
+          const handlers = desktopControlHandlersRef.current;
+          if (payload === "play") handlers.onPlay();
+          if (payload === "pause") handlers.onPause();
+          if (payload === "play-pause") handlers.onTogglePlayback();
+          if (payload === "previous") handlers.onPrevious();
+          if (payload === "next") handlers.onNext();
+          if (payload === "shuffle-library") {
+            void handlers.onShuffleLibrary();
+          }
         }),
       )
       .then((dispose) => {
         if (disposed) {
-          dispose();
+          safelyUnlisten(dispose);
         } else {
           unlisten = dispose;
         }
@@ -3841,9 +4041,9 @@ export default function App() {
       });
     return () => {
       disposed = true;
-      unlisten?.();
+      if (unlisten) safelyUnlisten(unlisten);
     };
-  }, [next, previous, shuffleLibrary, togglePlayback]);
+  }, []);
   const isInitialLoading =
     syncState === "checking" ||
     (connected && syncState === "syncing" && !albums.length && !libraryError);
@@ -4455,6 +4655,23 @@ export default function App() {
           onToggleQueue={toggleQueue}
         />
       )}
+      <MiniPlayerBridge
+        track={currentTrack}
+        artwork={currentAlbum}
+        radioTimeline={currentRadioTimeline}
+        playbackClock={playbackClock}
+        playing={playing}
+        durationSeconds={currentTrack?.duration ?? 0}
+        volume={volume}
+        canPrevious={canPrevious}
+        canNext={canNext}
+        onTogglePlayback={togglePlayback}
+        onPrevious={previous}
+        onNext={next}
+        onSeek={seek}
+        onSetVolume={setVolume}
+        onShowMain={showMainWindow}
+      />
       <audio
         ref={audioRef}
         src={streamUrl}
