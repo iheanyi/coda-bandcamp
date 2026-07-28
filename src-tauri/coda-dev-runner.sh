@@ -18,6 +18,16 @@ case "${1:-}" in
   */coda)
     executable="$1"
     shift
+    instance_slug="${CODA_DEV_INSTANCE_SLUG:-}"
+    if [ -n "$instance_slug" ]; then
+      if ! printf '%s\n' "$instance_slug" | grep -Eq '^[a-z0-9]+(-[a-z0-9]+)*$'; then
+        printf 'Coda received an invalid development instance slug "%s".\n' "$instance_slug" >&2
+        exit 1
+      fi
+      instance_executable="$(dirname -- "$executable")/coda-$instance_slug"
+      cp -f "$executable" "$instance_executable"
+      executable="$instance_executable"
+    fi
     identity_hash="$(
       security find-identity -v -p codesigning |
         grep -F "\"$identity\"" |

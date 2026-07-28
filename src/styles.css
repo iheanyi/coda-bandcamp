@@ -4130,7 +4130,6 @@ html:not(.coda-view-transitions-supported) .now-playing__up-next {
   white-space: nowrap;
 }
 
-.tracklist__loading,
 .tracklist__empty {
   display: flex;
   align-items: center;
@@ -4139,6 +4138,62 @@ html:not(.coda-view-transitions-supported) .now-playing__up-next {
   min-height: 180px;
   color: #898c87;
   font-size: 12px;
+}
+
+.track-row--skeleton {
+  pointer-events: none;
+}
+
+.track-row__skeleton {
+  display: block;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.09);
+  animation: track-skeleton-pulse 900ms ease-in-out infinite alternate;
+}
+
+.track-row__skeleton--number {
+  width: 10px;
+  height: 10px;
+  justify-self: center;
+}
+
+.track-row__skeleton--title {
+  width: min(58%, 220px);
+  height: 10px;
+}
+
+.track-row__skeleton--artist {
+  width: min(34%, 130px);
+  height: 7px;
+}
+
+.track-row__skeleton--duration {
+  width: 28px;
+  height: 8px;
+  justify-self: center;
+}
+
+.track-row__skeleton--action {
+  width: 18px;
+  height: 18px;
+  justify-self: center;
+}
+
+@keyframes track-skeleton-pulse {
+  from {
+    opacity: 0.45;
+  }
+
+  to {
+    opacity: 0.9;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .track-row__skeleton {
+    animation: none;
+    opacity: 0.65;
+  }
 }
 
 .tracklist__empty {

@@ -44,7 +44,31 @@ npm run dev
 ```
 
 `npm run dev` opens the desktop app with frontend hot reload and automatic Rust
-rebuilds. To create a native installer for the current platform:
+rebuilds.
+
+When developing in multiple worktrees, install
+[Grove](https://github.com/iheanyi/grove) and run this from each worktree:
+
+```sh
+grove start
+```
+
+Grove assigns each worktree a stable port, while Coda gives the native process,
+window titles, app data, and saved window state a matching development identity.
+Bandcamp and Last.fm credentials remain shared through the operating system
+vault. Use `grove ls`, `grove logs`, `grove restart`, and `grove stop` to manage
+the instances.
+
+To override the derived native name for a one-off launch:
+
+```sh
+CODA_DEV_INSTANCE=chrome-review grove start
+```
+
+The normal `npm run dev` command remains available for a single development
+instance.
+
+To create a native installer for the current platform:
 
 ```sh
 npm run desktop:build

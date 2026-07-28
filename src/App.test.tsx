@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Album, Track } from "./types";
+import { albumQueryKey } from "./libraryQueries";
 
 const mocks = vi.hoisted(() => ({
   beginLastFmAuthorization: vi.fn(),
@@ -145,6 +146,16 @@ const single: Album = {
   }],
   palette: ["#968", "#221"],
 };
+
+function deferred<Value>() {
+  let resolve!: (value: Value) => void;
+  let reject!: (cause: unknown) => void;
+  const promise = new Promise<Value>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
+}
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -1302,6 +1313,109 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(await screen.findByRole("button", { name: "Open Now Playing" }))
       .toBeInTheDocument();
     expect(screen.getAllByText("Streetlight").length).toBeGreaterThan(0);
+  });
+
+  it("prefetches a deliberate album hover and opens cached tracks immediately", async () => {
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    const { queryClient } = renderApp();
+
+    await screen.findByText("Soft Focus");
+    const openButton = screen.getByRole("button", { name: "Open Soft Focus" });
+    const albumCard = openButton.closest(".album-card")!;
+    mocks.fetchAlbum.mockClear();
+    vi.useFakeTimers();
+    try {
+      fireEvent.pointerEnter(albumCard);
+      fireEvent.pointerLeave(albumCard);
+      await act(async () => vi.runAllTimers());
+      expect(mocks.fetchAlbum).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    fireEvent.pointerEnter(albumCard);
+    await waitFor(() =>
+      expect(queryClient.getQueryData(albumQueryKey(album.id))).toEqual(tracks),
+    );
+
+    mocks.fetchAlbum.mockClear();
+    fireEvent.click(openButton);
+
+    const albumPage = screen.getByRole("article", {
+      name: "Soft Focus release details",
+    });
+    expect(within(albumPage).getByText("First Light")).toBeInTheDocument();
+    expect(within(albumPage).getByText("Afterimage")).toBeInTheDocument();
+    expect(within(albumPage).queryByText("Loading tracks…")).not.toBeInTheDocument();
+    expect(mocks.fetchAlbum).not.toHaveBeenCalled();
+  });
+
+  it("keeps a cold album busy when an older album request settles", async () => {
+    const secondTracks: Track[] = [{
+      ...tracks[0],
+      id: "track-second",
+      title: "Other Light",
+      album: "Other Focus",
+      albumId: "album-2",
+    }];
+    const secondAlbum: Album = {
+      ...album,
+      id: "album-2",
+      title: "Other Focus",
+      songCount: secondTracks.length,
+      duration: secondTracks[0].duration,
+      tracks: secondTracks,
+    };
+    const firstRequest = deferred<Track[]>();
+    const secondRequest = deferred<Track[]>();
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album, secondAlbum]);
+    mocks.fetchAlbum.mockImplementation((requestedAlbum: Album) =>
+      requestedAlbum.id === album.id
+        ? firstRequest.promise
+        : secondRequest.promise,
+    );
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    fireEvent.click(screen.getByRole("button", { name: "Play Soft Focus" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open Other Focus" }));
+    const albumPage = await screen.findByRole("article", {
+      name: "Other Focus release details",
+    });
+    expect(within(albumPage).getByText("Loading tracks…")).toBeInTheDocument();
+
+    await act(async () => firstRequest.resolve(tracks));
+
+    expect(within(albumPage).getByText("Loading tracks…")).toBeInTheDocument();
+    await act(async () => secondRequest.resolve(secondTracks));
+    expect(within(albumPage).getByText("Other Light")).toBeInTheDocument();
+  });
+
+  it("shows a bounded accessible skeleton while a cold album loads", async () => {
+    const request = deferred<Track[]>();
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    mocks.fetchAlbum.mockReturnValueOnce(request.promise);
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    fireEvent.click(screen.getByRole("button", { name: "Open Soft Focus" }));
+    const albumPage = await screen.findByRole("article", {
+      name: "Soft Focus release details",
+    });
+    const trackList = within(albumPage).getByRole("region", {
+      name: "Track list",
+    });
+
+    expect(trackList).toHaveAttribute("aria-busy", "true");
+    expect(within(trackList).getByRole("status", {
+      name: "Loading tracks for Soft Focus",
+    })).toBeInTheDocument();
+    expect(trackList.querySelectorAll(".track-row--skeleton")).toHaveLength(3);
+
+    await act(async () => request.resolve(tracks));
   });
 
   it("opens Now Playing from the player artwork and returns to the exact prior view", async () => {

@@ -1,11 +1,16 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
+const serverPort = Number(process.env.PORT ?? 1420);
+if (!Number.isInteger(serverPort) || serverPort < 1 || serverPort > 65_535) {
+  throw new Error("PORT must be an integer between 1 and 65535.");
+}
+
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
   server: {
-    port: 1420,
+    port: serverPort,
     strictPort: true,
     host: "127.0.0.1",
   },

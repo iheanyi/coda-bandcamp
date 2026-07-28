@@ -43,6 +43,14 @@ export function albumQueryOptions(album: Album) {
   });
 }
 
+export function cachedAlbumTracks(
+  queryClient: QueryClient,
+  album: Album,
+): Track[] | undefined {
+  if (album.tracks !== undefined) return album.tracks;
+  return queryClient.getQueryData<Track[]>(albumQueryKey(album.id));
+}
+
 function seedLocalAlbumTracks(queryClient: QueryClient, album: Album): boolean {
   const queryKey = albumQueryKey(album.id);
   if (
@@ -68,6 +76,14 @@ export function ensureAlbumQueryData(
     ...albumQueryOptions(album),
     revalidateIfStale: true,
   });
+}
+
+export async function prefetchAlbumQueryData(
+  queryClient: QueryClient,
+  album: Album,
+): Promise<void> {
+  if (seedLocalAlbumTracks(queryClient, album)) return;
+  await queryClient.prefetchQuery(albumQueryOptions(album));
 }
 
 async function invalidateAlbumQuery(

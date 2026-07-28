@@ -14,10 +14,12 @@ vi.mock("./lib", () => ({
 import {
   LIBRARY_AUTO_REVALIDATE_INTERVAL_MS,
   albumQueryKey,
+  cachedAlbumTracks,
   clearBandcampQueryData,
   ensureAlbumQueryData,
   libraryQueryKey,
   mergeLibraryProgress,
+  prefetchAlbumQueryData,
   refreshAlbumQueryData,
   shouldAutoRevalidateLibrary,
   toLibrarySummaries,
@@ -172,6 +174,30 @@ describe("library query helpers", () => {
     await expect(Promise.all([first, second])).resolves.toEqual([
       [expect.objectContaining({ id: "track-1" })],
       [expect.objectContaining({ id: "track-1" })],
+    ]);
+  });
+
+  it("reads cached tracks synchronously and prefetches a cold album", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const cachedRelease = album("one");
+    client.setQueryData(albumQueryKey(cachedRelease.id), [
+      track("cached", "Cached"),
+    ]);
+
+    expect(cachedAlbumTracks(client, cachedRelease)).toEqual([
+      expect.objectContaining({ id: "cached" }),
+    ]);
+    expect(mocks.fetchAlbum).not.toHaveBeenCalled();
+
+    const coldRelease = album("two");
+    mocks.fetchAlbum.mockResolvedValueOnce([track("prefetched", "Prefetched")]);
+    await prefetchAlbumQueryData(client, coldRelease);
+
+    expect(mocks.fetchAlbum).toHaveBeenCalledOnce();
+    expect(client.getQueryData(albumQueryKey(coldRelease.id))).toEqual([
+      expect.objectContaining({ id: "prefetched" }),
     ]);
   });
 

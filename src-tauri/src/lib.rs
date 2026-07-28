@@ -3933,7 +3933,18 @@ pub fn run() {
                     }
                 }
 
-                let show = MenuItem::with_id(app, "show", "Show Coda", true, None::<&str>)?;
+                let product_name = app
+                    .config()
+                    .product_name
+                    .clone()
+                    .unwrap_or_else(|| "Coda".to_string());
+                let show = MenuItem::with_id(
+                    app,
+                    "show",
+                    format!("Show {product_name}"),
+                    true,
+                    None::<&str>,
+                )?;
                 let mini_player =
                     MenuItem::with_id(app, "mini-player", "Mini Player", true, None::<&str>)?;
                 let play_pause =
@@ -3949,7 +3960,13 @@ pub fn run() {
                     None::<&str>,
                 )?;
                 let separator = PredefinedMenuItem::separator(app)?;
-                let quit = MenuItem::with_id(app, "quit", "Quit Coda", true, None::<&str>)?;
+                let quit = MenuItem::with_id(
+                    app,
+                    "quit",
+                    format!("Quit {product_name}"),
+                    true,
+                    None::<&str>,
+                )?;
                 let menu = Menu::with_items(
                     app,
                     &[
@@ -3971,7 +3988,7 @@ pub fn run() {
                             .cloned()
                             .ok_or("Coda's tray icon is unavailable.")?,
                     )
-                    .tooltip("Coda")
+                    .tooltip(product_name)
                     .menu(&menu)
                     .show_menu_on_left_click(false)
                     .on_menu_event(|app, event| match event.id().as_ref() {

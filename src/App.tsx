@@ -94,12 +94,14 @@ import {
   type LibraryBrowseMode,
 } from "./libraryBrowse";
 import {
+  cachedAlbumTracks,
   clearBandcampQueryData,
   ensureAlbumQueryData,
   hydrateLibraryQuery,
   libraryQueryKey,
   libraryStateQueryOptions,
   mergeLibraryProgress,
+  prefetchAlbumQueryData,
   refreshAlbumQueryData,
   revalidateAlbumQueryData,
   shouldAutoRevalidateLibrary,
@@ -228,6 +230,8 @@ const QUEUE_PANEL_EXIT_MS = 240;
 const PLAYER_STATE_SAVE_DEBOUNCE_MS = 450;
 const PLAYER_STATE_CHECKPOINT_MS = 5_000;
 const PREVIOUS_RESTART_THRESHOLD_SECONDS = 4;
+const ALBUM_PREFETCH_DELAY_MS = 120;
+const CODA_APP_NAME = import.meta.env.VITE_CODA_APP_NAME?.trim() || "Coda";
 const LIBRARY_COLLATOR = new Intl.Collator(undefined, {
   numeric: true,
   sensitivity: "base",
@@ -471,7 +475,9 @@ const WindowTitleController = memo(function WindowTitleController({
           : view === "radio"
             ? "Bandcamp Radio"
             : currentRadioChapter?.title ?? currentTrack?.title);
-  const windowTitle = subject ? `${subject} — Coda` : "Coda";
+  const windowTitle = subject
+    ? `${subject} — ${CODA_APP_NAME}`
+    : CODA_APP_NAME;
 
   useEffect(() => {
     document.title = windowTitle;
@@ -489,6 +495,7 @@ const WindowTitleController = memo(function WindowTitleController({
 const AlbumCard = memo(function AlbumCard({
   album,
   onOpen,
+  onPrefetch,
   onPlay,
   onQueue,
   onArtist,
@@ -498,6 +505,7 @@ const AlbumCard = memo(function AlbumCard({
 }: {
   album: Album;
   onOpen: (album: Album) => void;
+  onPrefetch: (album: Album) => void;
   onPlay: (album: Album) => void;
   onQueue: (album: Album) => void;
   onArtist: (artist: string) => void;
@@ -505,8 +513,32 @@ const AlbumCard = memo(function AlbumCard({
   playing: boolean;
   onTogglePlayback: () => void;
 }) {
+  const prefetchTimerRef = useRef<number | undefined>(undefined);
+  const cancelScheduledPrefetch = () => {
+    if (prefetchTimerRef.current === undefined) return;
+    window.clearTimeout(prefetchTimerRef.current);
+    prefetchTimerRef.current = undefined;
+  };
+  const schedulePrefetch = () => {
+    if (prefetchTimerRef.current !== undefined) return;
+    prefetchTimerRef.current = window.setTimeout(() => {
+      prefetchTimerRef.current = undefined;
+      onPrefetch(album);
+    }, ALBUM_PREFETCH_DELAY_MS);
+  };
+
+  useEffect(() => cancelScheduledPrefetch, [album.id, onPrefetch]);
+
   return (
-    <article className="album-card">
+    <article
+      className="album-card"
+      onPointerEnter={schedulePrefetch}
+      onPointerLeave={cancelScheduledPrefetch}
+      onFocusCapture={() => {
+        cancelScheduledPrefetch();
+        onPrefetch(album);
+      }}
+    >
       <div className="album-card__cover">
         <CoverArt album={album} />
         <button
@@ -1443,6 +1475,7 @@ function AlbumDetailPage({
   onTogglePlayback: () => void;
 }) {
   const activeAlbum = currentAlbumId === album.id;
+  const skeletonRowCount = Math.min(6, Math.max(3, album.songCount));
   return (
     <article className="album-detail" aria-label={`${album.title} release details`}>
       <button className="album-detail__back" onClick={onBack}>
@@ -1505,7 +1538,11 @@ function AlbumDetailPage({
             </div>
         </div>
         </header>
-        <section className="album-detail__tracks" aria-label="Track list">
+        <section
+          className="album-detail__tracks"
+          aria-label="Track list"
+          aria-busy={loading}
+        >
           <div className="album-detail__tracks-heading">
             <div>
               <span className="eyebrow">Track list</span>
@@ -1524,7 +1561,30 @@ function AlbumDetailPage({
             <span className="tracklist__actions-heading">Actions</span>
           </div>
           {loading ? (
-            <div className="tracklist__loading"><RefreshCw size={20} className="spin" /> Loading tracks…</div>
+            <>
+              <div
+                className="sr-only"
+                role="status"
+                aria-label={`Loading tracks for ${album.title}`}
+              >
+                Loading tracks…
+              </div>
+              {Array.from({ length: skeletonRowCount }, (_, index) => (
+                <div
+                  className="track-row track-row--skeleton"
+                  aria-hidden="true"
+                  key={index}
+                >
+                  <span className="track-row__skeleton track-row__skeleton--number" />
+                  <span className="track-row__copy">
+                    <span className="track-row__skeleton track-row__skeleton--title" />
+                    <span className="track-row__skeleton track-row__skeleton--artist" />
+                  </span>
+                  <span className="track-row__skeleton track-row__skeleton--duration" />
+                  <span className="track-row__skeleton track-row__skeleton--action" />
+                </div>
+              ))}
+            </>
           ) : !album.tracks?.length ? (
             <div className="tracklist__empty">
               <Music2 size={22} />
@@ -1950,7 +2010,7 @@ export default function App() {
   const [nowPlayingOpen, setNowPlayingOpen] = useState(false);
   const [playerStateReady, setPlayerStateReady] = useState(false);
   const [selectedAlbum, setSelectedAlbum] = useState<Album>();
-  const [albumLoading, setAlbumLoading] = useState(false);
+  const [loadingAlbumId, setLoadingAlbumId] = useState<string>();
   const [artworkRefreshing, setArtworkRefreshing] = useState(false);
   const [artistAction, setArtistAction] = useState<"play" | "shuffle" | "queue">();
   const [queueSearchProgress, setQueueSearchProgress] = useState<{ done: number; total: number }>();
@@ -3244,8 +3304,6 @@ export default function App() {
     sessionGeneration = bandcampSessionGenerationRef.current,
   ): Promise<Album | undefined> => {
     if (bandcampSessionGenerationRef.current !== sessionGeneration) return undefined;
-    const hasLocalTracklist = Boolean(album.tracks?.length);
-    if (!hasLocalTracklist) setAlbumLoading(true);
     try {
       const tracks = await ensureAlbumQueryData(queryClient, album);
       if (bandcampSessionGenerationRef.current !== sessionGeneration) return undefined;
@@ -3260,20 +3318,24 @@ export default function App() {
     } catch (cause) {
       if (bandcampSessionGenerationRef.current !== sessionGeneration) return undefined;
       throw cause;
-    } finally {
-      if (
-        !hasLocalTracklist &&
-        bandcampSessionGenerationRef.current === sessionGeneration
-      ) {
-        setAlbumLoading(false);
-      }
     }
   }, [queryClient, setAlbums]);
 
   const openAlbum = useCallback(async (album: Album) => {
     const sessionGeneration = bandcampSessionGenerationRef.current;
     const hasLocalTracklist = Boolean(album.tracks?.length);
-    let albumForDetail = album;
+    const cachedTracks = cachedAlbumTracks(queryClient, album);
+    const coldLoad = cachedTracks === undefined;
+    let albumForDetail = coldLoad
+      ? album
+      : albumWithTracks(album, cachedTracks);
+    if (coldLoad) {
+      setLoadingAlbumId(album.id);
+    } else {
+      setLoadingAlbumId((current) =>
+        current === album.id ? undefined : current
+      );
+    }
     void transitionCodaView(() => setSelectedAlbum(albumForDetail), "page-forward");
     try {
       const ready = await ensureTracks(album, sessionGeneration);
@@ -3308,8 +3370,18 @@ export default function App() {
     } catch (cause) {
       if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
       notify(String(cause), "bad");
+    } finally {
+      if (coldLoad) {
+        setLoadingAlbumId((current) =>
+          current === album.id ? undefined : current
+        );
+      }
     }
   }, [ensureTracks, notify, queryClient, setAlbums]);
+
+  const prefetchAlbum = useCallback((album: Album) => {
+    void prefetchAlbumQueryData(queryClient, album);
+  }, [queryClient]);
 
   const openTrackAlbum = useCallback((track: Track) => {
     if (track.id.startsWith("radio:")) {
@@ -3787,7 +3859,7 @@ export default function App() {
     clearRuntimeCaches();
     setConnected(false);
     setAlbums([]);
-    setAlbumLoading(false);
+    setLoadingAlbumId(undefined);
     setArtworkRefreshing(false);
     setArtistAction(undefined);
     setQueueSearchProgress(undefined);
@@ -4436,7 +4508,7 @@ export default function App() {
             {selectedAlbum ? (
               <AlbumDetailPage
                 album={selectedAlbum}
-                loading={albumLoading}
+                loading={loadingAlbumId === selectedAlbum.id}
                 onBack={closeAlbum}
                 onPlayAlbum={playSelectedAlbum}
                 onQueueAlbum={queueSelectedAlbum}
@@ -4572,6 +4644,7 @@ export default function App() {
                         <AlbumCard
                           album={album}
                           onOpen={openAlbum}
+                          onPrefetch={prefetchAlbum}
                           onPlay={playAlbum}
                           onQueue={queueAlbum}
                           onArtist={browseArtist}
