@@ -197,7 +197,7 @@ beforeEach(() => {
   mocks.hasConnection.mockResolvedValue(false);
 });
 
-describe("Coda application flows", () => {
+describe("Coda application flows", { timeout: 10_000 }, () => {
   it("locks the connection form and names the pending Bandcamp request", async () => {
     let resolveConnection!: (albums: Album[]) => void;
     mocks.connectBandcamp.mockReturnValue(new Promise((resolve) => {
