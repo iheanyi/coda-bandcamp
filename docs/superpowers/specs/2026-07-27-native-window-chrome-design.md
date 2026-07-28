@@ -55,7 +55,8 @@ install the visual title during Tauri setup:
 2. Create an AppKit `NSTextField` label initialized from `NSWindow.title`.
 3. Apply the system title font, system label color, centered text alignment, and
    truncation behavior.
-4. Add the label to the native window frame view.
+4. Add the label to the native close button's managed title-bar view so AppKit
+   owns its visibility during native full-screen transitions.
 5. Use Auto Layout to constrain the label's horizontal center to the full frame
    view and its vertical center to the native close button.
 6. Bind the label's value to `NSWindow.title` so renderer title updates remain
@@ -64,8 +65,9 @@ install the visual title during Tauri setup:
    built-in visual title using `NSWindow.titleVisibility`.
 
 The title label is native AppKit, not HTML. The real traffic lights and title
-bar remain owned by `NSWindow`. Auto Layout keeps the title centered when the
-window is resized or enters and exits full screen.
+bar remain owned by `NSWindow`. Mounting the label in the managed title-bar
+hierarchy makes it retract and return with the native chrome, while Auto Layout
+keeps the title centered when the window is resized.
 
 `NSTextField(labelWithString:)` is noneditable and reports
 `mouseDownCanMoveWindow = true`, so dragging over the title continues to move

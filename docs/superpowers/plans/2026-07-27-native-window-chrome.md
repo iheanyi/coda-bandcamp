@@ -235,6 +235,8 @@ pub(crate) fn install_centered_title(window: &tauri::WebviewWindow) -> Result<()
     let close_button = native_window
         .standardWindowButton(NSWindowButton::CloseButton)
         .ok_or_else(|| "the main NSWindow has no native close button".to_string())?;
+    let titlebar_view = unsafe { close_button.superview() }
+        .ok_or_else(|| "the main NSWindow has no managed title-bar view".to_string())?;
 
     let semantic_title = native_window.title().to_string();
     let title = NSTextField::labelWithString(
@@ -258,7 +260,7 @@ pub(crate) fn install_centered_title(window: &tauri::WebviewWindow) -> Result<()
             None,
         );
     }
-    frame_view.addSubview(&title);
+    titlebar_view.addSubview(&title);
 
     let constraints = NSArray::from_retained_slice(&[
         title
@@ -382,6 +384,8 @@ Use Computer Use against the new Coda process where possible:
 - verify the native static title matches the active `NSWindow` title;
 - compare the title and window frame centers within a one-point tolerance;
 - resize and move the window, then re-check the center;
+- enter and exit native full screen, verifying the centered title retracts and
+  returns with the traffic lights;
 - capture a screenshot for the handoff;
 - do not perform a real Bandcamp, playback, or AirPlay test.
 

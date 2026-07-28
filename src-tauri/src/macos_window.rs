@@ -149,6 +149,10 @@ pub(crate) fn install_centered_title(window: &tauri::WebviewWindow) -> Result<()
     let close_button = native_window
         .standardWindowButton(NSWindowButton::CloseButton)
         .ok_or_else(|| "the main NSWindow has no native close button".to_string())?;
+    // SAFETY: The standard close button and its containing title-bar view are
+    // owned by AppKit and accessed synchronously on the main thread.
+    let titlebar_view = unsafe { close_button.superview() }
+        .ok_or_else(|| "the main NSWindow has no managed title-bar view".to_string())?;
 
     let semantic_title = native_window.title().to_string();
     let title = NSTextField::labelWithString(
@@ -184,7 +188,10 @@ pub(crate) fn install_centered_title(window: &tauri::WebviewWindow) -> Result<()
             None,
         );
     }
-    frame_view.addSubview(&title);
+    // Keep the custom title inside AppKit's managed title-bar hierarchy so it
+    // retracts and returns with the traffic lights during native full-screen
+    // transitions.
+    titlebar_view.addSubview(&title);
 
     let constraints = NSArray::from_retained_slice(&[
         title
