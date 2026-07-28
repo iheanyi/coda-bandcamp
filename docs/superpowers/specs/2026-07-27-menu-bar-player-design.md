@@ -25,8 +25,8 @@ credential, or media-proxy behavior.
 
 ## Visual design
 
-The compact player is a 368 by 236 pixel undecorated utility window with a
-transparent canvas and a raised charcoal surface. It reuses Coda's existing
+The compact player is a 368 by 240 pixel undecorated utility window with an
+inset canvas and a raised charcoal surface. It reuses Coda's existing
 neutral palette, coral accent, typography, fine translucent dividers, rounded
 artwork, progress rail, and Lucide icon language.
 
@@ -116,4 +116,3 @@ queries or its own audio element.
   tests, Rust clippy, `git diff --check`, and a native `npm run dev` smoke test.
 - The smoke test verifies window creation, tray toggling, focus dismissal, and
   command synchronization without contacting Bandcamp or testing live AirPlay.
-

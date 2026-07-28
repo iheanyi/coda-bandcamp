@@ -1,10 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Minimal capabilities required by Coda's main window.",
-  "windows": ["main"],
+  "description": "Minimal capabilities required by Coda's application windows.",
+  "windows": ["main", "mini-player"],
   "permissions": [
     "core:default",
+    "core:window:allow-hide",
     "core:window:allow-unminimize",
     "core:window:allow-show",
     "core:window:allow-set-focus",

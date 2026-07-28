@@ -66,6 +66,7 @@ type RuntimeCacheEntry<T> = {
 const coverUrlCache = new Map<string, RuntimeCacheEntry<string>>();
 const streamUrlCache = new Map<string, RuntimeCacheEntry<string>>();
 let playerStateContractVersionRequest: Promise<number> | undefined;
+let nativeSystemMediaSupportRequest: Promise<boolean> | undefined;
 
 async function nativePlayerStateContractVersion(): Promise<number> {
   if (!playerStateContractVersionRequest) {
@@ -512,6 +513,39 @@ export async function fetchCoverUrl(coverArtId: string): Promise<string> {
     MAX_MEDIA_URLS,
     COVER_URL_CACHE_TTL_MS,
   );
+}
+
+export type SystemMediaSessionInput = {
+  track?: {
+    title: string;
+    artist: string;
+    album: string;
+    albumId?: string;
+    coverArtId?: string;
+    artworkUrl?: string;
+  };
+  playing: boolean;
+  positionSeconds: number;
+  durationSeconds: number;
+  canPrevious: boolean;
+  canNext: boolean;
+};
+
+export async function supportsNativeSystemMedia(): Promise<boolean> {
+  if (!isDesktop()) return false;
+  if (!nativeSystemMediaSupportRequest) {
+    nativeSystemMediaSupportRequest = invoke<boolean>(
+      "supports_native_system_media",
+    ).catch(() => false);
+  }
+  return nativeSystemMediaSupportRequest;
+}
+
+export async function updateSystemMediaSession(
+  input: SystemMediaSessionInput,
+): Promise<void> {
+  if (!isDesktop()) return;
+  return invoke("update_system_media_session", { input });
 }
 
 export async function fetchDiscover(

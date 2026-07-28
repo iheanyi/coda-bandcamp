@@ -32,6 +32,8 @@ use tauri::{
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 use url::Url;
 
+mod system_media;
+
 const SERVICE_NAME: &str = "com.coda.bandcamp";
 const CREDENTIAL_KEY: &str = "subsonic";
 const SERVER_BASE: &str = "https://bandcamp.com/api/subsonic";
@@ -3914,11 +3916,14 @@ pub fn run() {
                                 | StateFlags::MAXIMIZED
                                 | StateFlags::VISIBLE,
                         )
+                        .with_denylist(&["mini-player"])
                         .build(),
                 )?;
                 ensure_window_is_visible(app);
 
                 let show = MenuItem::with_id(app, "show", "Show Coda", true, None::<&str>)?;
+                let mini_player =
+                    MenuItem::with_id(app, "mini-player", "Mini Player", true, None::<&str>)?;
                 let play_pause =
                     MenuItem::with_id(app, "play-pause", "Play / Pause", true, None::<&str>)?;
                 let previous =
@@ -3937,6 +3942,7 @@ pub fn run() {
                     app,
                     &[
                         &show,
+                        &mini_player,
                         &separator,
                         &play_pause,
                         &previous,
@@ -3958,6 +3964,7 @@ pub fn run() {
                     .show_menu_on_left_click(false)
                     .on_menu_event(|app, event| match event.id().as_ref() {
                         "show" => show_main_window(app),
+                        "mini-player" => toggle_mini_player(app, None, None),
                         "play-pause" | "previous" | "next" | "shuffle-library" => {
                             let _ = app.emit("coda://tray-control", event.id().as_ref());
                         }
@@ -3975,12 +3982,14 @@ pub fn run() {
                     })
                     .on_tray_icon_event(|tray, event| {
                         if let TrayIconEvent::Click {
+                            position,
+                            rect,
                             button: MouseButton::Left,
                             button_state: MouseButtonState::Up,
                             ..
                         } = event
                         {
-                            show_main_window(tray.app_handle());
+                            toggle_mini_player(tray.app_handle(), Some(rect), Some(position));
                         }
                     })
                     .build(app)?;
@@ -4024,19 +4033,158 @@ pub fn run() {
             get_cover_url,
             discover,
             radio_shows,
-            radio_show
+            radio_show,
+            supports_native_system_media,
+            update_system_media_session
         ])
         .run(tauri::generate_context!())
         .expect("error while running Coda");
 }
 
+#[tauri::command]
+fn supports_native_system_media() -> bool {
+    system_media::native_supported()
+}
+
+#[tauri::command]
+async fn update_system_media_session(
+    app: tauri::AppHandle,
+    input: system_media::SystemMediaSessionInput,
+) -> Result<(), String> {
+    system_media::update_session(app, input).await
+}
+
 #[cfg(desktop)]
 fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("mini-player") {
+        let _ = window.hide();
+    }
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
     }
+}
+
+#[cfg(desktop)]
+fn toggle_mini_player(
+    app: &tauri::AppHandle,
+    event_rect: Option<tauri::Rect>,
+    event_position: Option<tauri::PhysicalPosition<f64>>,
+) {
+    let Some(window) = app.get_webview_window("mini-player") else {
+        return;
+    };
+    if window.is_visible().unwrap_or(false) {
+        let _ = window.hide();
+        return;
+    }
+
+    let tray_rect = event_rect.or_else(|| {
+        app.tray_by_id("coda-tray")
+            .and_then(|tray| tray.rect().ok().flatten())
+    });
+    let approximate_scale = window.scale_factor().unwrap_or(1.0);
+    let approximate_tray_center = tray_rect.map(|rect| {
+        let position = rect.position.to_physical::<i32>(approximate_scale);
+        let size = rect.size.to_physical::<u32>(approximate_scale);
+        (
+            f64::from(position.x) + f64::from(size.width) / 2.0,
+            f64::from(position.y) + f64::from(size.height) / 2.0,
+        )
+    });
+    let monitor = event_position
+        .and_then(|position| {
+            app.monitor_from_point(position.x, position.y)
+                .ok()
+                .flatten()
+        })
+        .or_else(|| {
+            approximate_tray_center.and_then(|(x, y)| app.monitor_from_point(x, y).ok().flatten())
+        })
+        .or_else(|| {
+            app.get_webview_window("main")
+                .and_then(|main| main.current_monitor().ok().flatten())
+        })
+        .or_else(|| app.primary_monitor().ok().flatten());
+    let Some(monitor) = monitor else {
+        let _ = window.show();
+        let _ = window.set_focus();
+        return;
+    };
+    let scale_factor = monitor.scale_factor();
+    let work_area = monitor.work_area();
+    let area = [
+        work_area.position.x,
+        work_area.position.y,
+        i32::try_from(work_area.size.width).unwrap_or(i32::MAX),
+        i32::try_from(work_area.size.height).unwrap_or(i32::MAX),
+    ];
+    let tray = tray_rect
+        .map(|rect| {
+            let position = rect.position.to_physical::<i32>(scale_factor);
+            let size = rect.size.to_physical::<u32>(scale_factor);
+            [
+                position.x,
+                position.y,
+                i32::try_from(size.width).unwrap_or(i32::MAX),
+                i32::try_from(size.height).unwrap_or(i32::MAX),
+            ]
+        })
+        .unwrap_or_else(|| {
+            [
+                area[0].saturating_add(area[2]).saturating_sub(32),
+                area[1],
+                24,
+                24,
+            ]
+        });
+    let size = tauri::LogicalSize::new(368.0, 240.0).to_physical::<u32>(scale_factor);
+    let position = mini_player_position(tray, [size.width, size.height], area);
+    let _ = window.set_position(tauri::PhysicalPosition::new(position[0], position[1]));
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
+#[cfg(desktop)]
+fn mini_player_position(tray: [i32; 4], window: [u32; 2], monitor: [i32; 4]) -> [i32; 2] {
+    const EDGE_GUTTER: i64 = 8;
+    const TRAY_GAP: i64 = 8;
+
+    fn clamp_axis(
+        desired: i64,
+        monitor_start: i64,
+        monitor_length: i64,
+        window_length: i64,
+    ) -> i32 {
+        let minimum = monitor_start.saturating_add(EDGE_GUTTER);
+        let maximum = monitor_start
+            .saturating_add(monitor_length)
+            .saturating_sub(window_length)
+            .saturating_sub(EDGE_GUTTER)
+            .max(minimum);
+        desired.clamp(minimum, maximum) as i32
+    }
+
+    let [tray_x, tray_y, tray_width, tray_height] = tray.map(i64::from);
+    let [window_width, window_height] = window.map(i64::from);
+    let [monitor_x, monitor_y, monitor_width, monitor_height] = monitor.map(i64::from);
+    let tray_center_x = tray_x.saturating_add(tray_width / 2);
+    let tray_center_y = tray_y.saturating_add(tray_height / 2);
+    let monitor_center_y = monitor_y.saturating_add(monitor_height / 2);
+    let desired_x = tray_center_x.saturating_sub(window_width / 2);
+    let desired_y = if tray_center_y <= monitor_center_y {
+        tray_y.saturating_add(tray_height).saturating_add(TRAY_GAP)
+    } else {
+        tray_y
+            .saturating_sub(window_height)
+            .saturating_sub(TRAY_GAP)
+    };
+
+    [
+        clamp_axis(desired_x, monitor_x, monitor_width, window_width),
+        clamp_axis(desired_y, monitor_y, monitor_height, window_height),
+    ]
 }
 
 #[cfg(desktop)]
@@ -5304,6 +5452,41 @@ mod tests {
             [4_000, 2_000, 1_000, 700],
             [-1_920, 0, 1_920, 1_080]
         ));
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn positions_mini_player_below_a_top_menu_bar() {
+        assert_eq!(
+            mini_player_position([900, 0, 24, 24], [368, 240], [0, 0, 1_920, 1_080],),
+            [728, 32],
+        );
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn positions_mini_player_above_a_bottom_taskbar() {
+        assert_eq!(
+            mini_player_position([900, 1_056, 24, 24], [368, 240], [0, 0, 1_920, 1_080],),
+            [728, 808],
+        );
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn clamps_mini_player_inside_the_monitor_edges() {
+        assert_eq!(
+            mini_player_position([1_910, 0, 20, 24], [368, 240], [0, 0, 1_920, 1_080],),
+            [1_544, 32],
+        );
+        assert_eq!(
+            mini_player_position([-1_918, 0, 20, 24], [368, 240], [-1_920, 0, 1_920, 1_080],),
+            [-1_912, 32],
+        );
+        assert_eq!(
+            mini_player_position([150, 0, 20, 24], [300, 180], [0, 0, 320, 200],),
+            [10, 12],
+        );
     }
 
     #[cfg(target_os = "windows")]

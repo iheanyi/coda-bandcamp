@@ -32,7 +32,7 @@
 - [ ] **Step 1: Write failing validation tests**
 
 Add literal fixtures covering valid state, text bounds, invalid numeric values,
-and clamping seek/volume commands.
+and rejection of out-of-range seek/volume commands.
 
 - [ ] **Step 2: Verify the test fails**
 
@@ -177,4 +177,3 @@ empty state, transport synchronization, seek, volume, and main-window restore.
 Stage only feature files, commit with a terse feature message, push
 `codex/menu-bar-player`, and open a draft pull request if the repository's
 GitHub authentication is available.
-

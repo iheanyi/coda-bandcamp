@@ -28,6 +28,31 @@
         "visible": true,
         "backgroundColor": "#111315",
         "devtools": false
+      },
+      {
+        "title": "Coda Mini Player",
+        "label": "mini-player",
+        "url": "index.html?view=mini-player",
+        "theme": "Dark",
+        "width": 368,
+        "height": 240,
+        "minWidth": 368,
+        "minHeight": 240,
+        "maxWidth": 368,
+        "maxHeight": 240,
+        "decorations": false,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "closable": true,
+        "focus": false,
+        "visible": false,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": true,
+        "skipTaskbar": true,
+        "shadow": true,
+        "backgroundColor": "#111315",
+        "devtools": false
       }
     ]
   },

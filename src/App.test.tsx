@@ -618,6 +618,69 @@ describe("Coda application flows", () => {
     expect(within(player!).getByText("First Light")).toBeInTheDocument();
   });
 
+  it("routes the system media skip control to the next queue track", async () => {
+    const handlers = new Map<
+      MediaSessionAction,
+      MediaSessionActionHandler | null
+    >();
+    const setActionHandler = vi.fn(
+      (
+        action: MediaSessionAction,
+        handler: MediaSessionActionHandler | null,
+      ) => {
+        handlers.set(action, handler);
+      },
+    );
+    const descriptor = Object.getOwnPropertyDescriptor(
+      navigator,
+      "mediaSession",
+    );
+    Object.defineProperty(navigator, "mediaSession", {
+      configurable: true,
+      value: { setActionHandler },
+    });
+    mocks.loadPlayerState.mockResolvedValue({
+      version: 1,
+      savedAt: Date.now(),
+      queue: tracks.map(({ streamUrl: _streamUrl, ...track }) => track),
+      currentIndex: 0,
+      positionSeconds: 0,
+      volume: 0.72,
+      repeatMode: "off",
+      queueOpen: false,
+    });
+    let unmount: (() => void) | undefined;
+
+    try {
+      const view = renderApp();
+      unmount = view.unmount;
+      await screen.findByRole("button", { name: "Open Now Playing" });
+
+      expect(handlers.get("seekforward")).toBeNull();
+      expect(
+        setActionHandler.mock.calls.filter(
+          ([action, handler]) =>
+            action === "nexttrack" && typeof handler === "function",
+        ),
+      ).toHaveLength(1);
+      const skipTrack = handlers.get("nexttrack");
+      expect(skipTrack).toBeTypeOf("function");
+      act(() => skipTrack?.({ action: "nexttrack" }));
+
+      const player = view.container.querySelector<HTMLElement>(".player");
+      await waitFor(() =>
+        expect(within(player!).getByText("Afterimage")).toBeInTheDocument(),
+      );
+    } finally {
+      unmount?.();
+      if (descriptor) {
+        Object.defineProperty(navigator, "mediaSession", descriptor);
+      } else {
+        Reflect.deleteProperty(navigator, "mediaSession");
+      }
+    }
+  });
+
   it("durably saves a changed queue after the structural debounce", async () => {
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
