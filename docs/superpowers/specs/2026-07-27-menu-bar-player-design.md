@@ -86,6 +86,19 @@ the compact window. The regular `App` and its TanStack Query provider remain
 unchanged for the main webview. The compact window does not initialize library
 queries or its own audio element.
 
+### Native artwork fallback
+
+The main renderer produces an in-memory 600 by 600 PNG when a track becomes
+current. It uses the same palette base, coral rule, title initials, and artist
+label as Coda's generated album covers. The bounded PNG data URL crosses only
+the native command boundary and is never persisted.
+
+macOS publishes this generated cover through `MPMediaItemArtwork` while real
+cover art is unavailable. Real artwork remains the first choice and replaces
+the generated cover as soon as it resolves. A bounded, stable-keyed in-memory
+cache retains the current real cover across play, pause, and metadata refreshes
+so routine updates never clear artwork or flash the application icon.
+
 ## Error handling
 
 - Event import, listener registration, and emission failures are treated as
@@ -94,6 +107,7 @@ queries or its own audio element.
 - Invalid compact-player snapshots are discarded.
 - Invalid seek and volume commands are ignored.
 - Missing or failed artwork falls back to a palette-based Coda cover.
+- Malformed or oversized generated artwork is rejected at the native boundary.
 - Native show, hide, focus, and positioning calls fail closed without exiting
   the app.
 

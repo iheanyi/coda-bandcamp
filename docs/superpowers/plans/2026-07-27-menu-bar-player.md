@@ -177,3 +177,63 @@ empty state, transport synchronization, seek, volume, and main-window restore.
 Stage only feature files, commit with a terse feature message, push
 `codex/menu-bar-player`, and open a draft pull request if the repository's
 GitHub authentication is available.
+
+### Task 6: Native generated-artwork fallback
+
+**Files:**
+- Create: `src/systemArtwork.ts`
+- Create: `src/systemArtwork.test.ts`
+- Modify: `src/MiniPlayerBridge.tsx`
+- Modify: `src/MiniPlayerBridge.test.tsx`
+- Modify: `src/lib.ts`
+- Modify: `src-tauri/Cargo.toml`
+- Modify: `src-tauri/src/system_media.rs`
+
+**Interfaces:**
+- Produces: `createSystemArtworkDataUrl(track)` returning a bounded PNG data URL
+  rendered from title, artist, and palette.
+- Consumes: the generated PNG as
+  `SystemMediaSessionInput.track.fallbackArtworkDataUrl`.
+- Preserves: real `MPMediaItemArtwork` bytes under a stable cover, album, or URL
+  identity for immediate reuse during native session updates.
+
+- [ ] **Step 1: Write failing renderer tests**
+
+Assert that the artwork generator draws the Coda palette cover and that
+`MiniPlayerBridge` includes its result in the system-media command.
+
+- [ ] **Step 2: Verify the renderer tests fail**
+
+Run `npm test -- src/systemArtwork.test.ts src/MiniPlayerBridge.test.tsx` and
+confirm the new fallback expectations fail before implementation.
+
+- [ ] **Step 3: Implement the renderer fallback**
+
+Render one 600 by 600 canvas per track identity, encode it as PNG, keep the
+result only in memory, and include it in the typed native-session payload.
+
+- [ ] **Step 4: Verify the renderer tests pass**
+
+Run `npm test -- src/systemArtwork.test.ts src/MiniPlayerBridge.test.tsx`.
+
+- [ ] **Step 5: Write failing native validation and cache tests**
+
+Assert that malformed or oversized PNG data URLs are rejected and that real
+artwork cached under a stable cover identity is available before an async
+refresh.
+
+- [ ] **Step 6: Verify the native tests fail**
+
+Run `cargo test --manifest-path src-tauri/Cargo.toml system_media`.
+
+- [ ] **Step 7: Implement bounded native decoding and stable artwork reuse**
+
+Decode only bounded `data:image/png;base64,` values, use them for the initial
+`MPMediaItemArtwork`, and replace them with fetched real art. Reuse the last
+real art immediately on play, pause, and metadata-only updates.
+
+- [ ] **Step 8: Run full verification and package the app**
+
+Run frontend tests and build, Rust format/tests/clippy, `git diff --check`, and
+`npm run tauri -- build --bundles app`. Launch the exact packaged worktree app
+for a native playback smoke test before publishing.
