@@ -1,3 +1,5 @@
+import { IconButton } from "./components/ui/IconButton";
+import { Input } from "./components/ui/Field";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import {
   ArrowUpRight,
@@ -129,14 +131,12 @@ const DiscoverCard = memo(function DiscoverCard({
           ) : (
             <span className="discover-card__unavailable">No preview available</span>
           )}
-          <button
-            className="icon-button"
-            onClick={() => void openBandcampUrl(release.itemUrl)}
+          <IconButton onClick={() => void openBandcampUrl(release.itemUrl)}
             aria-label={`Open ${release.title} on Bandcamp`}
             title="Open on Bandcamp"
           >
             <ArrowUpRight size={16} />
-          </button>
+          </IconButton>
         </div>
       </div>
     </article>
@@ -207,7 +207,7 @@ export default function DiscoverView({
         <form className="discover-search" onSubmit={submit}>
           <Search size={17} />
           <label className="sr-only" htmlFor="discover-tag">Search Discover by tag</label>
-          <input
+          <Input
             id="discover-tag"
             value={draftTag}
             maxLength={64}

@@ -1,3 +1,7 @@
+import { Button } from "./components/ui/Button";
+import { IconButton } from "./components/ui/IconButton";
+import { Input } from "./components/ui/Field";
+import { RangeControl } from "./components/ui/RangeControl";
 import {
   Airplay,
   AudioLines,
@@ -531,14 +535,13 @@ const AlbumCard = memo(function AlbumCard({
           {album.artist}
         </button>
       </div>
-      <button
-        className="icon-button album-card__more"
+      <IconButton className="album-card__more"
         onClick={() => onQueue(album)}
         title="Add album to queue"
         aria-label={`Add ${album.title} to queue`}
       >
         <Plus size={17} />
-      </button>
+      </IconButton>
     </article>
   );
 });
@@ -609,8 +612,8 @@ const ArtistHero = memo(function ArtistHero({
           {formatTime(group.duration)}
         </p>
         <div className="artist-hero__actions">
-          <button
-            className={`primary-button ${active ? "is-current" : ""} ${active && playing ? "is-playing" : ""}`}
+          <Button variant="primary"
+            className={`${active ? "is-current" : ""} ${active && playing ? "is-playing" : ""}`}
             onClick={active ? onTogglePlayback : () => onPlay(group)}
             disabled={Boolean(loading)}
             aria-label={
@@ -630,23 +633,21 @@ const ArtistHero = memo(function ArtistHero({
               : active
                 ? (playing ? "Pause" : "Resume")
                 : "Play all"}
-          </button>
-          <button
-            className="secondary-button"
+          </Button>
+          <Button variant="secondary"
             onClick={() => onShuffle(group)}
             disabled={Boolean(loading)}
           >
             {loading === "shuffle" ? <RefreshCw className="spin" size={16} /> : <Shuffle size={16} />}
             {loading === "shuffle" ? "Shuffling…" : "Shuffle"}
-          </button>
-          <button
-            className="secondary-button"
+          </Button>
+          <Button variant="secondary"
             onClick={() => onQueue(group)}
             disabled={Boolean(loading)}
           >
             {loading === "queue" ? <RefreshCw className="spin" size={16} /> : <ListPlus size={16} />}
             {loading === "queue" ? "Adding…" : "Add all"}
-          </button>
+          </Button>
         </div>
       </div>
     </section>
@@ -695,9 +696,9 @@ const Sidebar = memo(function Sidebar({
           <strong>{connected ? "Bandcamp synced" : "Not connected"}</strong>
           <span>{connected ? "Official Subsonic beta" : "Connect to hear your music"}</span>
         </div>
-        <button className="icon-button" onClick={onConnect} aria-label="Connection settings" title="Connection settings">
+        <IconButton onClick={onConnect} aria-label="Connection settings" title="Connection settings">
           <Settings2 size={17} />
-        </button>
+        </IconButton>
       </div>
     </aside>
   );
@@ -873,16 +874,14 @@ const QueuePanel = memo(function QueuePanel({
               )}
               {recommendationLoading ? "Picking…" : "Play something"}
             </button>
-            <button
-              type="button"
-              className="icon-button"
+            <IconButton type="button"
               onClick={onAnotherRecommendation}
               disabled={recommendationLoading}
               aria-label="Suggest another album"
               title="Suggest another"
             >
               <Dices size={15} />
-            </button>
+            </IconButton>
           </div>
         </div>
       ) : null}
@@ -904,17 +903,16 @@ const QueuePanel = memo(function QueuePanel({
           <h2>Queue</h2>
         </div>
         <div>
-          <button className="icon-button" onClick={onShuffle} disabled={queue.length < 2} title="Shuffle queue" aria-label="Shuffle queue">
+          <IconButton onClick={onShuffle} disabled={queue.length < 2} title="Shuffle queue" aria-label="Shuffle queue">
             <Shuffle size={17} />
-          </button>
-          <button
-            className="text-button"
+          </IconButton>
+          <Button variant="text"
             onClick={onClear}
             disabled={queue.length <= currentIndex + 1}
             title="Clear upcoming tracks"
           >
             Clear next
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -1051,9 +1049,9 @@ const QueuePanel = memo(function QueuePanel({
               </span>
             </div>
             <span className="queue-track__duration">{formatTime(track.duration)}</span>
-            <button className="icon-button queue-track__remove" onClick={() => onRemove(absoluteIndex)} aria-label={`Remove ${track.title}`} title="Remove">
+            <IconButton className="queue-track__remove" onClick={() => onRemove(absoluteIndex)} aria-label={`Remove ${track.title}`} title="Remove">
               <X size={14} />
-            </button>
+            </IconButton>
           </div>
         )}
         startIndex={currentIndex + 1}
@@ -1100,8 +1098,7 @@ const PlayerTrack = memo(function PlayerTrack({
   );
   const activeChapter = radioAiring.current;
   const favoriteControl = track ? (
-    <button
-      className={`icon-button favorite-button player__track-favorite ${favorite ? "is-favorite" : ""}`}
+    <IconButton className={`favorite-button player__track-favorite ${favorite ? "is-favorite" : ""}`}
       onClick={onToggleFavorite}
       title={favorite ? "Remove from favorites" : "Add to favorites"}
       aria-label={
@@ -1112,7 +1109,7 @@ const PlayerTrack = memo(function PlayerTrack({
       aria-pressed={favorite}
     >
       <Heart size={17} fill={favorite ? "currentColor" : "none"} />
-    </button>
+    </IconButton>
   ) : null;
 
   return (
@@ -1234,29 +1231,27 @@ const PlayerTransport = memo(function PlayerTransport({
         role="group"
         aria-label="Playback controls"
       >
-        <button className="icon-button" onClick={onPrevious} disabled={!canPrevious && !positionCanPrevious} title="Previous" aria-label="Previous"><SkipBack size={18} fill="currentColor" /></button>
+        <IconButton onClick={onPrevious} disabled={!canPrevious && !positionCanPrevious} title="Previous" aria-label="Previous"><SkipBack size={18} fill="currentColor" /></IconButton>
         <button className="play-button" onClick={onToggle} disabled={!track} aria-label={playing ? "Pause" : "Play"}>
           {playing ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
         </button>
-        <button className="icon-button" onClick={onNext} disabled={!canNext && !positionCanNext} title="Next" aria-label="Next"><SkipForward size={18} fill="currentColor" /></button>
-        <button className={`icon-button ${repeat !== "off" ? "is-active" : ""}`} onClick={onRepeat} disabled={!track} title="Repeat" aria-label={`Repeat ${repeat}`}>
+        <IconButton onClick={onNext} disabled={!canNext && !positionCanNext} title="Next" aria-label="Next"><SkipForward size={18} fill="currentColor" /></IconButton>
+        <IconButton className={`${repeat !== "off" ? "is-active" : ""}`} onClick={onRepeat} disabled={!track} title="Repeat" aria-label={`Repeat ${repeat}`}>
           {repeat === "one" ? <Repeat1 size={17} /> : <Repeat size={17} />}
-        </button>
+        </IconButton>
       </div>
       <div className="progress-row">
         <span>{formatTime(currentTime)}</span>
-        <label className="range" style={{ "--range-value": `${progress}%` } as React.CSSProperties}>
-          <span className="sr-only">Track position</span>
-          <input
-            type="range"
-            min="0"
-            max={duration || 1}
-            step="1"
-            value={Math.min(currentTime, duration || 1)}
-            disabled={!track}
-            onChange={(event) => onSeek(Number(event.target.value))}
-          />
-        </label>
+        <RangeControl
+          label="Track position"
+          percentage={progress}
+          min="0"
+          max={duration || 1}
+          step="1"
+          value={Math.min(currentTime, duration || 1)}
+          disabled={!track}
+          onChange={(event) => onSeek(Number(event.target.value))}
+        />
         <span>{formatTime(duration)}</span>
       </div>
     </div>
@@ -1350,43 +1345,44 @@ function Player({
         onRepeat={onRepeat}
       />
       <div className="player__volume">
-        <button className="icon-button" onClick={() => onVolume(volume ? 0 : 0.72)} aria-label={volume ? "Mute" : "Unmute"}>
+        <IconButton onClick={() => onVolume(volume ? 0 : 0.72)} aria-label={volume ? "Mute" : "Unmute"}>
           {volume ? <Volume2 size={18} /> : <VolumeX size={18} />}
-        </button>
-        <label className="range range--volume" style={{ "--range-value": `${volume * 100}%` } as React.CSSProperties}>
-          <span className="sr-only">Volume</span>
-          <input type="range" min="0" max="1" step="0.01" value={volume} onChange={(event) => onVolume(Number(event.target.value))} />
-        </label>
+        </IconButton>
+        <RangeControl
+          className="range--volume"
+          label="Volume"
+          percentage={volume * 100}
+          min="0"
+          max="1"
+          step="0.01"
+          value={volume}
+          onChange={(event) => onVolume(Number(event.target.value))}
+        />
         {airPlayAvailable ? (
-          <button
-            className="icon-button"
-            onClick={onAirPlay}
+          <IconButton onClick={onAirPlay}
             disabled={!track}
             title="Choose AirPlay device"
             aria-label="Choose AirPlay device"
           >
             <Airplay size={18} />
-          </button>
+          </IconButton>
         ) : null}
         {track && !track.id.startsWith("radio:") ? (
-          <button
-            className="icon-button"
-            onClick={onAddToPlaylist}
+          <IconButton onClick={onAddToPlaylist}
             title="Add to playlist"
             aria-label={`Add ${track.title} to playlist`}
           >
             <ListPlus size={17} />
-          </button>
+          </IconButton>
         ) : null}
-        <button
-          className={`icon-button ${queueOpen ? "is-active" : ""}`}
+        <IconButton className={`${queueOpen ? "is-active" : ""}`}
           onClick={onToggleQueue}
           title={queueOpen ? "Hide queue" : "Show queue"}
           aria-label={queueOpen ? "Hide queue" : "Show queue"}
           aria-pressed={queueOpen}
         >
           <ListMusic size={18} />
-        </button>
+        </IconButton>
       </div>
     </footer>
   );
@@ -1453,8 +1449,8 @@ function AlbumDetailPage({
               {album.year ?? "Year unknown"} · {countLabel(album.songCount, "track")} · {formatTime(album.duration)}
             </span>
             <div className="album-detail__actions">
-              <button
-                className={`primary-button ${activeAlbum ? "is-current" : ""} ${activeAlbum && playing ? "is-playing" : ""}`}
+              <Button variant="primary"
+                className={`${activeAlbum ? "is-current" : ""} ${activeAlbum && playing ? "is-playing" : ""}`}
                 onClick={activeAlbum ? onTogglePlayback : onPlayAlbum}
                 disabled={loading}
                 aria-label={
@@ -1470,25 +1466,28 @@ function AlbumDetailPage({
                 {activeAlbum
                   ? (playing ? "Pause" : "Resume")
                   : `Play ${album.songCount === 1 ? "single" : "album"}`}
-              </button>
-              <button className="secondary-button" onClick={onQueueAlbum} disabled={loading}>
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={onQueueAlbum}
+                disabled={loading}
+              >
                 <Plus size={17} /> Add to queue
-              </button>
-              <button
-                className="secondary-button"
+              </Button>
+              <Button variant="secondary"
                 onClick={() => onAddToPlaylist(album.tracks ?? [])}
                 disabled={loading || !album.tracks?.length}
               >
                 <ListPlus size={17} /> Add to playlist
-              </button>
-              <button
-                className={`secondary-button favorite-button ${favoriteAlbum ? "is-favorite" : ""}`}
+              </Button>
+              <Button variant="secondary"
+                className={`favorite-button ${favoriteAlbum ? "is-favorite" : ""}`}
                 onClick={onToggleFavoriteAlbum}
                 aria-pressed={favoriteAlbum}
               >
                 <Heart size={17} fill={favoriteAlbum ? "currentColor" : "none"} />
                 {favoriteAlbum ? "Favorited" : "Favorite"}
-              </button>
+              </Button>
             </div>
         </div>
         </header>
@@ -1554,21 +1553,20 @@ function AlbumDetailPage({
                 </div>
                 <span className="track-row__duration">{formatTime(track.duration)}</span>
                 <div className="track-row__actions">
-                  <button className="icon-button" onClick={() => onQueueTrack(track)} title="Add to queue" aria-label={`Add ${track.title} to queue`}>
+                  <IconButton onClick={() => onQueueTrack(track)} title="Add to queue" aria-label={`Add ${track.title} to queue`}>
                     <Plus size={16} />
-                  </button>
-                  <button className="icon-button" onClick={() => onAddToPlaylist([track])} title="Add to playlist" aria-label={`Add ${track.title} to playlist`}>
+                  </IconButton>
+                  <IconButton onClick={() => onAddToPlaylist([track])} title="Add to playlist" aria-label={`Add ${track.title} to playlist`}>
                     <ListPlus size={16} />
-                  </button>
-                  <button
-                    className={`icon-button favorite-button ${favoriteTrackIds.has(track.id) ? "is-favorite" : ""}`}
+                  </IconButton>
+                  <IconButton className={`favorite-button ${favoriteTrackIds.has(track.id) ? "is-favorite" : ""}`}
                     onClick={() => onToggleFavoriteTrack(track)}
                     title={favoriteTrackIds.has(track.id) ? "Remove from favorites" : "Add to favorites"}
                     aria-label={favoriteTrackIds.has(track.id) ? `Remove ${track.title} from favorites` : `Add ${track.title} to favorites`}
                     aria-pressed={favoriteTrackIds.has(track.id)}
                   >
                     <Heart size={16} fill={favoriteTrackIds.has(track.id) ? "currentColor" : "none"} />
-                  </button>
+                  </IconButton>
                 </div>
               </div>
               );
@@ -1717,14 +1715,13 @@ function ConnectionDialog({
         aria-labelledby="connection-title"
         aria-busy={dialogBusy}
       >
-        <button
-          className="icon-button dialog-close"
+        <IconButton className="dialog-close"
           onClick={onClose}
           aria-label="Close"
           disabled={dialogBusy}
         >
           <X size={19} />
-        </button>
+        </IconButton>
         <div className="connection-dialog__icon"><Radio size={24} /></div>
         <span className="eyebrow">Secure connection</span>
         <h2 id="connection-title">{connected ? "Bandcamp is connected" : "Bring in your collection"}</h2>
@@ -1755,28 +1752,27 @@ function ConnectionDialog({
         {!connected ? <form onSubmit={submit}>
           <label>
             Subsonic username
-            <input name="subsonic-username" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Generated username" disabled={state === "connecting"} />
+            <Input name="subsonic-username" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Generated username" disabled={state === "connecting"} />
           </label>
           <label>
             Subsonic password
-            <input name="subsonic-password" autoComplete="current-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Generated password" disabled={state === "connecting"} />
+            <Input name="subsonic-password" autoComplete="current-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Generated password" disabled={state === "connecting"} />
           </label>
           {error ? <div className="form-error">{error}</div> : null}
-          <button className="primary-button primary-button--wide" type="submit" disabled={!username.trim() || !password || state === "connecting"}>
+          <Button variant="primary" className="primary-button--wide" type="submit" disabled={!username.trim() || !password || state === "connecting"}>
             {state === "connecting" ? <RefreshCw className="spin" size={17} /> : <Radio size={17} />}
             {state === "connecting"
               ? connectLoaded
                 ? `Loading ${countLabel(connectLoaded, "release")}…`
                 : "Connecting securely…"
               : "Connect Bandcamp"}
-          </button>
+          </Button>
         </form> : null}
         {connected ? (
           <>
             {error ? <div className="form-error">{error}</div> : null}
-            <button
+            <Button variant="danger"
               type="button"
-              className="danger-button"
               onClick={() => void removeBandcamp()}
               disabled={disconnecting}
             >
@@ -1784,7 +1780,7 @@ function ConnectionDialog({
               {disconnecting
                 ? "Disconnecting Bandcamp…"
                 : "Disconnect and remove Bandcamp credentials"}
-            </button>
+            </Button>
           </>
         ) : null}
         <div className="connection-dialog__divider" />
@@ -1805,41 +1801,38 @@ function ConnectionDialog({
           {lastFmStatus.connected ? (
             <div className="lastfm-settings__connected">
               <span>Scrobbling as <strong>{lastFmStatus.username}</strong></span>
-              <button
+              <Button variant="secondary"
                 type="button"
-                className="secondary-button"
                 onClick={() => void removeLastFm()}
                 disabled={lastFmAction !== "idle"}
               >
                 {lastFmAction === "disconnecting" ? <RefreshCw className="spin" size={15} /> : null}
                 {lastFmAction === "disconnecting" ? "Disconnecting…" : "Disconnect"}
-              </button>
+              </Button>
             </div>
           ) : lastFmStatus.configured ? (
             <div className="lastfm-settings__actions">
               {lastFmToken ? (
                 <>
                   <p>Approve Coda in the browser, then return here to finish.</p>
-                  <button
+                  <Button variant="secondary"
                     type="button"
-                    className="secondary-button"
                     onClick={() => void finishLastFm()}
                     disabled={lastFmAction !== "idle"}
                   >
                     {lastFmAction === "finishing" ? <RefreshCw className="spin" size={15} /> : <Check size={15} />}
                     {lastFmAction === "finishing" ? "Finishing…" : "Finish connection"}
-                  </button>
+                  </Button>
                 </>
               ) : (
-                <button
+                <Button variant="secondary"
                   type="button"
-                  className="secondary-button"
                   onClick={() => void beginLastFm()}
                   disabled={lastFmAction !== "idle"}
                 >
                   {lastFmAction === "starting" ? <RefreshCw className="spin" size={15} /> : <ExternalLink size={15} />}
                   {lastFmAction === "starting" ? "Opening Last.fm…" : "Connect Last.fm"}
-                </button>
+                </Button>
               )}
             </div>
           ) : (
@@ -4063,13 +4056,12 @@ export default function App() {
                 <label className="search-box">
                   <Search size={17} />
                   <span className="sr-only">Search collection</span>
-                  <input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your collection" />
+                  <Input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your collection" />
                   <kbd>/</kbd>
                 </label>
               ) : null}
               {connected && shuffleScopeAlbums.length ? (
-                <button
-                  className="artwork-button"
+                <Button variant="artwork"
                   onClick={playRandomVisible}
                   disabled={randomPickLoading || Boolean(libraryShuffleProgress) || syncState === "syncing"}
                   title={`Play one random track from ${shuffleScopeName}`}
@@ -4077,11 +4069,10 @@ export default function App() {
                 >
                   {randomPickLoading ? <RefreshCw size={15} className="spin" /> : <Dices size={15} />}
                   {randomPickLoading ? "Picking…" : "Surprise me"}
-                </button>
+                </Button>
               ) : null}
               {connected && shuffleScopeAlbums.length ? (
-                <button
-                  className="artwork-button"
+                <Button variant="artwork"
                   onClick={shuffleVisible}
                   disabled={Boolean(libraryShuffleProgress) || randomPickLoading || syncState === "syncing"}
                   title={`${shuffleActionLabel} and start playing`}
@@ -4090,21 +4081,19 @@ export default function App() {
                   {libraryShuffleProgress
                     ? `${libraryShuffleProgress.done}/${libraryShuffleProgress.total}`
                     : shuffleActionLabel}
-                </button>
+                </Button>
               ) : null}
               {connected ? (
-                <button
-                  className="artwork-button"
+                <Button variant="artwork"
                   onClick={() => void refreshArtwork()}
                   disabled={artworkRefreshing || syncState === "syncing"}
                   title="Retry artwork and recover missing covers"
                 >
                   {artworkRefreshing ? <RefreshCw size={15} className="spin" /> : <Images size={15} />}
                   {artworkRefreshing ? "Refreshing…" : "Artwork"}
-                </button>
+                </Button>
               ) : null}
-              <button
-                className="sync-button"
+              <Button variant="primary"
                 onClick={connected ? () => void syncLibrary() : openConnection}
                 disabled={syncState === "checking" || syncState === "syncing"}
               >
@@ -4116,7 +4105,7 @@ export default function App() {
                     : connected
                       ? "Sync"
                       : "Connect"}
-              </button>
+              </Button>
             </div>
           </header>
 

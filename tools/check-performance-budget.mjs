@@ -47,7 +47,9 @@ const budgets = {
   // startup ceiling while allowing a narrow budget for the on-demand archive UI.
   totalJavaScriptRaw: 455 * 1024,
   totalJavaScriptGzip: 140 * 1024,
-  totalCssRaw: 90 * 1024,
+  // Tailwind expands @apply utilities with compatibility custom properties.
+  // Keep the transfer ceiling tight while allowing that parse-time overhead.
+  totalCssRaw: 100 * 1024,
   totalCssGzip: 18 * 1024,
 };
 

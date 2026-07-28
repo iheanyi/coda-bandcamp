@@ -1,3 +1,6 @@
+import { Button } from "./components/ui/Button";
+import { IconButton } from "./components/ui/IconButton";
+import { Input } from "./components/ui/Field";
 import {
   ArrowLeft,
   Check,
@@ -321,17 +324,21 @@ function PlaylistList({
         </div>
         <label>
           <span className="sr-only">Playlist name</span>
-          <input
+          <Input
             value={name}
             onChange={(event) => setName(event.target.value)}
             maxLength={256}
             placeholder="Late-night rotation"
           />
         </label>
-        <button className="primary-button" type="submit" disabled={!name.trim() || creating}>
+        <Button
+          variant="primary"
+          type="submit"
+          disabled={!name.trim() || creating}
+        >
           {creating ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />}
           {creating ? "Creating…" : "Create"}
-        </button>
+        </Button>
       </form>
 
       {playlists.length ? (
@@ -458,26 +465,22 @@ function PlaylistDetailView({
           <span className="eyebrow">Bandcamp playlist</span>
           {editing ? (
             <form className="playlist-rename" onSubmit={submitRename}>
-              <input
+              <Input
                 autoFocus
                 value={name}
                 maxLength={256}
                 aria-label="Playlist name"
                 onChange={(event) => setName(event.target.value)}
               />
-              <button
-                className="icon-button"
-                type="submit"
+              <IconButton type="submit"
                 aria-label="Save playlist name"
                 disabled={actionPending}
               >
                 {renaming
                   ? <LoaderCircle className="spin" size={17} />
                   : <Check size={17} />}
-              </button>
-              <button
-                className="icon-button"
-                type="button"
+              </IconButton>
+              <IconButton type="button"
                 aria-label="Cancel renaming"
                 disabled={actionPending}
                 onClick={() => {
@@ -486,18 +489,16 @@ function PlaylistDetailView({
                 }}
               >
                 <X size={17} />
-              </button>
+              </IconButton>
             </form>
           ) : (
             <div className="saved-hero__title">
               <h1>{playlist.name}</h1>
-              <button
-                className="icon-button"
-                onClick={() => setEditing(true)}
+              <IconButton onClick={() => setEditing(true)}
                 aria-label={`Rename ${playlist.name}`}
               >
                 <Pencil size={15} />
-              </button>
+              </IconButton>
             </div>
           )}
           <p>
@@ -506,8 +507,8 @@ function PlaylistDetailView({
             {" · Synced with Bandcamp"}
           </p>
           <div className="saved-hero__actions">
-            <button
-              className={`primary-button ${activePlaylist ? "is-current" : ""} ${activePlaylist && playing ? "is-playing" : ""}`}
+            <Button variant="primary"
+              className={`${activePlaylist ? "is-current" : ""} ${activePlaylist && playing ? "is-playing" : ""}`}
               disabled={!playlist.tracks.length}
               onClick={
                 activePlaylist
@@ -525,21 +526,19 @@ function PlaylistDetailView({
                 ? <Pause size={16} fill="currentColor" />
                 : <Play size={16} fill="currentColor" />}
               {activePlaylist ? (playing ? "Pause" : "Resume") : "Play"}
-            </button>
-            <button
-              className="secondary-button"
+            </Button>
+            <Button variant="secondary"
               disabled={!playlist.tracks.length}
               onClick={() => onPlay(shuffled(playlist.tracks))}
             >
               <Shuffle size={16} /> Shuffle
-            </button>
-            <button
-              className="secondary-button"
+            </Button>
+            <Button variant="secondary"
               disabled={!playlist.tracks.length}
               onClick={() => onQueue(playlist.tracks)}
             >
               <ListPlus size={16} /> Add to queue
-            </button>
+            </Button>
           </div>
         </div>
       </header>
@@ -596,17 +595,13 @@ function PlaylistDetailView({
                 </span>
               </div>
               <span className="saved-track__duration">{formatTime(track.duration)}</span>
-              <button
-                className="icon-button"
-                onClick={() => onAddToPlaylist([track])}
+              <IconButton onClick={() => onAddToPlaylist([track])}
                 title="Add to another playlist"
                 aria-label={`Add ${track.title} to another playlist`}
               >
                 <ListPlus size={15} />
-              </button>
-              <button
-                className="icon-button"
-                disabled={actionPending}
+              </IconButton>
+              <IconButton disabled={actionPending}
                 onClick={() => onRemove(index)}
                 title="Remove from playlist"
                 aria-label={`Remove ${track.title} from ${playlist.name}`}
@@ -614,7 +609,7 @@ function PlaylistDetailView({
                 {pendingRemovalIndex === index
                   ? <LoaderCircle className="spin" size={15} />
                   : <X size={15} />}
-              </button>
+              </IconButton>
             </div>
             );
           }}
@@ -631,22 +626,25 @@ function PlaylistDetailView({
         {confirmDelete ? (
           <>
             <span>Delete “{playlist.name}” from Bandcamp?</span>
-            <button className="danger-button" disabled={actionPending} onClick={onDelete}>
+            <Button
+              variant="danger"
+              disabled={actionPending}
+              onClick={onDelete}
+            >
               {deleting ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}
               {deleting ? "Deleting…" : "Delete playlist"}
-            </button>
-            <button
-              className="text-button"
+            </Button>
+            <Button variant="text"
               onClick={() => setConfirmDelete(false)}
               disabled={actionPending}
             >
               Keep it
-            </button>
+            </Button>
           </>
         ) : (
-          <button className="text-button text-button--danger" onClick={() => setConfirmDelete(true)}>
+          <Button variant="text" className="text-button--danger" onClick={() => setConfirmDelete(true)}>
             <Trash2 size={14} /> Delete playlist
-          </button>
+          </Button>
         )}
       </div>
     </article>
@@ -790,17 +788,15 @@ export function AddToPlaylistDialog({
             <h2>Add to playlist</h2>
             <p>{countLabel(tracks.length, "track")} selected</p>
           </div>
-          <button
-            className="icon-button"
-            onClick={onClose}
+          <IconButton onClick={onClose}
             aria-label="Close add to playlist"
             disabled={pending}
           >
             <X size={18} />
-          </button>
+          </IconButton>
         </header>
         <form className="playlist-dialog__create" onSubmit={submitCreate}>
-          <input
+          <Input
             autoFocus
             value={name}
             maxLength={256}
@@ -808,12 +804,16 @@ export function AddToPlaylistDialog({
             placeholder="Create a new playlist"
             aria-label="New playlist name"
           />
-          <button className="secondary-button" type="submit" disabled={!name.trim() || pending}>
+          <Button
+            variant="secondary"
+            type="submit"
+            disabled={!name.trim() || pending}
+          >
             {createMutation.isPending
               ? <LoaderCircle className="spin" size={15} />
               : <Plus size={15} />}
             {createMutation.isPending ? "Creating…" : "Create"}
-          </button>
+          </Button>
         </form>
         <div className="playlist-dialog__list">
           {playlists.isLoading ? (
@@ -1133,10 +1133,14 @@ export default function SavedLibraryView({
             <h1>Playlists</h1>
             <p>Build a sequence here and it follows you to Bandcamp.</p>
           </div>
-          <button className="artwork-button" onClick={() => void playlists.refetch()} disabled={playlists.isFetching}>
+          <Button
+            variant="artwork"
+            onClick={() => void playlists.refetch()}
+            disabled={playlists.isFetching}
+          >
             <RefreshCw size={15} className={playlists.isFetching ? "spin" : ""} />
             {playlists.isFetching ? "Refreshing…" : "Refresh"}
-          </button>
+          </Button>
         </header>
         {playlists.isLoading ? (
           <SavedEmpty
@@ -1208,10 +1212,14 @@ export default function SavedLibraryView({
             <HardDrive size={14} /> Local
           </span>
         ) : (
-          <button className="artwork-button" onClick={onRefreshFavorites} disabled={favoritesLoading}>
+          <Button
+            variant="artwork"
+            onClick={onRefreshFavorites}
+            disabled={favoritesLoading}
+          >
             <RefreshCw size={15} className={favoritesLoading ? "spin" : ""} />
             {favoritesLoading ? "Refreshing…" : "Refresh"}
-          </button>
+          </Button>
         )}
       </header>
       {favoritesLoading ? (
@@ -1339,15 +1347,15 @@ export default function SavedLibraryView({
                       </span>
                     </div>
                     <span className="saved-track__duration"><Clock3 size={12} /> {formatTime(track.duration)}</span>
-                    <button className="icon-button" onClick={() => onQueueTrack(track)} aria-label={`Add ${track.title} to queue`} title="Add to queue">
+                    <IconButton onClick={() => onQueueTrack(track)} aria-label={`Add ${track.title} to queue`} title="Add to queue">
                       <Plus size={15} />
-                    </button>
-                    <button className="icon-button" onClick={() => onAddToPlaylist([track])} aria-label={`Add ${track.title} to playlist`} title="Add to playlist">
+                    </IconButton>
+                    <IconButton onClick={() => onAddToPlaylist([track])} aria-label={`Add ${track.title} to playlist`} title="Add to playlist">
                       <ListPlus size={15} />
-                    </button>
-                    <button className="icon-button favorite-button is-favorite" onClick={() => onToggleFavorite(track.id, "song", false)} aria-label={`Remove ${track.title} from favorites`} title="Remove from favorites">
+                    </IconButton>
+                    <IconButton className="favorite-button is-favorite" onClick={() => onToggleFavorite(track.id, "song", false)} aria-label={`Remove ${track.title} from favorites`} title="Remove from favorites">
                       <Heart size={15} fill="currentColor" />
-                    </button>
+                    </IconButton>
                   </div>
                   );
                 }}
@@ -1405,8 +1413,7 @@ export default function SavedLibraryView({
                         {show.description ? <p>{show.description}</p> : null}
                       </div>
                       <div className="favorite-radio__actions">
-                        <button
-                          className={`icon-button ${activeShow && playing ? "is-active" : ""}`}
+                        <IconButton className={`${activeShow && playing ? "is-active" : ""}`}
                           onClick={
                             activeShow
                               ? onTogglePlayback
@@ -1426,10 +1433,8 @@ export default function SavedLibraryView({
                             : activeShow && playing
                               ? <Pause size={15} fill="currentColor" />
                               : <Play size={15} fill="currentColor" />}
-                        </button>
-                        <button
-                          className="icon-button"
-                          onClick={() => void actOnFavoriteRadioShow(show, "queue")}
+                        </IconButton>
+                        <IconButton onClick={() => void actOnFavoriteRadioShow(show, "queue")}
                           disabled={Boolean(radioAction)}
                           aria-label={`Add ${show.subtitle} to queue`}
                           title="Add to queue"
@@ -1437,15 +1442,14 @@ export default function SavedLibraryView({
                           {busyAction === "queue"
                             ? <LoaderCircle className="spin" size={15} />
                             : <ListPlus size={15} />}
-                        </button>
-                        <button
-                          className="icon-button favorite-button is-favorite"
+                        </IconButton>
+                        <IconButton className="favorite-button is-favorite"
                           onClick={() => onToggleRadioFavorite(show, false)}
                           aria-label={`Remove ${show.subtitle} from favorites`}
                           title="Remove from favorites"
                         >
                           <Heart size={15} fill="currentColor" />
-                        </button>
+                        </IconButton>
                       </div>
                     </article>
                   );
@@ -1485,13 +1489,12 @@ export default function SavedLibraryView({
                         </button>
                       </span>
                     </div>
-                    <button
-                      className="icon-button favorite-button is-favorite"
+                    <IconButton className="favorite-button is-favorite"
                       onClick={() => onToggleFavorite(album.id, "album", false)}
                       aria-label={`Remove ${album.title} from favorites`}
                     >
                       <Heart size={15} fill="currentColor" />
-                    </button>
+                    </IconButton>
                   </article>
                 ))}
               </div>

@@ -1,3 +1,5 @@
+import { Button } from "./components/ui/Button";
+import { IconButton } from "./components/ui/IconButton";
 import {
   useInfiniteQuery,
   useQueryClient,
@@ -231,8 +233,7 @@ const RadioCard = memo(function RadioCard({
             )}
             {active ? (playing ? "Pause" : "Resume") : "Play"}
           </button>
-          <button
-            className={`icon-button favorite-button ${favorite ? "is-favorite" : ""}`}
+          <IconButton className={`favorite-button ${favorite ? "is-favorite" : ""}`}
             onClick={() => onToggleFavorite(show)}
             disabled={Boolean(busyAction)}
             aria-label={
@@ -244,10 +245,8 @@ const RadioCard = memo(function RadioCard({
             title={favorite ? "Remove from favorites" : "Add to favorites"}
           >
             <Heart size={15} fill={favorite ? "currentColor" : "none"} />
-          </button>
-          <button
-            className="icon-button"
-            onClick={() => onDetails(show)}
+          </IconButton>
+          <IconButton onClick={() => onDetails(show)}
             disabled={Boolean(busyAction)}
             aria-label={`View tracklist for ${show.subtitle}`}
             title="View tracklist"
@@ -257,10 +256,8 @@ const RadioCard = memo(function RadioCard({
             ) : (
               <ListMusic size={15} />
             )}
-          </button>
-          <button
-            className="icon-button"
-            onClick={() => onQueue(show)}
+          </IconButton>
+          <IconButton onClick={() => onQueue(show)}
             disabled={Boolean(busyAction)}
             aria-label={`Add ${show.subtitle} to queue`}
             title="Add show to queue"
@@ -270,15 +267,13 @@ const RadioCard = memo(function RadioCard({
             ) : (
               <ListPlus size={15} />
             )}
-          </button>
-          <button
-            className="icon-button"
-            onClick={() => onOpenItem(radioEpisodeUrl(show.id))}
+          </IconButton>
+          <IconButton onClick={() => onOpenItem(radioEpisodeUrl(show.id))}
             aria-label={`Open ${show.subtitle} on Bandcamp`}
             title="Open on Bandcamp"
           >
             <ExternalLink size={14} />
-          </button>
+          </IconButton>
         </div>
       </div>
     </article>
@@ -360,8 +355,8 @@ const RadioDetail = memo(function RadioDetail({
           </div>
           <p>{show.description}</p>
           <div className="radio-feature__actions">
-            <button
-              className={`primary-button ${activeShow ? "is-current" : ""} ${activeShow && playing ? "is-playing" : ""}`}
+            <Button variant="primary"
+              className={`${activeShow ? "is-current" : ""} ${activeShow && playing ? "is-playing" : ""}`}
               onClick={activeShow ? onTogglePlayback : () => onPlay(track)}
               aria-label={activeShow ? `${playing ? "Pause" : "Resume"} show` : "Play show"}
               aria-pressed={activeShow && playing}
@@ -370,13 +365,13 @@ const RadioDetail = memo(function RadioDetail({
                 ? <Pause size={17} fill="currentColor" />
                 : <Play size={17} fill="currentColor" />}
               {activeShow ? (playing ? "Pause show" : "Resume show") : "Play show"}
-            </button>
-            <button className="secondary-button" onClick={() => onQueue(track)}>
+            </Button>
+            <Button variant="secondary" onClick={() => onQueue(track)}>
               <ListPlus size={17} />
               Add to queue
-            </button>
-            <button
-              className={`secondary-button favorite-button ${favorite ? "is-favorite" : ""}`}
+            </Button>
+            <Button variant="secondary"
+              className={`favorite-button ${favorite ? "is-favorite" : ""}`}
               onClick={() => onToggleFavorite(show)}
               aria-pressed={favorite}
               aria-label={
@@ -387,24 +382,21 @@ const RadioDetail = memo(function RadioDetail({
             >
               <Heart size={16} fill={favorite ? "currentColor" : "none"} />
               {favorite ? "Favorited" : "Favorite"}
-            </button>
+            </Button>
             {show.series ? (
-              <button
-                className="secondary-button"
+              <Button variant="secondary"
                 onClick={() => onBrowseSeries(show.series!.id)}
               >
                 <Radio size={16} />
                 Browse all episodes
-              </button>
+              </Button>
             ) : null}
-            <button
-              className="icon-button"
-              onClick={() => onOpenItem(radioEpisodeUrl(show.id))}
+            <IconButton onClick={() => onOpenItem(radioEpisodeUrl(show.id))}
               aria-label={`Open ${show.subtitle} on Bandcamp`}
               title="Open on Bandcamp"
             >
               <ExternalLink size={16} />
-            </button>
+            </IconButton>
           </div>
         </div>
       </header>
@@ -777,8 +769,8 @@ export default function RadioView({
           </div>
           <p>{featured.description}</p>
           <div className="radio-feature__actions">
-            <button
-              className={`primary-button ${currentTrackId === `radio:${featured.id}` ? "is-current" : ""} ${currentTrackId === `radio:${featured.id}` && playing ? "is-playing" : ""}`}
+            <Button variant="primary"
+              className={`${currentTrackId === `radio:${featured.id}` ? "is-current" : ""} ${currentTrackId === `radio:${featured.id}` && playing ? "is-playing" : ""}`}
               onClick={
                 currentTrackId === `radio:${featured.id}`
                   ? onTogglePlayback
@@ -806,9 +798,9 @@ export default function RadioView({
                 : currentTrackId === `radio:${featured.id}`
                   ? (playing ? "Pause latest show" : "Resume latest show")
                   : "Play latest show"}
-            </button>
-            <button
-              className={`secondary-button favorite-button ${favoriteShowIds.has(featured.id) ? "is-favorite" : ""}`}
+            </Button>
+            <Button variant="secondary"
+              className={`favorite-button ${favoriteShowIds.has(featured.id) ? "is-favorite" : ""}`}
               onClick={() => onToggleFavorite(featured)}
               disabled={Boolean(busy)}
               aria-pressed={favoriteShowIds.has(featured.id)}
@@ -823,9 +815,8 @@ export default function RadioView({
                 fill={favoriteShowIds.has(featured.id) ? "currentColor" : "none"}
               />
               {favoriteShowIds.has(featured.id) ? "Favorited" : "Favorite"}
-            </button>
-            <button
-              className="secondary-button"
+            </Button>
+            <Button variant="secondary"
               onClick={() => void actOnShow(featured, "queue")}
               disabled={Boolean(busy)}
             >
@@ -835,9 +826,8 @@ export default function RadioView({
                 <ListPlus size={17} />
               )}
               {actionFor(featured) === "queue" ? "Adding…" : "Add to queue"}
-            </button>
-            <button
-              className="secondary-button"
+            </Button>
+            <Button variant="secondary"
               onClick={() => void viewShow(featured)}
               disabled={Boolean(busy)}
             >
@@ -847,15 +837,13 @@ export default function RadioView({
                 <ListMusic size={17} />
               )}
               {actionFor(featured) === "detail" ? "Loading tracklist…" : "View tracklist"}
-            </button>
-            <button
-              className="icon-button"
-              onClick={() => openItem(radioEpisodeUrl(featured.id))}
+            </Button>
+            <IconButton onClick={() => openItem(radioEpisodeUrl(featured.id))}
               aria-label={`Open ${featured.subtitle} on Bandcamp`}
               title="Open on Bandcamp"
             >
               <ExternalLink size={16} />
-            </button>
+            </IconButton>
           </div>
           {actionError ? <p className="radio-action-error">{actionError}</p> : null}
         </div>

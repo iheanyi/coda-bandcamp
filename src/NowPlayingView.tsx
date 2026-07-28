@@ -1,3 +1,6 @@
+import { Button } from "./components/ui/Button";
+import { IconButton } from "./components/ui/IconButton";
+import { RangeControl } from "./components/ui/RangeControl";
 import {
   Airplay,
   ArrowLeft,
@@ -206,20 +209,16 @@ const NowPlayingPlaybackControls = memo(function NowPlayingPlaybackControls({
   return (
     <>
       <div className="now-playing__timeline">
-        <label
-          className="range now-playing__range"
-          style={{ "--range-value": `${progress}%` } as CSSProperties}
-        >
-          <span className="sr-only">Now playing position</span>
-          <input
-            type="range"
-            min="0"
-            max={safeDuration || 1}
-            step="1"
-            value={Math.min(Math.max(0, currentTime), safeDuration || 1)}
-            onChange={(event) => onSeek(Number(event.target.value))}
-          />
-        </label>
+        <RangeControl
+          className="now-playing__range"
+          label="Now playing position"
+          percentage={progress}
+          min="0"
+          max={safeDuration || 1}
+          step="1"
+          value={Math.min(Math.max(0, currentTime), safeDuration || 1)}
+          onChange={(event) => onSeek(Number(event.target.value))}
+        />
         <div className="now-playing__times" aria-hidden="true">
           <span>{formatTime(currentTime)}</span>
           <span>−{formatTime(remaining)}</span>
@@ -231,24 +230,22 @@ const NowPlayingPlaybackControls = memo(function NowPlayingPlaybackControls({
         role="group"
         aria-label="Playback controls"
       >
-        <button
-          className={`icon-button now-playing__mode ${repeat !== "off" ? "is-active" : ""}`}
+        <IconButton className={`now-playing__mode ${repeat !== "off" ? "is-active" : ""}`}
           onClick={onRepeat}
           title={repeatLabel}
           aria-label={repeatLabel}
           aria-pressed={repeat !== "off"}
         >
           {repeat === "one" ? <Repeat1 size={20} /> : <Repeat size={20} />}
-        </button>
-        <button
-          className="icon-button now-playing__skip"
+        </IconButton>
+        <IconButton className="now-playing__skip"
           onClick={onPrevious}
           disabled={!canPrevious && !positionCanPrevious}
           title="Previous"
           aria-label="Previous"
         >
           <SkipBack size={24} fill="currentColor" />
-        </button>
+        </IconButton>
         <button
           className="now-playing__play"
           onClick={onToggle}
@@ -258,24 +255,22 @@ const NowPlayingPlaybackControls = memo(function NowPlayingPlaybackControls({
             ? <Pause size={29} fill="currentColor" />
             : <Play size={29} fill="currentColor" />}
         </button>
-        <button
-          className="icon-button now-playing__skip"
+        <IconButton className="now-playing__skip"
           onClick={onNext}
           disabled={!canNext && !positionCanNext}
           title="Next"
           aria-label="Next"
         >
           <SkipForward size={24} fill="currentColor" />
-        </button>
-        <button
-          className={`icon-button now-playing__mode ${queueOpen ? "is-active" : ""}`}
+        </IconButton>
+        <IconButton className={`now-playing__mode ${queueOpen ? "is-active" : ""}`}
           onClick={onToggleQueue}
           title={queueOpen ? "Hide queue" : "Show queue"}
           aria-label={queueOpen ? "Hide queue" : "Show queue"}
           aria-pressed={queueOpen}
         >
           <ListMusic size={20} />
-        </button>
+        </IconButton>
       </div>
     </>
   );
@@ -537,19 +532,19 @@ function NowPlayingViewComponent({
           ) ? (
             <div className="now-playing__library-actions">
               {onToggleFavorite ? (
-                <button
-                  className={`text-button favorite-button ${favorite ? "is-favorite" : ""}`}
+                <Button variant="text"
+                  className={`favorite-button ${favorite ? "is-favorite" : ""}`}
                   onClick={onToggleFavorite}
                   aria-pressed={favorite}
                 >
                   <Heart size={15} fill={favorite ? "currentColor" : "none"} />
                   {favorite ? "Favorited" : "Favorite"}
-                </button>
+                </Button>
               ) : null}
               {!track.id.startsWith("radio:") && onAddToPlaylist ? (
-                <button className="text-button" onClick={onAddToPlaylist}>
+                <Button variant="text" onClick={onAddToPlaylist}>
                   <ListPlus size={15} /> Add to playlist
-                </button>
+                </Button>
               ) : null}
             </div>
           ) : null}
@@ -572,27 +567,21 @@ function NowPlayingViewComponent({
           />
 
           <div className="now-playing__output">
-            <button
-              className="icon-button"
-              onClick={() => onVolume(volume ? 0 : 0.72)}
+            <IconButton onClick={() => onVolume(volume ? 0 : 0.72)}
               aria-label={volume ? "Mute" : "Unmute"}
             >
               {volume ? <Volume2 size={19} /> : <VolumeX size={19} />}
-            </button>
-            <label
-              className="range now-playing__volume"
-              style={{ "--range-value": `${volume * 100}%` } as CSSProperties}
-            >
-              <span className="sr-only">Volume</span>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                value={volume}
-                onChange={(event) => onVolume(Number(event.target.value))}
-              />
-            </label>
+            </IconButton>
+            <RangeControl
+              className="now-playing__volume"
+              label="Volume"
+              percentage={volume * 100}
+              min="0"
+              max="1"
+              step="0.01"
+              value={volume}
+              onChange={(event) => onVolume(Number(event.target.value))}
+            />
             {airPlayAvailable ? (
               <button
                 className="now-playing__airplay"
@@ -666,8 +655,7 @@ function NowPlayingViewComponent({
               </small>
             </div>
             <div className="now-playing__continuation-actions">
-              <button
-                className="primary-button"
+              <Button variant="primary"
                 onClick={onPlayRecommendation}
                 disabled={recommendationLoading}
                 aria-label={`Play something from ${recommendation.album.title}`}
@@ -678,15 +666,14 @@ function NowPlayingViewComponent({
                   <Play size={15} fill="currentColor" />
                 )}
                 {recommendationLoading ? "Picking…" : "Play something"}
-              </button>
-              <button
-                className="secondary-button"
+              </Button>
+              <Button variant="secondary"
                 onClick={onAnotherRecommendation}
                 disabled={recommendationLoading}
               >
                 <Dices size={15} />
                 Another pick
-              </button>
+              </Button>
             </div>
           </div>
         ) : (

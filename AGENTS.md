@@ -231,6 +231,44 @@ overhead should not exceed the work being parallelized.
 - Preserve the minimum supported window width of 760 px and verify responsive
   behavior around and below 900 px.
 
+### Tailwind and UI primitives
+
+- Tailwind 4 is compiled through `@tailwindcss/vite`. Keep `src/styles.css` as
+  the canonical theme and component-style entry point; do not enable Preflight
+  or replace the native reset without a complete visual and platform audit.
+- Define shared colors, radii, and shadows in the `@theme` block with
+  `--color-coda-*`, `--radius-coda-*`, and `--shadow-coda-*` tokens. Reuse those
+  tokens instead of introducing one-off colors for ordinary control states.
+- Preserve exact values when migrating established visuals. Do not replace a
+  deliberate pixel value or opacity with the nearest Tailwind scale value when
+  that changes the rendered result.
+- Use the primitives in `src/components/ui/` for standard buttons, icon
+  buttons, fields, and range controls. Extend their variants before creating a
+  competing standard-control abstraction. Components accept `className` for
+  contextual styling; keep layout margins at the call site.
+- Use Tailwind utilities for repeatable layout, spacing, responsive behavior,
+  and token-backed states. Keep named component classes for complex gradients,
+  pseudo-elements, view transitions, reduced-motion behavior, native media
+  controls, and stateful surfaces where CSS is clearer than a long JSX class
+  list.
+- Canonicalize changed utility lists by passing each class list to
+  `npx @tailwindcss/cli canonicalize --css src/styles.css`; the command
+  canonicalizes its positional arguments or newline-delimited stdin, not the
+  CSS file itself. Inspect each result for visual equivalence before applying
+  it. Canonical ordering is not permission to approximate the design. Run
+  `npm run check:tailwind` to verify every `@apply` statement in the canonical
+  stylesheet.
+- Do not combine a border shorthand such as `[border:1px_solid]` with a
+  separate border-color or border-side utility in one `@apply`. Canonical
+  sorting can move the shorthand last and reset the other value. Use one exact
+  shorthand such as
+  `[border:1px_solid_var(--color-coda-line-strong)]`, or put a side override in
+  a normal CSS declaration after `@apply`.
+- Verify visual fidelity in the native Tauri app. Keep frontend tests focused on
+  observable component and application behavior; do not inject the full
+  stylesheet into jsdom, duplicate it in a test-only path, or build brittle
+  computed-style snapshots.
+
 Controls must change real application state. Do not simulate pane navigation
 with `scrollIntoView()` or focus alone. For two-way controls such as Show/Hide
 Queue, test both transitions and the player-control/keyboard recovery path.
