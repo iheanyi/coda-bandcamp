@@ -12,12 +12,14 @@ const MACOS_TITLE_DOUBLE_CLICK_ACTION_KEY: &str = "AppleActionOnDoubleClick";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TitleDoubleClickAction {
     Zoom,
+    Fill,
     Minimize,
     None,
 }
 
 fn title_double_click_action(preference: Option<&str>) -> TitleDoubleClickAction {
     match preference {
+        Some("Fill") => TitleDoubleClickAction::Fill,
         Some("Minimize") => TitleDoubleClickAction::Minimize,
         Some("None") => TitleDoubleClickAction::None,
         _ => TitleDoubleClickAction::Zoom,
@@ -39,6 +41,11 @@ fn perform_title_double_click_action(window: &NSWindow) {
             // SAFETY: `performZoom:` is an NSWindow action that accepts a nil sender.
             unsafe {
                 let _: () = msg_send![window, performZoom: Option::<&AnyObject>::None];
+            }
+        }
+        TitleDoubleClickAction::Fill => {
+            if let Some(screen) = window.screen() {
+                window.setFrame_display_animate(screen.visibleFrame(), true, true);
             }
         }
         TitleDoubleClickAction::Minimize => {
@@ -237,6 +244,10 @@ mod tests {
         assert_eq!(
             title_double_click_action(Some("Maximize")),
             TitleDoubleClickAction::Zoom
+        );
+        assert_eq!(
+            title_double_click_action(Some("Fill")),
+            TitleDoubleClickAction::Fill
         );
         assert_eq!(
             title_double_click_action(None),
