@@ -13,17 +13,18 @@ const releaseWorkflow = readFileSync(
 );
 
 function jobBlock(workflow, jobName) {
+  const normalizedWorkflow = workflow.replaceAll("\r\n", "\n");
   const marker = `  ${jobName}:\n`;
-  const start = workflow.indexOf(marker);
+  const start = normalizedWorkflow.indexOf(marker);
   if (start < 0) {
     throw new Error(`Workflow is missing job ${jobName}`);
   }
 
-  const afterStart = workflow.slice(start + marker.length);
+  const afterStart = normalizedWorkflow.slice(start + marker.length);
   const nextJob = afterStart.search(/^  [a-zA-Z0-9_-]+:\n/m);
   return nextJob < 0
-    ? workflow.slice(start)
-    : workflow.slice(start, start + marker.length + nextJob);
+    ? normalizedWorkflow.slice(start)
+    : normalizedWorkflow.slice(start, start + marker.length + nextJob);
 }
 
 test("shares target-specific Rust caches between CI and release builds", () => {
@@ -75,5 +76,13 @@ test("cryptographically verifies every signed updater artifact before publishing
   expect(publishRelease).toContain('for encoded_signature in "$SIGNED_ASSET_DIR"/*.sig');
   expect(publishRelease).toContain(
     'minisign -Vm "$artifact" -x "$decoded_signature" -p "$UPDATER_PUBLIC_KEY_PATH"',
+  );
+});
+
+test("parses workflow jobs after a Windows CRLF checkout", () => {
+  const windowsWorkflow = releaseWorkflow.replaceAll("\n", "\r\n");
+
+  expect(jobBlock(windowsWorkflow, "publish-release")).toContain(
+    "Cryptographically verify updater signatures",
   );
 });
