@@ -4105,6 +4105,30 @@ fn ensure_window_is_visible(app: &tauri::App) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn main_window_keeps_native_chrome_enabled() {
+        let config: Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("valid Tauri config");
+        let main_window = config["app"]["windows"]
+            .as_array()
+            .and_then(|windows| {
+                windows
+                    .iter()
+                    .find(|window| window["label"].as_str() == Some("main"))
+            })
+            .expect("main window config");
+
+        assert_eq!(main_window["decorations"], Value::Bool(true));
+        assert_eq!(
+            main_window["titleBarStyle"],
+            Value::String("Visible".into())
+        );
+        assert_eq!(main_window["closable"], Value::Bool(true));
+        assert_eq!(main_window["minimizable"], Value::Bool(true));
+        assert_eq!(main_window["maximizable"], Value::Bool(true));
+        assert_eq!(main_window["resizable"], Value::Bool(true));
+    }
+
     fn sample_player_track(id: &str) -> PlayerStateTrack {
         PlayerStateTrack {
             id: id.into(),
