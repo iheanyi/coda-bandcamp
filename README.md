@@ -103,13 +103,13 @@ short-lived and are not written to the persistent player snapshot. See
 ```sh
 npm test
 npm run test:coverage
-npm run build:perf
+npm run build
 cargo test --manifest-path src-tauri/Cargo.toml
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 ```
 
-CI runs the frontend suite, Rust tests, Clippy, performance budgets, and native
-Tauri builds on Windows, macOS, and Ubuntu.
+CI runs the frontend suite, production renderer build, Rust tests, Clippy, and
+native Tauri builds on Windows, macOS, and Ubuntu.
 
 ## Contributing
 

@@ -3899,6 +3899,7 @@ async fn radio_show(show_id: u64) -> Result<RadioShow, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
         .on_page_load(|webview, _| {
             if webview.label() == "main" {
                 let window = webview.window();
@@ -3910,6 +3911,8 @@ pub fn run() {
         .setup(|app| {
             #[cfg(desktop)]
             {
+                app.handle()
+                    .plugin(tauri_plugin_updater::Builder::new().build())?;
                 app.handle().plugin(
                     tauri_plugin_window_state::Builder::default()
                         .with_state_flags(

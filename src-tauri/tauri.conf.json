@@ -62,6 +62,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "category": "Music",
     "shortDescription": "A focused Bandcamp desktop player with a real queue.",
@@ -80,6 +81,17 @@
         "displayLanguageSelector": false,
         "installerIcon": "icons/icon.ico",
         "installMode": "currentUser"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdBREI5QjA1OEQyQ0ZBRkUKUldUKytpeU5CWnZiZWhXaTIwTUdFVm14WDYrUHlPZFk2eENOQXlGbGZnNThxNGtaeHJhZExhUSsK",
+      "endpoints": [
+        "https://github.com/iheanyi/coda-bandcamp/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

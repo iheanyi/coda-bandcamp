@@ -52,6 +52,12 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import {
+  AppUpdatePrompt,
+  AppUpdateSettings,
+  type AppUpdaterController,
+  useAppUpdater,
+} from "./AppUpdater";
 import { genreKey, summarizeGenres } from "./genres";
 import {
   clearCoverUrlCache,
@@ -1588,6 +1594,7 @@ function AlbumDetailPage({
 }
 
 function ConnectionDialog({
+  appUpdater,
   connected,
   lastFmStatus,
   onClose,
@@ -1595,6 +1602,7 @@ function ConnectionDialog({
   onDisconnected,
   onLastFmStatus,
 }: {
+  appUpdater: AppUpdaterController;
   connected: boolean;
   lastFmStatus: LastFmStatus;
   onClose: () => void;
@@ -1783,7 +1791,7 @@ function ConnectionDialog({
             {error ? <div className="form-error">{error}</div> : null}
             <button
               type="button"
-              className="danger-button"
+              className="connection-dialog__disconnect"
               onClick={() => void removeBandcamp()}
               disabled={disconnecting}
             >
@@ -1857,6 +1865,12 @@ function ConnectionDialog({
           {lastFmError ? <div className="form-error">{lastFmError}</div> : null}
           <small>The Last.fm session key is stored in your system credential vault. Coda never sees your Last.fm password.</small>
         </section>
+        {appUpdater.supported ? (
+          <>
+            <div className="connection-dialog__divider" />
+            <AppUpdateSettings updater={appUpdater} />
+          </>
+        ) : null}
         <small>Bandcamp’s Subsonic service is currently in beta. Coda is an independent client and is not affiliated with Bandcamp or Last.fm.</small>
       </section>
     </div>
@@ -1901,6 +1915,7 @@ function EmptyState({
 export default function App() {
   const queryClient = useQueryClient();
   const { data: albums } = useQuery(libraryStateQueryOptions);
+  const appUpdater = useAppUpdater();
   const setAlbums = useCallback(
     (update: React.SetStateAction<Album[]>) =>
       updateLibraryData(queryClient, update),
@@ -4698,6 +4713,7 @@ export default function App() {
       />
       {connectionOpen ? (
         <ConnectionDialog
+          appUpdater={appUpdater}
           connected={connected}
           lastFmStatus={lastFmStatus}
           onClose={closeConnection}
@@ -4706,6 +4722,7 @@ export default function App() {
           onLastFmStatus={setLastFmStatus}
         />
       ) : null}
+      {connectionOpen ? null : <AppUpdatePrompt updater={appUpdater} />}
       {playlistTarget?.length ? (
         <Suspense fallback={null}>
           <AddToPlaylistDialog
