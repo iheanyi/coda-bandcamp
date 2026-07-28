@@ -80,7 +80,9 @@ test("cryptographically verifies every signed updater artifact before publishing
 });
 
 test("parses workflow jobs after a Windows CRLF checkout", () => {
-  const windowsWorkflow = releaseWorkflow.replaceAll("\n", "\r\n");
+  const windowsWorkflow = releaseWorkflow
+    .replaceAll("\r\n", "\n")
+    .replaceAll("\n", "\r\n");
 
   expect(jobBlock(windowsWorkflow, "publish-release")).toContain(
     "Cryptographically verify updater signatures",
