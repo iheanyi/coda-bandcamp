@@ -353,9 +353,12 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     const dialog = await screen.findByRole("dialog", {
       name: "Bandcamp is connected",
     });
-    fireEvent.click(within(dialog).getByRole("button", {
+    const disconnectButton = within(dialog).getByRole("button", {
       name: "Disconnect and remove Bandcamp credentials",
-    }));
+    });
+    expect(disconnectButton).toHaveClass("connection-dialog__disconnect");
+    expect(disconnectButton).not.toHaveClass("danger-button");
+    fireEvent.click(disconnectButton);
     expect(await screen.findByText("Your collection starts here")).toBeInTheDocument();
 
     const cachedAt = Date.now();
