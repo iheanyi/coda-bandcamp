@@ -53,6 +53,17 @@ npm run desktop:build
 Tauri produces Windows installers on Windows, macOS bundles on macOS, and Linux
 packages on Linux.
 
+For a signed local build with Last.fm enabled, copy `.env.example` to the
+gitignored `.env.local`, fill in the values, and run:
+
+```sh
+npm run desktop:build:local
+```
+
+The local build command loads `.env.local` before Rust compiles, so the
+compile-time Last.fm credentials and Tauri updater signing credentials reach
+the native build. Do not commit `.env.local`.
+
 ## Connect Bandcamp
 
 1. Open **Settings** in Coda and choose **Connect**.
@@ -86,6 +97,26 @@ npm run dev
 
 The Last.fm session key created after authorization is stored in the operating
 system credential vault.
+
+## Releasing
+
+Maintainers can publish a stable release without editing version files:
+
+1. Open **Actions** in GitHub and select the **Release** workflow.
+2. Choose **Run workflow** on `main`.
+3. Select `patch`, `minor`, or `major`, then run it.
+
+If no stable release tag exists yet, the first run publishes the current
+manifest version. Later runs calculate the next version from the latest stable
+tag, update every JavaScript, Tauri, and Rust manifest, commit the synchronized
+versions to `main`, and create the tag. The same run builds all supported
+platforms, verifies the signed updater metadata, and publishes the GitHub
+release.
+
+If a platform job fails transiently, use **Re-run failed jobs** on the same
+workflow run. A superseded run will refuse to replace a newer release as
+latest. An exact `vX.Y.Z` tag on `main` whose version already matches every
+manifest remains available as an emergency release trigger.
 
 ## Technology
 

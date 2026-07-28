@@ -1,22 +1,184 @@
 name: Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: Version increment
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
   push:
     tags:
       - "v*.*.*"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 jobs:
+  prepare-release:
+    name: Prepare release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.prepare.outputs.version }}
+      tag: ${{ steps.prepare.outputs.tag }}
+      commit_sha: ${{ steps.prepare.outputs.commit_sha }}
+
+    steps:
+      - name: Validate release trigger
+        shell: bash
+        env:
+          RELEASE_EVENT: ${{ github.event_name }}
+          RELEASE_REF: ${{ github.ref }}
+        run: |
+          if [[ "$RELEASE_EVENT" == "workflow_dispatch" && "$RELEASE_REF" != "refs/heads/main" ]]; then
+            echo "Manual releases must run from the main branch." >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Validate release tag ancestry
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          if ! git merge-base --is-ancestor "$RELEASE_COMMIT" refs/remotes/origin/main; then
+            echo "Release tags must point to commits on main." >&2
+            exit 1
+          fi
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Test before releasing
+        run: npm test
+
+      - name: Enable authenticated release push
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+
+      - name: Configure release commit identity
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Prepare stable release
+        id: prepare
+        shell: bash
+        env:
+          RELEASE_EVENT: ${{ github.event_name }}
+          RELEASE_TYPE: ${{ inputs.release_type || 'patch' }}
+          RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
+          RELEASE_RUN_ID: ${{ github.run_id }}
+          RELEASE_BRANCH: ${{ github.ref_name }}
+        run: |
+          node tools/prepare-release.mjs \
+            --event "$RELEASE_EVENT" \
+            --release-type "$RELEASE_TYPE" \
+            --tag "$RELEASE_TAG" \
+            --run-id "$RELEASE_RUN_ID" \
+            --branch "$RELEASE_BRANCH" \
+            --repository-root "$GITHUB_WORKSPACE" \
+            --github-output "$GITHUB_OUTPUT"
+
+  prepare-draft:
+    name: Prepare draft release
+    needs: prepare-release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.draft.outputs.release_id }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare-release.outputs.commit_sha }}
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Create or verify owned draft
+        id: draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_COMMIT: ${{ needs.prepare-release.outputs.commit_sha }}
+          RELEASE_RUN_ID: ${{ github.run_id }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
+        run: |
+          draft_directory="$RUNNER_TEMP/coda-release-draft"
+          draft_metadata="$draft_directory/release.json"
+          release_notes="$draft_directory/notes.md"
+          ownership_marker="<!-- coda-release-run:${RELEASE_RUN_ID} coda-release-commit:${RELEASE_COMMIT} -->"
+          mkdir -p "$draft_directory"
+
+          if ! gh release view "$RELEASE_TAG" \
+            --json body,databaseId,isDraft,tagName \
+            > "$draft_metadata" 2>/dev/null; then
+            gh api \
+              --method POST \
+              "/repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+              -f tag_name="$RELEASE_TAG" \
+              -f target_commitish="$RELEASE_COMMIT" \
+              --jq .body \
+              > "$release_notes"
+            printf '\n%s\n' "$ownership_marker" >> "$release_notes"
+            gh release create "$RELEASE_TAG" \
+              --verify-tag \
+              --draft \
+              --title "Coda $RELEASE_TAG" \
+              --notes-file "$release_notes" \
+              --target "$RELEASE_COMMIT"
+            gh release view "$RELEASE_TAG" \
+              --json body,databaseId,isDraft,tagName \
+              > "$draft_metadata"
+          fi
+
+          node tools/verify-release-draft.mjs \
+            "$RELEASE_TAG" \
+            "$RELEASE_COMMIT" \
+            "$RELEASE_RUN_ID" \
+            "$draft_metadata"
+          release_id="$(jq -er '.databaseId' "$draft_metadata")"
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+
   build-release:
     name: ${{ matrix.name }}
+    needs:
+      - prepare-release
+      - prepare-draft
     runs-on: ${{ matrix.platform }}
     environment: release
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -38,9 +200,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          ref: ${{ needs.prepare-release.outputs.commit_sha }}
 
       - name: Validate release version
-        run: node tools/check-release-version.mjs "${{ github.ref_name }}"
+        run: node tools/check-release-version.mjs "${{ needs.prepare-release.outputs.tag }}"
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -74,24 +237,6 @@ jobs:
 
       - run: npm ci
 
-      - name: Generate release notes
-        id: release-notes
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          notes="$(gh api \
-            --method POST \
-            "/repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
-            -f tag_name="${GITHUB_REF_NAME}" \
-            -f target_commitish="${GITHUB_SHA}" \
-            --jq .body)"
-          {
-            echo 'body<<__CODA_RELEASE_NOTES__'
-            echo "$notes"
-            echo '__CODA_RELEASE_NOTES__'
-          } >> "$GITHUB_OUTPUT"
-
       - name: Build and upload draft release
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
         env:
@@ -102,9 +247,9 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: Coda ${{ github.ref_name }}
-          releaseBody: ${{ steps.release-notes.outputs.body }}
+          releaseId: ${{ needs.prepare-draft.outputs.release_id }}
+          tagName: ${{ needs.prepare-release.outputs.tag }}
+          releaseName: Coda ${{ needs.prepare-release.outputs.tag }}
           releaseDraft: true
           prerelease: false
           generateReleaseNotes: false
@@ -115,7 +260,10 @@ jobs:
 
   publish-release:
     name: Verify and publish
-    needs: build-release
+    needs:
+      - prepare-release
+      - prepare-draft
+      - build-release
     runs-on: ubuntu-22.04
     environment: release
     permissions:
@@ -124,29 +272,59 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
+          ref: ${{ needs.prepare-release.outputs.commit_sha }}
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
 
+      - name: Verify release is still current
+        env:
+          RELEASE_RUN_ID: ${{ github.run_id }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
+        run: >-
+          node tools/prepare-release.mjs
+          --event push
+          --release-type patch
+          --tag "$RELEASE_TAG"
+          --run-id "$RELEASE_RUN_ID"
+          --branch main
+          --repository-root "$GITHUB_WORKSPACE"
+
       - name: Download release metadata
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
         run: |
           mkdir -p "$RUNNER_TEMP/coda-release"
-          gh release download "$GITHUB_REF_NAME" \
+          gh release download "$RELEASE_TAG" \
             --pattern latest.json \
             --dir "$RUNNER_TEMP/coda-release"
-          gh release view "$GITHUB_REF_NAME" \
-            --json assets,isDraft,tagName \
+          gh release view "$RELEASE_TAG" \
+            --json assets,body,isDraft,tagName \
             > "$RUNNER_TEMP/coda-release/release.json"
 
+      - name: Verify draft ownership
+        env:
+          RELEASE_COMMIT: ${{ needs.prepare-release.outputs.commit_sha }}
+          RELEASE_RUN_ID: ${{ github.run_id }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
+        run: >-
+          node tools/verify-release-draft.mjs
+          "$RELEASE_TAG"
+          "$RELEASE_COMMIT"
+          "$RELEASE_RUN_ID"
+          "$RUNNER_TEMP/coda-release/release.json"
+
       - name: Verify signed updater assets
+        env:
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
         run: >-
           node tools/verify-release-assets.mjs
-          "$GITHUB_REF_NAME"
+          "$RELEASE_TAG"
           "$RUNNER_TEMP/coda-release/latest.json"
           "$RUNNER_TEMP/coda-release/release.json"
 
@@ -154,4 +332,5 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit "$GITHUB_REF_NAME" --draft=false --latest
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
+        run: gh release edit "$RELEASE_TAG" --draft=false --latest

@@ -12,7 +12,8 @@
     "test:coverage": "vitest run --coverage",
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
-    "desktop:build": "tauri build"
+    "desktop:build": "tauri build",
+    "desktop:build:local": "node --env-file=.env.local tools/local-desktop-build.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.4",
