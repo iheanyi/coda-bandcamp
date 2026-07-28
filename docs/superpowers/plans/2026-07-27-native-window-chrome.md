@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Preserve Coda's real macOS traffic lights while displaying a native, accessible `Coda` title centered against the full window.
+**Goal:** Preserve Coda's real macOS traffic lights while displaying the native, accessible live window title centered against the full window.
 
 **Architecture:** Make the Tauri native-window policy explicit, then install a macOS-only AppKit label in the existing `NSWindow` frame during setup. Keep the renderer's dynamic `NSWindow` title as system metadata, and hide its default leading visual only after the centered label has been installed successfully.
 
@@ -12,7 +12,8 @@
 
 - Native traffic lights and standard title-bar behavior remain owned by macOS.
 - No HTML chrome, overlay title bar, frameless window, private macOS API, renderer capability, or new Tauri command.
-- The visible title is exactly `Coda`; the semantic window title remains dynamic.
+- The visible and semantic titles both follow the existing dynamic window
+  title; the native visual label is centered and safely truncated.
 - Windows and Linux behavior must remain unchanged.
 - Queue layout and styling files are out of scope.
 - Work remains isolated on `codex/native-window-chrome`.
@@ -166,8 +167,10 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
   "NSControl",
   "NSFont",
   "NSFontDescriptor",
+  "NSKeyValueBinding",
   "NSLayoutAnchor",
   "NSLayoutConstraint",
+  "NSParagraphStyle",
   "NSResponder",
   "NSText",
   "NSTextField",
@@ -227,22 +230,34 @@ pub(crate) fn install_centered_title(window: &tauri::WebviewWindow) -> Result<()
     let content_view = native_window
         .contentView()
         .ok_or_else(|| "the main NSWindow has no content view".to_string())?;
-    let frame_view = content_view
-        .superview()
+    let frame_view = unsafe { content_view.superview() }
         .ok_or_else(|| "the main NSWindow has no frame view".to_string())?;
     let close_button = native_window
         .standardWindowButton(NSWindowButton::CloseButton)
         .ok_or_else(|| "the main NSWindow has no native close button".to_string())?;
 
-    let title = NSTextField::labelWithString(&NSString::from_str("Coda"), marker);
+    let semantic_title = native_window.title().to_string();
+    let title = NSTextField::labelWithString(
+        &NSString::from_str(centered_title_text(&semantic_title)),
+        marker,
+    );
     title.setAlignment(NSTextAlignment::Center);
-    title.setFont(Some(&NSFont::systemFontOfSize_weight(
-        13.0,
-        NSFontWeightSemibold,
-    )));
+    title.setLineBreakMode(NSLineBreakMode::ByTruncatingTail);
+    title.setMaximumNumberOfLines(1);
+    let title_weight = unsafe { NSFontWeightSemibold };
+    title.setFont(Some(&NSFont::systemFontOfSize_weight(13.0, title_weight)));
     title.setTextColor(Some(&NSColor::labelColor()));
     title.setAccessibilityElement(true);
     title.setTranslatesAutoresizingMaskIntoConstraints(false);
+    let value_binding = unsafe { NSValueBinding };
+    unsafe {
+        title.bind_toObject_withKeyPath_options(
+            value_binding,
+            native_window,
+            &NSString::from_str(centered_title_binding_key_path()),
+            None,
+        );
+    }
     frame_view.addSubview(&title);
 
     let constraints = NSArray::from_retained_slice(&[
@@ -252,6 +267,9 @@ pub(crate) fn install_centered_title(window: &tauri::WebviewWindow) -> Result<()
         title
             .centerYAnchor()
             .constraintEqualToAnchor(&close_button.centerYAnchor()),
+        title
+            .widthAnchor()
+            .constraintLessThanOrEqualToAnchor_constant(&frame_view.widthAnchor(), -220.0),
     ]);
     NSLayoutConstraint::activateConstraints(&constraints);
 
@@ -283,9 +301,9 @@ Do not propagate the error or hide the default title on failure.
 
 - [ ] **Step 6: Keep the centered title discoverable to accessibility**
 
-Update the approved design spec to state that the visual `Coda` label is
-exposed as native static text so Computer Use and assistive technology can
-locate it, while the `NSWindow` retains the contextual dynamic title.
+Update the approved design spec to state that the live visual title is exposed
+as native static text so Computer Use and assistive technology can locate it,
+while the `NSWindow` retains the same contextual dynamic title.
 
 - [ ] **Step 7: Format and run the focused test for GREEN**
 
@@ -361,7 +379,7 @@ configuration; do not terminate another Coda process.
 Use Computer Use against the new Coda process where possible:
 
 - verify AX buttons for close, minimize, and full screen;
-- verify the static text `Coda` is present in native chrome;
+- verify the native static title matches the active `NSWindow` title;
 - compare the title and window frame centers within a one-point tolerance;
 - resize and move the window, then re-check the center;
 - capture a screenshot for the handoff;

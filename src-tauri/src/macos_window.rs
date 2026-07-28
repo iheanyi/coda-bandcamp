@@ -1,7 +1,8 @@
 use objc2::MainThreadMarker;
 use objc2_app_kit::{
-    NSAccessibility, NSColor, NSFont, NSFontWeightSemibold, NSLayoutConstraint, NSTextAlignment,
-    NSTextField, NSWindow, NSWindowButton, NSWindowTitleVisibility,
+    NSAccessibility, NSColor, NSFont, NSFontWeightSemibold, NSLayoutConstraint, NSLineBreakMode,
+    NSObjectNSKeyValueBindingCreation, NSTextAlignment, NSTextField, NSValueBinding, NSWindow,
+    NSWindowButton, NSWindowTitleVisibility,
 };
 use objc2_foundation::{NSArray, NSString};
 
@@ -17,6 +18,14 @@ fn system_title_visibility(centered_title_installed: bool) -> SystemTitleVisibil
     } else {
         SystemTitleVisibility::Visible
     }
+}
+
+fn centered_title_text(window_title: &str) -> &str {
+    window_title
+}
+
+fn centered_title_binding_key_path() -> &'static str {
+    "title"
 }
 
 pub(crate) fn install_centered_title(window: &tauri::WebviewWindow) -> Result<(), String> {
@@ -43,14 +52,33 @@ pub(crate) fn install_centered_title(window: &tauri::WebviewWindow) -> Result<()
         .standardWindowButton(NSWindowButton::CloseButton)
         .ok_or_else(|| "the main NSWindow has no native close button".to_string())?;
 
-    let title = NSTextField::labelWithString(&NSString::from_str("Coda"), marker);
+    let semantic_title = native_window.title().to_string();
+    let title = NSTextField::labelWithString(
+        &NSString::from_str(centered_title_text(&semantic_title)),
+        marker,
+    );
     title.setAlignment(NSTextAlignment::Center);
+    title.setLineBreakMode(NSLineBreakMode::ByTruncatingTail);
+    title.setMaximumNumberOfLines(1);
     // SAFETY: NSFontWeightSemibold is an immutable AppKit framework constant.
     let title_weight = unsafe { NSFontWeightSemibold };
     title.setFont(Some(&NSFont::systemFontOfSize_weight(13.0, title_weight)));
     title.setTextColor(Some(&NSColor::labelColor()));
     title.setAccessibilityElement(true);
     title.setTranslatesAutoresizingMaskIntoConstraints(false);
+
+    // SAFETY: NSValueBinding is an immutable AppKit framework constant.
+    let value_binding = unsafe { NSValueBinding };
+    // SAFETY: NSWindow's `title` key path is KVC-compliant, NSTextField's
+    // value binding accepts strings, and no binding options are supplied.
+    unsafe {
+        title.bind_toObject_withKeyPath_options(
+            value_binding,
+            native_window,
+            &NSString::from_str(centered_title_binding_key_path()),
+            None,
+        );
+    }
     frame_view.addSubview(&title);
 
     let constraints = NSArray::from_retained_slice(&[
@@ -60,6 +88,9 @@ pub(crate) fn install_centered_title(window: &tauri::WebviewWindow) -> Result<()
         title
             .centerYAnchor()
             .constraintEqualToAnchor(&close_button.centerYAnchor()),
+        title
+            .widthAnchor()
+            .constraintLessThanOrEqualToAnchor_constant(&frame_view.widthAnchor(), -220.0),
     ]);
     NSLayoutConstraint::activateConstraints(&constraints);
 
@@ -85,5 +116,13 @@ mod tests {
             SystemTitleVisibility::Visible
         );
         assert_eq!(system_title_visibility(true), SystemTitleVisibility::Hidden);
+    }
+
+    #[test]
+    fn centered_title_preserves_and_observes_the_live_window_title() {
+        let current_title = "SUDDEN DEATH — Coda";
+
+        assert_eq!(centered_title_text(current_title), current_title);
+        assert_eq!(centered_title_binding_key_path(), "title");
     }
 }

@@ -16,7 +16,8 @@ screen-control overlay from the native window underneath it.
 ## Goals
 
 - Preserve real macOS close, minimize, and zoom/full-screen controls.
-- Center a concise `Coda` title against the full native window width.
+- Center the live track, album, artist, or destination title against the full
+  native window width.
 - Keep the dynamic track, album, artist, and destination title as the actual
   `NSWindow` title for accessibility, Window menu entries, and system metadata.
 - Preserve native title-bar dragging, double-click behavior, inactive-window
@@ -51,13 +52,15 @@ A focused `src-tauri/src/macos_window.rs` module, compiled only on macOS, will
 install the visual title during Tauri setup:
 
 1. Resolve the main `NSWindow` through Tauri's supported `ns_window()` handle.
-2. Create an AppKit `NSTextField` label containing `Coda`.
+2. Create an AppKit `NSTextField` label initialized from `NSWindow.title`.
 3. Apply the system title font, system label color, centered text alignment, and
    truncation behavior.
 4. Add the label to the native window frame view.
 5. Use Auto Layout to constrain the label's horizontal center to the full frame
    view and its vertical center to the native close button.
-6. Confirm the label participates in normal window dragging, then hide the
+6. Bind the label's value to `NSWindow.title` so renderer title updates remain
+   live without adding a renderer-to-native command.
+7. Confirm the label participates in normal window dragging, then hide the
    built-in visual title using `NSWindow.titleVisibility`.
 
 The title label is native AppKit, not HTML. The real traffic lights and title
@@ -105,7 +108,7 @@ The AppKit presentation requires a native macOS smoke test:
 - launch the complete app with `npm run dev`;
 - use Computer Use's accessibility tree to verify native close, minimize, and
   full-screen buttons remain exposed;
-- measure the native `Coda` title frame against the window frame and confirm
+- measure the native live-title frame against the window frame and confirm
   their horizontal centers align;
 - resize and move the window to confirm centering and native dragging persist;
 - distinguish Computer Use's purple control indicator from Coda's chrome.
