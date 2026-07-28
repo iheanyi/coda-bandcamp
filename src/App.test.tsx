@@ -897,6 +897,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     await screen.findByRole("button", { name: "Open Now Playing" });
     const audio = container.querySelector("audio");
     expect(audio).not.toBeNull();
+    await waitFor(() => {
+      expect(audio).toHaveAttribute("src", enrichedTrack.streamUrl);
+    });
     fireEvent.playing(audio!);
     await waitFor(() => expect(mocks.updateLastFmNowPlaying).toHaveBeenCalledOnce());
 
