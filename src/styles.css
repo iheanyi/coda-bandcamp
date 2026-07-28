@@ -1933,44 +1933,42 @@ kbd {
   min-height: 0;
   max-height: 100%;
   overflow: hidden;
-  border: 1px solid var(--line-strong);
+  contain: paint;
+  isolation: isolate;
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 10px;
-  background: rgba(21, 23, 25, 0.985);
+  background: #151719;
   box-shadow:
-    0 24px 64px rgba(0, 0, 0, 0.46),
-    0 5px 18px rgba(0, 0, 0, 0.28);
+    0 22px 54px rgba(0, 0, 0, 0.42),
+    0 4px 16px rgba(0, 0, 0, 0.24),
+    inset 1px 0 rgba(255, 255, 255, 0.025);
   transform-origin: right center;
-  will-change: transform, opacity;
 }
 
 .queue-panel--open {
-  animation: queue-panel-in 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: queue-panel-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .queue-panel--closing {
   pointer-events: none;
-  animation: queue-panel-out 220ms cubic-bezier(0.4, 0, 1, 1) both;
+  animation: queue-panel-out 180ms cubic-bezier(0.4, 0, 1, 1) both;
 }
 
 @keyframes queue-panel-in {
   from {
-    opacity: 0;
-    transform: translateX(28px) scale(0.985);
+    transform: translateX(24px) scale(0.99);
   }
   to {
-    opacity: 1;
     transform: translateX(0) scale(1);
   }
 }
 
 @keyframes queue-panel-out {
   from {
-    opacity: 1;
     transform: translateX(0) scale(1);
   }
   to {
-    opacity: 0;
-    transform: translateX(24px) scale(0.99);
+    transform: translateX(20px) scale(0.992);
   }
 }
 
@@ -1983,7 +1981,8 @@ kbd {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 25px 19px 17px;
+  padding: 25px 13px 17px;
+  background: #151719;
 }
 
 .queue-panel__header h2 {
@@ -2027,11 +2026,14 @@ kbd {
 }
 
 .queue-now {
+  overflow: hidden;
   margin: 0 13px 7px;
   padding: 10px;
-  border: 1px solid rgba(221, 101, 73, 0.18);
+  border: 1px solid rgba(221, 101, 73, 0.24);
   border-radius: 7px;
-  background: var(--accent-soft);
+  background:
+    linear-gradient(135deg, rgba(221, 101, 73, 0.14), transparent 62%),
+    #1c1a1b;
   animation: queue-now-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
@@ -2070,7 +2072,19 @@ kbd {
   align-items: center;
   gap: 10px;
   width: 100%;
+  min-width: 0;
   text-align: left;
+}
+
+.queue-now__main .queue-track__meta {
+  flex-basis: 0;
+  flex-grow: 1;
+  flex-shrink: 1;
+  overflow: hidden;
+}
+
+.queue-now__main .queue-track__title {
+  width: 100%;
 }
 
 .queue-now__chapter-artist,
@@ -2217,6 +2231,7 @@ kbd {
 
 .queue-bars {
   display: flex;
+  flex: 0 0 auto;
   align-items: flex-end;
   gap: 2px;
   height: 14px;
@@ -2248,6 +2263,7 @@ kbd {
   overflow-y: auto;
   overscroll-behavior-y: contain;
   padding: 2px 9px 10px;
+  background: #151719;
   scrollbar-color: #343738 transparent;
   scrollbar-width: thin;
   touch-action: pan-y;
@@ -2414,22 +2430,35 @@ kbd {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 38px 18px;
+  justify-content: center;
+  min-height: 100%;
+  padding: 24px 4px 28px;
   color: #666a66;
   text-align: center;
 }
 
+.queue-empty > svg {
+  box-sizing: content-box;
+  padding: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 50%;
+  background: #1b1e20;
+  color: #777b76;
+}
+
 .queue-empty > strong {
-  margin-top: 11px;
-  color: #aaaDa7;
-  font-size: 11px;
+  margin-top: 13px;
+  color: #b9bbb5;
+  font-size: 12px;
 }
 
 .queue-empty > span {
+  max-width: 250px;
   margin-top: 4px;
-  color: #6f736e;
+  color: #777b76;
   font-size: 10px;
   line-height: 1.45;
+  text-wrap: balance;
 }
 
 .queue-recommendation {
@@ -2437,13 +2466,16 @@ kbd {
   grid-template-columns: 46px minmax(0, 1fr);
   gap: 10px 11px;
   width: 100%;
-  margin-top: 20px;
-  padding: 11px;
-  border: 1px solid var(--line);
+  min-width: 0;
+  overflow: hidden;
+  margin-top: 22px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: 9px;
   background:
-    radial-gradient(circle at 0 0, rgba(221, 101, 73, 0.09), transparent 54%),
-    rgba(255, 255, 255, 0.02);
+    radial-gradient(circle at 0 0, rgba(221, 101, 73, 0.09), transparent 58%),
+    #1a1d1f;
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
   text-align: left;
 }
 
@@ -2502,7 +2534,7 @@ kbd {
   padding: 0 10px;
   border: 0;
   border-radius: 6px;
-  background: var(--accent-soft);
+  background: #34211e;
   color: #e9947e;
   font-size: 9px;
   font-weight: 750;
@@ -2522,8 +2554,9 @@ kbd {
 .queue-panel__footer {
   display: flex;
   justify-content: space-between;
-  padding: 12px 16px;
+  padding: 12px 13px;
   border-top: 1px solid var(--line);
+  background: #151719;
   color: #696d68;
   font-size: 9px;
 }
@@ -5683,8 +5716,8 @@ html:not(.coda-view-transitions-supported) .now-playing__up-next {
   }
 
   .queue-panel__header {
-    padding-right: 12px;
-    padding-left: 12px;
+    padding-right: 13px;
+    padding-left: 13px;
   }
 
   .queue-panel {
