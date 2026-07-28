@@ -536,7 +536,9 @@ describe("Coda application flows", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
     expect(await screen.findByText("Now playing")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Clear next" }));
-    expect(await screen.findByText("End of the queue")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("End of the queue")).toBeInTheDocument();
+    });
     expect(screen.getByRole("button", {
       name: "Play something from Soft Focus",
     })).toBeInTheDocument();

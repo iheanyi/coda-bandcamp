@@ -152,7 +152,7 @@ pub(crate) fn install_centered_title(window: &tauri::WebviewWindow) -> Result<()
     // the label instance keeps the same layout while gaining native title-bar
     // double-click handling.
     unsafe {
-        let title_object: &AnyObject = (&*title).as_ref();
+        let title_object: &AnyObject = (*title).as_ref();
         AnyObject::set_class(title_object, CodaTitleTextField::class());
     }
     title.setAlignment(NSTextAlignment::Center);
