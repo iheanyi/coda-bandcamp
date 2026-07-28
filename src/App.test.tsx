@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Album, Track } from "./types";
 
@@ -63,17 +64,20 @@ vi.mock("./lib", async (importOriginal) => {
 
 import App from "./App";
 
-function renderApp() {
+function renderApp(strict = false) {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
       mutations: { retry: false },
     },
   });
-  const view = render(
+  const app = (
     <QueryClientProvider client={queryClient}>
       <App />
-    </QueryClientProvider>,
+    </QueryClientProvider>
+  );
+  const view = render(
+    strict ? <StrictMode>{app}</StrictMode> : app,
   );
   return { ...view, queryClient };
 }
@@ -509,7 +513,7 @@ describe("Coda application flows", () => {
     });
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
-    const { container } = renderApp();
+    const { container } = renderApp(true);
 
     await screen.findByText("Soft Focus");
     fireEvent.click(screen.getByRole("button", { name: "Play Soft Focus" }));
@@ -541,6 +545,31 @@ describe("Coda application flows", () => {
     })).toBeInTheDocument();
     expect(screen.getAllByText("First Light").length).toBeGreaterThan(0);
     expect(screen.queryByText("Afterimage")).not.toBeInTheDocument();
+
+    const audio = container.querySelector("audio")!;
+    fireEvent.ended(audio);
+    expect(await screen.findByRole("button", { name: "Play" })).toBeInTheDocument();
+
+    vi.spyOn(Math, "random")
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0.75);
+    const play = vi.mocked(HTMLMediaElement.prototype.play);
+    play.mockClear();
+    fireEvent.click(screen.getByRole("button", {
+      name: "Play something from Soft Focus",
+    }));
+
+    expect(await screen.findByRole("button", {
+      name: "Add Afterimage to favorites",
+    })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Pause" })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(audio).toHaveAttribute(
+        "src",
+        tracks[1].streamUrl,
+      );
+      expect(play).toHaveBeenCalled();
+    });
   });
 
   it("restarts with Previous near the track body and disables unavailable transport", async () => {

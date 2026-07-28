@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { appendUnique, keepCurrentTrack, moveItem, shuffled } from "./queue";
+import {
+  activateTrack,
+  appendUnique,
+  keepCurrentTrack,
+  moveItem,
+  shuffled,
+} from "./queue";
 import type { Track } from "./types";
 
 const track = (id: string) => ({ id }) as Track;
@@ -22,6 +28,26 @@ describe("queue helpers", () => {
     const queue = [track("played"), track("current"), track("next")];
     expect(keepCurrentTrack(queue, 1).map((item) => item.id)).toEqual(["current"]);
     expect(queue.map((item) => item.id)).toEqual(["played", "current", "next"]);
+  });
+
+  it("inserts a new track after the current item and activates it", () => {
+    const queue = [track("current"), track("later")];
+    const result = activateTrack(queue, 0, track("recommended"));
+
+    expect(result.queue.map((item) => item.id)).toEqual([
+      "current",
+      "recommended",
+      "later",
+    ]);
+    expect(result.currentIndex).toBe(1);
+    expect(queue.map((item) => item.id)).toEqual(["current", "later"]);
+  });
+
+  it("activates an existing queued track without duplicating it", () => {
+    const queue = [track("current"), track("recommended")];
+    const result = activateTrack(queue, 0, queue[1]);
+
+    expect(result).toEqual({ queue, currentIndex: 1 });
   });
 
   it("supports deterministic shuffling", () => {

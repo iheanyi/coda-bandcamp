@@ -119,7 +119,13 @@ import {
   createPlaybackClock,
   type PlaybackClock,
 } from "./playbackClock";
-import { appendUnique, keepCurrentTrack, moveItem, shuffled } from "./queue";
+import {
+  activateTrack,
+  appendUnique,
+  keepCurrentTrack,
+  moveItem,
+  shuffled,
+} from "./queue";
 import {
   recommendQueueAlbum,
   type QueueRecommendation,
@@ -3389,21 +3395,22 @@ export default function App() {
   }, [albums, connected, notify, playbackClock, queryClient, setAlbums]);
 
   const playTrack = useCallback((track: Track) => {
-    setQueue((items) => {
-      const existing = items.findIndex((item) => item.id === track.id);
-      if (existing >= 0) {
-        setCurrentIndex(existing);
-        return items;
-      }
-      const insertion = Math.min(currentIndex + 1, items.length);
-      const copy = [...items];
-      copy.splice(insertion, 0, track);
-      setCurrentIndex(insertion);
-      return copy;
-    });
+    const latest = latestPlayerStateRef.current;
+    const activated = activateTrack(
+      latest.queue,
+      latest.currentIndex,
+      track,
+    );
+    latestPlayerStateRef.current = {
+      ...latest,
+      queue: activated.queue,
+      currentIndex: activated.currentIndex,
+    };
+    setQueue(activated.queue);
+    setCurrentIndex(activated.currentIndex);
     playbackClock.reset();
     setPlaying(true);
-  }, [currentIndex, playbackClock]);
+  }, [playbackClock]);
 
   const playTrackAt = useCallback((track: Track, position: number) => {
     const safePosition = Number.isFinite(position) ? Math.max(0, position) : 0;

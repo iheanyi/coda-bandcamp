@@ -1,5 +1,24 @@
 import type { Track } from "./types";
 
+export function activateTrack(
+  queue: Track[],
+  currentIndex: number,
+  track: Track,
+): { queue: Track[]; currentIndex: number } {
+  const existingIndex = queue.findIndex((item) => item.id === track.id);
+  if (existingIndex >= 0) {
+    return { queue, currentIndex: existingIndex };
+  }
+
+  const insertionIndex = Math.min(
+    Math.max(0, currentIndex + 1),
+    queue.length,
+  );
+  const nextQueue = [...queue];
+  nextQueue.splice(insertionIndex, 0, track);
+  return { queue: nextQueue, currentIndex: insertionIndex };
+}
+
 export function appendUnique(queue: Track[], tracks: Track[]): Track[] {
   const known = new Set(queue.map((track) => track.id));
   const additions = tracks.filter((track) => {
