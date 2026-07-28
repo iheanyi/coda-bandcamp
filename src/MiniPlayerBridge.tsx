@@ -21,6 +21,10 @@ import {
 } from "./miniPlayer";
 import type { PlaybackClock } from "./playbackClock";
 import {
+  createSystemArtworkDataUrl,
+  type SystemArtworkInput,
+} from "./systemArtwork";
+import {
   nextRadioChapterTimeInTimeline,
   previousRadioChapterTimeInTimeline,
   radioAiringIndexesAt,
@@ -54,6 +58,9 @@ type MiniPlayerBridgeProps = {
   syncSystemMediaSession?: (
     input: SystemMediaSessionInput,
   ) => Promise<void>;
+  createFallbackArtwork?: (
+    track: SystemArtworkInput,
+  ) => string | undefined;
 };
 
 let nativeEventBridgeRequest: Promise<MiniPlayerEventBridge> | undefined;
@@ -96,6 +103,7 @@ export function MiniPlayerBridge({
   onShowMain,
   loadArtworkUrl = fetchCoverUrl,
   syncSystemMediaSession = updateSystemMediaSession,
+  createFallbackArtwork = createSystemArtworkDataUrl,
 }: MiniPlayerBridgeProps) {
   const bridgeEnabled = Boolean(eventBridge) || isDesktop();
   const positionSeconds = useSyncExternalStore(
@@ -192,6 +200,19 @@ export function MiniPlayerBridge({
   );
   const latestSnapshotRef = useRef(snapshot);
   latestSnapshotRef.current = snapshot;
+  const fallbackArtworkDataUrl = useMemo(
+    () => snapshot.track
+      ? createFallbackArtwork(snapshot.track)
+      : undefined,
+    [
+      createFallbackArtwork,
+      snapshot.track?.artist,
+      snapshot.track?.id,
+      snapshot.track?.palette[0],
+      snapshot.track?.palette[1],
+      snapshot.track?.title,
+    ],
+  );
   const handlersRef = useRef({
     onTogglePlayback,
     onPrevious,
@@ -221,6 +242,7 @@ export function MiniPlayerBridge({
             albumId: track?.albumId,
             coverArtId,
             artworkUrl: miniTrack.artworkUrl,
+            fallbackArtworkDataUrl,
           }
         : undefined,
       playing: snapshot.playing,
@@ -244,6 +266,7 @@ export function MiniPlayerBridge({
     snapshot.track?.title,
     syncSystemMediaSession,
     coverArtId,
+    fallbackArtworkDataUrl,
   ]);
 
   const bridgeRequest = useMemo(

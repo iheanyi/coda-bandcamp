@@ -523,6 +523,7 @@ export type SystemMediaSessionInput = {
     albumId?: string;
     coverArtId?: string;
     artworkUrl?: string;
+    fallbackArtworkDataUrl?: string;
   };
   playing: boolean;
   positionSeconds: number;

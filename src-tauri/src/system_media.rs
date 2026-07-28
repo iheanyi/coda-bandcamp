@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde::Deserialize;
 #[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -5,12 +6,32 @@ use tauri::Emitter;
 
 const MAX_SYSTEM_MEDIA_TEXT_LENGTH: usize = 512;
 const MAX_SYSTEM_MEDIA_SECONDS: f64 = 7.0 * 24.0 * 60.0 * 60.0;
+const MAX_SYSTEM_FALLBACK_ARTWORK_DATA_URL_LENGTH: usize = 1024 * 1024;
+const MAX_SYSTEM_FALLBACK_ARTWORK_BYTES: usize = 768 * 1024;
+const PNG_DATA_URL_PREFIX: &str = "data:image/png;base64,";
+const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 #[cfg(target_os = "macos")]
 const MAX_SYSTEM_ARTWORK_BYTES: usize = 8 * 1024 * 1024;
 #[cfg(target_os = "macos")]
-type SystemArtworkCache = std::sync::Mutex<Option<(String, Vec<u8>)>>;
+#[derive(Default)]
+struct SystemArtworkCache(std::sync::Mutex<Option<(String, Vec<u8>)>>);
 #[cfg(target_os = "macos")]
 static SYSTEM_MEDIA_UPDATE_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(target_os = "macos")]
+impl SystemArtworkCache {
+    fn get(&self, key: &str) -> Option<Vec<u8>> {
+        let guard = self.0.lock().ok()?;
+        let (cached_key, bytes) = guard.as_ref()?;
+        (cached_key == key).then(|| bytes.clone())
+    }
+
+    fn insert(&self, key: String, bytes: Vec<u8>) {
+        if let Ok(mut guard) = self.0.lock() {
+            *guard = Some((key, bytes));
+        }
+    }
+}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -21,6 +42,7 @@ pub(crate) struct SystemMediaTrack {
     album_id: Option<String>,
     cover_art_id: Option<String>,
     artwork_url: Option<String>,
+    fallback_artwork_data_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -40,7 +62,26 @@ fn valid_text(value: &str, allow_empty: bool) -> bool {
         && !value.chars().any(char::is_control)
 }
 
-fn validate_input(input: &mut SystemMediaSessionInput) -> Result<(), String> {
+fn decode_fallback_artwork(value: Option<&str>) -> Result<Option<Vec<u8>>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.len() > MAX_SYSTEM_FALLBACK_ARTWORK_DATA_URL_LENGTH {
+        return Err("The system media fallback artwork is too large.".into());
+    }
+    let encoded = value
+        .strip_prefix(PNG_DATA_URL_PREFIX)
+        .ok_or_else(|| "The system media fallback artwork is invalid.".to_string())?;
+    let bytes = BASE64_STANDARD
+        .decode(encoded)
+        .map_err(|_| "The system media fallback artwork is invalid.".to_string())?;
+    if bytes.len() > MAX_SYSTEM_FALLBACK_ARTWORK_BYTES || !bytes.starts_with(PNG_SIGNATURE) {
+        return Err("The system media fallback artwork is invalid.".into());
+    }
+    Ok(Some(bytes))
+}
+
+fn validate_input(input: &mut SystemMediaSessionInput) -> Result<Option<Vec<u8>>, String> {
     if !input.position_seconds.is_finite()
         || !input.duration_seconds.is_finite()
         || input.position_seconds < 0.0
@@ -54,7 +95,7 @@ fn validate_input(input: &mut SystemMediaSessionInput) -> Result<(), String> {
         input.playing = false;
         input.can_previous = false;
         input.can_next = false;
-        return Ok(());
+        return Ok(None);
     };
     if !valid_text(&track.title, false)
         || !valid_text(&track.artist, false)
@@ -75,7 +116,7 @@ fn validate_input(input: &mut SystemMediaSessionInput) -> Result<(), String> {
     if let Some(album_id) = track.album_id.as_deref() {
         super::validate_identifier(album_id)?;
     }
-    Ok(())
+    decode_fallback_artwork(track.fallback_artwork_data_url.take().as_deref())
 }
 
 pub(crate) const fn native_supported() -> bool {
@@ -162,19 +203,25 @@ fn clear_remote_commands() {
 }
 
 #[cfg(target_os = "macos")]
-async fn artwork_bytes(url: &str) -> Option<Vec<u8>> {
+fn system_artwork_cache() -> &'static SystemArtworkCache {
     use std::sync::OnceLock;
 
     static CACHE: OnceLock<SystemArtworkCache> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| SystemArtworkCache::new(None));
-    if let Ok(guard) = cache.lock() {
-        if let Some((cached_url, bytes)) = guard.as_ref() {
-            if cached_url == url {
-                return Some(bytes.clone());
-            }
-        }
-    }
+    CACHE.get_or_init(SystemArtworkCache::default)
+}
 
+#[cfg(target_os = "macos")]
+fn artwork_cache_key(track: &SystemMediaTrack) -> Option<String> {
+    track
+        .cover_art_id
+        .as_ref()
+        .map(|id| format!("cover:{id}"))
+        .or_else(|| track.album_id.as_ref().map(|id| format!("album:{id}")))
+        .or_else(|| track.artwork_url.as_ref().map(|url| format!("url:{url}")))
+}
+
+#[cfg(target_os = "macos")]
+async fn fetch_artwork_bytes(url: &str) -> Option<Vec<u8>> {
     let response = super::http_client().ok()?.get(url).send().await.ok()?;
     if !response.status().is_success()
         || response
@@ -187,9 +234,6 @@ async fn artwork_bytes(url: &str) -> Option<Vec<u8>> {
     if bytes.is_empty() || bytes.len() > MAX_SYSTEM_ARTWORK_BYTES {
         return None;
     }
-    if let Ok(mut guard) = cache.lock() {
-        *guard = Some((url.to_string(), bytes.clone()));
-    }
     Some(bytes)
 }
 
@@ -199,7 +243,7 @@ async fn resolve_artwork_bytes(
     track: &SystemMediaTrack,
 ) -> Option<Vec<u8>> {
     if let Some(url) = track.artwork_url.as_deref() {
-        if let Some(bytes) = artwork_bytes(url).await {
+        if let Some(bytes) = fetch_artwork_bytes(url).await {
             return Some(bytes);
         }
     }
@@ -221,7 +265,7 @@ async fn resolve_artwork_bytes(
         &[("id", cover_art_id), ("size", "600".into())],
     )
     .ok()?;
-    artwork_bytes(url.as_str()).await
+    fetch_artwork_bytes(url.as_str()).await
 }
 
 #[cfg(target_os = "macos")]
@@ -256,7 +300,8 @@ fn update_native_session(input: SystemMediaSessionInput, artwork: Option<Vec<u8>
     use objc2_media_player::{
         MPMediaItemPropertyAlbumTitle, MPMediaItemPropertyArtist, MPMediaItemPropertyArtwork,
         MPMediaItemPropertyPlaybackDuration, MPMediaItemPropertyTitle, MPNowPlayingInfoCenter,
-        MPNowPlayingInfoPropertyDefaultPlaybackRate, MPNowPlayingInfoPropertyElapsedPlaybackTime,
+        MPNowPlayingInfoMediaType, MPNowPlayingInfoPropertyDefaultPlaybackRate,
+        MPNowPlayingInfoPropertyElapsedPlaybackTime, MPNowPlayingInfoPropertyMediaType,
         MPNowPlayingInfoPropertyPlaybackRate, MPNowPlayingPlaybackState, MPRemoteCommandCenter,
     };
 
@@ -279,6 +324,7 @@ fn update_native_session(input: SystemMediaSessionInput, artwork: Option<Vec<u8>
             MPNowPlayingInfoPropertyElapsedPlaybackTime,
             MPNowPlayingInfoPropertyPlaybackRate,
             MPNowPlayingInfoPropertyDefaultPlaybackRate,
+            MPNowPlayingInfoPropertyMediaType,
         ];
         let mut values: Vec<Retained<AnyObject>> = vec![
             NSString::from_str(&track.title).into(),
@@ -288,6 +334,7 @@ fn update_native_session(input: SystemMediaSessionInput, artwork: Option<Vec<u8>
             NSNumber::new_f64(input.position_seconds).into(),
             NSNumber::new_f64(if input.playing { 1.0 } else { 0.0 }).into(),
             NSNumber::new_f64(1.0).into(),
+            NSNumber::new_usize(MPNowPlayingInfoMediaType::Audio.0).into(),
         ];
         if let Some(artwork) = artwork.and_then(media_artwork) {
             keys.push(MPMediaItemPropertyArtwork);
@@ -312,13 +359,18 @@ pub(crate) async fn update_session(
     app: tauri::AppHandle,
     mut input: SystemMediaSessionInput,
 ) -> Result<(), String> {
-    validate_input(&mut input)?;
+    let fallback_artwork = validate_input(&mut input)?;
     #[cfg(target_os = "macos")]
     {
         let update_generation = SYSTEM_MEDIA_UPDATE_GENERATION
             .fetch_add(1, Ordering::AcqRel)
             .wrapping_add(1);
         let artwork_track = input.track.clone();
+        let artwork_cache_key = artwork_track.as_ref().and_then(artwork_cache_key);
+        let cached_artwork = artwork_cache_key
+            .as_deref()
+            .and_then(|key| system_artwork_cache().get(key));
+        let initial_artwork = cached_artwork.clone().or(fallback_artwork);
         let main_thread_app = app.clone();
         let initial_input = input.clone();
         app.run_on_main_thread(move || {
@@ -330,17 +382,20 @@ pub(crate) async fn update_session(
             } else {
                 clear_remote_commands();
             }
-            update_native_session(initial_input, None);
+            update_native_session(initial_input, initial_artwork);
         })
         .map_err(|error| format!("Could not update macOS media controls: {error}"))?;
-        let artwork = match artwork_track.as_ref() {
-            Some(track) => resolve_artwork_bytes(&app, track).await,
-            None => None,
+        let artwork = match (cached_artwork, artwork_track.as_ref()) {
+            (Some(_), _) | (_, None) => None,
+            (None, Some(track)) => resolve_artwork_bytes(&app, track).await,
         };
         if SYSTEM_MEDIA_UPDATE_GENERATION.load(Ordering::Acquire) != update_generation {
             return Ok(());
         }
         if let Some(artwork) = artwork {
+            if let Some(cache_key) = artwork_cache_key {
+                system_artwork_cache().insert(cache_key, artwork.clone());
+            }
             let artwork_app = app.clone();
             app.run_on_main_thread(move || {
                 if SYSTEM_MEDIA_UPDATE_GENERATION.load(Ordering::Acquire) != update_generation {
@@ -356,6 +411,7 @@ pub(crate) async fn update_session(
     {
         let _ = app;
         let _ = input;
+        let _ = fallback_artwork;
     }
     Ok(())
 }
@@ -373,6 +429,7 @@ mod tests {
                 album_id: Some("album-1".into()),
                 cover_art_id: Some("ca:496796527".into()),
                 artwork_url: Some("https://t4.bcbits.com/img/cover.jpg".into()),
+                fallback_artwork_data_url: None,
             }),
             playing: true,
             position_seconds: 42.0,
@@ -398,5 +455,41 @@ mod tests {
         let mut invalid_album = sample_input();
         invalid_album.track.as_mut().unwrap().album_id = Some("bad\nalbum".into());
         assert!(validate_input(&mut invalid_album).is_err());
+    }
+
+    #[test]
+    fn decodes_only_bounded_png_fallback_artwork() {
+        let decoded = decode_fallback_artwork(Some(concat!(
+            "data:image/png;base64,",
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lE",
+            "QVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        )))
+        .unwrap()
+        .unwrap();
+        assert_eq!(&decoded[..8], b"\x89PNG\r\n\x1a\n");
+        assert!(decode_fallback_artwork(Some("data:image/jpeg;base64,Y29kYS1jb3Zlcg==",)).is_err());
+        assert!(decode_fallback_artwork(Some("data:image/png;base64,not-valid-base64",)).is_err());
+        let oversized = format!(
+            "data:image/png;base64,{}",
+            "A".repeat(MAX_SYSTEM_FALLBACK_ARTWORK_DATA_URL_LENGTH),
+        );
+        assert!(decode_fallback_artwork(Some(&oversized)).is_err());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn reuses_real_artwork_by_stable_cover_identity() {
+        let mut first = sample_input().track.unwrap();
+        let mut refreshed = first.clone();
+        refreshed.artwork_url = Some("https://t4.bcbits.com/img/rotated-signed-cover.jpg".into());
+        let key = artwork_cache_key(&first).unwrap();
+        assert_eq!(artwork_cache_key(&refreshed).as_deref(), Some(key.as_str()));
+
+        let cache = SystemArtworkCache::default();
+        cache.insert(key.clone(), vec![1, 2, 3]);
+        assert_eq!(cache.get(&key), Some(vec![1, 2, 3]));
+
+        first.cover_art_id = None;
+        assert_ne!(artwork_cache_key(&first), artwork_cache_key(&refreshed));
     }
 }

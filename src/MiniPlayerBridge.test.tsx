@@ -42,6 +42,7 @@ const track: Track = {
   streamUrl: "https://t4.bcbits.com/stream/signed.mp3",
   palette: ["#dd6549", "#202326"],
 };
+const noFallbackArtwork = () => undefined;
 
 describe("main-to-mini player bridge", () => {
   it("mirrors the clock, routes bounded commands, and disposes listeners", async () => {
@@ -71,6 +72,7 @@ describe("main-to-mini player bridge", () => {
         onSeek={onSeek}
         onSetVolume={onSetVolume}
         onShowMain={onShowMain}
+        createFallbackArtwork={noFallbackArtwork}
       />,
     );
 
@@ -150,6 +152,7 @@ describe("main-to-mini player bridge", () => {
         onSetVolume={vi.fn()}
         onShowMain={vi.fn()}
         loadArtworkUrl={loadArtworkUrl}
+        createFallbackArtwork={noFallbackArtwork}
         syncSystemMediaSession={syncSystemMediaSession}
       />,
     );
@@ -166,6 +169,54 @@ describe("main-to-mini player bridge", () => {
           albumId: "album-1",
           coverArtId: "ca:496796527",
           artworkUrl: "https://t4.bcbits.com/img/restored-cover.jpg",
+        }),
+      }),
+    );
+
+    view.unmount();
+  });
+
+  it("publishes a generated Coda cover as the native artwork fallback", async () => {
+    const eventBridge = new MemoryMiniPlayerBridge();
+    const syncSystemMediaSession = vi.fn().mockResolvedValue(undefined);
+    const createFallbackArtwork = vi.fn().mockReturnValue(
+      "data:image/png;base64,Y29kYS1jb3Zlcg==",
+    );
+
+    const view = render(
+      <MiniPlayerBridge
+        eventBridge={eventBridge}
+        track={{ ...track, artworkUrl: undefined }}
+        radioTimeline={[]}
+        playbackClock={createPlaybackClock(42)}
+        playing
+        durationSeconds={180}
+        volume={0.72}
+        canPrevious
+        canNext
+        onTogglePlayback={vi.fn()}
+        onPrevious={vi.fn()}
+        onNext={vi.fn()}
+        onSeek={vi.fn()}
+        onSetVolume={vi.fn()}
+        onShowMain={vi.fn()}
+        createFallbackArtwork={createFallbackArtwork}
+        syncSystemMediaSession={syncSystemMediaSession}
+      />,
+    );
+
+    await waitFor(() => expect(syncSystemMediaSession).toHaveBeenCalled());
+    expect(createFallbackArtwork).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        title: "First Light",
+        artist: "Night Archive",
+        palette: ["#dd6549", "#202326"],
+      }),
+    );
+    expect(syncSystemMediaSession).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        track: expect.objectContaining({
+          fallbackArtworkDataUrl: "data:image/png;base64,Y29kYS1jb3Zlcg==",
         }),
       }),
     );
