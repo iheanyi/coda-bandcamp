@@ -111,6 +111,20 @@ describe("Discover", () => {
     expect(await screen.findByText("Jazz · Chicago, Illinois")).toBeInTheDocument();
   });
 
+  it("queries Hip-Hop/Rap with Bandcamp's canonical genre tag", async () => {
+    renderDiscover();
+
+    await screen.findByText("Blue Hours");
+    fireEvent.click(screen.getByRole("button", { name: "Hip-Hop/Rap" }));
+
+    await waitFor(() =>
+      expect(mocks.fetchDiscover).toHaveBeenLastCalledWith(
+        expect.objectContaining({ tag: "hip-hop-rap" }),
+        "*",
+      ),
+    );
+  });
+
   it("keeps the active preview control visible and matched to playback", async () => {
     const { onTogglePlayback } = renderDiscover(vi.fn(), {
       currentTrackId: "preview-1",
