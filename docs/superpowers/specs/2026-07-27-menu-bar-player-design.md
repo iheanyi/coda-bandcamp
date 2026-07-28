@@ -86,18 +86,25 @@ the compact window. The regular `App` and its TanStack Query provider remain
 unchanged for the main webview. The compact window does not initialize library
 queries or its own audio element.
 
-### Native artwork fallback
+### System media ownership
+
+The WebKit media session attached to Coda's existing `HTMLAudioElement` is the
+sole publisher of system playback state. Coda supplies title, artist, album,
+artwork, playback state, position, and previous/next handlers through the
+standard Media Session API on every supported platform. The native macOS
+`MPNowPlayingInfoCenter` and `MPRemoteCommandCenter` publisher is removed so
+macOS cannot display duplicate Coda sessions for one audio element.
 
 The main renderer produces an in-memory 600 by 600 PNG when a track becomes
 current. It uses the same palette base, coral rule, title initials, and artist
-label as Coda's generated album covers. The bounded PNG data URL crosses only
-the native command boundary and is never persisted.
+label as Coda's generated album covers. WebKit receives real artwork when it is
+available and the generated PNG otherwise. Neither source is persisted.
 
-macOS publishes this generated cover through `MPMediaItemArtwork` while real
-cover art is unavailable. Real artwork remains the first choice and replaces
-the generated cover as soon as it resolves. A bounded, stable-keyed in-memory
-cache retains the current real cover across play, pause, and metadata refreshes
-so routine updates never clear artwork or flash the application icon.
+WebKit must expose previous and next track actions instead of 15-second seeking
+in the packaged macOS app. The WebKit-only architecture ships only if a native
+smoke test confirms one Coda session with working play, pause, previous, and
+next controls. If the host WebKit ignores the registered track actions, retain
+the native publisher until playback moves to a native media engine.
 
 ## Error handling
 
@@ -106,8 +113,9 @@ so routine updates never clear artwork or flash the application icon.
   functional.
 - Invalid compact-player snapshots are discarded.
 - Invalid seek and volume commands are ignored.
-- Missing or failed artwork falls back to a palette-based Coda cover.
-- Malformed or oversized generated artwork is rejected at the native boundary.
+- Missing artwork falls back to a bounded palette-based Coda cover.
+- Unsupported Media Session properties or actions fail independently without
+  affecting in-app playback.
 - Native show, hide, focus, and positioning calls fail closed without exiting
   the app.
 

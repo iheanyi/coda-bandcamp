@@ -237,3 +237,72 @@ real art immediately on play, pause, and metadata-only updates.
 Run frontend tests and build, Rust format/tests/clippy, `git diff --check`, and
 `npm run tauri -- build --bundles app`. Launch the exact packaged worktree app
 for a native playback smoke test before publishing.
+
+### Task 7: WebKit-only system media experiment
+
+**Files:**
+- Modify: `src/media.ts`
+- Modify: `src/media.test.ts`
+- Modify: `src/App.tsx`
+- Modify: `src/App.test.tsx`
+- Modify: `src/MiniPlayerBridge.tsx`
+- Modify: `src/MiniPlayerBridge.test.tsx`
+- Modify: `src/lib.ts`
+- Delete: `src-tauri/src/system_media.rs`
+- Modify: `src-tauri/src/lib.rs`
+- Modify: `src-tauri/Cargo.toml`
+- Modify: `src-tauri/Cargo.lock`
+
+**Interfaces:**
+- Produces: one WebKit `MediaSession` with title, artist, album, artwork,
+  playback state, position, and previous/next track handlers.
+- Preserves: `MiniPlayerBridge` as the state and command bridge for Coda's
+  compact menu-bar window.
+- Removes: renderer-to-Rust system-media commands and the macOS
+  `MPNowPlayingInfoCenter`/`MPRemoteCommandCenter` publisher.
+
+- [ ] **Step 1: Write failing Web Media Session tests**
+
+Extend `src/media.test.ts` so `syncMediaSessionPlayback` must publish bounded
+position state and generated artwork, while
+`installMediaSessionTrackHandlers` must register previous/next and clear
+seek-forward/seek-backward actions.
+
+- [ ] **Step 2: Run the focused tests and verify failure**
+
+Run `npm test -- src/media.test.ts src/App.test.tsx
+src/MiniPlayerBridge.test.tsx`. Confirm position state and unconditional WebKit
+publication assertions fail before changing implementation.
+
+- [ ] **Step 3: Make WebKit the renderer's sole media publisher**
+
+Always install Web Media Session handlers. Publish real artwork or
+`createSystemArtworkDataUrl(currentTrack)` as the fallback, and send the current
+duration, position, and playback rate through `setPositionState` when they are
+valid.
+
+- [ ] **Step 4: Remove native publication plumbing**
+
+Remove `supportsNativeSystemMedia`, `updateSystemMediaSession`,
+`SystemMediaSessionInput`, the native-sync effect in `MiniPlayerBridge`, the
+registered Tauri commands, `system_media.rs`, and dependencies used only by that
+module. Do not remove the mini-player event bridge or the HTML audio element.
+
+- [ ] **Step 5: Run automated verification**
+
+Run `npm test`, `npm run build`, Rust formatting, Rust tests, Rust clippy, and
+`git diff --check`.
+
+- [ ] **Step 6: Package and validate the experiment**
+
+Quit every running Coda process, run `npm run tauri -- build --bundles app`,
+launch the exact worktree bundle, begin local playback, and inspect macOS media
+controls. Require exactly one Coda row with artwork, artist/album metadata,
+play/pause, previous, and next track controls.
+
+- [ ] **Step 7: Ship or roll back based on native evidence**
+
+If every requirement in Step 6 passes, commit and push the WebKit-only
+implementation. If WebKit still renders seek intervals, duplicates the session,
+or drops working commands, restore the implementation changes while retaining
+the documented result and keep the native publisher.
