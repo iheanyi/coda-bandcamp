@@ -1,6 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { Download, RefreshCw } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Spinner } from "@/components/ui/spinner";
 import { isDesktop } from "./lib";
 import {
   type AppUpdate,
@@ -11,7 +20,13 @@ import {
 const appUpdateQueryKey = ["coda", "app-update"] as const;
 
 type ManualCheckState = "idle" | "checking" | "current" | "error";
-type InstallState = "idle" | "installing" | "installed" | "restarting" | "error";
+type InstallState =
+  | "idle"
+  | "installing"
+  | "installed"
+  | "restarting"
+  | "install-error"
+  | "restart-error";
 
 export interface AppUpdaterController {
   readonly supported: boolean;
@@ -79,18 +94,23 @@ export function useAppUpdater(): AppUpdaterController {
       setProgress(100);
       setInstallState("installed");
     } catch {
-      setInstallState("error");
+      setInstallState("install-error");
     }
   }, [installState, update]);
 
   const restart = useCallback(async () => {
-    if (installState !== "installed") return;
+    if (
+      installState !== "installed" &&
+      installState !== "restart-error"
+    ) {
+      return;
+    }
 
     setInstallState("restarting");
     try {
       await restartAfterUpdate();
     } catch {
-      setInstallState("error");
+      setInstallState("restart-error");
     }
   }, [installState]);
 
@@ -118,44 +138,58 @@ export function AppUpdateSettings({
 
   return (
     <section
-      className="app-update-settings"
+      className="grid gap-3"
       aria-labelledby="app-update-settings-title"
     >
-      <div className="app-update-settings__heading">
-        <RefreshCw size={17} />
+      <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2.5">
+        <RefreshCw className="mt-px text-[#d4d2cc]" size={17} />
         <div>
-          <h3 id="app-update-settings-title">Coda updates</h3>
-          <p>
+          <h3
+            id="app-update-settings-title"
+            className="m-0 text-sm font-semibold text-[#deddd7]"
+          >
+            Coda updates
+          </h3>
+          <p className="mt-1 mb-0 text-xs/normal text-[#858984]">
             Check GitHub Releases for a signed update built for this computer.
           </p>
         </div>
         <span
-          className={`service-status ${
-            updater.update ? "service-status--live" : ""
+          className={`inline-flex items-center gap-1.5 text-xs font-bold whitespace-nowrap before:size-1.5 before:rounded-full before:content-[''] ${
+            updater.update
+              ? "text-[#9fbaa7] before:bg-coda-success"
+              : "text-[#7d817c] before:bg-[#656965]"
           }`}
         >
           {updater.update ? "Update available" : "Automatic"}
         </span>
       </div>
-      <div className="app-update-settings__actions">
-        <button
+      <div className="flex items-center gap-3 pl-7">
+        <Button
           type="button"
-          className="secondary-button"
           onClick={() => void updater.checkManually()}
           disabled={updater.checking}
         >
           {updater.checking ? (
-            <RefreshCw className="spin" size={15} />
+            <Spinner
+              aria-hidden="true"
+              className="size-4 text-current motion-reduce:animate-none"
+            />
           ) : null}
           {updater.checking ? "Checking…" : "Check for updates"}
-        </button>
+        </Button>
         {updater.manualCheckState === "current" ? (
-          <p role="status">Coda is up to date.</p>
+          <p
+            className="mt-1 mb-0 text-xs/normal text-[#858984]"
+            role="status"
+          >
+            Coda is up to date.
+          </p>
         ) : null}
         {updater.manualCheckState === "error" ? (
-          <p className="form-error" role="alert">
+          <Alert className="w-auto" variant="danger">
             Coda couldn’t check for updates. Check your connection and try again.
-          </p>
+          </Alert>
         ) : null}
       </div>
     </section>
@@ -167,6 +201,7 @@ export function AppUpdatePrompt({
 }: {
   updater: AppUpdaterController;
 }) {
+  const primaryActionRef = useRef<HTMLButtonElement>(null);
   const update = updater.update;
   if (!updater.supported || !updater.promptVisible || !update) return null;
 
@@ -175,84 +210,126 @@ export function AppUpdatePrompt({
     updater.installState === "restarting";
 
   return (
-    <div className="dialog-backdrop" role="presentation">
-      <section
-        className="app-update-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="app-update-title"
+    <Dialog
+      open
+      onOpenChange={(open, details) => {
+        if (open) return;
+        if (busy) {
+          details.cancel();
+          return;
+        }
+        updater.dismiss();
+      }}
+    >
+      <DialogContent
+        className="top-[calc(50%-46px)] max-h-[calc(100%-152px)] w-[min(30rem,92vw)] scrollbar-thin [scrollbar-color:#3e4142_transparent] gap-0 overflow-auto p-8"
+        showCloseButton={false}
         aria-busy={busy}
+        initialFocus={primaryActionRef}
       >
-        <div className="app-update-dialog__icon">
-          <Download size={23} />
+        <div className="mb-5 grid size-12 place-items-center rounded-full bg-accent text-[#e77b60]">
+          <Download size={24} />
         </div>
-        <span className="eyebrow">Coda update</span>
-        <h2 id="app-update-title">Coda {update.version} is ready</h2>
+        <span className="mb-2.5 text-xs font-bold tracking-widest text-[#777b76] uppercase">
+          Coda update
+        </span>
+        <DialogTitle
+          id="app-update-title"
+          className="m-0 font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-3xl leading-none font-semibold tracking-tighter"
+        >
+          Coda {update.version} is ready
+        </DialogTitle>
         {update.date ? (
-          <p className="app-update-dialog__date">Released {update.date}</p>
-        ) : null}
-        {update.body ? (
-          <div className="app-update-dialog__notes">{update.body}</div>
-        ) : (
-          <p className="app-update-dialog__notes">
-            A new version of Coda is available from GitHub Releases.
+          <p className="mt-2 mb-0 text-xs text-[#777b76]">
+            Released {update.date}
           </p>
-        )}
+        ) : null}
+        <DialogDescription className="mt-4 mb-5 max-h-48 overflow-auto text-xs/normal whitespace-pre-wrap text-[#a4a6a1]">
+          {update.body ??
+            "A new version of Coda is available from GitHub Releases."}
+        </DialogDescription>
 
         {updater.installState === "installing" ? (
-          <div className="app-update-dialog__progress" role="status">
-            <span>Downloading update… {updater.progress}%</span>
-            <progress max={100} value={updater.progress} />
+          <div
+            className="mb-4 grid gap-2 text-xs text-[#a6a8a2]"
+            role="status"
+          >
+            <span id="app-update-progress-label">
+              Downloading update… {updater.progress}%
+            </span>
+            <progress
+              aria-labelledby="app-update-progress-label"
+              className="h-1.5 w-full accent-primary"
+              max={100}
+              value={updater.progress}
+            />
           </div>
         ) : null}
-        {updater.installState === "error" ? (
-          <div className="form-error" role="alert">
+        {updater.installState === "install-error" ||
+        updater.installState === "restart-error" ? (
+          <Alert variant="danger">
             Coda couldn’t finish the update. Check your connection and try
             again.
-          </div>
+          </Alert>
         ) : null}
 
-        <div className="app-update-dialog__actions">
+        <div className="flex items-center gap-2">
           {updater.installState === "installed" ||
-          updater.installState === "restarting" ? (
-            <button
+          updater.installState === "restarting" ||
+          updater.installState === "restart-error" ? (
+            <Button
+              ref={primaryActionRef}
               type="button"
-              className="primary-button"
               onClick={() => void updater.restart()}
               disabled={updater.installState === "restarting"}
+              variant="primary"
             >
               {updater.installState === "restarting" ? (
-                <RefreshCw className="spin" size={16} />
+                <Spinner
+                  aria-hidden="true"
+                  className="size-4 text-current motion-reduce:animate-none"
+                />
+              ) : updater.installState === "restart-error" ? (
+                <RefreshCw size={16} />
               ) : null}
               {updater.installState === "restarting"
                 ? "Restarting…"
-                : "Restart Coda"}
-            </button>
+                : updater.installState === "restart-error"
+                  ? "Try again"
+                  : "Restart Coda"}
+            </Button>
           ) : (
-            <button
+            <Button
+              ref={primaryActionRef}
               type="button"
-              className="primary-button"
               onClick={() => void updater.install()}
               disabled={updater.installState === "installing"}
+              variant="primary"
             >
-              <Download size={16} />
+              {updater.installState === "installing" ? (
+                <Spinner
+                  aria-hidden="true"
+                  className="size-4 text-current motion-reduce:animate-none"
+                />
+              ) : (
+                <Download size={16} />
+              )}
               {updater.installState === "installing"
                 ? "Installing…"
-                : updater.installState === "error"
+                : updater.installState === "install-error"
                   ? "Try again"
-                  : "Download and install"}
-            </button>
+                  : "Update now"}
+            </Button>
           )}
-          <button
+          <Button
             type="button"
-            className="secondary-button"
             onClick={updater.dismiss}
             disabled={busy}
           >
             Later
-          </button>
+          </Button>
         </div>
-      </section>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

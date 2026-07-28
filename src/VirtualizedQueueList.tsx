@@ -252,11 +252,10 @@ export function VirtualizedQueueList<Item>({
       {items.length ? (
         virtualized ? (
           <div
+            className="relative w-full"
             role="list"
             style={{
               height: virtualizer.getTotalSize(),
-              position: "relative",
-              width: "100%",
             }}
           >
             {virtualItems.map((virtualItem) =>

@@ -58,6 +58,29 @@ import {
   type AppUpdaterController,
   useAppUpdater,
 } from "./AppUpdater";
+import { Alert } from "./components/ui/alert";
+import { Badge } from "./components/ui/badge";
+import { Button } from "./components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "./components/ui/dialog";
+import { Input } from "./components/ui/input";
+import { Label } from "./components/ui/label";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "./components/ui/native-select";
+import { Skeleton } from "./components/ui/skeleton";
+import { Slider } from "./components/ui/slider";
+import { Spinner } from "./components/ui/spinner";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "./components/ui/tooltip";
 import { genreKey, summarizeGenres } from "./genres";
 import {
   clearCoverUrlCache,
@@ -383,9 +406,17 @@ function CoverArt({
     setRequestVersion((version) => version + 1);
   };
 
+  const sizeClassName = size === "card"
+    ? "cover--card aspect-square w-full rounded-md shadow-[0_10px_24px_rgba(0,0,0,0.24)]"
+    : size === "small"
+      ? "cover--small size-10 rounded-sm"
+      : "cover--large size-52 rounded-md shadow-[0_20px_42px_rgba(0,0,0,0.35)]";
+
   return (
     <div
-      className={`cover cover--${size} ${animateChanges ? "cover--artwork-transition" : ""}`}
+      className={`cover relative isolate shrink-0 overflow-hidden bg-(--cover-base) text-[#f7f3e8] ${sizeClassName} ${
+        animateChanges ? "[&>img]:animate-[cover-artwork-in_180ms_ease-out]" : ""
+      }`}
       style={
         {
           "--cover-accent": album.palette[0],
@@ -402,12 +433,25 @@ function CoverArt({
           decoding="async"
           draggable={false}
           onError={retryImage}
+          className="block size-full object-cover"
         />
       ) : (
         <>
-          <span className="cover__rule" />
-          <span className="cover__mark">{initials(album.title)}</span>
-          <span className="cover__artist">{album.artist}</span>
+          <span className="absolute top-[12%] left-[9%] h-1 w-[31%] bg-(--cover-accent)" />
+          <span
+            className={`absolute left-[9%] font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] leading-none font-semibold tracking-[-0.08em] ${
+              size === "small"
+                ? "top-[22%] text-xs"
+                : "top-[24%] text-[clamp(18px,4vw,38px)]"
+            }`}
+          >
+            {initials(album.title)}
+          </span>
+          {size === "small" ? null : (
+            <span className="absolute right-[8%] bottom-[8%] left-[9%] truncate text-left text-[clamp(6px,0.75vw,9px)] font-bold tracking-widest uppercase">
+              {album.artist}
+            </span>
+          )}
         </>
       )}
     </div>
@@ -531,7 +575,7 @@ const AlbumCard = memo(function AlbumCard({
 
   return (
     <article
-      className="album-card"
+      className="group relative min-w-0 [contain-intrinsic-size:170px_235px] [content-visibility:auto]"
       onPointerEnter={schedulePrefetch}
       onPointerLeave={cancelScheduledPrefetch}
       onFocusCapture={() => {
@@ -539,16 +583,23 @@ const AlbumCard = memo(function AlbumCard({
         onPrefetch(album);
       }}
     >
-      <div className="album-card__cover">
+      <div className="relative block w-full">
         <CoverArt album={album} />
         <button
-          className="album-card__open"
+          className="absolute inset-0 z-1 w-full cursor-pointer rounded-md border-0 bg-transparent p-0 after:absolute after:inset-0 after:rounded-md after:bg-[rgba(8,9,10,0.2)] after:opacity-0 after:transition-opacity after:duration-(--duration-coda-fast) hover:after:opacity-100"
           onClick={() => onOpen(album)}
           aria-label={`Open ${album.title}`}
         />
-        <span className="album-card__play">
-          <button
-            className={`${active ? "is-current" : ""} ${active && playing ? "is-playing" : ""}`}
+        <span
+          className="absolute right-2 bottom-2 z-2 translate-y-1 opacity-0 transition-[opacity,transform] duration-(--duration-coda-fast) group-focus-within:translate-y-0 group-focus-within:opacity-100 group-hover:translate-y-0 group-hover:opacity-100 data-current:translate-y-0 data-current:opacity-100"
+          data-current={active || undefined}
+        >
+          <Button
+            className={`size-10 rounded-full p-0 text-white shadow-[0_5px_15px_rgba(0,0,0,0.35)] ${
+              active && playing
+                ? "bg-[color-mix(in_srgb,var(--primary)_80%,#17191b)] shadow-[0_5px_15px_rgba(0,0,0,0.35),0_0_0_3px_rgba(221,101,73,0.16)]"
+                : ""
+            }`}
             onClick={active ? onTogglePlayback : () => onPlay(album)}
             aria-label={
               active
@@ -556,34 +607,38 @@ const AlbumCard = memo(function AlbumCard({
                 : `Play ${album.title}`
             }
             aria-pressed={active && playing}
+            size="icon"
             title={active ? (playing ? "Pause album" : "Resume album") : "Play album"}
+            variant="primary"
           >
             {active && playing
               ? <Pause size={19} fill="currentColor" />
               : <Play size={19} fill="currentColor" />}
-          </button>
+          </Button>
         </span>
       </div>
-      <div className="album-card__meta">
-        <button className="album-card__name" onClick={() => onOpen(album)}>
+      <div className="flex min-w-0 flex-col pt-2.5 pr-6">
+        <button className="truncate cursor-pointer border-0 bg-transparent p-0 text-left text-xs font-bold text-[#e5e3dd]" onClick={() => onOpen(album)}>
           {album.title}
         </button>
         <button
-          className="album-card__artist"
+          className="mt-1 truncate cursor-pointer border-0 bg-transparent p-0 text-left text-xs font-medium text-[#868984] hover:text-[#dc8973] hover:underline hover:underline-offset-2"
           onClick={() => onArtist(album.artist)}
           title={`Browse ${album.artist}`}
         >
           {album.artist}
         </button>
       </div>
-      <button
-        className="icon-button album-card__more"
+      <Button
+        className="absolute -right-1 -bottom-1 size-7 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
         onClick={() => onQueue(album)}
+        size="icon-compact"
         title="Add album to queue"
         aria-label={`Add ${album.title} to queue`}
+        variant="ghost"
       >
         <Plus size={17} />
-      </button>
+      </Button>
     </article>
   );
 });
@@ -596,22 +651,23 @@ const ArtistCard = memo(function ArtistCard({
   onOpen: (group: ArtistGroup) => void;
 }) {
   return (
-    <button
-      className="artist-card"
+    <Button
+      className="group grid h-auto w-full min-w-0 grid-cols-[2.5rem_minmax(0,1fr)_auto] items-center gap-3 rounded-lg border border-border bg-[#171a1c] p-2 text-left text-inherit [contain-intrinsic-size:62px] [content-visibility:auto] hover:border-(--line-strong) hover:bg-[#1d2022]"
       onClick={() => onOpen(group)}
       aria-label={`Browse ${group.name}`}
+      variant="secondary"
     >
       <CoverArt album={group.representative} size="small" />
-      <span className="artist-card__copy">
-        <strong>{group.name}</strong>
-        <span>
+      <span className="flex min-w-0 flex-col gap-1">
+        <strong className="truncate text-xs font-bold text-[#e8e6df]">{group.name}</strong>
+        <span className="truncate text-xs font-normal text-[#777b76]">
           {countLabel(group.releaseCount, "release")}
           {" · "}
           {countLabel(group.trackCount, "track")}
         </span>
       </span>
-      <ChevronRight size={17} />
-    </button>
+      <ChevronRight className="text-[#686c67] group-hover:text-[#d88974]" size={17} />
+    </Button>
   );
 });
 
@@ -637,25 +693,25 @@ const ArtistHero = memo(function ArtistHero({
   onTogglePlayback: () => void;
 }) {
   return (
-    <section className="artist-hero">
+    <section className="relative -mt-2 mb-6 grid grid-cols-[7.5rem_minmax(0,1fr)] items-end gap-4 overflow-hidden rounded-lg border border-border bg-[radial-gradient(circle_at_88%_20%,rgba(221,101,73,0.13),transparent_38%),linear-gradient(135deg,#202426,#171a1c_72%)] p-4 xl:grid-cols-[9.5rem_minmax(0,1fr)] xl:gap-6 xl:p-5 [&>.cover]:size-30 [&>.cover]:rounded-lg xl:[&>.cover]:size-38">
       <CoverArt album={group.representative} size="large" />
-      <div className="artist-hero__body">
-        <button className="artist-hero__back" onClick={onBack}>
+      <div className="relative z-1 min-w-0">
+        <Button className="mb-3 -ml-1 h-auto gap-1 p-1 text-xs text-[#8b8f89] hover:bg-transparent hover:text-[#f0eee8] xl:mb-4" onClick={onBack} size="compact" variant="text">
           <ArrowLeft size={14} />
           All artists
-        </button>
-        <span className="eyebrow">Artist</span>
-        <h2>{group.name}</h2>
-        <p>
+        </Button>
+        <span className="mb-2.5 text-xs font-bold tracking-widest text-[#777b76] uppercase">Artist</span>
+        <h2 className="mt-1 mb-2 truncate font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-2xl leading-none font-semibold tracking-tighter text-[#f2f0e9] xl:text-3xl">{group.name}</h2>
+        <p className="m-0 text-xs text-[#858983]">
           {countLabel(group.releaseCount, "release")}
           {" · "}
           {countLabel(group.trackCount, "track")}
           {" · "}
           {formatTime(group.duration)}
         </p>
-        <div className="artist-hero__actions">
-          <button
-            className={`primary-button ${active ? "is-current" : ""} ${active && playing ? "is-playing" : ""}`}
+        <div className="mt-3.5 flex gap-2 xl:mt-5">
+          <Button
+            className={`${active ? "shadow-[inset_0_0_0_1px_rgba(255,255,255,0.18),0_8px_24px_rgba(221,101,73,0.16)]" : ""} ${active && playing ? "bg-[color-mix(in_srgb,var(--primary)_82%,#17191b)]" : ""}`}
             onClick={active ? onTogglePlayback : () => onPlay(group)}
             disabled={Boolean(loading)}
             aria-label={
@@ -664,9 +720,10 @@ const ArtistHero = memo(function ArtistHero({
                 : "Play all"
             }
             aria-pressed={active && playing}
+            variant="primary"
           >
             {loading === "play"
-              ? <RefreshCw className="spin" size={16} />
+              ? <Spinner aria-hidden="true" className="size-4 text-current" />
               : active && playing
                 ? <Pause size={16} fill="currentColor" />
                 : <Play size={16} fill="currentColor" />}
@@ -675,23 +732,21 @@ const ArtistHero = memo(function ArtistHero({
               : active
                 ? (playing ? "Pause" : "Resume")
                 : "Play all"}
-          </button>
-          <button
-            className="secondary-button"
+          </Button>
+          <Button
             onClick={() => onShuffle(group)}
             disabled={Boolean(loading)}
           >
-            {loading === "shuffle" ? <RefreshCw className="spin" size={16} /> : <Shuffle size={16} />}
+            {loading === "shuffle" ? <Spinner aria-hidden="true" className="size-4" /> : <Shuffle size={16} />}
             {loading === "shuffle" ? "Shuffling…" : "Shuffle"}
-          </button>
-          <button
-            className="secondary-button"
+          </Button>
+          <Button
             onClick={() => onQueue(group)}
             disabled={Boolean(loading)}
           >
-            {loading === "queue" ? <RefreshCw className="spin" size={16} /> : <ListPlus size={16} />}
+            {loading === "queue" ? <Spinner aria-hidden="true" className="size-4" /> : <ListPlus size={16} />}
             {loading === "queue" ? "Adding…" : "Add all"}
-          </button>
+          </Button>
         </div>
       </div>
     </section>
@@ -709,40 +764,49 @@ const Sidebar = memo(function Sidebar({
   connected: boolean;
   onConnect: () => void;
 }) {
+  const navigationButtonClass =
+    "relative h-10 w-full justify-start gap-2 rounded-md px-2 text-left text-xs font-medium text-[#a8aaa5] hover:bg-white/[0.04] hover:text-[#e3e1db] lg:gap-3 lg:px-3 lg:text-sm aria-[current=page]:bg-accent aria-[current=page]:text-[#f0b09f] aria-[current=page]:before:absolute aria-[current=page]:before:-left-3.5 aria-[current=page]:before:h-5 aria-[current=page]:before:w-1 aria-[current=page]:before:bg-primary aria-[current=page]:before:content-['']";
+
   return (
-    <aside className="sidebar">
-      <nav aria-label="Primary navigation">
-        <p className="eyebrow">Your music</p>
-        <button className={view === "library" ? "active" : ""} onClick={() => onView("library")}>
+    <aside className="flex min-h-0 flex-col border-r border-sidebar-border bg-sidebar px-2 pt-6 pb-3.5 lg:px-3.5">
+      <nav className="flex flex-col gap-1" aria-label="Primary navigation">
+        <p className="mb-2.5 text-xs font-bold tracking-widest text-[#777b76] uppercase">Your music</p>
+        <Button className={navigationButtonClass} aria-current={view === "library" ? "page" : undefined} onClick={() => onView("library")} variant="ghost">
           <Library size={18} /><span>Collection</span>
-        </button>
-        <button className={view === "favorites" ? "active" : ""} onClick={() => onView("favorites")}>
+        </Button>
+        <Button className={navigationButtonClass} aria-current={view === "favorites" ? "page" : undefined} onClick={() => onView("favorites")} variant="ghost">
           <Heart size={18} /><span>Favorites</span>
-        </button>
-        <button className={view === "playlists" ? "active" : ""} onClick={() => onView("playlists")}>
+        </Button>
+        <Button className={navigationButtonClass} aria-current={view === "playlists" ? "page" : undefined} onClick={() => onView("playlists")} variant="ghost">
           <ListMusic size={18} /><span>Playlists</span>
-        </button>
-        <button className={view === "recent" ? "active" : ""} onClick={() => onView("recent")}>
+        </Button>
+        <Button className={navigationButtonClass} aria-current={view === "recent" ? "page" : undefined} onClick={() => onView("recent")} variant="ghost">
           <Clock3 size={18} /><span>Recently added</span>
-        </button>
-        <button className={view === "discover" ? "active" : ""} onClick={() => onView("discover")}>
+        </Button>
+        <Button className={navigationButtonClass} aria-current={view === "discover" ? "page" : undefined} onClick={() => onView("discover")} variant="ghost">
           <Compass size={18} /><span>Discover</span>
-        </button>
-        <p className="eyebrow eyebrow--spaced">Listen</p>
-        <button className={view === "radio" ? "active" : ""} onClick={() => onView("radio")}>
+        </Button>
+        <p className="mt-6 mb-2.5 text-xs font-bold tracking-widest text-[#777b76] uppercase">Listen</p>
+        <Button className={navigationButtonClass} aria-current={view === "radio" ? "page" : undefined} onClick={() => onView("radio")} variant="ghost">
           <Radio size={18} /><span>Bandcamp Radio</span>
-        </button>
+        </Button>
       </nav>
 
-      <div className="sidebar__connection">
-        <span className={`status-dot ${connected ? "status-dot--live" : ""}`} />
-        <div>
-          <strong>{connected ? "Bandcamp synced" : "Not connected"}</strong>
-          <span>{connected ? "Official Subsonic beta" : "Connect to hear your music"}</span>
+      <div className="mt-auto grid grid-cols-[auto_1fr_auto] items-center gap-2 border-t border-border px-2 py-3 lg:px-2 lg:py-3">
+        <span
+          className={`size-2 rounded-full ${
+            connected
+              ? "bg-coda-success shadow-[0_0_0_4px_rgba(127,167,139,0.1)]"
+              : "bg-[#777a76]"
+          }`}
+        />
+        <div className="flex min-w-0 flex-col">
+          <strong className="truncate text-xs font-semibold text-[#c9cbc5]">{connected ? "Bandcamp synced" : "Not connected"}</strong>
+          <span className="mt-0.5 hidden truncate text-xs text-[#727670] lg:block">{connected ? "Official Subsonic beta" : "Connect to hear your music"}</span>
         </div>
-        <button className="icon-button" onClick={onConnect} aria-label="Connection settings" title="Connection settings">
+        <Button onClick={onConnect} aria-label="Connection settings" title="Connection settings" size="icon" variant="ghost">
           <Settings2 size={17} />
-        </button>
+        </Button>
       </div>
     </aside>
   );
@@ -772,42 +836,41 @@ const QueueRadioChapters = memo(function QueueRadioChapters({
   if (!chapters?.length) return null;
 
   return (
-    <section className="queue-radio" aria-label="Show chapters">
-      <header className="queue-radio__header">
+    <section className="mt-3 border-t border-white/[0.07] pt-2.5" aria-label="Show chapters">
+      <header className="flex items-center justify-between px-1 pb-2 text-xs font-bold tracking-widest text-[#8d918b] uppercase">
         <span>Show chapters</span>
-        <span>{chapters.length}</span>
+        <span className="text-[#686d68] tabular-nums">{chapters.length}</span>
       </header>
-      <ol className="queue-radio__list">
+      <ol className="m-0 max-h-[min(16rem,30vh)] list-none overflow-x-hidden overflow-y-auto px-0.5 pb-0.5 overscroll-contain [scrollbar-color:#3b3e3f_transparent] scrollbar-thin">
         {chapters.map((chapter, chapterIndex) => {
           const isCurrent = chapterIndex === currentChapterIndex;
           const isNext = chapterIndex === nextChapterIndex;
           return (
             <li
-              className={[
-                "queue-radio__chapter",
-                isCurrent ? "is-current" : "",
-                isNext ? "is-next" : "",
-              ].filter(Boolean).join(" ")}
+              className="[contain-intrinsic-size:48px] [content-visibility:auto]"
               key={`${chapter.timecode}-${chapter.artist}-${chapter.title}-${chapterIndex}`}
             >
               <button
+                className={`grid min-h-12 w-full cursor-pointer grid-cols-[2.5rem_minmax(0,1fr)_auto] items-center gap-2 rounded-md border-0 px-2 py-1.5 text-left text-inherit transition-colors duration-150 hover:bg-white/4.5 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary/60 ${
+                  isCurrent ? "bg-primary/10" : ""
+                }`}
                 ref={isCurrent ? currentChapterRef : undefined}
                 onClick={() => onSeek(chapter.timecode)}
                 aria-current={isCurrent ? "true" : undefined}
                 aria-label={`Seek to ${chapter.title} at ${formatTime(chapter.timecode)}`}
               >
-                <time>{formatTime(chapter.timecode)}</time>
-                <span className="queue-radio__chapter-copy">
-                  <strong>{chapter.title}</strong>
-                  <small>
+                <time className="text-xs text-[#777b76] tabular-nums">{formatTime(chapter.timecode)}</time>
+                <span className="flex min-w-0 flex-col gap-1">
+                  <strong className={`truncate text-xs font-semibold ${isCurrent ? "text-[#f0e8e2]" : isNext ? "text-[#c5c5bf]" : "text-[#d5d4ce]"}`}>{chapter.title}</strong>
+                  <small className="truncate text-xs text-[#747873]">
                     {chapter.artist}
                     {chapter.album ? ` · ${chapter.album}` : ""}
                   </small>
                 </span>
                 {isCurrent ? (
-                  <span className="queue-radio__state">On air</span>
+                  <Badge className="rounded-full bg-primary/15 p-1 text-xs font-bold tracking-widest text-[#e39582] uppercase">On air</Badge>
                 ) : isNext ? (
-                  <span className="queue-radio__state">Next</span>
+                  <Badge className="rounded-full bg-white/4.5 p-1 text-xs font-bold tracking-widest text-[#858984] uppercase">Next</Badge>
                 ) : null}
               </button>
             </li>
@@ -842,6 +905,7 @@ const QueuePanel = memo(function QueuePanel({
   recommendationLoading,
   onPlayRecommendation,
   onAnotherRecommendation,
+  onClose,
 }: {
   open: boolean;
   panelRef: RefObject<HTMLElement | null>;
@@ -866,6 +930,7 @@ const QueuePanel = memo(function QueuePanel({
   recommendationLoading: boolean;
   onPlayRecommendation: () => void;
   onAnotherRecommendation: () => void;
+  onClose: () => void;
 }) {
   const upcoming = queue.slice(currentIndex + 1);
   const remaining = upcoming.reduce((total, item) => total + item.duration, 0);
@@ -883,10 +948,10 @@ const QueuePanel = memo(function QueuePanel({
     ? radioTimeline.indexOf(nextRadioChapter)
     : -1;
   const emptyQueue = (
-    <div className="queue-empty">
-      <Music2 size={25} />
-      <strong>{currentTrack ? "End of the queue" : "Your queue is empty"}</strong>
-      <span>
+    <div className="flex min-h-full flex-col items-center justify-center px-1 pt-6 pb-7 text-center text-[#666a66]">
+      <Music2 className="box-content rounded-full border border-white/[0.07] bg-coda-radio p-2 text-[#777b76]" size={25} />
+      <strong className="mt-3 text-xs text-[#b9bbb5]">{currentTrack ? "End of the queue" : "Your queue is empty"}</strong>
+      <span className="mt-1 max-w-64 text-balance text-xs/normal text-[#777b76]">
         {recommendation
           ? "Not sure what comes next? Let Coda pick from your collection."
           : currentTrack
@@ -894,40 +959,48 @@ const QueuePanel = memo(function QueuePanel({
             : "Use the + button on any release to line up music."}
       </span>
       {recommendation ? (
-        <div className="queue-recommendation">
+        <div className="mt-6 grid w-full min-w-0 grid-cols-[3rem_minmax(0,1fr)] gap-x-3 gap-y-2.5 overflow-hidden rounded-lg border border-white/[0.09] bg-[radial-gradient(circle_at_0_0,rgba(221,101,73,0.09),transparent_58%),#1a1d1f] p-3 text-left shadow-[inset_0_1px_rgba(255,255,255,0.025)] [&>.cover]:self-center">
           <CoverArt size="small" album={recommendation.album} />
-          <div className="queue-recommendation__copy">
-            <span>Try this next</span>
-            <strong>{recommendation.album.title}</strong>
-            <small>
+          <div className="flex min-w-0 flex-col justify-center">
+            <span className="text-xs font-bold tracking-widest text-[#d07c67] uppercase">Try this next</span>
+            <strong className="mt-1 truncate text-xs/tight text-[#deddd7]">{recommendation.album.title}</strong>
+            <small className="mt-1 truncate text-xs/tight text-[#797d78]">
               {recommendation.album.artist} · {recommendation.reason}
             </small>
           </div>
-          <div className="queue-recommendation__actions">
-            <button
+          <div className="col-span-full flex gap-1.5">
+            <Button
               type="button"
-              className="queue-recommendation__play"
+              className="min-h-8 flex-1 gap-1.5 border-0 bg-[#34211e] px-2.5 text-xs font-bold text-[#e9947e] hover:bg-primary/20 hover:text-[#ffc0b0]"
               onClick={onPlayRecommendation}
               disabled={recommendationLoading}
               aria-label={`Play something from ${recommendation.album.title}`}
+              size="compact"
             >
               {recommendationLoading ? (
-                <RefreshCw className="spin" size={14} />
+                <Spinner aria-hidden="true" className="size-3.5" />
               ) : (
                 <Play size={14} fill="currentColor" />
               )}
               {recommendationLoading ? "Picking…" : "Play something"}
-            </button>
-            <button
-              type="button"
-              className="icon-button"
-              onClick={onAnotherRecommendation}
-              disabled={recommendationLoading}
-              aria-label="Suggest another album"
-              title="Suggest another"
-            >
-              <Dices size={15} />
-            </button>
+            </Button>
+            <Tooltip>
+              <TooltipTrigger
+                render={(
+                  <Button
+                    type="button"
+                    onClick={onAnotherRecommendation}
+                    disabled={recommendationLoading}
+                    aria-label="Suggest another album"
+                    size="icon-compact"
+                    variant="ghost"
+                  />
+                )}
+              >
+                <Dices size={15} />
+              </TooltipTrigger>
+              <TooltipContent>Suggest another</TooltipContent>
+            </Tooltip>
           </div>
         </div>
       ) : null}
@@ -937,41 +1010,69 @@ const QueuePanel = memo(function QueuePanel({
   return (
     <aside
       ref={panelRef}
-      className={`queue-panel ${open ? "queue-panel--open" : "queue-panel--closing"}`}
+      className={`absolute top-3 right-3 bottom-3 z-4 isolate grid max-h-full min-h-0 w-[min(22rem,calc(100%_-_15rem))] min-w-0 grid-rows-[auto_auto_minmax(0,1fr)_auto] overflow-hidden rounded-lg border border-white/12 bg-coda-queue shadow-coda-queue [contain:paint] [transform-origin:right_center] max-xl:w-[min(21rem,calc(100%_-_13rem))] max-xl:text-[90%] max-lg:inset-y-2 max-lg:right-2 max-lg:w-[min(20rem,calc(100%_-_10.5rem))] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary/70 ${
+        open
+          ? "animate-[queue-panel-in_220ms_cubic-bezier(0.22,1,0.36,1)_both]"
+          : "pointer-events-none animate-[queue-panel-out_180ms_cubic-bezier(0.4,0,1,1)_both]"
+      }`}
       aria-label="Playback queue"
       aria-hidden={!open}
       inert={!open}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape") return;
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+      }}
       tabIndex={open ? -1 : undefined}
     >
-      <div className="queue-panel__header">
+      <div className="flex items-center justify-between bg-coda-queue px-3 pt-6 pb-4">
         <div>
-          <span className="eyebrow">Playing next</span>
-          <h2>Queue</h2>
+          <span className="mb-2 text-xs font-bold tracking-widest text-[#777b76] uppercase">Playing next</span>
+          <h2 className="m-0 font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-xl leading-none font-semibold">Queue</h2>
         </div>
-        <div>
-          <button className="icon-button" onClick={onShuffle} disabled={queue.length < 2} title="Shuffle queue" aria-label="Shuffle queue">
-            <Shuffle size={17} />
-          </button>
-          <button
-            className="text-button"
+        <div className="flex items-center">
+          <Tooltip>
+            <TooltipTrigger
+              render={(
+                <Button
+                  className="transition-[color,background-color,transform] duration-160 hover:scale-105 hover:rotate-12"
+                  onClick={onShuffle}
+                  disabled={queue.length < 2}
+                  aria-label="Shuffle queue"
+                  size="icon"
+                  variant="ghost"
+                />
+              )}
+            >
+              <Shuffle size={17} />
+            </TooltipTrigger>
+            <TooltipContent>Shuffle queue</TooltipContent>
+          </Tooltip>
+          <Button
+            className="h-8 px-2 text-xs font-semibold text-[#858984] hover:bg-transparent hover:text-[#e1dfd9]"
             onClick={onClear}
             disabled={queue.length <= currentIndex + 1}
             title="Clear upcoming tracks"
+            size="compact"
+            variant="text"
           >
             Clear next
-          </button>
+          </Button>
         </div>
       </div>
 
       {currentTrack ? (
         <div
-          className={`queue-now ${playing ? "queue-now--playing" : "queue-now--paused"}`}
+          className="mx-3 mb-2 overflow-hidden rounded-md border border-primary/25 bg-[linear-gradient(135deg,rgba(221,101,73,0.14),transparent_62%),#1c1a1b] p-2.5 animate-[queue-now-in_320ms_cubic-bezier(0.22,1,0.36,1)_both]"
           key={currentTrack.id}
         >
-          <span className="queue-now__label"><span />Now playing</span>
-          <div className="queue-now__main">
+          <Badge className="mb-2 gap-1.5 bg-transparent p-0 text-xs tracking-widest text-[#d07b65] uppercase">
+            <span className="size-1.5 rounded-full bg-primary" />Now playing
+          </Badge>
+          <div className="flex w-full min-w-0 items-center gap-2.5 text-left">
             <button
-              className="queue-track__art"
+              className="block shrink-0 cursor-pointer overflow-hidden border-0 bg-transparent p-0 text-left"
               onClick={onNowPlaying}
               aria-label={`Open Now Playing for ${currentRadioChapter?.title ?? currentTrack.title}`}
               title="Open Now Playing"
@@ -988,17 +1089,17 @@ const QueuePanel = memo(function QueuePanel({
               }}
             />
             </button>
-            <div className="queue-track__meta">
+            <div className="flex min-w-0 shrink grow basis-0 flex-col gap-1 overflow-hidden">
               {currentRadioChapter ? (
                 <>
                   <RadioChapterCopy
                     chapter={currentRadioChapter}
-                    className="queue-now__radio-copy"
+                    className="flex min-w-0 flex-col gap-1"
                     onOpen={onOpenRadioItem}
                     localLinks={getRadioChapterLocalLinks(currentRadioChapter)}
                   />
                   {nextRadioChapter ? (
-                    <span className="queue-now__chapter-next">
+                    <span className="mt-0.5 truncate text-xs text-[#6f746f]">
                       Next: {nextRadioChapter.title}
                     </span>
                   ) : null}
@@ -1006,21 +1107,27 @@ const QueuePanel = memo(function QueuePanel({
               ) : (
                 <>
                   <button
-                    className="queue-track__title"
+                    className="w-full truncate cursor-pointer border-0 bg-transparent p-0 text-left text-xs font-semibold text-[#d9d8d2]"
                     onClick={onNowPlaying}
                   >
                     {currentTrack.title}
                   </button>
-                  <button
-                    className="metadata-link"
+                  <Button
+                    className="h-auto justify-start truncate p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
                     onClick={() => onArtist(currentTrack.artist)}
+                    size="compact"
+                    variant="text"
                   >
                     {currentTrack.artist}
-                  </button>
+                  </Button>
                 </>
               )}
             </div>
-            <span className="queue-bars"><i /><i /><i /></span>
+            <span className={`ml-auto flex h-3.5 shrink-0 items-end gap-0.5 text-primary ${playing ? "" : "[&>i]:[animation-play-state:paused]"}`}>
+              <i className="h-2 w-0.5 bg-current animate-[bar_750ms_ease-in-out_infinite_alternate]" />
+              <i className="h-3 w-0.5 bg-current animate-[bar_750ms_ease-in-out_-320ms_infinite_alternate]" />
+              <i className="h-1.5 w-0.5 bg-current animate-[bar_750ms_ease-in-out_-520ms_infinite_alternate]" />
+            </span>
           </div>
           <QueueRadioChapters
             chapters={radioTimeline}
@@ -1036,7 +1143,7 @@ const QueuePanel = memo(function QueuePanel({
         fallback={(
           <div
             aria-label="Upcoming tracks"
-            className="queue-list"
+            className="min-h-0 [touch-action:pan-y] [scrollbar-color:#343738_transparent] scrollbar-thin overflow-x-hidden overflow-y-auto overscroll-y-contain bg-coda-queue px-2 pt-0.5 pb-2.5 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary/60"
             role="region"
             tabIndex={0}
           >
@@ -1046,24 +1153,28 @@ const QueuePanel = memo(function QueuePanel({
       >
       <TrackQueueList
         aria-label="Upcoming tracks"
-        className="queue-list"
+        className="min-h-0 [touch-action:pan-y] [scrollbar-color:#343738_transparent] scrollbar-thin overflow-x-hidden overflow-y-auto overscroll-y-contain bg-coda-queue px-2 pt-0.5 pb-2.5 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary/60"
         empty={emptyQueue}
         getItemKey={(track, absoluteIndex) => `${track.id}-${absoluteIndex}`}
         items={upcoming}
         onMove={onMove}
         renderItem={(track, { absoluteIndex, index: upcomingIndex }) => (
           <div
-            className={`queue-track ${upcomingIndex < 12 ? "queue-track--animated" : ""}`}
+            className={`group grid min-h-15 grid-cols-[1rem_minmax(0,1fr)_auto_1.5rem] items-center gap-1 rounded-md p-1.5 transition-[background-color,transform] duration-180 hover:translate-x-0.5 hover:bg-white/[0.035] max-lg:grid-cols-[0.75rem_minmax(0,1fr)_auto_1.5rem] ${
+              upcomingIndex < 12
+                ? "animate-[queue-track-in_300ms_cubic-bezier(0.22,1,0.36,1)_both] [animation-delay:var(--queue-delay,0ms)]"
+                : ""
+            }`}
             style={
               upcomingIndex < 12
                 ? { "--queue-delay": `${upcomingIndex * 18}ms` } as React.CSSProperties
                 : undefined
             }
           >
-            <GripVertical className="queue-track__grip" size={15} />
-            <div className="queue-track__main">
+            <GripVertical className="cursor-grab text-[#4e5250] opacity-0 transition-[color,opacity,transform] duration-180 group-hover:translate-x-px group-hover:opacity-100" size={15} />
+            <div className="flex min-w-0 items-center gap-2 text-left">
               <button
-                className="queue-track__art"
+                className="block shrink-0 cursor-pointer overflow-hidden border-0 bg-transparent p-0 text-left"
                 onClick={() => onAlbum(track)}
                 aria-label={`Open ${track.album}`}
                 title={`Open ${track.album}`}
@@ -1080,25 +1191,40 @@ const QueuePanel = memo(function QueuePanel({
                   }}
                 />
               </button>
-              <span className="queue-track__meta">
+              <span className="flex min-w-0 flex-col gap-1">
                 <button
-                  className="queue-track__title"
+                  className="truncate cursor-pointer border-0 bg-transparent p-0 text-left text-xs font-semibold text-[#d9d8d2]"
                   onClick={() => onPlay(absoluteIndex)}
                 >
                   {track.title}
                 </button>
-                <button
-                  className="metadata-link"
+                <Button
+                  className="h-auto justify-start truncate p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
                   onClick={() => onArtist(track.artist)}
+                  size="compact"
+                  variant="text"
                 >
                   {track.artist}
-                </button>
+                </Button>
               </span>
             </div>
-            <span className="queue-track__duration">{formatTime(track.duration)}</span>
-            <button className="icon-button queue-track__remove" onClick={() => onRemove(absoluteIndex)} aria-label={`Remove ${track.title}`} title="Remove">
-              <X size={14} />
-            </button>
+            <span className="text-xs text-[#666a66]">{formatTime(track.duration)}</span>
+            <Tooltip>
+              <TooltipTrigger
+                render={(
+                  <Button
+                    className="size-6 scale-100 opacity-60 transition-[color,opacity,transform] duration-180 group-hover:opacity-100 group-focus-within:scale-100 group-focus-within:opacity-100 focus-visible:scale-100 focus-visible:opacity-100"
+                    onClick={() => onRemove(absoluteIndex)}
+                    aria-label={`Remove ${track.title}`}
+                    size="icon-compact"
+                    variant="ghost"
+                  />
+                )}
+              >
+                <X size={14} />
+              </TooltipTrigger>
+              <TooltipContent>Remove</TooltipContent>
+            </Tooltip>
           </div>
         )}
         startIndex={currentIndex + 1}
@@ -1106,8 +1232,8 @@ const QueuePanel = memo(function QueuePanel({
       />
       </Suspense>
 
-      <div className="queue-panel__footer">
-        <span className="queue-panel__count" key={upcoming.length}>
+      <div className="flex justify-between border-t border-border bg-coda-queue p-3 text-xs text-[#696d68]">
+        <span className="animate-[queue-count-in_220ms_cubic-bezier(0.22,1,0.36,1)_both]" key={upcoming.length}>
           {countLabel(upcoming.length, "track")} next
         </span>
         <span>{upcoming.length ? `${formatTime(remaining)} remaining` : "Queue ready"}</span>
@@ -1145,9 +1271,10 @@ const PlayerTrack = memo(function PlayerTrack({
   );
   const activeChapter = radioAiring.current;
   const favoriteControl = track ? (
-    <button
-      className={`icon-button favorite-button player__track-favorite ${favorite ? "is-favorite" : ""}`}
+    <Button
+      className={`size-7 shrink-0 ${favorite ? "text-[#ef8066]" : ""}`}
       onClick={onToggleFavorite}
+      size="icon-compact"
       title={favorite ? "Remove from favorites" : "Add to favorites"}
       aria-label={
         favorite
@@ -1155,17 +1282,18 @@ const PlayerTrack = memo(function PlayerTrack({
           : `Add ${track.title} to favorites`
       }
       aria-pressed={favorite}
+      variant="ghost"
     >
       <Heart size={17} fill={favorite ? "currentColor" : "none"} />
-    </button>
+    </Button>
   ) : null;
 
   return (
-    <div className="player__track">
+    <div className="flex w-full min-w-0 items-center justify-self-start gap-3">
       {track ? (
         <>
           <button
-            className="player__art-link"
+            className="player__art-link block shrink-0 cursor-pointer overflow-hidden rounded-sm border-0 bg-transparent p-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
             onClick={onNowPlaying}
             aria-label="Open Now Playing"
             title={`Open Now Playing for ${track.title}`}
@@ -1187,12 +1315,12 @@ const PlayerTrack = memo(function PlayerTrack({
             />
           </button>
           {activeChapter ? (
-            <div className="player__track-details">
-              <div className="player__track-copy">
-                <div className="player__radio-live" aria-live="polite">
+            <div className="flex min-w-0 flex-[0_1_auto] items-center gap-1">
+              <div className="flex min-w-0 flex-[0_1_auto] flex-col gap-1">
+                <div className="min-w-0" aria-live="polite">
                   <RadioChapterCopy
                     chapter={activeChapter}
-                    className="player__radio-chapter-copy"
+                    className="flex min-w-0 flex-col gap-1"
                     onOpen={onOpenRadioItem}
                     localLinks={getRadioChapterLocalLinks(activeChapter)}
                   />
@@ -1201,33 +1329,37 @@ const PlayerTrack = memo(function PlayerTrack({
               {favoriteControl}
             </div>
           ) : (
-            <div className="player__track-copy">
-              <div className="player__track-title-row">
-                <strong title={track.title}>{track.title}</strong>
+            <div className="flex min-w-0 flex-[0_1_auto] flex-col gap-1">
+              <div className="flex min-w-0 items-center gap-1">
+                <strong className="truncate text-xs font-bold text-[#e6e4de]" title={track.title}>{track.title}</strong>
                 {favoriteControl}
               </div>
-              <span>
-                <button
-                  className="metadata-link"
+              <span className="truncate text-xs text-[#7f827e]">
+                <Button
+                  className="h-auto p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
                   onClick={() => onArtist(track.artist)}
+                  size="compact"
+                  variant="text"
                 >
                   {track.artist}
-                </button>
+                </Button>
                 {" · "}
-                <button
-                  className="metadata-link"
+                <Button
+                  className="h-auto p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
                   onClick={() => onAlbum(track)}
+                  size="compact"
+                  variant="text"
                 >
                   {track.album}
-                </button>
+                </Button>
               </span>
             </div>
           )}
         </>
       ) : (
-        <div className="player__placeholder">
+        <div className="flex items-center gap-2 text-[#777a76]">
           <Disc3 size={20} />
-          <span>Nothing playing</span>
+          <span className="truncate text-xs">Nothing playing</span>
         </div>
       )}
     </div>
@@ -1264,7 +1396,6 @@ const PlayerTransport = memo(function PlayerTransport({
   onRepeat: () => void;
 }) {
   const currentTime = usePlaybackPosition(playbackClock);
-  const progress = duration ? Math.min(100, (currentTime / duration) * 100) : 0;
   const positionCanPrevious = Boolean(track) && (
     currentTime > PREVIOUS_RESTART_THRESHOLD_SECONDS ||
     previousRadioChapterTimeInTimeline(radioTimeline, currentTime) !== undefined
@@ -1273,36 +1404,53 @@ const PlayerTransport = memo(function PlayerTransport({
     nextRadioChapterTimeInTimeline(radioTimeline, currentTime) !== undefined;
 
   return (
-    <div className="player__transport">
+    <div className="flex w-full max-w-3xl flex-col items-stretch gap-2 justify-self-center">
       <div
-        className="transport-buttons"
+        className="grid grid-cols-[repeat(5,2rem)] items-center justify-center gap-2"
         role="group"
         aria-label="Playback controls"
       >
-        <button className="icon-button" onClick={onPrevious} disabled={!canPrevious && !positionCanPrevious} title="Previous" aria-label="Previous"><SkipBack size={18} fill="currentColor" /></button>
-        <button className="play-button" onClick={onToggle} disabled={!track} aria-label={playing ? "Pause" : "Play"}>
+        <span aria-hidden="true" className="size-8" />
+        <Tooltip>
+          <TooltipTrigger render={<Button onClick={onPrevious} disabled={!canPrevious && !positionCanPrevious} aria-label="Previous" size="icon" variant="ghost" />}>
+            <SkipBack size={18} fill="currentColor" />
+          </TooltipTrigger>
+          <TooltipContent>Previous</TooltipContent>
+        </Tooltip>
+        <Button
+          className="size-9 rounded-full border-0 bg-[#eeece6] p-0 text-[#17191b] transition-[background-color,transform,box-shadow] duration-(--duration-coda-fast) hover:scale-105 hover:bg-white hover:shadow-[0_5px_16px_rgba(0,0,0,0.22)] active:scale-95"
+          onClick={onToggle}
+          disabled={!track}
+          aria-label={playing ? "Pause" : "Play"}
+          size="icon"
+        >
           {playing ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
-        </button>
-        <button className="icon-button" onClick={onNext} disabled={!canNext && !positionCanNext} title="Next" aria-label="Next"><SkipForward size={18} fill="currentColor" /></button>
-        <button className={`icon-button ${repeat !== "off" ? "is-active" : ""}`} onClick={onRepeat} disabled={!track} title="Repeat" aria-label={`Repeat ${repeat}`}>
-          {repeat === "one" ? <Repeat1 size={17} /> : <Repeat size={17} />}
-        </button>
+        </Button>
+        <Tooltip>
+          <TooltipTrigger render={<Button onClick={onNext} disabled={!canNext && !positionCanNext} aria-label="Next" size="icon" variant="ghost" />}>
+            <SkipForward size={18} fill="currentColor" />
+          </TooltipTrigger>
+          <TooltipContent>Next</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger render={<Button className={repeat !== "off" ? "text-primary" : ""} onClick={onRepeat} disabled={!track} aria-label={`Repeat ${repeat}`} size="icon" variant="ghost" />}>
+            {repeat === "one" ? <Repeat1 size={17} /> : <Repeat size={17} />}
+          </TooltipTrigger>
+          <TooltipContent>Repeat</TooltipContent>
+        </Tooltip>
       </div>
-      <div className="progress-row">
-        <span>{formatTime(currentTime)}</span>
-        <label className="range" style={{ "--range-value": `${progress}%` } as React.CSSProperties}>
-          <span className="sr-only">Track position</span>
-          <input
-            type="range"
-            min="0"
-            max={duration || 1}
-            step="1"
-            value={Math.min(currentTime, duration || 1)}
-            disabled={!track}
-            onChange={(event) => onSeek(Number(event.target.value))}
-          />
-        </label>
-        <span>{formatTime(duration)}</span>
+      <div className="grid grid-cols-[2rem_minmax(6rem,1fr)_2rem] items-center gap-2">
+        <span className="text-xs text-[#70746f]">{formatTime(currentTime)}</span>
+        <Slider
+          aria-label="Track position"
+          min={0}
+          max={duration || 1}
+          step={1}
+          value={[Math.min(currentTime, duration || 1)]}
+          disabled={!track}
+          onValueChange={([nextPosition]) => onSeek(nextPosition)}
+        />
+        <span className="text-right text-xs text-[#70746f]">{formatTime(duration)}</span>
       </div>
     </div>
   );
@@ -1336,6 +1484,7 @@ function Player({
   onAddToPlaylist,
   queueOpen,
   onToggleQueue,
+  queueControlRef,
 }: {
   track?: Track;
   radioTimeline: readonly RadioChapter[];
@@ -1364,9 +1513,10 @@ function Player({
   onAddToPlaylist: () => void;
   queueOpen: boolean;
   onToggleQueue: () => void;
+  queueControlRef: RefObject<HTMLButtonElement | null>;
 }) {
   return (
-    <footer className="player">
+    <footer className="relative z-3 grid grid-cols-[minmax(0,1fr)_minmax(18rem,1.4fr)_minmax(0,1fr)] items-center gap-3 border-t border-(--line-strong) bg-coda-player px-3 shadow-coda-player lg:grid-cols-[minmax(0,1fr)_minmax(22rem,1.5fr)_minmax(0,1fr)] lg:gap-6 lg:px-4">
       <PlayerTrack
         track={track}
         radioTimeline={radioTimeline}
@@ -1394,44 +1544,56 @@ function Player({
         onSeek={onSeek}
         onRepeat={onRepeat}
       />
-      <div className="player__volume">
-        <button className="icon-button" onClick={() => onVolume(volume ? 0 : 0.72)} aria-label={volume ? "Mute" : "Unmute"}>
-          {volume ? <Volume2 size={18} /> : <VolumeX size={18} />}
-        </button>
-        <label className="range range--volume" style={{ "--range-value": `${volume * 100}%` } as React.CSSProperties}>
-          <span className="sr-only">Volume</span>
-          <input type="range" min="0" max="1" step="0.01" value={volume} onChange={(event) => onVolume(Number(event.target.value))} />
-        </label>
+      <div className="flex w-full min-w-0 items-center justify-end justify-self-end gap-0.5">
+        <Tooltip>
+          <TooltipTrigger render={<Button onClick={() => onVolume(volume ? 0 : 0.72)} aria-label={volume ? "Mute" : "Unmute"} size="icon" variant="ghost" />}>
+            {volume ? <Volume2 size={18} /> : <VolumeX size={18} />}
+          </TooltipTrigger>
+          <TooltipContent>{volume ? "Mute" : "Unmute"}</TooltipContent>
+        </Tooltip>
+        <Slider
+          aria-label="Volume"
+          className="hidden w-20 lg:block"
+          min={0}
+          max={1}
+          step={0.01}
+          value={[volume]}
+          onValueChange={([nextVolume]) => onVolume(nextVolume)}
+        />
         {airPlayAvailable ? (
-          <button
-            className="icon-button"
-            onClick={onAirPlay}
-            disabled={!track}
-            title="Choose AirPlay device"
-            aria-label="Choose AirPlay device"
-          >
-            <Airplay size={18} />
-          </button>
+          <Tooltip>
+            <TooltipTrigger render={<Button onClick={onAirPlay} disabled={!track} aria-label="Choose AirPlay device" size="icon" variant="ghost" />}>
+              <Airplay size={18} />
+            </TooltipTrigger>
+            <TooltipContent>Choose AirPlay device</TooltipContent>
+          </Tooltip>
         ) : null}
         {track && !track.id.startsWith("radio:") ? (
-          <button
-            className="icon-button"
-            onClick={onAddToPlaylist}
-            title="Add to playlist"
-            aria-label={`Add ${track.title} to playlist`}
-          >
-            <ListPlus size={17} />
-          </button>
+          <Tooltip>
+            <TooltipTrigger render={<Button onClick={onAddToPlaylist} aria-label={`Add ${track.title} to playlist`} size="icon" variant="ghost" />}>
+              <ListPlus size={17} />
+            </TooltipTrigger>
+            <TooltipContent>Add to playlist</TooltipContent>
+          </Tooltip>
         ) : null}
-        <button
-          className={`icon-button ${queueOpen ? "is-active" : ""}`}
-          onClick={onToggleQueue}
-          title={queueOpen ? "Hide queue" : "Show queue"}
-          aria-label={queueOpen ? "Hide queue" : "Show queue"}
-          aria-pressed={queueOpen}
-        >
-          <ListMusic size={18} />
-        </button>
+        <Tooltip>
+          <TooltipTrigger
+            render={(
+              <Button
+                className={queueOpen ? "text-primary" : ""}
+                onClick={onToggleQueue}
+                ref={queueControlRef}
+                aria-label={queueOpen ? "Hide queue" : "Show queue"}
+                aria-pressed={queueOpen}
+                size="icon"
+                variant="ghost"
+              />
+            )}
+          >
+            <ListMusic size={18} />
+          </TooltipTrigger>
+          <TooltipContent>{queueOpen ? "Hide queue" : "Show queue"}</TooltipContent>
+        </Tooltip>
       </div>
     </footer>
   );
@@ -1475,32 +1637,33 @@ function AlbumDetailPage({
   onTogglePlayback: () => void;
 }) {
   const activeAlbum = currentAlbumId === album.id;
-  const skeletonRowCount = Math.min(6, Math.max(3, album.songCount));
   return (
-    <article className="album-detail" aria-label={`${album.title} release details`}>
-      <button className="album-detail__back" onClick={onBack}>
+    <article className="mx-auto -mt-2 mb-8 w-full max-w-4xl animate-[album-page-in_180ms_ease-out]" aria-label={`${album.title} release details`}>
+      <Button className="mb-3.5 -ml-1 h-auto gap-1.5 p-1 text-xs text-[#8d918b] hover:bg-transparent hover:text-[#eceae4]" onClick={onBack} size="compact" variant="text">
         <ArrowLeft size={15} />
         Back to releases
-      </button>
-      <header className="album-detail__hero">
-        <div className="album-detail__art">
+      </Button>
+      <header className="relative grid grid-cols-[10rem_minmax(0,1fr)] items-end gap-6 overflow-hidden rounded-t-xl border border-border bg-[radial-gradient(circle_at_82%_20%,rgba(221,101,73,0.13),transparent_37%),linear-gradient(135deg,#24282a,#191c1e_70%)] p-6 xl:grid-cols-[14rem_minmax(0,1fr)] xl:gap-8 xl:p-8">
+        <div className="size-40 drop-shadow-[0_16px_25px_rgba(0,0,0,0.25)] xl:size-56 [&>.cover]:size-full [&>.cover]:rounded-lg">
           <CoverArt album={album} size="large" />
         </div>
-        <div className="album-detail__copy">
-            <span className="eyebrow">{album.songCount === 1 ? "Single" : "Album"}</span>
-            <h2>{album.title}</h2>
-            <button
-              className="album-detail__artist metadata-link"
+        <div className="min-w-0 pb-1">
+            <span className="mb-2.5 text-xs font-bold tracking-widest text-[#777b76] uppercase">{album.songCount === 1 ? "Single" : "Album"}</span>
+            <h2 className="m-0 max-w-lg font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-3xl leading-none font-semibold tracking-tighter text-[#f1efe9] xl:text-4xl">{album.title}</h2>
+            <Button
+              className="mx-0 my-2 block h-auto justify-start p-0 text-sm font-semibold text-[#d98771] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
               onClick={() => onArtist(album.artist)}
+              size="compact"
+              variant="text"
             >
               {album.artist}
-            </button>
-            <span className="album-detail__facts">
+            </Button>
+            <span className="text-xs text-[#7f837e]">
               {album.year ?? "Year unknown"} · {countLabel(album.songCount, "track")} · {formatTime(album.duration)}
             </span>
-            <div className="album-detail__actions">
-              <button
-                className={`primary-button ${activeAlbum ? "is-current" : ""} ${activeAlbum && playing ? "is-playing" : ""}`}
+            <div className="mt-6 flex gap-2">
+              <Button
+                className={`${activeAlbum ? "shadow-[inset_0_0_0_1px_rgba(255,255,255,0.18),0_8px_24px_rgba(221,101,73,0.16)]" : ""} ${activeAlbum && playing ? "bg-[color-mix(in_srgb,var(--primary)_82%,#17191b)]" : ""}`}
                 onClick={activeAlbum ? onTogglePlayback : onPlayAlbum}
                 disabled={loading}
                 aria-label={
@@ -1509,6 +1672,7 @@ function AlbumDetailPage({
                     : `Play ${album.songCount === 1 ? "single" : "album"}`
                 }
                 aria-pressed={activeAlbum && playing}
+                variant="primary"
               >
                 {activeAlbum && playing
                   ? <Pause size={17} fill="currentColor" />
@@ -1516,88 +1680,66 @@ function AlbumDetailPage({
                 {activeAlbum
                   ? (playing ? "Pause" : "Resume")
                   : `Play ${album.songCount === 1 ? "single" : "album"}`}
-              </button>
-              <button className="secondary-button" onClick={onQueueAlbum} disabled={loading}>
+              </Button>
+              <Button onClick={onQueueAlbum} disabled={loading}>
                 <Plus size={17} /> Add to queue
-              </button>
-              <button
-                className="secondary-button"
+              </Button>
+              <Button
                 onClick={() => onAddToPlaylist(album.tracks ?? [])}
                 disabled={loading || !album.tracks?.length}
               >
                 <ListPlus size={17} /> Add to playlist
-              </button>
-              <button
-                className={`secondary-button favorite-button ${favoriteAlbum ? "is-favorite" : ""}`}
+              </Button>
+              <Button
+                className={favoriteAlbum ? "text-[#ef8066]" : ""}
                 onClick={onToggleFavoriteAlbum}
                 aria-pressed={favoriteAlbum}
               >
                 <Heart size={17} fill={favoriteAlbum ? "currentColor" : "none"} />
                 {favoriteAlbum ? "Favorited" : "Favorite"}
-              </button>
+              </Button>
             </div>
         </div>
         </header>
         <section
-          className="album-detail__tracks"
+          className="rounded-b-xl border border-t-0 border-border bg-coda-field"
           aria-label="Track list"
-          aria-busy={loading}
+          aria-busy={loading || undefined}
         >
-          <div className="album-detail__tracks-heading">
+          <div className="flex items-end justify-between px-6 pt-6 pb-2">
             <div>
-              <span className="eyebrow">Track list</span>
-              <h3>{countLabel(album.songCount, "song")}</h3>
+              <span className="mb-2.5 text-xs font-bold tracking-widest text-[#777b76] uppercase">Track list</span>
+              <h3 className="mt-1 mb-0 font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-base leading-none font-semibold text-[#d7d6d0]">{countLabel(album.songCount, "song")}</h3>
             </div>
-            <span>{formatTime(album.duration)}</span>
+            <span className="text-xs text-[#747873]">{formatTime(album.duration)}</span>
           </div>
-          <div className="tracklist">
-          <div className="tracklist__head">
-            <span className="tracklist__number-heading">#</span>
+          <div className="px-4 pt-2.5 pb-4">
+          <div className="grid h-9 grid-cols-[2.5rem_minmax(0,1fr)_3.5rem_7rem] items-center border-b border-border text-xs text-[#6f736e] uppercase">
+            <span className="grid place-items-center justify-self-stretch text-center">#</span>
             <span>Title</span>
-            <span className="tracklist__duration-heading" title="Duration">
+            <span className="grid place-items-center justify-self-stretch text-center leading-none" title="Duration">
               <Clock3 size={14} aria-hidden="true" />
               <span className="sr-only">Duration</span>
             </span>
-            <span className="tracklist__actions-heading">Actions</span>
+            <span className="text-center">Actions</span>
           </div>
           {loading ? (
-            <>
-              <div
-                className="sr-only"
-                role="status"
-                aria-label={`Loading tracks for ${album.title}`}
-              >
-                Loading tracks…
-              </div>
-              {Array.from({ length: skeletonRowCount }, (_, index) => (
-                <div
-                  className="track-row track-row--skeleton"
-                  aria-hidden="true"
-                  key={index}
-                >
-                  <span className="track-row__skeleton track-row__skeleton--number" />
-                  <span className="track-row__copy">
-                    <span className="track-row__skeleton track-row__skeleton--title" />
-                    <span className="track-row__skeleton track-row__skeleton--artist" />
-                  </span>
-                  <span className="track-row__skeleton track-row__skeleton--duration" />
-                  <span className="track-row__skeleton track-row__skeleton--action" />
-                </div>
-              ))}
-            </>
+            <div className="flex min-h-44 items-center justify-center gap-2.5 text-xs text-[#898c87]">
+              <Spinner className="size-5" aria-label="Loading album tracks" /> Loading tracks…
+            </div>
           ) : !album.tracks?.length ? (
-            <div className="tracklist__empty">
+            <div className="flex min-h-44 flex-col items-center justify-center gap-1.5 p-6 text-center text-xs text-[#898c87]">
               <Music2 size={22} />
-              <strong>No playable tracks returned</strong>
-              <span>This release may not be streamable through Bandcamp’s Subsonic beta yet.</span>
+              <strong className="mt-1 text-xs text-[#c7c8c2]">No playable tracks returned</strong>
+              <span className="max-w-80 text-xs/normal text-[#777b76]">This release may not be streamable through Bandcamp’s Subsonic beta yet.</span>
             </div>
           ) : (
             album.tracks.map((track) => {
               const activeTrack = currentTrackId === track.id;
               return (
-              <div className={`track-row ${activeTrack ? "is-current" : ""}`} key={track.id}>
-                <button
-                  className={`track-row__number ${activeTrack && playing ? "is-playing" : ""}`}
+              <div className={`group grid min-h-14 grid-cols-[2.5rem_minmax(0,1fr)_3.5rem_7rem] items-center rounded-sm border-b border-white/[0.045] hover:bg-white/[0.035] ${activeTrack ? "bg-primary/[0.075]" : ""}`} key={track.id}>
+                <Button
+                  className={`h-full rounded-none p-0 text-xs text-[#777a76] hover:bg-transparent group-hover:[&>span]:hidden group-hover:[&>svg]:block [&>svg]:hidden ${activeTrack ? "text-[#e88c75] [&>span]:hidden [&>svg]:block" : ""}`}
                   onClick={activeTrack ? onTogglePlayback : () => onPlayTrack(track)}
                   aria-label={
                     activeTrack
@@ -1605,43 +1747,48 @@ function AlbumDetailPage({
                       : `Play ${track.title}`
                   }
                   aria-pressed={activeTrack && playing}
+                  variant="ghost"
                 >
                   <span>{track.track}</span>
                   {activeTrack && playing
                     ? <Pause size={13} fill="currentColor" />
                     : <Play size={13} fill="currentColor" />}
-                </button>
-                <div className="track-row__copy">
+                </Button>
+                <div className="flex min-w-0 flex-col gap-0.5 overflow-hidden">
                   <button
-                    className="track-row__title"
+                    className="w-fit max-w-full min-w-0 cursor-pointer border-0 bg-transparent p-0 text-left"
                     onClick={activeTrack ? onTogglePlayback : () => onPlayTrack(track)}
                   >
-                    <strong>{track.title}</strong>
+                    <strong className={`block truncate text-xs ${activeTrack ? "text-[#f0d7cf]" : "text-[#d9d8d2]"}`}>{track.title}</strong>
                   </button>
-                  <button
-                    className="track-row__artist metadata-link"
+                  <Button
+                    className="h-auto w-fit max-w-full justify-start truncate p-0 text-xs text-[#777b76] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
                     onClick={() => onArtist(track.artist)}
+                    size="compact"
+                    variant="text"
                   >
                     {track.artist}
-                  </button>
+                  </Button>
                 </div>
-                <span className="track-row__duration">{formatTime(track.duration)}</span>
-                <div className="track-row__actions">
-                  <button className="icon-button" onClick={() => onQueueTrack(track)} title="Add to queue" aria-label={`Add ${track.title} to queue`}>
+                <span className="grid place-items-center justify-self-stretch text-center text-xs text-[#777b76] tabular-nums">{formatTime(track.duration)}</span>
+                <div className="grid grid-cols-[repeat(3,2rem)] justify-end">
+                  <Button onClick={() => onQueueTrack(track)} size="icon" variant="ghost" title="Add to queue" aria-label={`Add ${track.title} to queue`}>
                     <Plus size={16} />
-                  </button>
-                  <button className="icon-button" onClick={() => onAddToPlaylist([track])} title="Add to playlist" aria-label={`Add ${track.title} to playlist`}>
+                  </Button>
+                  <Button onClick={() => onAddToPlaylist([track])} size="icon" variant="ghost" title="Add to playlist" aria-label={`Add ${track.title} to playlist`}>
                     <ListPlus size={16} />
-                  </button>
-                  <button
-                    className={`icon-button favorite-button ${favoriteTrackIds.has(track.id) ? "is-favorite" : ""}`}
+                  </Button>
+                  <Button
+                    className={favoriteTrackIds.has(track.id) ? "text-[#ef8066]" : ""}
                     onClick={() => onToggleFavoriteTrack(track)}
+                    size="icon"
                     title={favoriteTrackIds.has(track.id) ? "Remove from favorites" : "Add to favorites"}
                     aria-label={favoriteTrackIds.has(track.id) ? `Remove ${track.title} from favorites` : `Add ${track.title} to favorites`}
                     aria-pressed={favoriteTrackIds.has(track.id)}
+                    variant="ghost"
                   >
                     <Heart size={16} fill={favoriteTrackIds.has(track.id) ? "currentColor" : "none"} />
-                  </button>
+                  </Button>
                 </div>
               </div>
               );
@@ -1782,169 +1929,192 @@ function ConnectionDialog({
     lastFmAction !== "idle";
 
   return (
-    <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => {
-      if (event.target === event.currentTarget && !dialogBusy) onClose();
-    }}>
-      <section
-        className="connection-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="connection-title"
+    <Dialog
+      open
+      onOpenChange={(open, details) => {
+        if (open) return;
+        if (dialogBusy) {
+          details.cancel();
+          return;
+        }
+        onClose();
+      }}
+    >
+      <DialogContent
         aria-busy={dialogBusy}
+        className="top-[calc(50%-46px)] max-h-[calc(100%-152px)] w-[min(32rem,92vw)] [scrollbar-color:#3e4142_transparent] scrollbar-thin gap-0 overflow-auto p-8"
+        showCloseButton={false}
       >
-        <button
-          className="icon-button dialog-close"
+        <Button
+          className="absolute top-3 right-3 z-2"
           onClick={onClose}
           aria-label="Close"
           disabled={dialogBusy}
+          size="icon"
+          variant="ghost"
         >
           <X size={19} />
-        </button>
-        <div className="connection-dialog__icon"><Radio size={24} /></div>
-        <span className="eyebrow">Secure connection</span>
-        <h2 id="connection-title">{connected ? "Bandcamp is connected" : "Bring in your collection"}</h2>
-        <p>
+        </Button>
+        <div className="mb-5 grid size-12 place-items-center rounded-full bg-accent text-[#e77b60]">
+          <Radio size={24} />
+        </div>
+        <span className="mb-2.5 text-xs font-bold tracking-widest text-[#777b76] uppercase">
+          Secure connection
+        </span>
+        <DialogTitle
+          id="connection-title"
+          className="m-0 font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-3xl leading-none font-semibold tracking-tighter"
+        >
+          {connected ? "Bandcamp is connected" : "Bring in your collection"}
+        </DialogTitle>
+        <DialogDescription className="mt-2.5 mb-4 text-xs/normal text-[#969994]">
           Coda uses Bandcamp’s official Subsonic beta. Generate separate app credentials in
           Fan Settings, then enter them here.
-        </p>
-        <div className="connection-dialog__security">
-          <span><Check size={15} /> Stored in your system credential vault</span>
-          <span><Check size={15} /> Requests limited to bandcamp.com</span>
-          <span><Check size={15} /> No analytics or third-party servers</span>
+        </DialogDescription>
+        <div className="grid grid-cols-1 gap-2 rounded-md border border-border bg-white/2.5 px-3.5 py-3">
+          <span className="flex items-center gap-2 text-xs text-[#a8aaa5]"><Check className="text-coda-success" size={15} /> Stored in your system credential vault</span>
+          <span className="flex items-center gap-2 text-xs text-[#a8aaa5]"><Check className="text-coda-success" size={15} /> Requests limited to bandcamp.com</span>
+          <span className="flex items-center gap-2 text-xs text-[#a8aaa5]"><Check className="text-coda-success" size={15} /> No analytics or third-party servers</span>
         </div>
-        <button
-          className="settings-link"
+        <Button
+          className="my-4 h-auto justify-start gap-2 p-0 text-xs text-[#df8067] hover:bg-transparent hover:text-[#f1957d]"
           onClick={() => void openSettings()}
           disabled={settingsOpening || state === "connecting" || disconnecting}
+          size="compact"
+          variant="text"
         >
           {settingsOpening
-            ? <RefreshCw className="spin" size={16} />
+            ? <Spinner aria-hidden="true" className="size-4 text-current" />
             : <ExternalLink size={16} />}
           {settingsOpening ? "Opening Bandcamp…" : "Sign in and generate credentials"}
-        </button>
-        <ol className="connection-dialog__steps">
+        </Button>
+        <ol className="-mt-1 mb-4 grid list-decimal gap-1 pl-6 text-xs/normal text-[#8d908b] marker:font-bold marker:text-[#cf6d55]">
           <li>Sign in to your Bandcamp fan account in the browser.</li>
           <li>Scroll to Subsonic and choose Generate credentials.</li>
           <li>Return here and enter the generated username and password.</li>
         </ol>
-        {!connected ? <form onSubmit={submit}>
-          <label>
+        {!connected ? <form className="flex flex-col gap-3" onSubmit={submit}>
+          <Label className="flex-col items-stretch gap-1.5">
             Subsonic username
-            <input name="subsonic-username" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Generated username" disabled={state === "connecting"} />
-          </label>
-          <label>
+            <Input name="subsonic-username" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Generated username" disabled={state === "connecting"} />
+          </Label>
+          <Label className="flex-col items-stretch gap-1.5">
             Subsonic password
-            <input name="subsonic-password" autoComplete="current-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Generated password" disabled={state === "connecting"} />
-          </label>
-          {error ? <div className="form-error">{error}</div> : null}
-          <button className="primary-button primary-button--wide" type="submit" disabled={!username.trim() || !password || state === "connecting"}>
-            {state === "connecting" ? <RefreshCw className="spin" size={17} /> : <Radio size={17} />}
+            <Input name="subsonic-password" autoComplete="current-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Generated password" disabled={state === "connecting"} />
+          </Label>
+          {error ? <Alert variant="danger">{error}</Alert> : null}
+          <Button className="mt-1 w-full" type="submit" disabled={!username.trim() || !password || state === "connecting"} variant="primary">
+            {state === "connecting" ? <Spinner aria-hidden="true" className="size-4 text-current" /> : <Radio size={17} />}
             {state === "connecting"
               ? connectLoaded
                 ? `Loading ${countLabel(connectLoaded, "release")}…`
                 : "Connecting securely…"
               : "Connect Bandcamp"}
-          </button>
+          </Button>
         </form> : null}
         {connected ? (
           <>
-            {error ? <div className="form-error">{error}</div> : null}
-            <button
+            {error ? <Alert variant="danger">{error}</Alert> : null}
+            <Button
               type="button"
-              className="connection-dialog__disconnect"
+              className="mt-2.5 w-full text-xs"
               onClick={() => void removeBandcamp()}
               disabled={disconnecting}
+              variant="danger"
             >
-              {disconnecting ? <RefreshCw className="spin" size={15} /> : null}
+              {disconnecting ? <Spinner aria-hidden="true" className="size-4 text-current" /> : null}
               {disconnecting
                 ? "Disconnecting Bandcamp…"
                 : "Disconnect and remove Bandcamp credentials"}
-            </button>
+            </Button>
           </>
         ) : null}
-        <div className="connection-dialog__divider" />
-        <section className="lastfm-settings" aria-labelledby="lastfm-settings-title">
-          <div className="lastfm-settings__heading">
-            <AudioLines size={17} />
+        <div className="my-5 h-px bg-border" />
+        <section className="grid gap-3" aria-labelledby="lastfm-settings-title">
+          <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2.5">
+            <AudioLines className="mt-px text-[#d4d2cc]" size={17} />
             <div>
-              <h3 id="lastfm-settings-title">Last.fm scrobbling</h3>
-              <p>
+              <h3 id="lastfm-settings-title" className="m-0 text-sm font-semibold text-[#deddd7]">Last.fm scrobbling</h3>
+              <p className="mt-1 mb-0 text-xs/normal text-[#858984]">
                 Send Now Playing updates and scrobble after half the track or four minutes,
                 whichever comes first.
               </p>
             </div>
-            <span className={`service-status ${lastFmStatus.connected ? "service-status--live" : ""}`}>
+            <Badge variant={lastFmStatus.connected ? "success" : "secondary"}>
               {lastFmStatus.connected ? "Connected" : "Not connected"}
-            </span>
+            </Badge>
           </div>
           {lastFmStatus.connected ? (
-            <div className="lastfm-settings__connected">
-              <span>Scrobbling as <strong>{lastFmStatus.username}</strong></span>
-              <button
+            <div className="flex items-center justify-between gap-3 pl-7">
+              <span className="text-xs text-[#8f928d]">Scrobbling as <strong className="font-semibold text-[#d0d1cb]">{lastFmStatus.username}</strong></span>
+              <Button
                 type="button"
-                className="secondary-button"
                 onClick={() => void removeLastFm()}
                 disabled={lastFmAction !== "idle"}
+                size="compact"
               >
-                {lastFmAction === "disconnecting" ? <RefreshCw className="spin" size={15} /> : null}
+                {lastFmAction === "disconnecting" ? <Spinner aria-hidden="true" className="size-4" /> : null}
                 {lastFmAction === "disconnecting" ? "Disconnecting…" : "Disconnect"}
-              </button>
+              </Button>
             </div>
           ) : lastFmStatus.configured ? (
-            <div className="lastfm-settings__actions">
+            <div className="flex items-center justify-between gap-3 pl-7">
               {lastFmToken ? (
                 <>
-                  <p>Approve Coda in the browser, then return here to finish.</p>
-                  <button
+                  <p className="m-0 text-xs/normal text-[#858984]">Approve Coda in the browser, then return here to finish.</p>
+                  <Button
                     type="button"
-                    className="secondary-button"
                     onClick={() => void finishLastFm()}
                     disabled={lastFmAction !== "idle"}
+                    size="compact"
                   >
-                    {lastFmAction === "finishing" ? <RefreshCw className="spin" size={15} /> : <Check size={15} />}
+                    {lastFmAction === "finishing" ? <Spinner aria-hidden="true" className="size-4" /> : <Check size={15} />}
                     {lastFmAction === "finishing" ? "Finishing…" : "Finish connection"}
-                  </button>
+                  </Button>
                 </>
               ) : (
-                <button
+                <Button
                   type="button"
-                  className="secondary-button"
                   onClick={() => void beginLastFm()}
                   disabled={lastFmAction !== "idle"}
+                  size="compact"
                 >
-                  {lastFmAction === "starting" ? <RefreshCw className="spin" size={15} /> : <ExternalLink size={15} />}
+                  {lastFmAction === "starting" ? <Spinner aria-hidden="true" className="size-4" /> : <ExternalLink size={15} />}
                   {lastFmAction === "starting" ? "Opening Last.fm…" : "Connect Last.fm"}
-                </button>
+                </Button>
               )}
             </div>
           ) : (
-            <p className="lastfm-settings__unavailable">
+            <p className="mt-1 mb-0 pl-7 text-xs/normal text-[#858984]">
               Last.fm credentials have not been added to this Coda build yet.
             </p>
           )}
-          {lastFmError ? <div className="form-error">{lastFmError}</div> : null}
-          <small>The Last.fm session key is stored in your system credential vault. Coda never sees your Last.fm password.</small>
+          {lastFmError ? <Alert variant="danger">{lastFmError}</Alert> : null}
+          <small className="block pl-7 text-xs/normal text-[#656965]">The Last.fm session key is stored in your system credential vault. Coda never sees your Last.fm password.</small>
         </section>
         {appUpdater.supported ? (
           <>
-            <div className="connection-dialog__divider" />
+            <div className="my-5 h-px bg-border" />
             <AppUpdateSettings updater={appUpdater} />
           </>
         ) : null}
-        <small>Bandcamp’s Subsonic service is currently in beta. Coda is an independent client and is not affiliated with Bandcamp or Last.fm.</small>
-      </section>
-    </div>
+        <small className="mt-4 block text-xs/normal text-[#656965]">Bandcamp’s Subsonic service is currently in beta. Coda is an independent client and is not affiliated with Bandcamp or Last.fm.</small>
+      </DialogContent>
+    </Dialog>
   );
 }
 
 function LibrarySkeleton() {
+  const shimmerClassName =
+    "relative overflow-hidden rounded-sm bg-[#202325] animate-none after:block after:h-full after:w-[45%] after:translate-x-[-120%] after:bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.045),transparent)] after:animate-[skeleton-shimmer_1.4s_ease-in-out_infinite] after:content-[''] motion-reduce:after:animate-none";
+
   return (
-    <div className="album-grid album-grid--loading" aria-label="Loading your collection">
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-x-3 gap-y-5 pt-10 lg:grid-cols-[repeat(auto-fill,minmax(8rem,1fr))] lg:gap-x-4 lg:gap-y-6 xl:grid-cols-[repeat(auto-fill,minmax(9rem,1fr))]" aria-label="Loading your collection">
       {Array.from({ length: 10 }, (_, index) => (
-        <div className="album-skeleton" key={index}>
-          <span className="album-skeleton__cover" />
-          <span className="album-skeleton__line" />
-          <span className="album-skeleton__line album-skeleton__line--short" />
+        <div className="flex flex-col gap-2" key={index}>
+          <Skeleton className={`${shimmerClassName} aspect-square w-full`} />
+          <Skeleton className={`${shimmerClassName} h-2.5 w-[72%]`} />
+          <Skeleton className={`${shimmerClassName} h-2 w-[48%]`} />
         </div>
       ))}
     </div>
@@ -1963,10 +2133,10 @@ function EmptyState({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="library-empty">
-      <span className="library-empty__icon">{icon}</span>
-      <h3>{title}</h3>
-      <p>{detail}</p>
+    <div className="flex min-h-72 flex-col items-center justify-center text-center text-[#696d68]">
+      <span className="grid size-14 place-items-center rounded-full border border-border bg-white/[0.018] text-[#787c77]">{icon}</span>
+      <h3 className="mt-4 mb-1 font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-base/tight font-semibold text-[#c7c8c2]">{title}</h3>
+      <p className="m-0 max-w-xs text-xs text-[#777a76]">{detail}</p>
       {action}
     </div>
   );
@@ -2024,6 +2194,7 @@ export default function App() {
   const [airPlayAvailable, setAirPlayAvailable] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
   const queuePanelRef = useRef<HTMLElement>(null);
+  const queueControlRef = useRef<HTMLButtonElement>(null);
   const queueFocusRequestedRef = useRef(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const libraryPaneRef = useRef<HTMLElement>(null);
@@ -3891,6 +4062,21 @@ export default function App() {
       return next;
     });
   }, []);
+  const closeQueueFromKeyboard = useCallback(() => {
+    const queueControl = queueControlRef.current ??
+      document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Hide queue"]',
+      );
+    setQueueOpen(false);
+    const restoreFocus = () => {
+      queueControl?.focus({ preventScroll: true });
+    };
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(restoreFocus);
+    } else {
+      window.setTimeout(restoreFocus, 0);
+    }
+  }, []);
 
   const playQueueIndex = useCallback((index: number) => {
     setCurrentIndex(index);
@@ -4203,15 +4389,32 @@ export default function App() {
   }, []);
 
   return (
-    <div className={`app-shell ${nowPlayingOpen ? "app-shell--now-playing" : ""}`}>
-      <div className={`app-body ${queueOpen ? "" : "app-body--queue-closed"}`}>
+    <div
+      className={`grid h-full w-full min-w-[760px] bg-background ${
+        nowPlayingOpen
+          ? "grid-rows-[minmax(0,1fr)]"
+          : "grid-rows-[minmax(0,1fr)_92px]"
+      }`}
+    >
+      <div
+        className="relative isolate grid min-h-0 grid-cols-[9rem_minmax(22rem,1fr)] overflow-hidden lg:grid-cols-[12rem_minmax(32rem,1fr)] xl:grid-cols-[14rem_minmax(32rem,1fr)]"
+        data-queue-open={queueOpen}
+      >
         <Sidebar
           view={view}
           onView={chooseView}
           connected={connected}
           onConnect={openConnection}
         />
-        <main className="library-pane" ref={libraryPaneRef}>
+        <main
+          className={`library-pane min-w-0 overflow-auto [scrollbar-color:#393c3d_transparent] scrollbar-thin ${
+            nowPlayingOpen
+              ? "p-0"
+              : "px-4 pt-6 pb-10 lg:px-6 lg:pt-8 lg:pb-12 xl:px-8"
+          }`}
+          data-coda-library-scroll
+          ref={libraryPaneRef}
+        >
           {nowPlayingOpen && currentTrack ? (
             <NowPlayingView
               track={currentTrack}
@@ -4333,11 +4536,11 @@ export default function App() {
             </Suspense>
           ) : (
             <>
-          <header className="library-header">
+          <header className="flex flex-wrap items-start justify-between gap-3 lg:gap-6">
             <div>
-              <span className="eyebrow">{connected ? "Your Bandcamp" : "Your music"}</span>
-              <h1>{view === "library" ? "Collection" : "Recently added"}</h1>
-              <p>
+              <span className="mb-2.5 text-xs font-bold tracking-widest text-[#777b76] uppercase">{connected ? "Your Bandcamp" : "Your music"}</span>
+              <h1 className="m-0 font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-3xl lg:text-4xl leading-none font-semibold tracking-tighter text-foreground">{view === "library" ? "Collection" : "Recently added"}</h1>
+              <p className="mt-2 mb-0 text-sm text-muted-foreground">
                 {syncState === "checking"
                   ? "Checking your saved connection…"
                   : connected
@@ -4345,57 +4548,57 @@ export default function App() {
                     : "Connect your Bandcamp library to start listening."}
               </p>
             </div>
-            <div className="library-header__actions">
+            <div className="mt-3 flex w-full flex-wrap justify-end gap-2 lg:w-auto">
               {connected ? (
-                <label className="search-box">
+                <label className="flex h-10 w-full flex-[1_1_100%] items-center rounded-md border border-(--line-strong) bg-coda-field px-2.5 text-[#737772] focus-within:border-primary/55 focus-within:ring-3 focus-within:ring-primary/8 lg:w-[clamp(12.5rem,22vw,18.75rem)] lg:flex-none">
                   <Search size={17} />
                   <span className="sr-only">Search collection</span>
-                  <input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your collection" />
-                  <kbd>/</kbd>
+                  <Input className="h-full flex-1 border-0 bg-transparent px-2 focus-visible:border-0 focus-visible:ring-0" ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your collection" />
+                  <kbd className="grid size-5 place-items-center rounded-sm border border-(--line-strong) font-['Segoe_UI_Variable','Segoe_UI',sans-serif] text-xs leading-none text-[#777a76]">/</kbd>
                 </label>
               ) : null}
               {connected && shuffleScopeAlbums.length ? (
-                <button
-                  className="artwork-button"
+                <Button
                   onClick={playRandomVisible}
                   disabled={randomPickLoading || Boolean(libraryShuffleProgress) || syncState === "syncing"}
                   title={`Play one random track from ${shuffleScopeName}`}
                   aria-label={`Play a random track from ${shuffleScopeName}`}
+                  variant="artwork"
                 >
-                  {randomPickLoading ? <RefreshCw size={15} className="spin" /> : <Dices size={15} />}
+                  {randomPickLoading ? <Spinner aria-hidden="true" className="size-4" /> : <Dices size={15} />}
                   {randomPickLoading ? "Picking…" : "Surprise me"}
-                </button>
+                </Button>
               ) : null}
               {connected && shuffleScopeAlbums.length ? (
-                <button
-                  className="artwork-button"
+                <Button
                   onClick={shuffleVisible}
                   disabled={Boolean(libraryShuffleProgress) || randomPickLoading || syncState === "syncing"}
                   title={`${shuffleActionLabel} and start playing`}
+                  variant="artwork"
                 >
-                  {libraryShuffleProgress ? <RefreshCw size={15} className="spin" /> : <Shuffle size={15} />}
+                  {libraryShuffleProgress ? <Spinner aria-hidden="true" className="size-4" /> : <Shuffle size={15} />}
                   {libraryShuffleProgress
                     ? `${libraryShuffleProgress.done}/${libraryShuffleProgress.total}`
                     : shuffleActionLabel}
-                </button>
+                </Button>
               ) : null}
               {connected ? (
-                <button
-                  className="artwork-button"
+                <Button
                   onClick={() => void refreshArtwork()}
                   disabled={artworkRefreshing || syncState === "syncing"}
                   title="Retry artwork and recover missing covers"
+                  variant="artwork"
                 >
-                  {artworkRefreshing ? <RefreshCw size={15} className="spin" /> : <Images size={15} />}
+                  {artworkRefreshing ? <Spinner aria-hidden="true" className="size-4" /> : <Images size={15} />}
                   {artworkRefreshing ? "Refreshing…" : "Artwork"}
-                </button>
+                </Button>
               ) : null}
-              <button
-                className="sync-button"
+              <Button
                 onClick={connected ? () => void syncLibrary() : openConnection}
                 disabled={syncState === "checking" || syncState === "syncing"}
+                variant="primary"
               >
-                {syncState === "checking" || syncState === "syncing" ? <RefreshCw size={16} className="spin" /> : connected ? <RefreshCw size={16} /> : <Radio size={16} />}
+                {syncState === "checking" || syncState === "syncing" ? <Spinner aria-hidden="true" className="size-4 text-current" /> : connected ? <RefreshCw size={16} /> : <Radio size={16} />}
                 {syncState === "checking"
                   ? "Checking…"
                   : syncState === "syncing"
@@ -4403,7 +4606,7 @@ export default function App() {
                     : connected
                       ? "Sync"
                       : "Connect"}
-              </button>
+              </Button>
             </div>
           </header>
 
@@ -4411,26 +4614,29 @@ export default function App() {
           (syncState === "error" || syncState === "syncing") &&
           Boolean(libraryError) &&
           albums.length ? (
-            <section className="sync-notice" role="status">
-              <div className="sync-notice__icon"><CircleAlert size={18} /></div>
-              <div>
-                <strong>Showing your saved collection</strong>
-                <span>{libraryError || "Bandcamp could not be reached. Your cached library is still available."}</span>
+            <section className="mt-6 grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-lg border border-primary/20 bg-primary/6.5 px-3.5 py-3" role="status">
+              <div className="grid size-9 place-items-center rounded-full bg-accent text-[#e68268]"><CircleAlert size={18} /></div>
+              <div className="flex flex-col gap-0.5">
+                <strong className="text-xs text-[#e8e5df]">Showing your saved collection</strong>
+                <span className="text-xs text-[#969992]">{libraryError || "Bandcamp could not be reached. Your cached library is still available."}</span>
               </div>
-              <button
+              <Button
+                className="gap-1 px-2 text-xs text-[#ed8a71]"
                 onClick={() => void syncLibrary()}
                 disabled={syncState === "syncing"}
+                size="compact"
+                variant="text"
               >
                 {syncState === "syncing"
-                  ? <RefreshCw className="spin" size={16} />
+                  ? <Spinner aria-hidden="true" className="size-4" />
                   : <ChevronRight size={16} />}
                 {syncState === "syncing" ? "Syncing…" : "Try again"}
-              </button>
+              </Button>
             </section>
           ) : null}
 
           {connected && albums.length && view === "library" && !selectedAlbum ? (
-            <nav className="browse-tabs" aria-label="Browse collection">
+            <nav className="mt-7 flex w-fit max-w-full gap-1 overflow-x-auto rounded-lg border border-border bg-[#171a1c] p-1 scrollbar-none [&::-webkit-scrollbar]:hidden" aria-label="Browse collection">
               {LIBRARY_BROWSE_OPTIONS.map(({ mode, label, title }) => {
                 const count =
                   mode === "releases"
@@ -4439,72 +4645,83 @@ export default function App() {
                       ? libraryBrowseCounts.artists
                       : libraryBrowseCounts[mode];
                 return (
-                  <button
+                  <Button
                     key={mode}
-                    className={browseMode === mode ? "active" : ""}
+                    className="group min-h-8 gap-2 px-2.5 text-xs text-[#858984] hover:bg-transparent hover:text-[#deddd7] aria-pressed:bg-[#2a2d2f] aria-pressed:text-[#f0eee8] aria-pressed:shadow-[0_1px_4px_rgba(0,0,0,0.22)]"
                     onClick={() => chooseBrowseMode(mode)}
                     aria-pressed={browseMode === mode}
+                    size="compact"
                     title={title}
+                    variant="ghost"
                   >
                     {label}
-                    <span>{count}</span>
-                  </button>
+                    <Badge className="min-w-5 rounded-full bg-white/5.5 px-1 py-0.5 text-xs text-[#737771] group-aria-pressed:bg-accent group-aria-pressed:text-[#e78d76]" variant="secondary">{count}</Badge>
+                  </Button>
                 );
               })}
             </nav>
           ) : null}
 
           {connected && albums.length && !selectedAlbum ? (
-            <section className="filter-row">
-              <div className="genre-filter">
-                <div className="genre-tabs">
+            <section className={`flex items-center justify-between gap-2 border-b border-border pb-3 lg:gap-4 ${view === "library" ? "mt-3" : "mt-7"}`}>
+              <div className="flex min-w-0 items-center gap-1">
+                <div className="flex items-center gap-1 overflow-hidden">
                   {["All", ...visibleGenreTabs].map((item) => (
-                    <button
+                    <Button
                       key={item}
-                      className={genreKey(genre) === genreKey(item) ? "active" : ""}
+                      className="h-8 px-3 text-xs font-semibold text-[#888b86] hover:bg-transparent hover:text-[#dddcd7] aria-pressed:bg-coda-active aria-pressed:text-[#f0eee8]"
                       onClick={() => setGenre(item)}
+                      aria-pressed={genreKey(genre) === genreKey(item)}
+                      size="compact"
+                      variant="ghost"
                     >
                       {item}
-                    </button>
+                    </Button>
                   ))}
                 </div>
                 {overflowGenres.length ? (
-                  <label className="genre-picker">
+                  <div className="flex h-8 shrink-0 items-center gap-1 rounded-sm border border-border bg-muted px-2 text-[#858984]">
                     <Music2 size={14} />
-                    <span className="sr-only">More collection genres</span>
-                    <select
+                    <NativeSelect
+                      className="w-auto [&_[data-slot=native-select]]:h-auto [&_[data-slot=native-select]]:max-w-24 [&_[data-slot=native-select]]:border-0 [&_[data-slot=native-select]]:bg-transparent [&_[data-slot=native-select]]:p-0 [&_[data-slot=native-select]]:pr-0 [&_[data-slot=native-select]]:text-xs [&_[data-slot=native-select-icon]]:hidden"
                       value=""
                       aria-label="More collection genres"
                       onChange={(event) => setGenre(event.target.value)}
+                      size="sm"
                     >
-                      <option value="" disabled>More genres</option>
+                      <NativeSelectOption value="" disabled>More genres</NativeSelectOption>
                       {overflowGenres.map((item) => (
-                        <option key={item} value={item}>{item}</option>
+                        <NativeSelectOption key={item} value={item}>{item}</NativeSelectOption>
                       ))}
-                    </select>
+                    </NativeSelect>
                     <ChevronDown size={13} />
-                  </label>
+                  </div>
                 ) : null}
               </div>
               {effectiveBrowseMode === "artists" && !selectedArtist ? (
-                <span className="artist-sort-note"><ArrowDownUp size={14} /> Artist A–Z</span>
+                <span className="flex shrink-0 items-center gap-1.5 text-xs font-semibold text-[#777b76] [&>svg]:max-lg:hidden"><ArrowDownUp size={14} /> Artist A–Z</span>
               ) : (
-                <label className="sort-control">
+                <div className="flex items-center gap-1.5 text-[#7f837d] [&>svg]:max-lg:hidden">
                   <ArrowDownUp size={15} />
-                  <span className="sr-only">Sort collection</span>
-                  <select value={sort} onChange={(event) => setSort(event.target.value as SortMode)}>
-                    <option value="recent">Recently added</option>
-                    <option value="artist">Artist A–Z</option>
-                    <option value="title">Album A–Z</option>
-                    <option value="year">Release year</option>
-                  </select>
+                  <NativeSelect
+                    aria-label="Sort collection"
+                    className="w-auto [&_[data-slot=native-select]]:h-auto [&_[data-slot=native-select]]:max-w-30 [&_[data-slot=native-select]]:border-0 [&_[data-slot=native-select]]:bg-transparent [&_[data-slot=native-select]]:p-0 [&_[data-slot=native-select]]:pr-0 [&_[data-slot=native-select]]:text-xs [&_[data-slot=native-select-icon]]:hidden"
+                    value={sort}
+                    onChange={(event) => setSort(event.target.value as SortMode)}
+                    size="sm"
+                  >
+                    <NativeSelectOption value="recent">Recently added</NativeSelectOption>
+                    <NativeSelectOption value="artist">Artist A–Z</NativeSelectOption>
+                    <NativeSelectOption value="title">Album A–Z</NativeSelectOption>
+                    <NativeSelectOption value="year">Release year</NativeSelectOption>
+                  </NativeSelect>
                   <ChevronDown size={14} />
-                </label>
+                </div>
               )}
             </section>
           ) : null}
 
-          <section className="album-section" aria-live="polite">
+          <section className="pt-6" aria-live="polite">
             {selectedAlbum ? (
               <AlbumDetailPage
                 album={selectedAlbum}
@@ -4532,7 +4749,7 @@ export default function App() {
                 icon={<Radio size={28} />}
                 title="Your collection starts here"
                 detail="Connect the separate Subsonic credentials from your Bandcamp fan settings. Your password stays in the system vault."
-                action={<button onClick={openConnection}>Connect Bandcamp <ChevronRight size={15} /></button>}
+                action={<Button className="mt-3 text-xs text-[#ed8a71]" onClick={openConnection} size="compact" variant="text">Connect Bandcamp <ChevronRight size={15} /></Button>}
               />
             ) : (syncState === "error" || syncState === "syncing") &&
               Boolean(libraryError) &&
@@ -4542,16 +4759,18 @@ export default function App() {
                 title="Your collection couldn’t load"
                 detail={libraryError || "Bandcamp could not be reached. Check your connection and try again."}
                 action={(
-                  <button
+                  <Button
+                    className="mt-3 text-xs text-[#ed8a71]"
                     onClick={() => void syncLibrary()}
                     disabled={syncState === "syncing"}
+                    size="compact"
+                    variant="text"
                   >
-                    <RefreshCw
-                      className={syncState === "syncing" ? "spin" : ""}
-                      size={14}
-                    />
+                    {syncState === "syncing"
+                      ? <Spinner aria-hidden="true" className="size-3.5" />
+                      : <RefreshCw size={14} />}
                     {syncState === "syncing" ? "Syncing…" : "Try syncing again"}
-                  </button>
+                  </Button>
                 )}
               />
             ) : !albums.length ? (
@@ -4560,23 +4779,25 @@ export default function App() {
                 title="No releases found"
                 detail="Bandcamp connected successfully, but its Subsonic library returned no purchases yet."
                 action={(
-                  <button
+                  <Button
+                    className="mt-3 text-xs text-[#ed8a71]"
                     onClick={() => void syncLibrary()}
                     disabled={syncState === "syncing"}
+                    size="compact"
+                    variant="text"
                   >
-                    <RefreshCw
-                      className={syncState === "syncing" ? "spin" : ""}
-                      size={14}
-                    />
+                    {syncState === "syncing"
+                      ? <Spinner aria-hidden="true" className="size-3.5" />
+                      : <RefreshCw size={14} />}
                     {syncState === "syncing" ? "Checking…" : "Check again"}
-                  </button>
+                  </Button>
                 )}
               />
             ) : effectiveBrowseMode === "artists" && !selectedArtist ? (
               <>
-                <div className="section-heading">
-                  <h2>{genre === "All" ? "Artists" : `${genre} artists`}</h2>
-                  <span>
+                <div className="mb-4 flex items-baseline justify-between">
+                  <h2 className="m-0 font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-base leading-none font-semibold tracking-tight">{genre === "All" ? "Artists" : `${genre} artists`}</h2>
+                  <span className="text-xs text-[#6f736e]">
                     {countLabel(artistGroups.length, "artist")}
                   </span>
                 </div>
@@ -4596,7 +4817,7 @@ export default function App() {
                     title="No artists match those filters"
                     detail="Try another artist name, release title, or genre."
                     action={hasActiveFilters ? (
-                      <button onClick={clearLibraryFilters}>Clear filters</button>
+                      <Button className="mt-3 text-xs text-[#ed8a71]" onClick={clearLibraryFilters} size="compact" variant="text">Clear filters</Button>
                     ) : undefined}
                   />
                 )}
@@ -4616,22 +4837,23 @@ export default function App() {
                     onTogglePlayback={togglePlayback}
                   />
                 ) : null}
-                <div className="section-heading">
-                  <h2>{releaseSectionTitle}</h2>
-                  <div className="section-heading__actions">
-                    <span>{countLabel(visibleAlbums.length, "release")}</span>
+                <div className="mb-4 flex items-baseline justify-between">
+                  <h2 className="m-0 font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-base leading-none font-semibold tracking-tight">{releaseSectionTitle}</h2>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-[#6f736e]">{countLabel(visibleAlbums.length, "release")}</span>
                     {deferredQuery && visibleAlbums.length ? (
-                      <button
-                        className="queue-results-button"
+                      <Button
+                        className="min-h-8 gap-1.5 border-primary/25 bg-accent px-2.5 text-xs text-[#ed9a84] hover:border-primary/40 hover:bg-primary/18 hover:text-[#ffc1b1]"
                         onClick={() => void queueSearchResults()}
                         disabled={Boolean(queueSearchProgress)}
+                        size="compact"
                       >
                         {queueSearchProgress ? (
-                          <><RefreshCw className="spin" size={14} /> Adding {queueSearchProgress.done}/{queueSearchProgress.total}</>
+                          <><Spinner aria-hidden="true" className="size-3.5" /> Adding {queueSearchProgress.done}/{queueSearchProgress.total}</>
                         ) : (
                           <><ListPlus size={15} /> Add results to queue</>
                         )}
-                      </button>
+                      </Button>
                     ) : null}
                   </div>
                 </div>
@@ -4668,7 +4890,7 @@ export default function App() {
                           : "Try a different artist, release title, or genre."
                     }
                     action={hasActiveFilters ? (
-                      <button onClick={clearLibraryFilters}>Clear filters</button>
+                      <Button className="mt-3 text-xs text-[#ed8a71]" onClick={clearLibraryFilters} size="compact" variant="text">Clear filters</Button>
                     ) : undefined}
                   />
                 )}
@@ -4703,6 +4925,7 @@ export default function App() {
             recommendationLoading={randomPickLoading}
             onPlayRecommendation={playQueueRecommendation}
             onAnotherRecommendation={showAnotherQueueRecommendation}
+            onClose={closeQueueFromKeyboard}
           />
         ) : null}
       </div>
@@ -4741,6 +4964,7 @@ export default function App() {
           }}
           queueOpen={queueOpen}
           onToggleQueue={toggleQueue}
+          queueControlRef={queueControlRef}
         />
       )}
       <MiniPlayerBridge
@@ -4805,8 +5029,22 @@ export default function App() {
           />
         </Suspense>
       ) : null}
-      <div className="toast-region" aria-live="polite">
-        {toasts.map((toast) => <div key={toast.id} className={`toast toast--${toast.tone ?? "neutral"}`}>{toast.tone === "good" ? <Check size={16} /> : toast.tone === "bad" ? <X size={16} /> : null}{toast.message}</div>)}
+      <div className="pointer-events-none fixed right-4 bottom-28 z-30 flex flex-col items-end gap-2" aria-live="polite">
+        {toasts.map((toast) => (
+          <div
+            key={toast.id}
+            className={`flex max-w-xs items-center gap-2 rounded-md border border-(--line-strong) bg-[#282b2d] px-3 py-2.5 text-xs text-[#dddcd6] shadow-[0_10px_28px_rgba(0,0,0,0.3)] animate-[toast-in_180ms_ease-out] ${
+              toast.tone === "good"
+                ? "[&>svg]:text-coda-success"
+                : toast.tone === "bad"
+                  ? "[&>svg]:text-[#d77868]"
+                  : ""
+            }`}
+          >
+            {toast.tone === "good" ? <Check size={16} /> : toast.tone === "bad" ? <X size={16} /> : null}
+            {toast.message}
+          </div>
+        ))}
       </div>
     </div>
   );

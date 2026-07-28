@@ -39,7 +39,7 @@ export default function AlbumVirtualGrid({
   return (
     <ResponsiveVirtualGrid
       aria-label={ariaLabel}
-      className="album-grid"
+      className="w-full"
       getItemKey={(album) => album.id}
       items={items}
       layouts={ALBUM_GRID_LAYOUTS}

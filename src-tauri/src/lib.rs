@@ -3895,11 +3895,30 @@ async fn radio_show(show_id: u64) -> Result<RadioShow, String> {
     radio_show_from_raw(body)
 }
 
+#[cfg(desktop)]
+fn with_window_state_plugin<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    builder.plugin(
+        tauri_plugin_window_state::Builder::default()
+            .with_state_flags(
+                StateFlags::POSITION
+                    | StateFlags::SIZE
+                    | StateFlags::MAXIMIZED
+                    | StateFlags::VISIBLE,
+            )
+            .with_denylist(&["mini-player"])
+            .build(),
+    )
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_process::init());
+    #[cfg(desktop)]
+    let builder = with_window_state_plugin(builder);
+
+    builder
         .on_page_load(|webview, _| {
             if webview.label() == "main" {
                 let window = webview.window();
@@ -3913,17 +3932,16 @@ pub fn run() {
             {
                 app.handle()
                     .plugin(tauri_plugin_updater::Builder::new().build())?;
-                app.handle().plugin(
-                    tauri_plugin_window_state::Builder::default()
-                        .with_state_flags(
-                            StateFlags::POSITION
-                                | StateFlags::SIZE
-                                | StateFlags::MAXIMIZED
-                                | StateFlags::VISIBLE,
-                        )
-                        .with_denylist(&["mini-player"])
-                        .build(),
-                )?;
+                let should_maximize_main_window = app
+                    .path()
+                    .app_config_dir()
+                    .map(|directory| should_maximize_main_window_on_startup(&directory))
+                    .unwrap_or(false);
+                if should_maximize_main_window {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.maximize();
+                    }
+                }
                 ensure_window_is_visible(app);
 
                 #[cfg(target_os = "macos")]
@@ -4066,6 +4084,17 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Coda");
+}
+
+#[cfg(desktop)]
+fn should_maximize_main_window_for_state_lookup(state_file_exists: std::io::Result<bool>) -> bool {
+    matches!(state_file_exists, Ok(false))
+}
+
+#[cfg(desktop)]
+fn should_maximize_main_window_on_startup(app_config_dir: &Path) -> bool {
+    let state_path = app_config_dir.join(tauri_plugin_window_state::DEFAULT_FILENAME);
+    should_maximize_main_window_for_state_lookup(state_path.try_exists())
 }
 
 #[cfg(desktop)]
@@ -4289,6 +4318,102 @@ mod tests {
         assert_eq!(main_window["minimizable"], Value::Bool(true));
         assert_eq!(main_window["maximizable"], Value::Bool(true));
         assert_eq!(main_window["resizable"], Value::Bool(true));
+        assert_ne!(
+            main_window.get("maximized").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_ne!(
+            main_window.get("center").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_ne!(
+            main_window.get("fullscreen").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_ne!(
+            main_window.get("simpleFullscreen").and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn window_state_plugin_registration_precedes_user_setup() {
+        let source = include_str!("lib.rs");
+        let run_source = source
+            .split_once("pub fn run()")
+            .map(|(_, run_source)| run_source)
+            .expect("run function");
+        let setup_index = run_source.find(".setup(|app|").expect("user setup");
+        let registration_index = run_source
+            .find("let builder = with_window_state_plugin(builder);")
+            .expect("static window-state plugin registration");
+
+        assert!(
+            registration_index < setup_index,
+            "window-state plugin must be registered before user setup"
+        );
+
+        let setup_source = &run_source[setup_index
+            ..run_source
+                .find(".on_window_event")
+                .expect("end of user setup")];
+        assert!(
+            !setup_source.contains("tauri_plugin_window_state::Builder"),
+            "window-state plugin must not be registered dynamically in user setup"
+        );
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn window_state_plugin_is_initialized_before_user_setup_runs() {
+        let setup_observed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let setup_observed_from_callback = setup_observed.clone();
+
+        let mut app = with_window_state_plugin(tauri::test::mock_builder())
+            .setup(move |app| {
+                setup_observed_from_callback.store(
+                    app.handle().filename() == tauri_plugin_window_state::DEFAULT_FILENAME,
+                    std::sync::atomic::Ordering::SeqCst,
+                );
+                Ok(())
+            })
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app with static window-state plugin");
+
+        #[allow(deprecated)]
+        app.run_iteration(|_, _| {});
+        assert!(setup_observed.load(std::sync::atomic::Ordering::SeqCst));
+        drop(app);
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn first_launch_maximization_requires_an_absent_window_state_file() {
+        let suffix: String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(16)
+            .map(char::from)
+            .collect();
+        let app_config_dir = std::env::temp_dir().join(format!("coda-window-state-{suffix}"));
+        let state_path = app_config_dir.join(tauri_plugin_window_state::DEFAULT_FILENAME);
+
+        assert!(should_maximize_main_window_on_startup(&app_config_dir));
+
+        fs::create_dir_all(&app_config_dir).unwrap();
+        fs::write(&state_path, b"{}").unwrap();
+        assert!(!should_maximize_main_window_on_startup(&app_config_dir));
+
+        fs::remove_file(state_path).unwrap();
+        fs::remove_dir(app_config_dir).unwrap();
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn window_state_lookup_errors_do_not_override_a_restored_window() {
+        let error = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+
+        assert!(!should_maximize_main_window_for_state_lookup(Err(error)));
     }
 
     fn sample_player_track(id: &str) -> PlayerStateTrack {

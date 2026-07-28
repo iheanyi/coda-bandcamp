@@ -30,7 +30,7 @@ export default function ArtistVirtualGrid({
   return (
     <ResponsiveVirtualGrid
       aria-label="Artists"
-      className="artist-grid"
+      className="w-full"
       getItemKey={(group) => group.key}
       items={items}
       layouts={ARTIST_GRID_LAYOUTS}

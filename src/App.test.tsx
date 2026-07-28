@@ -1,9 +1,63 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { compile as compileTailwind } from "@tailwindcss/node";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Album, Track } from "./types";
 import { albumQueryKey } from "./libraryQueries";
+import type { Album, Track } from "./types";
+
+function applyCompiledStyles(
+  css: string,
+  elements: readonly HTMLElement[],
+) {
+  const variables = new Map<string, string>();
+  for (const match of css.matchAll(/(--[\w-]+):\s*([^;{}]+);/g)) {
+    variables.set(match[1], match[2].trim());
+  }
+  const resolveValue = (rawValue: string) => {
+    let value = rawValue.replace(
+      /var\((--[\w-]+)(?:,[^)]+)?\)/g,
+      (_match, name: string) => variables.get(name) ?? _match,
+    );
+    const spacingCalculation = value.match(
+      /^calc\(([\d.]+)rem \* ([\d.]+)\)$/,
+    );
+    if (spacingCalculation) {
+      value = `${Number(spacingCalculation[1]) * 16 * Number(spacingCalculation[2])}px`;
+    } else if (/^[\d.]+rem$/.test(value)) {
+      value = `${Number.parseFloat(value) * 16}px`;
+    }
+    return value;
+  };
+
+  for (const rule of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const selectors = rule[1].split(",").map((selector) => selector.trim());
+    for (const element of elements) {
+      const matches = selectors.some((selector) => {
+        try {
+          return element.matches(selector);
+        } catch {
+          return false;
+        }
+      });
+      if (!matches) continue;
+      for (const declaration of rule[2].matchAll(/([\w-]+):\s*([^;]+);/g)) {
+        const property = declaration[1];
+        const value = resolveValue(declaration[2].trim());
+        if (property === "margin-inline" || property === "padding-inline") {
+          const prefix = property.startsWith("margin") ? "margin" : "padding";
+          element.style.setProperty(`${prefix}-left`, value);
+          element.style.setProperty(`${prefix}-right`, value);
+        } else {
+          element.style.setProperty(property, value);
+        }
+      }
+    }
+  }
+}
 
 const mocks = vi.hoisted(() => ({
   beginLastFmAuthorization: vi.fn(),
@@ -222,6 +276,108 @@ beforeEach(() => {
 });
 
 describe("Coda application flows", { timeout: 10_000 }, () => {
+  it("dismisses connection settings with Escape and restores trigger focus", async () => {
+    renderApp();
+
+    const trigger = await screen.findByRole("button", {
+      name: "Connection settings",
+    });
+    trigger.focus();
+    fireEvent.click(trigger);
+    expect(await screen.findByRole("dialog", {
+      name: "Bring in your collection",
+    })).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", {
+        name: "Bring in your collection",
+      })).not.toBeInTheDocument(),
+    );
+    expect(trigger).toHaveFocus();
+  });
+
+  it("rejects Escape and outside dismissal while Bandcamp connection is busy", async () => {
+    mocks.connectBandcamp.mockReturnValue(new Promise(() => undefined));
+    renderApp();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Connect Bandcamp" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Bring in your collection",
+    });
+    fireEvent.change(within(dialog).getByLabelText("Subsonic username"), {
+      target: { value: "generated-user" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("Subsonic password"), {
+      target: { value: "generated-password" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Connect Bandcamp" }));
+    expect(await within(dialog).findByRole("button", {
+      name: "Connecting securely…",
+    })).toBeDisabled();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.pointerDown(document.body);
+    fireEvent.mouseDown(document.body);
+    fireEvent.click(document.body);
+
+    expect(screen.getByRole("dialog", {
+      name: "Bring in your collection",
+    })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Close" })).toBeDisabled();
+  });
+
+  it("rejects Escape and outside dismissal while Last.fm authorization is busy", async () => {
+    let resolveAuthorization!: (authorization: {
+      authorizationUrl: string;
+      token: string;
+    }) => void;
+    const pendingAuthorization = new Promise<{
+      authorizationUrl: string;
+      token: string;
+    }>((resolve) => {
+      resolveAuthorization = resolve;
+    });
+    mocks.beginLastFmAuthorization.mockReturnValue(pendingAuthorization);
+    renderApp();
+
+    fireEvent.click(await screen.findByRole("button", {
+      name: "Connection settings",
+    }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Bring in your collection",
+    });
+    fireEvent.click(within(dialog).getByRole("button", {
+      name: "Connect Last.fm",
+    }));
+    expect(await within(dialog).findByRole("button", {
+      name: "Opening Last.fm…",
+    })).toBeDisabled();
+
+    try {
+      fireEvent.keyDown(document, { key: "Escape" });
+      fireEvent.pointerDown(document.body);
+      fireEvent.mouseDown(document.body);
+      fireEvent.click(document.body);
+
+      expect(screen.getByRole("dialog", {
+        name: "Bring in your collection",
+      })).toBeInTheDocument();
+      expect(within(dialog).getByRole("button", { name: "Close" }))
+        .toBeDisabled();
+    } finally {
+      await act(async () => {
+        resolveAuthorization({
+          authorizationUrl:
+            "https://www.last.fm/api/auth/?api_key=key&token=deferred-token",
+          token: "deferred-token",
+        });
+        await pendingAuthorization;
+      });
+    }
+  });
+
   it("locks the connection form and names the pending Bandcamp request", async () => {
     let resolveConnection!: (albums: Album[]) => void;
     mocks.connectBandcamp.mockReturnValue(new Promise((resolve) => {
@@ -277,6 +433,17 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     );
     expect(await screen.findByText("Soft Focus")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ambient" })).toBeInTheDocument();
+  });
+
+  it("exposes the library scroll owner for virtualized views", async () => {
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    expect(
+      document.querySelector("[data-coda-library-scroll]"),
+    ).toBeInstanceOf(HTMLElement);
   });
 
   it("uses a fresh native library cache without revalidating", async () => {
@@ -367,8 +534,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     const disconnectButton = within(dialog).getByRole("button", {
       name: "Disconnect and remove Bandcamp credentials",
     });
-    expect(disconnectButton).toHaveClass("connection-dialog__disconnect");
-    expect(disconnectButton).not.toHaveClass("danger-button");
+    expect(disconnectButton).toBeEnabled();
     fireEvent.click(disconnectButton);
     expect(await screen.findByText("Your collection starts here")).toBeInTheDocument();
 
@@ -548,15 +714,15 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(await screen.findByRole("button", { name: "Open Now Playing" }))
       .toBeInTheDocument();
     expect(screen.getAllByText("First Light").length).toBeGreaterThan(0);
-    const player = container.querySelector<HTMLElement>(".player");
+    const player = screen.getByRole("contentinfo");
     const favorite = screen.getByRole("button", {
       name: "Add First Light to favorites",
     });
-    expect(favorite.closest(".player__track-title-row")).not.toBeNull();
-    expect(player?.querySelector(".player__track")?.contains(favorite))
-      .toBe(true);
-    expect(player?.querySelector(".player__volume")?.contains(favorite))
-      .toBe(false);
+    expect(within(player).getByRole("button", {
+      name: "Add First Light to favorites",
+    })).toBe(favorite);
+    expect(within(player).getByRole("slider", { name: "Volume" }))
+      .toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Choose AirPlay device" }));
     expect(airPlayPicker).toHaveBeenCalledOnce();
 
@@ -601,6 +767,98 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
   });
 
+  it("applies compact-player position and volume slider changes immediately", async () => {
+    const restoredQueue = tracks.map(
+      ({ streamUrl: _streamUrl, ...track }) => track,
+    );
+    mocks.loadPlayerState.mockResolvedValue({
+      version: 1,
+      savedAt: Date.now(),
+      queue: restoredQueue,
+      currentIndex: 0,
+      positionSeconds: 42,
+      volume: 0.44,
+      repeatMode: "off",
+      queueOpen: false,
+    });
+    const { container } = renderApp();
+
+    await screen.findByRole("button", { name: "Open Now Playing" });
+    const audio = container.querySelector("audio");
+    expect(audio).not.toBeNull();
+    Object.defineProperty(audio!, "duration", {
+      configurable: true,
+      value: 210,
+    });
+    fireEvent.loadedMetadata(audio!);
+    await waitFor(() => expect(audio!.currentTime).toBe(42));
+    await waitFor(() => expect(audio!.volume).toBeCloseTo(0.44));
+
+    const position = screen.getByRole("slider", {
+      name: "Track position",
+    });
+    position.focus();
+    fireEvent.keyDown(position, { key: "ArrowRight" });
+    await waitFor(() => expect(audio!.currentTime).toBe(43));
+
+    const volume = screen.getByRole("slider", { name: "Volume" });
+    const volumeRoot = screen.getByRole("group", { name: "Volume" });
+    const compactWidthStyles = document.createElement("style");
+    compactWidthStyles.textContent = `
+      .w-20 { width: 5rem; }
+      .data-horizontal\\:w-full:where([data-orientation="horizontal"]) {
+        width: 100%;
+      }
+    `;
+    document.head.append(compactWidthStyles);
+    try {
+      expect(getComputedStyle(volumeRoot).width).toBe("5rem");
+    } finally {
+      compactWidthStyles.remove();
+    }
+
+    volume.focus();
+    fireEvent.keyDown(volume, { key: "ArrowRight" });
+    await waitFor(() => expect(audio!.volume).toBeCloseTo(0.45));
+
+    const volumeControl = volumeRoot.querySelector<HTMLElement>(
+      "[data-base-ui-slider-control]",
+    );
+    const volumeThumb = volumeRoot.querySelector<HTMLElement>(
+      "[data-slot=slider-thumb]",
+    );
+    expect(volumeControl).not.toBeNull();
+    expect(volumeThumb).not.toBeNull();
+    vi.spyOn(volumeControl!, "getBoundingClientRect")
+      .mockReturnValue(new DOMRect(0, 0, 100, 20));
+    vi.spyOn(volumeThumb!, "getBoundingClientRect")
+      .mockReturnValue(new DOMRect(0, 5, 10, 10));
+    fireEvent.pointerDown(volumeControl!, {
+      button: 0,
+      buttons: 1,
+      clientX: 72,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
+    fireEvent.pointerMove(document, {
+      buttons: 1,
+      clientX: 36.5,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
+    fireEvent.pointerUp(document, {
+      button: 0,
+      buttons: 0,
+      clientX: 36.5,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
+    await waitFor(() => expect(audio!.volume).toBeCloseTo(0.35));
+  });
+
   it("restarts with Previous near the track body and disables unavailable transport", async () => {
     mocks.loadPlayerState.mockResolvedValue({
       version: 1,
@@ -616,10 +874,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
     await screen.findByRole("button", { name: "Open Now Playing" });
 
-    const player = container.querySelector<HTMLElement>(".player");
-    expect(player).not.toBeNull();
-    const previous = within(player!).getByRole("button", { name: "Previous" });
-    const next = within(player!).getByRole("button", { name: "Next" });
+    const player = screen.getByRole("contentinfo");
+    const previous = within(player).getByRole("button", { name: "Previous" });
+    const next = within(player).getByRole("button", { name: "Next" });
     const audio = container.querySelector("audio")!;
 
     expect(previous).toBeDisabled();
@@ -631,12 +888,12 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     fireEvent.click(previous);
 
     expect(audio.currentTime).toBe(0);
-    expect(within(player!).getByText("First Light")).toBeInTheDocument();
+    expect(within(player).getByText("First Light")).toBeInTheDocument();
     expect(previous).toBeDisabled();
 
     fireEvent.click(next);
     await waitFor(() =>
-      expect(within(player!).getByText("Afterimage")).toBeInTheDocument(),
+      expect(within(player).getByText("Afterimage")).toBeInTheDocument(),
     );
     expect(next).toBeDisabled();
     expect(previous).toBeEnabled();
@@ -644,7 +901,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     fireEvent.click(within(player!).getByRole("button", { name: "Repeat off" }));
     expect(next).toBeEnabled();
     fireEvent.click(next);
-    expect(within(player!).getByText("First Light")).toBeInTheDocument();
+    expect(within(player).getByText("First Light")).toBeInTheDocument();
   });
 
   it("publishes rich WebKit media state and routes next-track controls", async () => {
@@ -737,9 +994,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       });
       act(() => skipTrack?.({ action: "nexttrack" }));
 
-      const player = view.container.querySelector<HTMLElement>(".player");
+      const player = within(view.container).getByRole("contentinfo");
       await waitFor(() =>
-        expect(within(player!).getByText("Afterimage")).toBeInTheDocument(),
+        expect(within(player).getByText("Afterimage")).toBeInTheDocument(),
       );
     } finally {
       unmount?.();
@@ -782,44 +1039,188 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
   });
 
   it("toggles the queue pane from the dedicated player control", async () => {
+    const user = userEvent.setup();
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
     renderApp();
 
     await screen.findByText("Soft Focus");
-    const appBody = document.querySelector(".app-body");
-    expect(appBody).not.toBeNull();
     const libraryPane = screen.getByRole("main");
+    const player = screen.getByRole("contentinfo");
     expect(screen.queryByRole("complementary", { name: "Playback queue" }))
       .not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Show queue" }))
+    const showQueue = screen.getByRole("button", { name: "Show queue" });
+    expect(showQueue)
       .toHaveAttribute("aria-pressed", "false");
-    expect(appBody).toHaveClass("app-body--queue-closed");
+    showQueue.focus();
+    expect(showQueue).toHaveFocus();
 
-    fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
+    await user.keyboard("{Enter}");
     await waitFor(() =>
       expect(screen.getByRole("complementary", { name: "Playback queue" })).toHaveFocus(),
     );
+    expect(within(player).getByRole("button", { name: "Play" }))
+      .toBeInTheDocument();
+    expect(within(player).getByRole("slider", { name: "Volume" })).toBeEnabled();
     expect(screen.getByRole("region", { name: "Upcoming tracks" })).toHaveAttribute(
       "tabindex",
       "0",
     );
-    expect(screen.getByRole("button", { name: "Hide queue" })).toHaveAttribute(
+    const hideQueue = screen.getByRole("button", { name: "Hide queue" });
+    expect(hideQueue).toHaveAttribute(
       "aria-pressed",
       "true",
     );
-    expect(appBody).not.toHaveClass("app-body--queue-closed");
     expect(screen.getByRole("main")).toBe(libraryPane);
 
-    fireEvent.click(screen.getByRole("button", { name: "Hide queue" }));
+    await user.keyboard("{Escape}");
     expect(screen.queryByRole("complementary", { name: "Playback queue" }))
       .not.toBeInTheDocument();
-    expect(document.querySelector(".queue-panel--closing"))
+    expect(document.querySelector(
+      'aside[aria-label="Playback queue"][aria-hidden="true"]',
+    ))
       .toHaveAttribute("aria-hidden", "true");
     expect(screen.getByRole("button", { name: "Show queue" }))
       .toHaveAttribute("aria-pressed", "false");
-    expect(appBody).toHaveClass("app-body--queue-closed");
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Show queue" })).toHaveFocus(),
+    );
     expect(screen.getByRole("main")).toBe(libraryPane);
+
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(screen.getByRole("complementary", { name: "Playback queue" }))
+        .toHaveFocus(),
+    );
+    const keyboardHideQueue = screen.getByRole("button", {
+      name: "Hide queue",
+    });
+    keyboardHideQueue.focus();
+    await user.keyboard(" ");
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Show queue" })).toHaveFocus(),
+    );
+  });
+
+  it("keeps the rendered queue opaque and contains long metadata within one gutter", async () => {
+    const longTitle =
+      "A deliberately long Now Playing title that must yield before the queue edge";
+    const restoredTrack = {
+      ...tracks[0],
+      title: longTitle,
+    };
+    const { streamUrl: _streamUrl, ...restoredTrackState } = restoredTrack;
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    mocks.loadPlayerState.mockResolvedValue({
+      version: 1,
+      savedAt: Date.now(),
+      queue: [restoredTrackState],
+      currentIndex: 0,
+      positionSeconds: 0,
+      volume: 0.72,
+      repeatMode: "off",
+      queueOpen: true,
+    });
+    renderApp();
+
+    const panel = await screen.findByRole("complementary", {
+      name: "Playback queue",
+    });
+    const stylesPath = resolve("src/styles.css");
+    const compiler = await compileTailwind(
+      await readFile(stylesPath, "utf8"),
+      {
+        base: resolve("src"),
+        from: stylesPath,
+        onDependency: () => undefined,
+      },
+    );
+    const candidates = Array.from(document.querySelectorAll("*"))
+      .flatMap((element) => Array.from(element.classList));
+    const queueHeading = within(panel).getByRole("heading", { name: "Queue" });
+    const header = queueHeading.parentElement?.parentElement;
+    const currentTitle = within(panel).getByRole("button", { name: longTitle });
+    const currentMetadata = currentTitle.parentElement;
+    const nowPlayingCard = currentMetadata?.parentElement?.parentElement;
+    const queueRegion = within(panel).getByRole("region", {
+      name: "Upcoming tracks",
+    });
+    const emptyCopy = within(queueRegion).getByText(
+      /Not sure what comes next|Add another album or track/,
+    );
+    const emptyState = emptyCopy.parentElement;
+    const footer = panel.lastElementChild;
+
+    applyCompiledStyles(compiler.build(candidates), [
+      panel,
+      currentMetadata!,
+      currentTitle,
+      emptyCopy,
+      nowPlayingCard!,
+      queueRegion,
+      emptyState!,
+      header!,
+      footer as HTMLElement,
+    ]);
+
+    expect(getComputedStyle(panel).backgroundColor).toBe("rgb(21, 23, 25)");
+    expect(getComputedStyle(currentMetadata!).flexBasis).toBe("0px");
+    expect(getComputedStyle(currentMetadata!).flexGrow).toBe("1");
+    expect(getComputedStyle(currentMetadata!).overflow).toBe("hidden");
+    expect(getComputedStyle(currentTitle).textOverflow).toBe("ellipsis");
+    expect(getComputedStyle(currentTitle).whiteSpace).toBe("nowrap");
+    expect(getComputedStyle(emptyCopy).maxWidth).toBe("256px");
+
+    const gutter = Number.parseFloat(getComputedStyle(nowPlayingCard!).marginLeft);
+    const recommendationGutter =
+      Number.parseFloat(getComputedStyle(queueRegion).paddingLeft) +
+      Number.parseFloat(getComputedStyle(emptyState!).paddingLeft);
+    expect(gutter).toBe(12);
+    expect(recommendationGutter).toBe(gutter);
+    expect(Number.parseFloat(getComputedStyle(header!).paddingLeft)).toBe(gutter);
+    expect(Number.parseFloat(getComputedStyle(footer!).paddingLeft)).toBe(gutter);
+  });
+
+  it("reveals a queue remove control when it receives keyboard focus", async () => {
+    const restoredQueue = tracks.map(
+      ({ streamUrl: _streamUrl, ...track }) => track,
+    );
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    mocks.loadPlayerState.mockResolvedValue({
+      version: 1,
+      savedAt: Date.now(),
+      queue: restoredQueue,
+      currentIndex: 0,
+      positionSeconds: 0,
+      volume: 0.72,
+      repeatMode: "off",
+      queueOpen: true,
+    });
+    renderApp();
+
+    const remove = await screen.findByRole("button", {
+      name: "Remove Afterimage",
+    });
+    const stylesPath = resolve("src/styles.css");
+    const compiler = await compileTailwind(
+      await readFile(stylesPath, "utf8"),
+      {
+        base: resolve("src"),
+        from: stylesPath,
+        onDependency: () => undefined,
+      },
+    );
+    const candidates = Array.from(document.querySelectorAll("*"))
+      .flatMap((element) => Array.from(element.classList));
+    applyCompiledStyles(compiler.build(candidates), [remove]);
+    expect(["0", "0%"]).not.toContain(getComputedStyle(remove).opacity);
+
+    remove.focus();
+    expect(remove).toHaveFocus();
+    applyCompiledStyles(compiler.build(candidates), [remove]);
+    expect(["1", "100%"]).toContain(getComputedStyle(remove).opacity);
   });
 
   it("does not reopen a saved queue drawer without a restorable current track", async () => {
@@ -985,7 +1386,8 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
     fireEvent.loadedMetadata(audio!);
     expect(audio!.currentTime).toBe(42);
-    expect(screen.getByLabelText("Track position")).toHaveValue("42");
+    expect(screen.getByRole("slider", { name: "Track position" }))
+      .toHaveValue("42");
   });
 
   it("refreshes a restored Radio show and resumes its saved playhead without a connection", async () => {
@@ -1295,11 +1697,13 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       name: "Streetlight release details",
     });
     expect(singlePage).toBeInTheDocument();
-    expect(within(singlePage).getByText("#")).toHaveClass("tracklist__number-heading");
-    expect(within(singlePage).getByTitle("Duration")).toHaveClass(
-      "tracklist__duration-heading",
-    );
-    expect(singlePage.querySelector(".track-row__duration")).toHaveTextContent("2:44");
+    expect(within(singlePage).getByText("#")).toBeVisible();
+    expect(within(singlePage).getByTitle("Duration")).toBeVisible();
+    const singleTrackControl = within(singlePage).getByRole("button", {
+      name: "Play Streetlight",
+    });
+    expect(within(singleTrackControl.parentElement!).getByText("2:44"))
+      .toBeVisible();
     expect(screen.getByRole("heading", { name: "1 song" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Shuffle album" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Back to releases" }));
@@ -1322,7 +1726,8 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
     await screen.findByText("Soft Focus");
     const openButton = screen.getByRole("button", { name: "Open Soft Focus" });
-    const albumCard = openButton.closest(".album-card")!;
+    const albumCard = openButton.closest("article");
+    if (!albumCard) throw new Error("Expected the album control inside a card");
     mocks.fetchAlbum.mockClear();
     vi.useFakeTimers();
     try {
@@ -1393,7 +1798,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(within(albumPage).getByText("Other Light")).toBeInTheDocument();
   });
 
-  it("shows a bounded accessible skeleton while a cold album loads", async () => {
+  it("shows a bounded accessible spinner while a cold album loads", async () => {
     const request = deferred<Track[]>();
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
@@ -1410,12 +1815,92 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
 
     expect(trackList).toHaveAttribute("aria-busy", "true");
-    expect(within(trackList).getByRole("status", {
-      name: "Loading tracks for Soft Focus",
-    })).toBeInTheDocument();
-    expect(trackList.querySelectorAll(".track-row--skeleton")).toHaveLength(3);
+    const loadingStatus = within(trackList).getByRole("status", {
+      name: "Loading album tracks",
+    });
+    expect(loadingStatus).toHaveAttribute("data-slot", "spinner");
+    expect(loadingStatus.parentElement).toHaveClass("min-h-44");
 
     await act(async () => request.resolve(tracks));
+  });
+
+  it("announces cold album track hydration until the fetched tracks arrive", async () => {
+    const summaryAlbum: Album = {
+      ...album,
+      tracks: undefined,
+    };
+    let resolveAlbumTracks!: (value: Track[]) => void;
+    let albumTracksSettled = false;
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([summaryAlbum]);
+    mocks.fetchAlbum.mockReturnValue(new Promise((resolve) => {
+      resolveAlbumTracks = resolve;
+    }));
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      document,
+      "startViewTransition",
+    );
+    let applyTransitionUpdate: (() => void) | undefined;
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: vi.fn((update: () => void) => {
+        applyTransitionUpdate = update;
+        return { finished: Promise.resolve() };
+      }),
+    });
+
+    try {
+      renderApp();
+
+      await screen.findByText("Soft Focus");
+      fireEvent.click(screen.getByRole("button", { name: "Open Soft Focus" }));
+      await act(async () => {
+        applyTransitionUpdate?.();
+        await Promise.resolve();
+      });
+
+      const albumPage = await screen.findByRole("article", {
+        name: "Soft Focus release details",
+      });
+      const loadingStatus = await within(albumPage).findByRole("status", {
+        name: "Loading album tracks",
+      });
+      expect(within(albumPage).getByText("Loading tracks…")).toBeVisible();
+      expect(loadingStatus).toHaveAttribute("data-slot", "spinner");
+      expect(within(albumPage).getByLabelText("Track list"))
+        .toHaveAttribute("aria-busy", "true");
+
+      await act(async () => {
+        albumTracksSettled = true;
+        resolveAlbumTracks(tracks);
+        await Promise.resolve();
+      });
+
+      await waitFor(() =>
+        expect(within(albumPage).queryByRole("status", {
+          name: "Loading album tracks",
+        })).not.toBeInTheDocument(),
+      );
+      expect(within(albumPage).getByLabelText("Track list"))
+        .not.toHaveAttribute("aria-busy");
+      expect(within(albumPage).getByText("First Light")).toBeInTheDocument();
+    } finally {
+      try {
+        if (!albumTracksSettled) {
+          await act(async () => {
+            albumTracksSettled = true;
+            resolveAlbumTracks(tracks);
+            await Promise.resolve();
+          });
+        }
+      } finally {
+        if (originalDescriptor) {
+          Object.defineProperty(document, "startViewTransition", originalDescriptor);
+        } else {
+          Reflect.deleteProperty(document, "startViewTransition");
+        }
+      }
+    }
   });
 
   it("opens Now Playing from the player artwork and returns to the exact prior view", async () => {
@@ -1596,7 +2081,11 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       "true",
     );
 
-    fireEvent.change(within(nowPlaying).getByLabelText("Now playing position"), {
+    const nowPlayingPosition = nowPlaying.querySelector<HTMLInputElement>(
+      'input[type="range"][aria-label="Now playing position"]',
+    );
+    expect(nowPlayingPosition).not.toBeNull();
+    fireEvent.change(nowPlayingPosition!, {
       target: { value: "60" },
     });
     expect(container.querySelector("audio")?.currentTime).toBe(60);

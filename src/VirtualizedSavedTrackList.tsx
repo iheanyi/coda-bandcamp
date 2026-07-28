@@ -11,11 +11,12 @@ import {
   useState,
   type CSSProperties,
   type FocusEventHandler,
+  Fragment,
   type Key,
   type ReactNode,
 } from "react";
 
-export const SAVED_TRACK_ROW_HEIGHT = 58;
+export const SAVED_TRACK_ROW_HEIGHT = 56;
 export const SAVED_TRACK_VIRTUALIZATION_THRESHOLD = 100;
 export const SAVED_TRACK_OVERSCAN = 6;
 
@@ -29,7 +30,6 @@ export type SavedTrackRowProps = {
   "aria-setsize": number;
   "data-index": number;
   "data-saved-track-index": number;
-  key: Key;
   onBlurCapture: FocusEventHandler<HTMLDivElement>;
   onFocusCapture: FocusEventHandler<HTMLDivElement>;
   role: "listitem";
@@ -52,12 +52,13 @@ export type VirtualizedSavedTrackListProps<Item> = {
 };
 
 function defaultScrollElement(root: HTMLElement): HTMLElement | null {
-  return root.closest<HTMLElement>(".library-pane") ?? root.parentElement;
+  return root.closest<HTMLElement>("[data-coda-library-scroll]") ??
+    root.parentElement;
 }
 
 /**
- * Virtualizes fixed-height saved-library track rows against Coda's existing
- * library-pane scroller. Short lists keep their original natural DOM flow.
+ * Virtualizes fixed-height saved-library track rows against Coda's stable
+ * data-marked library scroller. Short lists keep their natural DOM flow.
  */
 export function VirtualizedSavedTrackList<Item>({
   "aria-label": ariaLabel,
@@ -161,7 +162,6 @@ export function VirtualizedSavedTrackList<Item>({
       "aria-setsize": items.length,
       "data-index": index,
       "data-saved-track-index": index,
-      key,
       onBlurCapture: (event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
           setFocusedIndex((current) => current === index ? undefined : current);
@@ -171,7 +171,11 @@ export function VirtualizedSavedTrackList<Item>({
       role: "listitem",
       style,
     };
-    return renderItem(item, { index, virtualized }, rowProps);
+    return (
+      <Fragment key={key}>
+        {renderItem(item, { index, virtualized }, rowProps)}
+      </Fragment>
+    );
   };
 
   const virtualItems = virtualized ? virtualizer.getVirtualItems() : [];

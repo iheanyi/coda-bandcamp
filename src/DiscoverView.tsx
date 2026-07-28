@@ -1,9 +1,7 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import {
   ArrowUpRight,
-  ChevronDown,
   Disc3,
-  LoaderCircle,
   Pause,
   Play,
   Plus,
@@ -12,6 +10,16 @@ import {
   Sparkles,
 } from "lucide-react";
 import { type FormEvent, memo, useMemo, useState } from "react";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@/components/ui/native-select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { countLabel } from "./countLabel";
 import { DISCOVER_GENRES, normalizeGenre } from "./genres";
 import {
@@ -69,9 +77,9 @@ const DiscoverCard = memo(function DiscoverCard({
   const active = Boolean(track && currentTrackId === track.id);
 
   return (
-    <article className="discover-card">
+    <article className="group/card grid min-w-0 grid-cols-[112px_minmax(0,1fr)] overflow-hidden rounded-lg border border-(--line) bg-white/[0.018] [contain-intrinsic-size:112px_300px] [content-visibility:auto] hover:border-(--line-strong) hover:bg-white/3">
       <div
-        className="discover-card__art"
+        className="relative grid size-[112px] place-items-center overflow-hidden bg-[linear-gradient(145deg,var(--cover-accent),transparent_72%),var(--cover-base)] text-2xl font-bold text-white/78"
         style={
           {
             "--cover-accent": palette[0],
@@ -81,6 +89,7 @@ const DiscoverCard = memo(function DiscoverCard({
       >
         {release.artworkUrl ? (
           <img
+            className="size-full object-cover"
             src={release.artworkUrl}
             alt=""
             loading="lazy"
@@ -91,8 +100,10 @@ const DiscoverCard = memo(function DiscoverCard({
           <span>{initials(release.title)}</span>
         )}
         {track ? (
-          <button
-            className={`discover-card__play ${active ? "is-current" : ""} ${active && playing ? "is-playing" : ""}`}
+          <Button
+            variant="primary"
+            size="icon"
+            className={`absolute right-2 bottom-2 size-9 rounded-full p-0 opacity-0 shadow-[0_5px_17px_rgba(0,0,0,0.42)] translate-y-1 transition-[opacity,transform] duration-(--duration-coda-fast) group-hover/card:translate-y-0 group-hover/card:opacity-100 group-focus-within/card:translate-y-0 group-focus-within/card:opacity-100 motion-reduce:transition-none ${active ? "translate-y-0 opacity-100" : ""} ${active && playing ? "bg-[color-mix(in_srgb,var(--primary)_80%,#17191b)] shadow-[0_5px_17px_rgba(0,0,0,0.42),0_0_0_3px_rgba(221,101,73,0.16)]" : ""}`}
             onClick={active ? onTogglePlayback : () => onPlay(track)}
             aria-label={
               active
@@ -104,39 +115,46 @@ const DiscoverCard = memo(function DiscoverCard({
             {active && playing
               ? <Pause size={20} fill="currentColor" />
               : <Play size={20} fill="currentColor" />}
-          </button>
+          </Button>
         ) : null}
       </div>
-      <div className="discover-card__body">
-        <div className="discover-card__copy">
-          <strong title={release.title}>{release.title}</strong>
-          <span title={release.artist}>{release.artist}</span>
+      <div className="flex min-w-0 flex-col px-3 pt-3 pb-2">
+        <div className="flex min-w-0 flex-col gap-1">
+          <strong className="truncate text-xs text-[#e8e5de]" title={release.title}>{release.title}</strong>
+          <span className="truncate text-xs text-[#9b9e99]" title={release.artist}>{release.artist}</span>
         </div>
-        <p>
+        <p className="mt-2 truncate text-xs text-[#696d68]">
           {[release.genre ?? fallbackGenre, release.location]
             .filter(Boolean)
             .map((value, index) => index === 0 ? normalizeGenre(value) : value)
             .join(" · ") ||
             "Independent release"}
         </p>
-        <div className="discover-card__actions">
+        <div className="mt-auto flex items-center gap-1">
           {track ? (
-            <button className="discover-card__queue" onClick={() => onQueue(track)}>
+            <Button
+              variant="text"
+              size="compact"
+              className="h-auto min-w-0 gap-1 py-1 pr-1 pl-0 text-xs font-bold text-[#dc8069] hover:text-[#dc8069]"
+              onClick={() => onQueue(track)}
+            >
               <Plus size={14} />
               Add to queue
-              {track.duration ? <span>{formatTime(track.duration)}</span> : null}
-            </button>
+              {track.duration ? <span className="text-xs font-medium text-[#626661]">{formatTime(track.duration)}</span> : null}
+            </Button>
           ) : (
-            <span className="discover-card__unavailable">No preview available</span>
+            <span className="text-xs text-[#666a65]">No preview available</span>
           )}
-          <button
-            className="icon-button"
+          <Button
+            variant="ghost"
+            size="icon-compact"
+            className="ml-auto size-7 text-muted-foreground"
             onClick={() => void openBandcampUrl(release.itemUrl)}
             aria-label={`Open ${release.title} on Bandcamp`}
             title="Open on Bandcamp"
           >
             <ArrowUpRight size={16} />
-          </button>
+          </Button>
         </div>
       </div>
     </article>
@@ -194,114 +212,140 @@ export default function DiscoverView({
 
   return (
     <section
-      className="discover-view"
+      className="min-h-full"
       aria-live="polite"
       aria-busy={query.isFetching}
     >
-      <div className="discover-intro">
-        <div>
-          <span className="eyebrow"><Sparkles size={13} /> Find something new</span>
-          <h1>Discover</h1>
-          <p>Browse Bandcamp’s public feed, preview a release, then send it straight to your queue.</p>
+      <div className="relative -mx-8 -mt-8 mb-6 flex items-end justify-between gap-9 overflow-hidden border-b border-(--line) bg-[radial-gradient(circle_at_92%_0%,rgba(221,101,73,0.17),transparent_39%),linear-gradient(135deg,#181b1d_0%,#141719_70%)] px-8 pt-12 pb-8 after:pointer-events-none after:absolute after:top-[-115px] after:right-[18%] after:size-[230px] after:rounded-full after:border after:border-white/[0.035] after:shadow-[0_0_0_42px_rgba(255,255,255,0.012),0_0_0_84px_rgba(255,255,255,0.008)] after:content-[''] max-xl:-mx-6 max-xl:flex-col max-xl:items-stretch max-xl:px-6">
+        <div className="relative z-1">
+          <Badge variant="artwork" className="mb-2.5 h-auto gap-1.5 border-0 bg-transparent p-0 text-xs tracking-widest text-[#c67966] uppercase"><Sparkles size={13} /> Find something new</Badge>
+          <h1 className="m-0 font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-4xl leading-none font-semibold tracking-tighter xl:text-5xl">Discover</h1>
+          <p className="mt-3 mb-0 max-w-xl text-sm/normal text-[#969a95]">Browse Bandcamp’s public feed, preview a release, then send it straight to your queue.</p>
         </div>
-        <form className="discover-search" onSubmit={submit}>
+        <form className="relative z-1 flex h-10 min-w-70 basis-90 items-center rounded-lg border border-(--line-strong) bg-[rgba(9,10,11,0.52)] pl-3 text-[#777b76] shadow-[0_12px_30px_rgba(0,0,0,0.16)] focus-within:border-[rgba(221,101,73,0.5)] max-xl:w-full max-xl:max-w-md max-xl:basis-auto" onSubmit={submit}>
           <Search size={17} />
           <label className="sr-only" htmlFor="discover-tag">Search Discover by tag</label>
           <input
             id="discover-tag"
+            className="h-full min-w-0 flex-1 border-0 bg-transparent px-2.5 text-xs text-[#ebe8e1] outline-none"
             value={draftTag}
             maxLength={64}
             onChange={(event) => setDraftTag(event.target.value)}
             placeholder="Try shoegaze, house, Lagos…"
           />
-          <button type="submit" disabled={query.isPending}>
-            {query.isPending ? <LoaderCircle className="spin" size={14} /> : null}
+          <Button type="submit" variant="text" size="compact" className="h-full self-stretch rounded-l-none rounded-r-md border-y-0 border-r-0 border-l border-(--line) bg-[rgba(221,101,73,0.12)] px-3.5 text-xs font-bold text-[#e98a72] hover:bg-[rgba(221,101,73,0.12)] hover:text-[#e98a72]" disabled={query.isPending}>
+            {query.isPending ? <Spinner aria-hidden="true" className="size-3.5 text-current motion-reduce:animate-none" /> : null}
             {query.isPending ? "Exploring…" : "Explore"}
-          </button>
+          </Button>
         </form>
       </div>
 
-      <div className="discover-controls">
-        <div className="discover-genres" aria-label="Discover genres">
-          <button
-            className={!filters.tag ? "active" : ""}
-            onClick={() => chooseGenre("all")}
-            disabled={query.isPending}
-          >
+      <div className="flex items-start justify-between gap-4 border-b border-(--line) pb-4 max-xl:flex-col">
+        <ToggleGroup
+          className="w-auto flex-wrap gap-1 rounded-none"
+          aria-label="Discover genres"
+          value={[filters.tag || "all"]}
+          spacing={4}
+          disabled={query.isPending}
+          onValueChange={(values) => {
+            const nextTag = values[0];
+            if (nextTag) chooseGenre(nextTag);
+          }}
+        >
+          <ToggleGroupItem value="all" variant="default" size="sm" className="h-7 min-w-0 rounded-full border border-transparent px-2.5 text-xs font-semibold text-[#858984] hover:text-[#d8d7d1] aria-pressed:border-(--line) aria-pressed:bg-[#26292b] aria-pressed:text-[#efede7]">
             All genres
-          </button>
+          </ToggleGroupItem>
           {quickGenres.map((tag) => (
-            <button
+            <ToggleGroupItem
               key={tag}
-              className={selectedGenre === tag ? "active" : ""}
-              onClick={() => chooseGenre(tag)}
-              disabled={query.isPending}
+              value={tag}
+              variant="default"
+              size="sm"
+              className="h-7 min-w-0 rounded-full border border-transparent px-2.5 text-xs font-semibold text-[#858984] hover:text-[#d8d7d1] aria-pressed:border-(--line) aria-pressed:bg-[#26292b] aria-pressed:text-[#efede7]"
             >
               {normalizeGenre(tag)}
-            </button>
+            </ToggleGroupItem>
           ))}
-          <label className="discover-genre-picker">
-            <span className="sr-only">More Discover genres</span>
-            <select
-              value={selectedExtraGenre}
-              aria-label="More Discover genres"
-              onChange={(event) => chooseGenre(event.target.value)}
-              disabled={query.isPending}
-            >
-              <option value="" disabled>More genres</option>
-              {EXTRA_GENRES.map((tag) => (
-                <option key={tag} value={tag}>{normalizeGenre(tag)}</option>
-              ))}
-            </select>
-            <ChevronDown size={12} />
-          </label>
-        </div>
-        <div className="discover-sort" aria-label="Sort Discover results">
-          <button
-            className={filters.sort === "top" ? "active" : ""}
-            onClick={() => chooseSort("top")}
+          <NativeSelect
+            className="h-7 max-w-32 rounded-full border border-(--line) bg-[#202325] text-xs text-[#858984] [&_select]:h-7 [&_select]:max-w-20 [&_select]:border-0 [&_select]:bg-transparent [&_select]:py-0 [&_select]:pr-6 [&_select]:pl-2 [&_select]:text-xs [&_select]:text-inherit [&_svg]:right-1 [&_svg]:size-3"
+            value={selectedExtraGenre}
+            aria-label="More Discover genres"
+            onChange={(event) => chooseGenre(event.target.value)}
             disabled={query.isPending}
           >
+            <NativeSelectOption value="" disabled>More genres</NativeSelectOption>
+            {EXTRA_GENRES.map((tag) => (
+              <NativeSelectOption key={tag} value={tag}>{normalizeGenre(tag)}</NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </ToggleGroup>
+        <ToggleGroup
+          className="w-auto rounded-full border border-(--line) p-0.5"
+          aria-label="Sort Discover results"
+          value={[filters.sort]}
+          disabled={query.isPending}
+          onValueChange={(values) => {
+            const nextSort = values[0] as DiscoverSort | undefined;
+            if (nextSort) chooseSort(nextSort);
+          }}
+        >
+          <ToggleGroupItem value="top" variant="default" size="sm" className="h-7 min-w-0 rounded-full border-0 px-2.5 text-xs font-semibold text-[#858984] hover:text-[#d8d7d1] aria-pressed:bg-(--accent-soft) aria-pressed:text-[#e9917a]">
             Best-selling
-          </button>
-          <button
-            className={filters.sort === "new" ? "active" : ""}
-            onClick={() => chooseSort("new")}
-            disabled={query.isPending}
-          >
+          </ToggleGroupItem>
+          <ToggleGroupItem value="new" variant="default" size="sm" className="h-7 min-w-0 rounded-full border-0 px-2.5 text-xs font-semibold text-[#858984] hover:text-[#d8d7d1] aria-pressed:bg-(--accent-soft) aria-pressed:text-[#e9917a]">
             New arrivals
-          </button>
-        </div>
+          </ToggleGroupItem>
+        </ToggleGroup>
       </div>
 
       {query.isPending ? (
-        <div className="discover-status">
-          <LoaderCircle className="spin" size={26} />
-          <strong>Scanning Bandcamp…</strong>
-          <span>Finding releases with playable previews.</span>
+        <div className="flex min-h-80 flex-col items-center justify-center text-center text-[#6e726d]">
+          <div className="relative grid size-7 place-items-center">
+            <Skeleton aria-hidden="true" className="absolute inset-0 rounded-full bg-[#6e726d]/20 motion-reduce:animate-none" />
+            <Spinner aria-hidden="true" className="relative size-7 text-current motion-reduce:animate-none" />
+          </div>
+          <strong className="mt-3 text-sm text-[#c8c7c1]">Scanning Bandcamp…</strong>
+          <span className="mt-1 max-w-sm text-xs text-[#747873]">Finding releases with playable previews.</span>
         </div>
-      ) : query.isError ? (
-        <div className="discover-status">
+      ) : query.isError && !releases.length ? (
+        <div className="flex min-h-80 flex-col items-center justify-center text-center text-[#6e726d]">
           <Disc3 size={28} />
-          <strong>Discover is taking a break</strong>
-          <span>{String(query.error).replace(/^Error:\s*/, "")}</span>
-          <button
+          <strong className="mt-3 text-sm text-[#c8c7c1]">Discover is taking a break</strong>
+          <span className="mt-1 max-w-sm text-xs text-[#747873]">{String(query.error).replace(/^Error:\s*/, "")}</span>
+          <Button
+            variant="artwork"
+            size="compact"
+            className="mt-3 h-auto gap-1.5 rounded-md border border-(--line) px-2.5 py-2 text-xs font-bold text-[#d98974] hover:bg-white/2.5 hover:text-[#d98974]"
             onClick={() => void query.refetch()}
             disabled={query.isFetching}
           >
             {query.isFetching
-              ? <LoaderCircle className="spin" size={14} />
+              ? <Spinner aria-hidden="true" className="size-3.5 text-current motion-reduce:animate-none" />
               : <RefreshCw size={14} />}
             {query.isFetching ? "Trying again…" : "Try again"}
-          </button>
+          </Button>
         </div>
       ) : releases.length ? (
         <>
-          <div className="section-heading">
-            <h2>{filters.tag ? `Sounds tagged “${filters.tag}”` : "Across Bandcamp"}</h2>
-            <span>{countLabel(total, "result")}</span>
+          {query.isError ? (
+            <Alert variant="danger" className="mb-4 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2">
+              <Disc3 size={16} />
+              <div>
+                <AlertTitle>Discover is taking a break</AlertTitle>
+                <AlertDescription>{String(query.error).replace(/^Error:\s*/, "")}</AlertDescription>
+              </div>
+              <AlertAction className="static">
+                <Button variant="text" size="compact" className="h-auto px-0 text-xs text-[#d98974] hover:text-[#d98974]" onClick={() => void query.refetch()} disabled={query.isFetching}>
+                  {query.isFetching ? "Trying again…" : "Try again"}
+                </Button>
+              </AlertAction>
+            </Alert>
+          ) : null}
+          <div className="mt-6 mb-4 flex items-baseline justify-between gap-3">
+            <h2 className="m-0 font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-base leading-none font-semibold tracking-tight">{filters.tag ? `Sounds tagged “${filters.tag}”` : "Across Bandcamp"}</h2>
+            <span className="text-xs text-[#6f736e]">{countLabel(total, "result")}</span>
           </div>
-          <div className="discover-grid">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(285px,1fr))] gap-2.5">
             {releases.map((release) => (
               <DiscoverCard
                 key={release.id}
@@ -316,25 +360,27 @@ export default function DiscoverView({
             ))}
           </div>
           {query.hasNextPage ? (
-            <button
-              className="load-more"
+            <Button
+              variant="outline"
+              size="compact"
+              className="mx-auto mt-8 flex h-auto w-fit rounded-md border border-(--line) bg-white/2.5 px-3.5 py-2 text-xs font-bold text-[#a8aaa5] hover:border-(--line-strong) hover:bg-white/5.5 hover:text-[#e3e1db]"
               disabled={query.isFetchingNextPage}
               onClick={() => void query.fetchNextPage()}
             >
               {query.isFetchingNextPage ? (
-                <><LoaderCircle className="spin" size={15} /> Loading more</>
+                <><Spinner aria-hidden="true" className="size-4 text-current motion-reduce:animate-none" /> Loading more</>
               ) : (
                 "View more discoveries"
               )}
-            </button>
+            </Button>
           ) : null}
         </>
       ) : (
-        <div className="discover-status">
+        <div className="flex min-h-80 flex-col items-center justify-center text-center text-[#6e726d]">
           <Search size={28} />
-          <strong>No releases found</strong>
-          <span>Try a broader genre or a different tag.</span>
-          <button onClick={() => chooseGenre("all")}>Clear tag</button>
+          <strong className="mt-3 text-sm text-[#c8c7c1]">No releases found</strong>
+          <span className="mt-1 max-w-sm text-xs text-[#747873]">Try a broader genre or a different tag.</span>
+          <Button variant="artwork" size="compact" className="mt-3 h-auto gap-1.5 rounded-md border border-(--line) px-2.5 py-2 text-xs font-bold text-[#d98974] hover:bg-white/2.5 hover:text-[#d98974]" onClick={() => chooseGenre("all")}>Clear tag</Button>
         </div>
       )}
     </section>

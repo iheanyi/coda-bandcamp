@@ -1,4 +1,6 @@
 import { defineConfig } from "vitest/config";
+import { fileURLToPath, URL } from "node:url";
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 
 const serverPort = Number(process.env.PORT ?? 1420);
@@ -7,7 +9,12 @@ if (!Number.isInteger(serverPort) || serverPort < 1 || serverPort > 65_535) {
 }
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: {
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
+    },
+  },
   clearScreen: false,
   server: {
     port: serverPort,

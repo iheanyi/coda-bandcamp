@@ -6,7 +6,6 @@ import {
   Heart,
   ListMusic,
   ListPlus,
-  LoaderCircle,
   Music2,
   Pause,
   Pencil,
@@ -24,7 +23,39 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  type FormEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import {
   createPlaylist,
   deletePlaylist,
@@ -51,6 +82,7 @@ import type {
 } from "./types";
 import { transitionCodaView } from "./viewTransitions";
 import { VirtualizedSavedTrackList } from "./VirtualizedSavedTrackList";
+import { cn } from "@/lib/utils";
 
 export const PLAYLISTS_QUERY_KEY = ["bandcamp", "playlists"] as const;
 const playlistQueryKey = (playlistId: string) =>
@@ -90,6 +122,12 @@ const radioDateFormatter = new Intl.DateTimeFormat(undefined, {
   day: "numeric",
   year: "numeric",
 });
+const eyebrowClassName =
+  "mb-2.5 text-xs font-bold tracking-widest text-[#777b76] uppercase";
+const metadataLinkClassName =
+  "max-w-[48%] cursor-pointer truncate border-0 bg-transparent p-0 text-left text-xs font-normal text-[#777b76] hover:text-accent-foreground hover:underline hover:underline-offset-2";
+const savedPageClassName =
+  "mx-auto min-h-full w-full max-w-5xl animate-[saved-page-in_180ms_ease-out] pt-2 pb-12 motion-reduce:animate-none";
 
 type PlaylistListMutationContext = {
   optimisticId?: string;
@@ -224,9 +262,18 @@ function radioTrack(show: RadioShow): Track {
   };
 }
 
+function Eyebrow({
+  className,
+  ...props
+}: React.ComponentProps<"span">) {
+  return <span className={cn(eyebrowClassName, className)} {...props} />;
+}
+
 function FavoriteArtwork({
+  className,
   item,
 }: {
+  className?: string;
   item: Pick<Album, "title" | "coverArt" | "artworkUrl" | "palette">;
 }) {
   const [url, setUrl] = useState(item.artworkUrl);
@@ -255,14 +302,23 @@ function FavoriteArtwork({
 
   return (
     <span
-      className="favorite-artwork"
+      className={cn(
+        "relative grid size-10 shrink-0 place-items-center overflow-hidden rounded-md text-white/70 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.07)]",
+        className,
+      )}
       style={{
         background: `linear-gradient(145deg, ${item.palette[0]}, ${item.palette[1]})`,
       }}
       aria-hidden="true"
     >
       {url ? (
-        <img src={url} alt="" loading="lazy" onError={() => setUrl(undefined)} />
+        <img
+          className="size-full object-cover"
+          src={url}
+          alt=""
+          loading="lazy"
+          onError={() => setUrl(undefined)}
+        />
       ) : (
         <Music2 size={20} />
       )}
@@ -282,10 +338,16 @@ function SavedEmpty({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="saved-empty">
-      <span className="saved-empty__icon">{icon}</span>
-      <h2>{title}</h2>
-      <p>{detail}</p>
+    <div className="flex min-h-80 flex-col items-center justify-center rounded-xl border border-dashed border-input bg-white/1 p-10 text-center text-muted-foreground">
+      <span className="mb-4 grid size-14 place-items-center rounded-full border border-border bg-white/2.5 text-[#8d908b]">
+        {icon}
+      </span>
+      <h2 className="m-0 font-display text-lg/tight font-semibold text-[#d7d6d0]">
+        {title}
+      </h2>
+      <p className="mt-2 mb-4 max-w-sm text-xs/relaxed text-[#777b76]">
+        {detail}
+      </p>
       {action}
     </div>
   );
@@ -313,52 +375,69 @@ function PlaylistList({
 
   return (
     <>
-      <form className="playlist-create" onSubmit={submit}>
-        <div className="playlist-create__copy">
-          <span className="eyebrow">New playlist</span>
-          <strong>Create a playlist</strong>
-          <p>Playlists sync with your Bandcamp collection.</p>
+      <form
+        className="mb-6 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-lg border border-border bg-[linear-gradient(110deg,rgba(221,101,73,0.075),transparent_46%),var(--panel)] p-5 lg:grid-cols-[minmax(14rem,1fr)_minmax(13rem,0.9fr)_auto]"
+        onSubmit={submit}
+      >
+        <div className="col-span-full flex flex-col items-start lg:col-span-1">
+          <Eyebrow className="mb-1">New playlist</Eyebrow>
+          <strong className="text-sm text-[#deddd7]">Create a playlist</strong>
+          <p className="mt-1 mb-0 text-xs text-[#777b76]">
+            Playlists sync with your Bandcamp collection.
+          </p>
         </div>
-        <label>
+        <Label className="block">
           <span className="sr-only">Playlist name</span>
-          <input
+          <Input
             value={name}
             onChange={(event) => setName(event.target.value)}
             maxLength={256}
             placeholder="Late-night rotation"
           />
-        </label>
-        <button className="primary-button" type="submit" disabled={!name.trim() || creating}>
-          {creating ? <LoaderCircle className="spin" size={16} /> : <Plus size={16} />}
+        </Label>
+        <Button
+          type="submit"
+          disabled={!name.trim() || creating}
+          variant="primary"
+        >
+          {creating
+            ? <Spinner aria-hidden="true" className="size-4 text-current" />
+            : <Plus size={16} />}
           {creating ? "Creating…" : "Create"}
-        </button>
+        </Button>
       </form>
 
       {playlists.length ? (
-        <div className="playlist-grid">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-3">
           {playlists.map((playlist) => (
-            <button
+            <Button
               aria-busy={isOptimisticPlaylist(playlist)}
-              className="playlist-card"
+              className="grid h-auto min-h-20 grid-cols-[3.25rem_minmax(0,1fr)_auto] items-center gap-3 rounded-lg border-border bg-white/2 p-3.5 text-left font-normal transition-[border-color,background-color,transform] duration-150 hover:-translate-y-px hover:border-input hover:bg-white/3.5"
               disabled={isOptimisticPlaylist(playlist)}
               key={playlist.id}
               onClick={() => onOpen(playlist)}
             >
-              <span className="playlist-card__art">
+              <span className="grid size-13 place-items-center rounded-lg border border-white/7 bg-coda-hover text-[#e1846d]">
                 <ListMusic size={25} />
               </span>
-              <span className="playlist-card__copy">
-                <strong>{playlist.name}</strong>
-                <span>
+              <span className="flex min-w-0 flex-col">
+                <strong className="truncate text-xs text-[#dcdbd5]">
+                  {playlist.name}
+                </strong>
+                <span className="mt-1 truncate text-xs text-[#777b76]">
                   {countLabel(playlist.songCount, "track")}
                   {playlist.duration ? ` · ${formatTime(playlist.duration)}` : ""}
                 </span>
-                {playlist.comment ? <small>{playlist.comment}</small> : null}
+                {playlist.comment ? (
+                  <small className="mt-1 truncate text-xs text-[#777b76]">
+                    {playlist.comment}
+                  </small>
+                ) : null}
               </span>
-              <span className="playlist-card__open">
+              <span className="text-xs font-bold text-[#787c77] uppercase">
                 {isOptimisticPlaylist(playlist) ? "Creating…" : "Open"}
               </span>
-            </button>
+            </Button>
           ))}
         </div>
       ) : (
@@ -423,12 +502,20 @@ function PlaylistDetailView({
 
   if (loading || !playlist) {
     return (
-      <div className="saved-page">
-        <button className="saved-page__back" onClick={onBack}>
+      <div>
+        <Button
+          className="mb-3 -ml-1 h-auto gap-1.5 p-1 text-xs font-bold"
+          onClick={onBack}
+          variant="text"
+        >
           <ArrowLeft size={15} /> All playlists
-        </button>
+        </Button>
         <SavedEmpty
-          icon={<LoaderCircle className="spin" size={28} />}
+          icon={(
+            <Skeleton className="grid size-8 place-items-center rounded-full bg-transparent">
+              <Spinner aria-hidden="true" className="size-7 text-current" />
+            </Skeleton>
+          )}
           title="Loading playlist"
           detail="Pulling the latest track order from Bandcamp…"
         />
@@ -448,35 +535,45 @@ function PlaylistDetailView({
   };
 
   return (
-    <article className="saved-page" aria-busy={actionPending}>
-      <button className="saved-page__back" onClick={onBack}>
+    <article aria-busy={actionPending}>
+      <Button
+        className="mb-3 -ml-1 h-auto gap-1.5 p-1 text-xs font-bold"
+        onClick={onBack}
+        variant="text"
+      >
         <ArrowLeft size={15} /> All playlists
-      </button>
-      <header className="saved-hero">
-        <span className="saved-hero__art"><ListMusic size={38} /></span>
-        <div>
-          <span className="eyebrow">Bandcamp playlist</span>
+      </Button>
+      <header className="grid min-h-48 grid-cols-[8rem_minmax(0,1fr)] items-center gap-6 rounded-t-xl border border-border bg-[radial-gradient(circle_at_84%_10%,rgba(221,101,73,0.12),transparent_40%),linear-gradient(135deg,#24282a,#191c1e_72%)] p-7">
+        <span className="grid size-32 place-items-center rounded-lg border border-white/7 bg-coda-hover text-[#e1846d]">
+          <ListMusic size={38} />
+        </span>
+        <div className="min-w-0">
+          <Eyebrow>Bandcamp playlist</Eyebrow>
           {editing ? (
-            <form className="playlist-rename" onSubmit={submitRename}>
-              <input
+            <form
+              className="flex max-w-xl items-center gap-2"
+              onSubmit={submitRename}
+            >
+              <Input
+                className="h-11 text-2xl font-semibold"
                 autoFocus
                 value={name}
                 maxLength={256}
                 aria-label="Playlist name"
                 onChange={(event) => setName(event.target.value)}
               />
-              <button
-                className="icon-button"
+              <Button
                 type="submit"
                 aria-label="Save playlist name"
                 disabled={actionPending}
+                size="icon"
+                variant="ghost"
               >
                 {renaming
-                  ? <LoaderCircle className="spin" size={17} />
+                  ? <Spinner aria-hidden="true" className="size-4 text-current" />
                   : <Check size={17} />}
-              </button>
-              <button
-                className="icon-button"
+              </Button>
+              <Button
                 type="button"
                 aria-label="Cancel renaming"
                 disabled={actionPending}
@@ -484,30 +581,39 @@ function PlaylistDetailView({
                   setEditing(false);
                   setName(playlist.name);
                 }}
+                size="icon"
+                variant="ghost"
               >
                 <X size={17} />
-              </button>
+              </Button>
             </form>
           ) : (
-            <div className="saved-hero__title">
-              <h1>{playlist.name}</h1>
-              <button
-                className="icon-button"
+            <div className="flex items-center gap-2">
+              <h1 className="m-0 max-w-2xl truncate font-display text-4xl leading-none font-semibold tracking-tighter text-[#f1efe9]">
+                {playlist.name}
+              </h1>
+              <Button
                 onClick={() => setEditing(true)}
                 aria-label={`Rename ${playlist.name}`}
+                size="icon"
+                variant="ghost"
               >
                 <Pencil size={15} />
-              </button>
+              </Button>
             </div>
           )}
-          <p>
+          <p className="mt-2 mb-0 text-xs text-[#858984]">
             {countLabel(playlist.songCount, "track")}
             {playlist.duration ? ` · ${formatTime(playlist.duration)}` : ""}
             {" · Synced with Bandcamp"}
           </p>
-          <div className="saved-hero__actions">
-            <button
-              className={`primary-button ${activePlaylist ? "is-current" : ""} ${activePlaylist && playing ? "is-playing" : ""}`}
+          <div className="mt-5 flex flex-wrap gap-2">
+            <Button
+              className={cn(
+                activePlaylist &&
+                  "shadow-[inset_0_0_0_1px_rgba(255,255,255,0.18),0_8px_24px_rgba(221,101,73,0.16)]",
+                activePlaylist && playing && "bg-[color-mix(in_srgb,var(--primary)_82%,#17191b)]",
+              )}
               disabled={!playlist.tracks.length}
               onClick={
                 activePlaylist
@@ -520,26 +626,25 @@ function PlaylistDetailView({
                   : "Play"
               }
               aria-pressed={activePlaylist && playing}
+              variant="primary"
             >
               {activePlaylist && playing
                 ? <Pause size={16} fill="currentColor" />
                 : <Play size={16} fill="currentColor" />}
               {activePlaylist ? (playing ? "Pause" : "Resume") : "Play"}
-            </button>
-            <button
-              className="secondary-button"
+            </Button>
+            <Button
               disabled={!playlist.tracks.length}
               onClick={() => onPlay(shuffled(playlist.tracks))}
             >
               <Shuffle size={16} /> Shuffle
-            </button>
-            <button
-              className="secondary-button"
+            </Button>
+            <Button
               disabled={!playlist.tracks.length}
               onClick={() => onQueue(playlist.tracks)}
             >
               <ListPlus size={16} /> Add to queue
-            </button>
+            </Button>
           </div>
         </div>
       </header>
@@ -547,7 +652,7 @@ function PlaylistDetailView({
       {playlist.tracks.length ? (
         <VirtualizedSavedTrackList
           aria-label={`${playlist.name} tracks`}
-          className="saved-tracklist"
+          className="rounded-b-lg border border-t-0 border-border bg-coda-field"
           getItemKey={playlistTrackKey}
           items={playlist.tracks}
           renderItem={(track, { index }, rowProps) => {
@@ -555,10 +660,17 @@ function PlaylistDetailView({
             return (
             <div
               {...rowProps}
-              className={`saved-track saved-track--playlist ${activeTrack ? "is-current" : ""}`}
+              className={cn(
+                "group grid min-h-14 grid-cols-[2rem_minmax(0,1fr)_3rem_repeat(2,2rem)] items-center gap-x-1.5 border-b border-white/5 pr-2 pl-1 last:border-b-0 hover:bg-white/3 lg:grid-cols-[2rem_minmax(0,1fr)_4rem_repeat(2,2rem)] lg:gap-x-2 lg:pr-3",
+                activeTrack && "bg-primary/7.5",
+              )}
             >
-              <button
-                className={`saved-track__number ${activeTrack && playing ? "is-playing" : ""}`}
+              <Button
+                className={cn(
+                  "group/number size-full rounded-none p-0 text-xs font-normal text-[#777a76] hover:bg-transparent group-hover:[&_span]:hidden [&_svg]:hidden group-hover:[&_svg]:block",
+                  activeTrack &&
+                    "text-[#e88c75] [&_span]:hidden [&_svg]:block",
+                )}
                 onClick={activeTrack ? onTogglePlayback : () => onPlay([track])}
                 aria-label={
                   activeTrack
@@ -566,55 +678,67 @@ function PlaylistDetailView({
                     : `Play ${track.title}`
                 }
                 aria-pressed={activeTrack && playing}
+                variant="ghost"
               >
                 <span>{index + 1}</span>
                 {activeTrack && playing
                   ? <Pause size={13} fill="currentColor" />
                   : <Play size={13} fill="currentColor" />}
-              </button>
-              <div className="saved-track__copy">
-                <button
-                  className="saved-track__title-link"
+              </Button>
+              <div className="flex min-w-0 flex-col gap-1">
+                <Button
+                  className={cn(
+                    "h-auto w-fit max-w-full justify-start truncate rounded-none p-0 text-xs text-[#d9d8d2] hover:bg-transparent hover:text-accent-foreground",
+                    activeTrack && "text-[#f0d7cf]",
+                  )}
                   onClick={activeTrack ? onTogglePlayback : () => onPlay([track])}
+                  variant="ghost"
                 >
                   {track.title}
-                </button>
-                <span className="saved-track__metadata">
-                  <button
-                    className="metadata-link"
+                </Button>
+                <span className="flex min-w-0 items-center gap-1">
+                  <Button
+                    className={metadataLinkClassName}
                     onClick={() => onOpenArtist(track.artist)}
+                    variant="ghost"
                   >
                     {track.artist}
-                  </button>
+                  </Button>
                   <span aria-hidden="true">·</span>
-                  <button
-                    className="metadata-link"
+                  <Button
+                    aria-label={`Open ${track.album} album`}
+                    className={metadataLinkClassName}
                     onClick={() => onOpenTrackAlbum(track)}
+                    variant="ghost"
                   >
                     {track.album}
-                  </button>
+                  </Button>
                 </span>
               </div>
-              <span className="saved-track__duration">{formatTime(track.duration)}</span>
-              <button
-                className="icon-button"
+              <span className="flex items-center justify-center gap-1 text-xs text-[#777b76] tabular-nums">
+                {formatTime(track.duration)}
+              </span>
+              <Button
                 onClick={() => onAddToPlaylist([track])}
                 title="Add to another playlist"
                 aria-label={`Add ${track.title} to another playlist`}
+                size="icon"
+                variant="ghost"
               >
                 <ListPlus size={15} />
-              </button>
-              <button
-                className="icon-button"
+              </Button>
+              <Button
                 disabled={actionPending}
                 onClick={() => onRemove(index)}
                 title="Remove from playlist"
                 aria-label={`Remove ${track.title} from ${playlist.name}`}
+                size="icon"
+                variant="ghost"
               >
                 {pendingRemovalIndex === index
-                  ? <LoaderCircle className="spin" size={15} />
+                  ? <Spinner aria-hidden="true" className="size-4 text-current" />
                   : <X size={15} />}
-              </button>
+              </Button>
             </div>
             );
           }}
@@ -627,27 +751,53 @@ function PlaylistDetailView({
         />
       )}
 
-      <div className="playlist-danger">
-        {confirmDelete ? (
-          <>
-            <span>Delete “{playlist.name}” from Bandcamp?</span>
-            <button className="danger-button" disabled={actionPending} onClick={onDelete}>
-              {deleting ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}
-              {deleting ? "Deleting…" : "Delete playlist"}
-            </button>
-            <button
-              className="text-button"
-              onClick={() => setConfirmDelete(false)}
-              disabled={actionPending}
-            >
-              Keep it
-            </button>
-          </>
-        ) : (
-          <button className="text-button text-button--danger" onClick={() => setConfirmDelete(true)}>
+      <div className="flex min-h-16 items-center justify-end px-1 py-3">
+        <AlertDialog
+          open={confirmDelete}
+          onOpenChange={(open, details) => {
+            if (!open && deleting) {
+              details.cancel();
+              return;
+            }
+            setConfirmDelete(open);
+          }}
+        >
+          <AlertDialogTrigger
+            render={(
+              <Button
+                className="text-coda-danger-foreground"
+                size="compact"
+                variant="text"
+              />
+            )}
+          >
             <Trash2 size={14} /> Delete playlist
-          </button>
-        )}
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete {playlist.name}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Delete “{playlist.name}” from Bandcamp? This cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={actionPending}>
+                Keep playlist
+              </AlertDialogCancel>
+              <AlertDialogAction
+                aria-label="Delete playlist from Bandcamp"
+                className="border-primary/35 bg-primary/10 text-coda-danger-foreground hover:bg-primary/18"
+                disabled={actionPending}
+                onClick={onDelete}
+              >
+                {deleting
+                  ? <Spinner aria-hidden="true" className="size-4 text-current" />
+                  : <Trash2 size={14} />}
+                {deleting ? "Deleting…" : "Delete playlist"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </article>
   );
@@ -664,6 +814,17 @@ export function AddToPlaylistDialog({
 }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const restoreFocusRef = useRef(
+    document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null,
+  );
+  const closeDialog = () => {
+    const restoreFocus = restoreFocusRef.current;
+    onClose();
+    window.setTimeout(() => restoreFocus?.focus(), 0);
+  };
   const playlists = useQuery({
     queryKey: PLAYLISTS_QUERY_KEY,
     queryFn: fetchPlaylists,
@@ -712,7 +873,7 @@ export function AddToPlaylistDialog({
         (current) => upsertPlaylistSummary(current, playlistSummary(updated)),
       );
       onNotify(`${countLabel(tracks.length, "track")} added to ${updated.name}`, "good");
-      onClose();
+      closeDialog();
     },
     onError: (cause, target, context) => {
       if (context) restorePlaylistMutation(queryClient, target.id, context);
@@ -752,7 +913,7 @@ export function AddToPlaylistDialog({
         ),
       );
       onNotify(`${created.name} created with ${countLabel(tracks.length, "track")}`, "good");
-      onClose();
+      closeDialog();
     },
     onError: (cause, _playlistName, context) => {
       if (context) restorePlaylistList(queryClient, context.previousPlaylists);
@@ -760,13 +921,6 @@ export function AddToPlaylistDialog({
     },
   });
   const pending = addMutation.isPending || createMutation.isPending;
-  useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !pending) onClose();
-    };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [onClose, pending]);
   const submitCreate = (event: FormEvent) => {
     event.preventDefault();
     const nextName = name.trim();
@@ -774,84 +928,121 @@ export function AddToPlaylistDialog({
   };
 
   return (
-    <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => {
-      if (event.target === event.currentTarget && !pending) onClose();
-    }}>
-      <section
-        className="playlist-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Add to playlist"
+    <Dialog
+      open
+      onOpenChange={(open, details) => {
+        if (open) return;
+        if (pending) {
+          details.cancel();
+          return;
+        }
+        closeDialog();
+      }}
+    >
+      <DialogContent
+        className="max-h-[min(620px,calc(100vh-150px))] w-[min(480px,92vw)] gap-0 overflow-hidden p-0"
         aria-busy={pending || playlists.isFetching}
+        finalFocus={restoreFocusRef}
+        initialFocus={nameInputRef}
+        showCloseButton={false}
       >
-        <header>
+        <DialogHeader className="flex-row items-start justify-between gap-4 px-6 pt-6 pb-4">
           <div>
-            <span className="eyebrow">Bandcamp playlists</span>
-            <h2>Add to playlist</h2>
-            <p>{countLabel(tracks.length, "track")} selected</p>
+            <Eyebrow>Bandcamp playlists</Eyebrow>
+            <DialogTitle className="font-display text-2xl leading-none font-semibold text-[#efede7]">
+              Add to playlist
+            </DialogTitle>
+            <DialogDescription className="mt-2 text-xs text-[#7c807b]">
+              {countLabel(tracks.length, "track")} selected
+            </DialogDescription>
           </div>
-          <button
-            className="icon-button"
-            onClick={onClose}
+          <DialogClose
             aria-label="Close add to playlist"
             disabled={pending}
+            render={<Button size="icon" variant="ghost" />}
           >
             <X size={18} />
-          </button>
-        </header>
-        <form className="playlist-dialog__create" onSubmit={submitCreate}>
-          <input
-            autoFocus
+          </DialogClose>
+        </DialogHeader>
+        <form
+          className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-border px-6 pb-5"
+          onSubmit={submitCreate}
+        >
+          <Input
+            ref={nameInputRef}
             value={name}
             maxLength={256}
             onChange={(event) => setName(event.target.value)}
             placeholder="Create a new playlist"
             aria-label="New playlist name"
           />
-          <button className="secondary-button" type="submit" disabled={!name.trim() || pending}>
+          <Button
+            type="submit"
+            disabled={!name.trim() || pending}
+          >
             {createMutation.isPending
-              ? <LoaderCircle className="spin" size={15} />
+              ? <Spinner aria-hidden="true" className="size-4 text-current" />
               : <Plus size={15} />}
             {createMutation.isPending ? "Creating…" : "Create"}
-          </button>
+          </Button>
         </form>
-        <div className="playlist-dialog__list">
+        <div className="flex max-h-84 scrollbar-thin [scrollbar-color:#3e4142_transparent] flex-col overflow-y-auto p-2">
           {playlists.isLoading ? (
-            <span className="playlist-dialog__status"><LoaderCircle className="spin" size={17} /> Loading playlists…</span>
+            <span className="flex min-h-28 items-center justify-center gap-2 text-xs text-[#858984]">
+              <Skeleton className="grid size-8 place-items-center rounded-full bg-white/2.5">
+                <Spinner aria-hidden="true" className="size-4" />
+              </Skeleton>
+              Loading playlists…
+            </span>
           ) : playlists.isError ? (
-            <span className="playlist-dialog__status playlist-dialog__status--error">
-              Couldn’t load playlists.
-              <button
+            <Alert
+              className="my-6"
+              variant="danger"
+            >
+              <AlertDescription>
+                Couldn’t load playlists.
+              </AlertDescription>
+              <Button
+                className="mt-2 h-auto p-0 text-xs text-current"
                 onClick={() => void playlists.refetch()}
                 disabled={playlists.isFetching}
+                variant="text"
               >
                 {playlists.isFetching ? "Trying again…" : "Try again"}
-              </button>
-            </span>
+              </Button>
+            </Alert>
           ) : playlists.data?.length ? (
             playlists.data.map((playlist) => (
-              <button
+              <Button
                 key={playlist.id}
-                className="playlist-dialog__option"
+                className="grid h-auto min-h-14 grid-cols-[2.25rem_minmax(0,1fr)_auto] items-center gap-2 rounded-md border-0 bg-transparent px-2.5 py-1.5 text-left font-normal hover:bg-white/4.5"
                 disabled={pending}
                 onClick={() => addMutation.mutate(playlist)}
               >
-                <span><ListMusic size={17} /></span>
-                <span>
-                  <strong>{playlist.name}</strong>
-                  <small>{countLabel(playlist.songCount, "track")}</small>
+                <span className="grid size-9 place-items-center rounded-md bg-muted text-[#a16c5f]">
+                  <ListMusic size={17} />
+                </span>
+                <span className="flex min-w-0 flex-col">
+                  <strong className="truncate text-xs text-[#d6d5cf]">
+                    {playlist.name}
+                  </strong>
+                  <small className="mt-1 text-xs text-[#757974]">
+                    {countLabel(playlist.songCount, "track")}
+                  </small>
                 </span>
                 {addMutation.isPending && addMutation.variables.id === playlist.id
-                  ? <LoaderCircle className="spin" size={16} />
+                  ? <Spinner aria-hidden="true" className="size-4 text-current" />
                   : <Plus size={16} />}
-              </button>
+              </Button>
             ))
           ) : (
-            <span className="playlist-dialog__status">No playlists yet. Create one above.</span>
+            <span className="flex min-h-28 items-center justify-center gap-2 text-xs text-[#858984]">
+              No playlists yet. Create one above.
+            </span>
           )}
         </div>
-      </section>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1056,7 +1247,7 @@ export default function SavedLibraryView({
 
   if (!connected && mode === "playlists") {
     return (
-      <section className="saved-library">
+      <section className={savedPageClassName}>
         <SavedEmpty
           icon={<ListMusic size={28} />}
           title="Connect Bandcamp to see playlists"
@@ -1068,22 +1259,23 @@ export default function SavedLibraryView({
 
   if (mode === "playlists" && selectedPlaylistId) {
     return (
-      <section className="saved-library">
+      <section className={savedPageClassName}>
         {playlist.isError ? (
           <SavedEmpty
             icon={<ListMusic size={28} />}
             title="This playlist couldn’t load"
             detail={mutationError(playlist.error)}
             action={(
-              <button
+              <Button
                 onClick={() => void playlist.refetch()}
                 disabled={playlist.isFetching}
+                size="compact"
               >
                 {playlist.isFetching
-                  ? <LoaderCircle className="spin" size={14} />
+                  ? <Spinner aria-hidden="true" className="size-4 text-current" />
                   : <RefreshCw size={14} />}
                 {playlist.isFetching ? "Trying again…" : "Try again"}
-              </button>
+              </Button>
             )}
           />
         ) : (
@@ -1126,21 +1318,36 @@ export default function SavedLibraryView({
 
   if (mode === "playlists") {
     return (
-      <section className="saved-library">
-        <header className="saved-library__header">
+      <section className={savedPageClassName}>
+        <header className="mb-7 flex items-start justify-between gap-6">
           <div>
-            <span className="eyebrow">Synced with Bandcamp</span>
-            <h1>Playlists</h1>
-            <p>Build a sequence here and it follows you to Bandcamp.</p>
+            <Eyebrow>Synced with Bandcamp</Eyebrow>
+            <h1 className="m-0 font-display text-4xl leading-none font-semibold tracking-tighter text-foreground">
+              Playlists
+            </h1>
+            <p className="mt-2 mb-0 text-xs text-muted-foreground">
+              Build a sequence here and it follows you to Bandcamp.
+            </p>
           </div>
-          <button className="artwork-button" onClick={() => void playlists.refetch()} disabled={playlists.isFetching}>
-            <RefreshCw size={15} className={playlists.isFetching ? "spin" : ""} />
+          <Button
+            onClick={() => void playlists.refetch()}
+            disabled={playlists.isFetching}
+            size="compact"
+            variant="artwork"
+          >
+            {playlists.isFetching
+              ? <Spinner aria-hidden="true" className="size-4 text-current" />
+              : <RefreshCw size={15} />}
             {playlists.isFetching ? "Refreshing…" : "Refresh"}
-          </button>
+          </Button>
         </header>
         {playlists.isLoading ? (
           <SavedEmpty
-            icon={<LoaderCircle className="spin" size={28} />}
+            icon={(
+              <Skeleton className="grid size-8 place-items-center rounded-full bg-transparent">
+                <Spinner aria-hidden="true" className="size-7 text-current" />
+              </Skeleton>
+            )}
             title="Loading playlists"
             detail="Pulling your latest Bandcamp mixes…"
           />
@@ -1150,16 +1357,16 @@ export default function SavedLibraryView({
             title="Playlists couldn’t load"
             detail={mutationError(playlists.error)}
             action={(
-              <button
+              <Button
                 onClick={() => void playlists.refetch()}
                 disabled={playlists.isFetching}
+                size="compact"
               >
-                <RefreshCw
-                  className={playlists.isFetching ? "spin" : ""}
-                  size={14}
-                />
+                {playlists.isFetching
+                  ? <Spinner aria-hidden="true" className="size-4 text-current" />
+                  : <RefreshCw size={14} />}
                 {playlists.isFetching ? "Trying again…" : "Try again"}
-              </button>
+              </Button>
             )}
           />
         ) : (
@@ -1190,33 +1397,49 @@ export default function SavedLibraryView({
   const favoriteDisplayMetadataCount =
     favoriteTrackCount + favoriteAlbumCount + favoriteRadioShowCount;
   return (
-    <section className="saved-library">
-      <header className="saved-library__header">
+    <section className={savedPageClassName}>
+      <header className="mb-7 flex items-start justify-between gap-6">
         <div>
-          <span className="eyebrow">
+          <Eyebrow className="inline-flex items-center gap-1.5">
             {favoritesLocal ? <><HardDrive size={12} /> On this device</> : "Your keepers"}
-          </span>
-          <h1>Favorites</h1>
-          <p>
+          </Eyebrow>
+          <h1 className="m-0 font-display text-4xl leading-none font-semibold tracking-tighter text-foreground">
+            Favorites
+          </h1>
+          <p className="mt-2 mb-0 text-xs text-muted-foreground">
             {favoritesLocal
               ? "Your personal shortlist, saved only in Coda on this computer."
               : "Starred releases and tracks from your Bandcamp collection."}
           </p>
         </div>
         {favoritesLocal ? (
-          <span className="saved-library__local-badge">
+          <Badge
+            className="gap-2 rounded-full border-white/7 bg-white/2.5 px-2.5 py-2 tracking-wider text-[#91958f] uppercase"
+            variant="secondary"
+          >
             <HardDrive size={14} /> Local
-          </span>
+          </Badge>
         ) : (
-          <button className="artwork-button" onClick={onRefreshFavorites} disabled={favoritesLoading}>
-            <RefreshCw size={15} className={favoritesLoading ? "spin" : ""} />
+          <Button
+            onClick={onRefreshFavorites}
+            disabled={favoritesLoading}
+            size="compact"
+            variant="artwork"
+          >
+            {favoritesLoading
+              ? <Spinner aria-hidden="true" className="size-4 text-current" />
+              : <RefreshCw size={15} />}
             {favoritesLoading ? "Refreshing…" : "Refresh"}
-          </button>
+          </Button>
         )}
       </header>
       {favoritesLoading ? (
         <SavedEmpty
-          icon={<LoaderCircle className="spin" size={28} />}
+          icon={(
+            <Skeleton className="grid size-8 place-items-center rounded-full bg-transparent">
+              <Spinner aria-hidden="true" className="size-7 text-current" />
+            </Skeleton>
+          )}
           title="Loading favorites"
           detail="Looking through your starred Bandcamp music…"
         />
@@ -1226,10 +1449,16 @@ export default function SavedLibraryView({
           title="Favorites couldn’t load"
           detail={favoritesError}
           action={(
-            <button onClick={onRefreshFavorites} disabled={favoritesLoading}>
-              <RefreshCw className={favoritesLoading ? "spin" : ""} size={14} />
+            <Button
+              onClick={onRefreshFavorites}
+              disabled={favoritesLoading}
+              size="compact"
+            >
+              {favoritesLoading
+                ? <Spinner aria-hidden="true" className="size-4 text-current" />
+                : <RefreshCw size={14} />}
               {favoritesLoading ? "Trying again…" : "Try again"}
-            </button>
+            </Button>
           )}
         />
       ) : !favoriteAlbumCount && !favoriteTrackCount && !favoriteRadioShowCount ? (
@@ -1250,21 +1479,34 @@ export default function SavedLibraryView({
                 ? `${countLabel(favoriteDisplayMetadataCount, "local favorite")} ${favoriteDisplayMetadataCount === 1 ? "is" : "are"} waiting for display metadata. Coda will repair ${favoriteDisplayMetadataCount === 1 ? "it" : "them"} when the item is loaded.`
                 : `Bandcamp returned ${countLabel(favoriteTrackCount + favoriteAlbumCount, "favorite ID")} without display metadata. Refresh after your collection finishes syncing.`}
               action={favoritesLocal ? undefined : (
-                <button onClick={onRefreshFavorites} disabled={favoritesLoading}>
-                  <RefreshCw className={favoritesLoading ? "spin" : ""} size={14} />
+                <Button
+                  onClick={onRefreshFavorites}
+                  disabled={favoritesLoading}
+                  size="compact"
+                >
+                  {favoritesLoading
+                    ? <Spinner aria-hidden="true" className="size-4 text-current" />
+                    : <RefreshCw size={14} />}
                   {favoritesLoading ? "Refreshing…" : "Refresh metadata"}
-                </button>
+                </Button>
               )}
             />
           ) : null}
           {favoriteTracks.length ? (
-            <section className="favorites-section">
-              <div className="section-heading">
-                <h2>Tracks</h2>
-                <div className="section-heading__actions">
-                  <span>{countLabel(favoriteTrackCount, "track")}</span>
-                  <button
-                    className={`queue-results-button ${activeFavoriteTrack ? "is-current" : ""} ${activeFavoriteTrack && playing ? "is-playing" : ""}`}
+            <section>
+              <div className="mb-4 flex items-baseline justify-between">
+                <h2 className="m-0 font-display text-base leading-none font-semibold tracking-tight">
+                  Tracks
+                </h2>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-[#6f736e]">
+                    {countLabel(favoriteTrackCount, "track")}
+                  </span>
+                  <Button
+                    className={cn(
+                      activeFavoriteTrack && "border-primary/30 bg-primary/10 text-accent-foreground",
+                      activeFavoriteTrack && playing && "bg-primary/15",
+                    )}
                     onClick={
                       activeFavoriteTrack
                         ? onTogglePlayback
@@ -1276,20 +1518,24 @@ export default function SavedLibraryView({
                         : "Play all favorite tracks"
                     }
                     aria-pressed={activeFavoriteTrack && playing}
+                    size="compact"
                   >
                     {activeFavoriteTrack && playing
                       ? <Pause size={14} fill="currentColor" />
                       : <Play size={14} fill="currentColor" />}
                     {activeFavoriteTrack ? (playing ? "Pause" : "Resume") : "Play all"}
-                  </button>
-                  <button className="queue-results-button" onClick={() => onQueueTracks(favoriteTracks)}>
+                  </Button>
+                  <Button
+                    onClick={() => onQueueTracks(favoriteTracks)}
+                    size="compact"
+                  >
                     <ListPlus size={14} /> Add all
-                  </button>
+                  </Button>
                 </div>
               </div>
               <VirtualizedSavedTrackList
                 aria-label="Favorite tracks"
-                className="saved-tracklist"
+                className="rounded-lg border border-border bg-coda-field"
                 getItemKey={favoriteTrackKey}
                 items={favoriteTracks}
                 renderItem={(track, { index }, rowProps) => {
@@ -1297,10 +1543,17 @@ export default function SavedLibraryView({
                   return (
                   <div
                     {...rowProps}
-                    className={`saved-track saved-track--favorite ${activeTrack ? "is-current" : ""}`}
+                    className={cn(
+                      "group grid min-h-14 grid-cols-[2rem_2.5rem_minmax(0,1fr)_3rem_repeat(3,2rem)] items-center gap-x-1.5 border-b border-white/5 pr-2 pl-1 last:border-b-0 hover:bg-white/3 lg:grid-cols-[2rem_2.5rem_minmax(0,1fr)_4rem_repeat(3,2rem)] lg:gap-x-2 lg:pr-3",
+                      activeTrack && "bg-primary/7.5",
+                    )}
                   >
-                    <button
-                      className={`saved-track__number ${activeTrack && playing ? "is-playing" : ""}`}
+                    <Button
+                      className={cn(
+                        "group/number size-full rounded-none p-0 text-xs font-normal text-[#777a76] hover:bg-transparent group-hover:[&_span]:hidden [&_svg]:hidden group-hover:[&_svg]:block",
+                        activeTrack &&
+                          "text-[#e88c75] [&_span]:hidden [&_svg]:block",
+                      )}
                       onClick={activeTrack ? onTogglePlayback : () => onPlayTrack(track)}
                       aria-label={
                         activeTrack
@@ -1308,46 +1561,75 @@ export default function SavedLibraryView({
                           : `Play ${track.title}`
                       }
                       aria-pressed={activeTrack && playing}
+                      variant="ghost"
                     >
                       <span>{index + 1}</span>
                       {activeTrack && playing
                         ? <Pause size={13} fill="currentColor" />
                         : <Play size={13} fill="currentColor" />}
-                    </button>
+                    </Button>
                     <FavoriteArtwork item={track} />
-                    <div className="saved-track__copy">
-                      <button
-                        className="saved-track__title-link"
+                    <div className="flex min-w-0 flex-col gap-1">
+                      <Button
+                        className={cn(
+                          "h-auto w-fit max-w-full justify-start truncate rounded-none p-0 text-xs text-[#d9d8d2] hover:bg-transparent hover:text-accent-foreground",
+                          activeTrack && "text-[#f0d7cf]",
+                        )}
                         onClick={activeTrack ? onTogglePlayback : () => onPlayTrack(track)}
+                        variant="ghost"
                       >
                         {track.title}
-                      </button>
-                      <span className="saved-track__metadata">
-                        <button
-                          className="metadata-link"
+                      </Button>
+                      <span className="flex min-w-0 items-center gap-1">
+                        <Button
+                          className={metadataLinkClassName}
                           onClick={() => onOpenArtist(track.artist)}
+                          variant="ghost"
                         >
                           {track.artist}
-                        </button>
+                        </Button>
                         <span aria-hidden="true">·</span>
-                        <button
-                          className="metadata-link"
+                        <Button
+                          aria-label={`Open ${track.album} album`}
+                          className={metadataLinkClassName}
                           onClick={() => onOpenTrackAlbum(track)}
+                          variant="ghost"
                         >
                           {track.album}
-                        </button>
+                        </Button>
                       </span>
                     </div>
-                    <span className="saved-track__duration"><Clock3 size={12} /> {formatTime(track.duration)}</span>
-                    <button className="icon-button" onClick={() => onQueueTrack(track)} aria-label={`Add ${track.title} to queue`} title="Add to queue">
+                    <span className="flex items-center justify-center gap-1 text-xs text-[#777b76] tabular-nums">
+                      <Clock3 size={12} /> {formatTime(track.duration)}
+                    </span>
+                    <Button
+                      onClick={() => onQueueTrack(track)}
+                      aria-label={`Add ${track.title} to queue`}
+                      title="Add to queue"
+                      size="icon"
+                      variant="ghost"
+                    >
                       <Plus size={15} />
-                    </button>
-                    <button className="icon-button" onClick={() => onAddToPlaylist([track])} aria-label={`Add ${track.title} to playlist`} title="Add to playlist">
+                    </Button>
+                    <Button
+                      onClick={() => onAddToPlaylist([track])}
+                      aria-label={`Add ${track.title} to playlist`}
+                      title="Add to playlist"
+                      size="icon"
+                      variant="ghost"
+                    >
                       <ListPlus size={15} />
-                    </button>
-                    <button className="icon-button favorite-button is-favorite" onClick={() => onToggleFavorite(track.id, "song", false)} aria-label={`Remove ${track.title} from favorites`} title="Remove from favorites">
+                    </Button>
+                    <Button
+                      className="text-[#ef8066]"
+                      onClick={() => onToggleFavorite(track.id, "song", false)}
+                      aria-label={`Remove ${track.title} from favorites`}
+                      title="Remove from favorites"
+                      size="icon"
+                      variant="ghost"
+                    >
                       <Heart size={15} fill="currentColor" />
-                    </button>
+                    </Button>
                   </div>
                   );
                 }}
@@ -1355,12 +1637,16 @@ export default function SavedLibraryView({
             </section>
           ) : null}
           {favoriteRadioShows.length ? (
-            <section className="favorites-section">
-              <div className="section-heading">
-                <h2>Radio shows</h2>
-                <span>{countLabel(favoriteRadioShowCount, "show")}</span>
+            <section className="mt-8">
+              <div className="mb-4 flex items-baseline justify-between">
+                <h2 className="m-0 font-display text-base leading-none font-semibold tracking-tight">
+                  Radio shows
+                </h2>
+                <span className="text-xs text-[#6f736e]">
+                  {countLabel(favoriteRadioShowCount, "show")}
+                </span>
               </div>
-              <div className="favorite-radio-grid">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(19rem,1fr))] gap-2.5">
                 {favoriteRadioShows.map((show) => {
                   const activeShow = currentTrackId === `radio:${show.id}`;
                   const busyAction = radioAction?.id === show.id
@@ -1368,45 +1654,62 @@ export default function SavedLibraryView({
                     : undefined;
                   return (
                     <article
-                      className={`favorite-radio ${activeShow ? "is-current" : ""}`}
+                      className={cn(
+                        "grid min-w-0 grid-cols-[2.75rem_minmax(0,1fr)] items-center gap-3 rounded-lg border border-border bg-white/2 p-3 transition-[border-color,background-color,transform] duration-150 hover:-translate-y-px hover:border-white/12 hover:bg-white/3 lg:grid-cols-[3rem_minmax(0,1fr)_auto]",
+                        activeShow && "border-primary/30 bg-primary/7",
+                      )}
                       key={show.id}
                     >
-                      <button
-                        className="favorite-radio__art"
+                      <Button
+                        className="size-11 overflow-hidden rounded-lg p-0 lg:size-12"
                         onClick={() => onOpenRadioShow(show)}
                         aria-label={`Open ${show.subtitle} episode`}
+                        variant="ghost"
                       >
                         <FavoriteArtwork
+                          className="size-full"
                           item={{
                             title: show.subtitle,
                             palette: paletteFor(`radio:${show.id}`),
                           }}
                         />
-                      </button>
-                      <div className="favorite-radio__copy">
-                        <button
-                          className="eyebrow favorite-radio__series"
+                      </Button>
+                      <div className="flex min-w-0 flex-col gap-1">
+                        <Button
+                          className={cn(
+                            eyebrowClassName,
+                            "mb-0 h-auto w-fit max-w-full justify-start truncate rounded-none p-0 hover:bg-transparent hover:text-accent-foreground",
+                          )}
                           onClick={() => onOpenRadioSeries(show.series?.id)}
                           aria-label={`Browse ${show.series?.title ?? "Bandcamp Radio"}`}
+                          variant="ghost"
                         >
                           <Radio size={12} />
                           {show.series?.title ?? "Bandcamp Radio"}
-                        </button>
-                        <button
-                          className="favorite-radio__title"
+                        </Button>
+                        <Button
+                          className="h-auto w-fit max-w-full justify-start truncate rounded-none p-0 text-xs text-[#deddd7] hover:bg-transparent hover:text-accent-foreground"
                           onClick={() => onOpenRadioShow(show)}
                           aria-label={`Open ${show.subtitle} details`}
+                          variant="ghost"
                         >
                           {show.subtitle}
-                        </button>
-                        <time dateTime={show.publishedAt}>
+                        </Button>
+                        <time
+                          className="truncate text-xs text-[#777b76]"
+                          dateTime={show.publishedAt}
+                        >
                           {radioShowDate(show.publishedAt)}
                         </time>
-                        {show.description ? <p>{show.description}</p> : null}
+                        {show.description ? (
+                          <p className="m-0 truncate text-xs text-[#777b76]">
+                            {show.description}
+                          </p>
+                        ) : null}
                       </div>
-                      <div className="favorite-radio__actions">
-                        <button
-                          className={`icon-button ${activeShow && playing ? "is-active" : ""}`}
+                      <div className="col-start-2 flex items-center gap-1 lg:col-start-auto">
+                        <Button
+                          className={activeShow && playing ? "text-primary" : undefined}
                           onClick={
                             activeShow
                               ? onTogglePlayback
@@ -1420,32 +1723,37 @@ export default function SavedLibraryView({
                           }
                           aria-pressed={activeShow && playing}
                           title={activeShow ? (playing ? "Pause" : "Resume") : "Play"}
+                          size="icon"
+                          variant="ghost"
                         >
                           {busyAction === "play"
-                            ? <LoaderCircle className="spin" size={15} />
+                            ? <Spinner aria-hidden="true" className="size-4 text-current" />
                             : activeShow && playing
                               ? <Pause size={15} fill="currentColor" />
                               : <Play size={15} fill="currentColor" />}
-                        </button>
-                        <button
-                          className="icon-button"
+                        </Button>
+                        <Button
                           onClick={() => void actOnFavoriteRadioShow(show, "queue")}
                           disabled={Boolean(radioAction)}
                           aria-label={`Add ${show.subtitle} to queue`}
                           title="Add to queue"
+                          size="icon"
+                          variant="ghost"
                         >
                           {busyAction === "queue"
-                            ? <LoaderCircle className="spin" size={15} />
+                            ? <Spinner aria-hidden="true" className="size-4 text-current" />
                             : <ListPlus size={15} />}
-                        </button>
-                        <button
-                          className="icon-button favorite-button is-favorite"
+                        </Button>
+                        <Button
+                          className="text-[#ef8066]"
                           onClick={() => onToggleRadioFavorite(show, false)}
                           aria-label={`Remove ${show.subtitle} from favorites`}
                           title="Remove from favorites"
+                          size="icon"
+                          variant="ghost"
                         >
                           <Heart size={15} fill="currentColor" />
-                        </button>
+                        </Button>
                       </div>
                     </article>
                   );
@@ -1454,44 +1762,56 @@ export default function SavedLibraryView({
             </section>
           ) : null}
           {favoriteAlbums.length ? (
-            <section className="favorites-section">
-              <div className="section-heading">
-                <h2>Releases</h2>
-                <span>{countLabel(favoriteAlbumCount, "release")}</span>
+            <section className="mt-8">
+              <div className="mb-4 flex items-baseline justify-between">
+                <h2 className="m-0 font-display text-base leading-none font-semibold tracking-tight">
+                  Releases
+                </h2>
+                <span className="text-xs text-[#6f736e]">
+                  {countLabel(favoriteAlbumCount, "release")}
+                </span>
               </div>
-              <div className="favorite-album-grid">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-2.5">
                 {favoriteAlbums.map((album) => (
-                  <article className="favorite-album" key={album.id}>
-                    <div className="favorite-album__open">
-                      <button
-                        className="favorite-album__art-button"
+                  <article
+                    className="grid grid-cols-[minmax(0,1fr)_2rem] items-center gap-1 rounded-lg border border-border bg-white/2 p-2"
+                    key={album.id}
+                  >
+                    <div className="grid min-w-0 grid-cols-[3rem_minmax(0,1fr)] items-center gap-3">
+                      <Button
+                        className="size-12 overflow-hidden rounded-md p-0"
                         onClick={() => onOpenAlbum(album)}
                         aria-label={`Open ${album.title}`}
+                        variant="ghost"
                       >
-                        <FavoriteArtwork item={album} />
-                      </button>
-                      <span>
-                        <button
-                          className="favorite-album__title"
+                        <FavoriteArtwork className="size-full" item={album} />
+                      </Button>
+                      <span className="flex min-w-0 flex-col">
+                        <Button
+                          className="h-auto w-fit max-w-full justify-start truncate rounded-none p-0 text-xs text-[#d8d7d1] hover:bg-transparent hover:text-accent-foreground"
                           onClick={() => onOpenAlbum(album)}
+                          variant="ghost"
                         >
                           {album.title}
-                        </button>
-                        <button
-                          className="favorite-album__artist metadata-link"
+                        </Button>
+                        <Button
+                          className={cn(metadataLinkClassName, "mt-1 max-w-full")}
                           onClick={() => onOpenArtist(album.artist)}
+                          variant="ghost"
                         >
                           {album.artist}
-                        </button>
+                        </Button>
                       </span>
                     </div>
-                    <button
-                      className="icon-button favorite-button is-favorite"
+                    <Button
+                      className="text-[#ef8066]"
                       onClick={() => onToggleFavorite(album.id, "album", false)}
                       aria-label={`Remove ${album.title} from favorites`}
+                      size="icon"
+                      variant="ghost"
                     >
                       <Heart size={15} fill="currentColor" />
-                    </button>
+                    </Button>
                   </article>
                 ))}
               </div>

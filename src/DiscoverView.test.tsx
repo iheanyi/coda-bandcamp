@@ -31,6 +31,7 @@ function renderDiscover(
   });
   const onTogglePlayback = playback.onTogglePlayback ?? vi.fn();
   return {
+    client,
     onQueue,
     onTogglePlayback,
     ...render(
@@ -82,6 +83,9 @@ describe("Discover", () => {
     renderDiscover();
 
     expect(await screen.findByRole("button", { name: "Exploring…" })).toBeDisabled();
+    const skeleton = document.querySelector('[data-slot="skeleton"]');
+    expect(skeleton).toBeInTheDocument();
+    expect(skeleton).toHaveClass("motion-reduce:animate-none");
     expect(screen.getByRole("button", { name: "All genres" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Best-selling" })).toBeDisabled();
 
@@ -123,6 +127,95 @@ describe("Discover", () => {
         "*",
       ),
     );
+  });
+
+  it("exposes the active genre and sort as pressed controls", async () => {
+    renderDiscover();
+
+    await screen.findByText("Blue Hours");
+    const allGenres = screen.getByRole("button", { name: "All genres" });
+    const bestSelling = screen.getByRole("button", { name: "Best-selling" });
+    expect(allGenres).toHaveAttribute("aria-pressed", "true");
+    expect(bestSelling).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "Rock" }));
+    expect(screen.getByRole("button", { name: "Rock" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(allGenres).toHaveAttribute("aria-pressed", "false");
+
+    await waitFor(() =>
+      expect(mocks.fetchDiscover).toHaveBeenLastCalledWith(
+        expect.objectContaining({ tag: "rock" }),
+        "*",
+      ),
+    );
+    const newArrivals = screen.getByRole("button", { name: "New arrivals" });
+    await waitFor(() => expect(newArrivals).not.toBeDisabled());
+    fireEvent.click(newArrivals);
+    expect(newArrivals).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(bestSelling).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("appends the next page of discoveries using the returned cursor", async () => {
+    mocks.fetchDiscover
+      .mockResolvedValueOnce({
+        results: [{
+          id: "release-1",
+          title: "Blue Hours",
+          artist: "Signal Garden",
+          location: "Chicago, Illinois",
+          itemUrl: "https://signal-garden.bandcamp.com/album/blue-hours",
+        }],
+        resultCount: 2,
+        hasMore: true,
+        cursor: "next-page",
+      })
+      .mockResolvedValueOnce({
+        results: [{
+          id: "release-2",
+          title: "Amber Transit",
+          artist: "Signal Garden",
+          location: "Chicago, Illinois",
+          itemUrl: "https://signal-garden.bandcamp.com/album/amber-transit",
+        }],
+        resultCount: 2,
+        hasMore: false,
+      });
+    renderDiscover();
+
+    await screen.findByText("Blue Hours");
+    fireEvent.click(screen.getByRole("button", { name: "View more discoveries" }));
+
+    expect(await screen.findByText("Amber Transit")).toBeInTheDocument();
+    expect(mocks.fetchDiscover).toHaveBeenLastCalledWith(
+      expect.objectContaining({ tag: "", sort: "top" }),
+      "next-page",
+    );
+  });
+
+  it("keeps prior discoveries visible when their revalidation fails", async () => {
+    mocks.fetchDiscover.mockResolvedValueOnce({
+      results: [{
+        id: "release-1",
+        title: "Blue Hours",
+        artist: "Signal Garden",
+        location: "Chicago, Illinois",
+        itemUrl: "https://signal-garden.bandcamp.com/album/blue-hours",
+      }],
+      resultCount: 1,
+      hasMore: false,
+    }).mockRejectedValueOnce(new Error("Network unavailable"));
+    const { client } = renderDiscover();
+
+    await screen.findByText("Blue Hours");
+    await client.invalidateQueries({ queryKey: ["discover"] });
+
+    expect(await screen.findByText("Blue Hours")).toBeInTheDocument();
   });
 
   it("keeps the active preview control visible and matched to playback", async () => {

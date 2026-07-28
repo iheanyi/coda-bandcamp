@@ -53,6 +53,137 @@ const continuationAlbum: Album = {
 };
 
 describe("NowPlayingView Radio metadata", () => {
+  it("focuses the track heading and drives playback, queue, and bounded sliders", () => {
+    const onBack = vi.fn();
+    const onToggle = vi.fn();
+    const onPrevious = vi.fn();
+    const onNext = vi.fn();
+    const onSeek = vi.fn();
+    const onVolume = vi.fn();
+    const onRepeat = vi.fn();
+    const onToggleQueue = vi.fn();
+    const noOp = vi.fn();
+    render(
+      <NowPlayingView
+        track={radioTrack}
+        radioTimeline={radioTimeline}
+        queue={[radioTrack]}
+        currentIndex={0}
+        playing
+        playbackClock={createPlaybackClock(45)}
+        duration={radioTrack.duration}
+        volume={0.7}
+        repeat="off"
+        artwork={<span>Artwork</span>}
+        airPlayAvailable={false}
+        queueOpen={false}
+        onBack={onBack}
+        onToggle={onToggle}
+        onPrevious={onPrevious}
+        onNext={onNext}
+        canPrevious
+        canNext
+        onSeek={onSeek}
+        onVolume={onVolume}
+        onRepeat={onRepeat}
+        onAirPlay={noOp}
+        onToggleQueue={onToggleQueue}
+        onArtist={noOp}
+        onAlbum={noOp}
+        onPlayQueueIndex={noOp}
+        onRadioSeries={noOp}
+        recommendationLoading={false}
+        onPlayRecommendation={noOp}
+        onAnotherRecommendation={noOp}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Kinrose" })).toHaveFocus();
+
+    const transportIcon = (name: string) => {
+      const icon = screen.getByRole("button", { name }).querySelector("svg");
+      if (!icon) throw new Error(`Missing ${name} icon`);
+      return icon;
+    };
+    expect(transportIcon("Repeat off")).toHaveClass("size-5");
+    expect(transportIcon("Previous")).toHaveClass("size-6");
+    expect(transportIcon("Pause")).toHaveClass("size-7");
+    expect(transportIcon("Next")).toHaveClass("size-6");
+    expect(transportIcon("Show queue")).toHaveClass("size-5");
+    expect(transportIcon("Mute")).toHaveClass("size-5");
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Repeat off" }));
+    fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+    fireEvent.click(screen.getByRole("button", { name: "Pause" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
+
+    expect(onBack).toHaveBeenCalledOnce();
+    expect(onRepeat).toHaveBeenCalledOnce();
+    expect(onPrevious).toHaveBeenCalledOnce();
+    expect(onToggle).toHaveBeenCalledOnce();
+    expect(onNext).toHaveBeenCalledOnce();
+    expect(onToggleQueue).toHaveBeenCalledOnce();
+
+    const [position, volume] = screen.getAllByRole("slider", { hidden: true });
+    expect(position).toHaveAttribute("aria-label", "Now playing position");
+    expect(volume).toHaveAttribute("aria-label", "Volume");
+    position.focus();
+    fireEvent.keyDown(position, { key: "ArrowRight" });
+    expect(onSeek).toHaveBeenCalledWith(46);
+    fireEvent.keyDown(position, { key: "End" });
+    expect(onSeek).toHaveBeenCalledWith(radioTrack.duration);
+    fireEvent.keyDown(position, { key: "Home" });
+    expect(onSeek).toHaveBeenCalledWith(0);
+
+    const volumeGroup = screen.getByRole("group", { name: "Volume" });
+    const volumeControl = volumeGroup.querySelector<HTMLElement>(
+      "[data-base-ui-slider-control]",
+    );
+    if (!volumeControl) throw new Error("Missing volume slider control");
+    const volumeThumb = volumeGroup.querySelector<HTMLElement>(
+      "[data-slot=slider-thumb]",
+    );
+    if (!volumeThumb) throw new Error("Missing volume slider thumb");
+    vi.spyOn(volumeControl, "getBoundingClientRect")
+      .mockReturnValue(new DOMRect(0, 0, 100, 20));
+    vi.spyOn(volumeThumb, "getBoundingClientRect")
+      .mockReturnValue(new DOMRect(0, 0, 10, 10));
+    fireEvent.pointerDown(volumeControl, {
+      button: 0,
+      buttons: 1,
+      clientX: 72,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
+    fireEvent.pointerMove(document, {
+      buttons: 1,
+      clientX: 35,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
+    fireEvent.pointerUp(document, {
+      button: 0,
+      buttons: 0,
+      clientX: 35,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
+    expect(onVolume).toHaveBeenCalledWith(0.33);
+
+    volume.focus();
+    fireEvent.keyDown(volume, { key: "ArrowRight" });
+    expect(onVolume).toHaveBeenCalledWith(0.71);
+    fireEvent.keyDown(volume, { key: "End" });
+    expect(onVolume).toHaveBeenCalledWith(1);
+    fireEvent.keyDown(volume, { key: "Home" });
+    expect(onVolume).toHaveBeenCalledWith(0);
+  });
+
   it("announces the currently airing chapter and its successor", () => {
     const noOp = vi.fn();
     const onSeek = vi.fn();
@@ -98,8 +229,7 @@ describe("NowPlayingView Radio metadata", () => {
     expect(currentlyAiring).toHaveTextContent("Mirage");
     expect(currentlyAiring).toHaveTextContent("Sweeps");
     expect(currentlyAiring).toHaveTextContent("Up next: Night Drive by Keylime");
-    expect(screen.getByText("Playing now").closest(".now-playing__status"))
-      .toHaveClass("is-playing");
+    expect(screen.getByRole("status")).toHaveTextContent("Playing now");
 
     const onAirTitle = within(currentlyAiring).getByRole("button", {
       name: "Open Mirage by Sweeps on Bandcamp",
@@ -120,14 +250,14 @@ describe("NowPlayingView Radio metadata", () => {
     expect(onRadioSeries).toHaveBeenNthCalledWith(1);
     expect(onRadioSeries).toHaveBeenNthCalledWith(2, 5);
 
-    const chapterList = document.querySelector(".now-playing__radio-chapters");
-    expect(chapterList).not.toBeNull();
-    const currentTitle = within(chapterList as HTMLElement).getByRole("button", {
+    const chapterList = screen.getByRole("list", {
+      name: "Radio chapter timeline",
+    });
+    const currentTitle = within(chapterList).getByRole("button", {
       name: "Open Mirage by Sweeps on Bandcamp",
     });
     expect(currentTitle.closest("li")).toHaveAttribute("aria-current", "true");
-    expect(screen.getByText("Up next", { selector: ".now-playing__radio-state" }))
-      .toBeInTheDocument();
+    expect(within(chapterList).getByText("Up next")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", {
       name: "Seek to Mirage at 0:30",
@@ -139,10 +269,10 @@ describe("NowPlayingView Radio metadata", () => {
       "https://sweepsbeats.bandcamp.com/track/mirage-w-keylime",
     );
 
-    fireEvent.click(within(chapterList as HTMLElement).getByRole("button", {
+    fireEvent.click(within(chapterList).getByRole("button", {
       name: "Open artist Sweeps on Bandcamp",
     }));
-    fireEvent.click(within(chapterList as HTMLElement).getByRole("button", {
+    fireEvent.click(within(chapterList).getByRole("button", {
       name: "Open album Mirage on Bandcamp",
     }));
     expect(mocks.openBandcampUrl).toHaveBeenCalledWith(
@@ -151,7 +281,7 @@ describe("NowPlayingView Radio metadata", () => {
     expect(mocks.openBandcampUrl).toHaveBeenCalledWith(
       "https://sweepsbeats.bandcamp.com/album/mirage",
     );
-    expect(document.querySelector(".radio-chapter-artwork img")).toHaveAttribute(
+    expect(document.querySelector('img[src="https://f4.bcbits.com/img/0161226005_10.jpg"]')).toHaveAttribute(
       "src",
       "https://f4.bcbits.com/img/0161226005_10.jpg",
     );
@@ -200,7 +330,8 @@ describe("NowPlayingView Radio metadata", () => {
     const initialMetadataReads = getRadioChapterLocalLinks.mock.calls.length;
     act(() => playbackClock.updateFromMedia(46.2));
 
-    expect(screen.getByLabelText("Now playing position")).toHaveValue("46");
+    const [position] = screen.getAllByRole("slider", { hidden: true });
+    expect(position).toHaveValue("46");
     expect(getRadioChapterLocalLinks).toHaveBeenCalledTimes(initialMetadataReads);
 
     act(() => playbackClock.updateFromMedia(120));
@@ -260,8 +391,8 @@ describe("NowPlayingView Radio metadata", () => {
     expect(screen.getByRole("heading", { name: "Keep listening" }))
       .toBeInTheDocument();
     expect(screen.getByText("Soft Focus")).toBeInTheDocument();
-    expect(document.querySelector(".now-playing__continuation-copy"))
-      .toHaveTextContent("Night Archive · Another Ambient pick");
+    expect(screen.getByText("Night Archive · Another Ambient pick"))
+      .toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", {
       name: "Play something from Soft Focus",

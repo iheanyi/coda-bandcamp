@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useState, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useState,
+  type ComponentProps,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import {
   Maximize2,
   Music2,
@@ -10,6 +17,14 @@ import {
   VolumeX,
   X,
 } from "lucide-react";
+import { Button } from "./components/ui/button";
+import { Slider } from "./components/ui/slider";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "./components/ui/tooltip";
+import { cn } from "./lib/utils";
 import {
   MINI_PLAYER_COMMAND_EVENT,
   MINI_PLAYER_REQUEST_STATE_EVENT,
@@ -44,6 +59,45 @@ function initials(value: string): string {
   return words.map((word) => word[0]?.toUpperCase() ?? "").join("") || "C";
 }
 
+type MiniIconButtonProps = Omit<
+  ComponentProps<typeof Button>,
+  "aria-label" | "children" | "size" | "variant"
+> & {
+  children: ReactNode;
+  label: string;
+  tooltip?: string;
+};
+
+function MiniIconButton({
+  children,
+  className,
+  label,
+  tooltip = label,
+  ...props
+}: MiniIconButtonProps) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={(
+          <Button
+            {...props}
+            aria-label={label}
+            className={cn(
+              "size-7 rounded-full border-0 bg-transparent p-0 text-[#8f928d] transition-[color,background-color,transform] hover:bg-white/[0.07] hover:text-[#f1eee8] active:scale-95 motion-reduce:transform-none motion-reduce:transition-none",
+              className,
+            )}
+            size="icon-compact"
+            variant="ghost"
+          />
+        )}
+      >
+        {children}
+      </TooltipTrigger>
+      <TooltipContent>{tooltip}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 function MiniArtwork({ track }: { track: MiniPlayerTrack }) {
   const [failedUrl, setFailedUrl] = useState<string>();
   const artworkAvailable = Boolean(
@@ -51,7 +105,7 @@ function MiniArtwork({ track }: { track: MiniPlayerTrack }) {
   );
   return (
     <div
-      className="mini-player__artwork"
+      className="relative grid size-16 shrink-0 place-items-center overflow-hidden rounded-lg shadow-[0_7px_18px_rgba(0,0,0,0.28)] [background:linear-gradient(145deg,var(--mini-cover-accent),var(--mini-cover-base))]"
       style={
         {
           "--mini-cover-accent": track.palette[0],
@@ -61,6 +115,7 @@ function MiniArtwork({ track }: { track: MiniPlayerTrack }) {
     >
       {artworkAvailable ? (
         <img
+          className="size-full object-cover"
           src={track.artworkUrl}
           alt={`${track.album || track.title} cover`}
           draggable={false}
@@ -68,8 +123,13 @@ function MiniArtwork({ track }: { track: MiniPlayerTrack }) {
         />
       ) : (
         <>
-          <span className="mini-player__artwork-rule" aria-hidden="true" />
-          <strong>{initials(track.title)}</strong>
+          <span
+            className="absolute inset-x-0 bottom-3 h-0.5 bg-white/40"
+            aria-hidden="true"
+          />
+          <strong className="relative z-1 text-base font-extrabold tracking-widest text-white/90">
+            {initials(track.title)}
+          </strong>
         </>
       )}
     </div>
@@ -86,47 +146,56 @@ export function MiniPlayerView({
   onDismiss: () => void;
 }) {
   const { track } = snapshot;
-  const progress = snapshot.durationSeconds
-    ? Math.min(100, (snapshot.positionSeconds / snapshot.durationSeconds) * 100)
-    : 0;
-
   return (
-    <div className="mini-player-canvas">
-      <section className="mini-player" role="region" aria-label="Coda mini player">
-        <header className="mini-player__header">
-          <div className="mini-player__brand" aria-label="Coda">
+    <div className="size-full bg-transparent p-2">
+      <section
+        className="relative isolate grid size-full grid-rows-[1.75rem_minmax(4.5rem,1fr)_2.5rem_auto_1.5rem] overflow-hidden rounded-xl border border-white/[0.12] bg-coda-player text-foreground shadow-[0_18px_50px_rgba(0,0,0,0.45),0_2px_10px_rgba(0,0,0,0.32)] before:pointer-events-none before:absolute before:-top-20 before:-right-12 before:-z-10 before:h-36 before:w-48 before:rounded-full before:bg-primary/[0.08] before:blur-2xl before:content-['']"
+        role="region"
+        aria-label="Coda mini player"
+      >
+        <header className="flex min-w-0 items-center justify-between pt-1 pr-2 pl-3">
+          <div
+            className="flex min-w-0 items-center gap-1.5 text-xs font-bold tracking-widest text-sidebar-foreground uppercase [&_svg]:shrink-0 [&_svg]:text-primary"
+            aria-label="Coda"
+          >
             <Music2 size={15} aria-hidden="true" />
             <span>Coda</span>
           </div>
-          <div className="mini-player__window-actions">
-            <button
-              className="mini-player__icon-button"
+          <div className="flex items-center gap-px">
+            <MiniIconButton
               type="button"
               onClick={() => onCommand({ type: "show-main" })}
-              aria-label="Open Coda"
-              title="Open Coda"
+              label="Open Coda"
             >
               <Maximize2 size={15} aria-hidden="true" />
-            </button>
-            <button
-              className="mini-player__icon-button"
+            </MiniIconButton>
+            <MiniIconButton
               type="button"
               onClick={onDismiss}
-              aria-label="Close mini player"
-              title="Close mini player"
+              label="Close mini player"
             >
               <X size={16} aria-hidden="true" />
-            </button>
+            </MiniIconButton>
           </div>
         </header>
 
-        <div className={`mini-player__content ${track ? "" : "is-empty"}`}>
+        <div
+          className={cn(
+            "flex min-w-0 items-center gap-3 px-4 py-1.5",
+            !track && "justify-center",
+          )}
+        >
           {track ? (
             <>
-              <MiniArtwork key={`${track.id}:${track.artworkUrl ?? ""}`} track={track} />
-              <div className="mini-player__metadata" aria-live="polite">
-                <h1>{track.title}</h1>
-                <p>
+              <MiniArtwork
+                key={`${track.id}:${track.artworkUrl ?? ""}`}
+                track={track}
+              />
+              <div className="min-w-0" aria-live="polite">
+                <h1 className="truncate text-xs leading-4 font-bold text-foreground">
+                  {track.title}
+                </h1>
+                <p className="mt-1 truncate text-xs leading-4 font-semibold text-[#b7b9b3]">
                   {track.artist}
                   {track.album ? ` · ${track.album}` : ""}
                 </p>
@@ -134,123 +203,121 @@ export function MiniPlayerView({
             </>
           ) : (
             <>
-              <div className="mini-player__empty-mark" aria-hidden="true">
+              <div
+                className="grid size-12 shrink-0 place-items-center rounded-full border border-white/[0.08] bg-white/[0.035] text-[#686c68]"
+                aria-hidden="true"
+              >
                 <Music2 size={22} />
               </div>
-              <div className="mini-player__empty-copy">
-                <h1>Nothing queued</h1>
-                <p>Choose something in Coda to start listening.</p>
+              <div className="min-w-0">
+                <h1 className="truncate text-xs leading-4 font-bold text-foreground">
+                  Nothing queued
+                </h1>
+                <p className="mt-1 max-w-52 text-xs leading-3 text-[#777b76]">
+                  Choose something in Coda to start listening.
+                </p>
               </div>
             </>
           )}
         </div>
 
-        <div className="mini-player__transport">
-          <button
-            className="mini-player__icon-button"
+        <div className="flex items-center justify-center gap-3">
+          <MiniIconButton
             type="button"
             onClick={() => onCommand({ type: "previous" })}
             disabled={!snapshot.canPrevious}
-            aria-label="Previous"
-            title="Previous"
+            label="Previous"
           >
             <SkipBack size={17} fill="currentColor" aria-hidden="true" />
-          </button>
-          <button
-            className="mini-player__play-button"
-            type="button"
-            onClick={() => onCommand({ type: "play-pause" })}
-            disabled={!track}
-            aria-label={snapshot.playing ? "Pause" : "Play"}
-          >
-            {snapshot.playing ? (
-              <Pause size={19} fill="currentColor" aria-hidden="true" />
-            ) : (
-              <Play size={19} fill="currentColor" aria-hidden="true" />
-            )}
-          </button>
-          <button
-            className="mini-player__icon-button"
+          </MiniIconButton>
+          <Tooltip>
+            <TooltipTrigger
+              render={(
+                <Button
+                  className="size-9 rounded-full border-0 bg-[#f0ede6] p-0 text-[#17191b] shadow-[0_5px_14px_rgba(0,0,0,0.24)] transition-[background-color,transform] hover:scale-105 hover:bg-white active:scale-95 motion-reduce:transform-none motion-reduce:transition-none"
+                  type="button"
+                  onClick={() => onCommand({ type: "play-pause" })}
+                  disabled={!track}
+                  aria-label={snapshot.playing ? "Pause" : "Play"}
+                  size="icon"
+                />
+              )}
+            >
+              {snapshot.playing ? (
+                <Pause size={19} fill="currentColor" aria-hidden="true" />
+              ) : (
+                <Play size={19} fill="currentColor" aria-hidden="true" />
+              )}
+            </TooltipTrigger>
+            <TooltipContent>{snapshot.playing ? "Pause" : "Play"}</TooltipContent>
+          </Tooltip>
+          <MiniIconButton
             type="button"
             onClick={() => onCommand({ type: "next" })}
             disabled={!snapshot.canNext}
-            aria-label="Skip track"
-            title="Skip track"
+            label="Skip track"
           >
             <SkipForward size={17} fill="currentColor" aria-hidden="true" />
-          </button>
+          </MiniIconButton>
         </div>
 
         {track ? (
-          <div className="mini-player__progress">
-            <span>{formatTime(snapshot.positionSeconds)}</span>
-            <label
-              className="mini-player__range"
-              style={{ "--mini-range-value": `${progress}%` } as CSSProperties}
-            >
-              <span className="sr-only">Track position</span>
-              <input
-                type="range"
-                min="0"
-                max={snapshot.durationSeconds || 1}
-                step="1"
-                value={Math.min(
+          <div className="grid grid-cols-[1.75rem_minmax(0,1fr)_1.75rem] items-center gap-2 px-4">
+            <span className="text-xs text-[#6f736e] tabular-nums">
+              {formatTime(snapshot.positionSeconds)}
+            </span>
+            <Slider
+              className="min-w-0 [&_[data-slot=slider-range]]:bg-primary [&_[data-slot=slider-thumb]]:bg-[#efede7]"
+              min={0}
+              max={snapshot.durationSeconds || 1}
+              step={1}
+              value={[
+                Math.min(
                   snapshot.positionSeconds,
                   snapshot.durationSeconds || 1,
-                )}
-                aria-label="Track position"
-                onChange={(event) =>
-                  onCommand({
-                    type: "seek",
-                    positionSeconds: Number(event.currentTarget.value),
-                  })}
-              />
-            </label>
-            <span>{formatTime(snapshot.durationSeconds)}</span>
+                ),
+              ]}
+              aria-label="Track position"
+              onValueChange={([positionSeconds]) => {
+                if (positionSeconds === undefined) return;
+                onCommand({ type: "seek", positionSeconds });
+              }}
+            />
+            <span className="text-right text-xs text-[#6f736e] tabular-nums">
+              {formatTime(snapshot.durationSeconds)}
+            </span>
           </div>
         ) : null}
 
-        <div className="mini-player__volume">
-          <button
-            className="mini-player__icon-button"
+        <div className="flex items-center justify-end gap-1 px-4 pb-2">
+          <MiniIconButton
+            className="size-6"
             type="button"
             onClick={() =>
               onCommand({
                 type: "volume",
                 volume: snapshot.volume ? 0 : 0.72,
               })}
-            aria-label={snapshot.volume ? "Mute" : "Unmute"}
-            title={snapshot.volume ? "Mute" : "Unmute"}
+            label={snapshot.volume ? "Mute" : "Unmute"}
           >
             {snapshot.volume ? (
               <Volume2 size={16} aria-hidden="true" />
             ) : (
               <VolumeX size={16} aria-hidden="true" />
             )}
-          </button>
-          <label
-            className="mini-player__range mini-player__range--volume"
-            style={
-              {
-                "--mini-range-value": `${snapshot.volume * 100}%`,
-              } as CSSProperties
-            }
-          >
-            <span className="sr-only">Volume</span>
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.01"
-              value={snapshot.volume}
-              aria-label="Volume"
-              onChange={(event) =>
-                onCommand({
-                  type: "volume",
-                  volume: Number(event.currentTarget.value),
-                })}
-            />
-          </label>
+          </MiniIconButton>
+          <Slider
+            className="min-w-0 data-horizontal:w-16 [&_[data-slot=slider-range]]:bg-primary [&_[data-slot=slider-thumb]]:bg-[#efede7] [&_[data-slot=slider-track]]:h-0.5"
+            min={0}
+            max={1}
+            step={0.01}
+            value={[snapshot.volume]}
+            aria-label="Volume"
+            onValueChange={([volume]) => {
+              if (volume === undefined) return;
+              onCommand({ type: "volume", volume });
+            }}
+          />
         </div>
       </section>
     </div>
