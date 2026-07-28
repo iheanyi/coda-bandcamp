@@ -1229,7 +1229,11 @@ const PlayerTransport = memo(function PlayerTransport({
 
   return (
     <div className="player__transport">
-      <div className="transport-buttons">
+      <div
+        className="transport-buttons"
+        role="group"
+        aria-label="Playback controls"
+      >
         <button className="icon-button" onClick={onPrevious} disabled={!canPrevious && !positionCanPrevious} title="Previous" aria-label="Previous"><SkipBack size={18} fill="currentColor" /></button>
         <button className="play-button" onClick={onToggle} disabled={!track} aria-label={playing ? "Pause" : "Play"}>
           {playing ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}

@@ -226,7 +226,11 @@ const NowPlayingPlaybackControls = memo(function NowPlayingPlaybackControls({
         </div>
       </div>
 
-      <div className="now-playing__controls" aria-label="Playback controls">
+      <div
+        className="now-playing__controls"
+        role="group"
+        aria-label="Playback controls"
+      >
         <button
           className={`icon-button now-playing__mode ${repeat !== "off" ? "is-active" : ""}`}
           onClick={onRepeat}
