@@ -1345,6 +1345,63 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     }
   });
 
+  it("keeps playing when an intermediate rapid Next request is interrupted", async () => {
+    const rapidTracks: Track[] = [
+      ...tracks,
+      {
+        id: "track-3",
+        title: "Vanishing Point",
+        artist: "Night Archive",
+        album: "Soft Focus",
+        albumId: "album-1",
+        duration: 196,
+        track: 3,
+        streamUrl: "https://example.test/vanishing-point.mp3",
+        palette: ["#777", "#222"],
+      },
+    ];
+    const play = vi.mocked(HTMLMediaElement.prototype.play);
+    play.mockReset()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(
+        new DOMException("The play request was interrupted", "AbortError"),
+      )
+      .mockResolvedValue(undefined);
+
+    try {
+      mocks.hasConnection.mockResolvedValue(true);
+      mocks.fetchLibrary.mockResolvedValue([{
+        ...album,
+        songCount: rapidTracks.length,
+        tracks: rapidTracks,
+      }]);
+      mocks.fetchAlbum.mockResolvedValue(rapidTracks);
+      renderApp();
+
+      await screen.findByText("Soft Focus");
+      fireEvent.click(screen.getByRole("button", {
+        name: "Play Soft Focus",
+      }));
+      const player = await screen.findByRole("contentinfo");
+      await waitFor(() => expect(play).toHaveBeenCalledOnce());
+
+      const next = within(player).getByRole("button", { name: "Next" });
+      fireEvent.click(next);
+      await waitFor(() => expect(play).toHaveBeenCalledTimes(2));
+      fireEvent.click(next);
+
+      await waitFor(() => {
+        expect(within(player).getByText("Vanishing Point"))
+          .toBeInTheDocument();
+        expect(within(player).getByRole("button", { name: "Pause" }))
+          .toBeInTheDocument();
+        expect(play).toHaveBeenCalledTimes(3);
+      });
+    } finally {
+      play.mockReset().mockResolvedValue(undefined);
+    }
+  });
+
   it("publishes rich WebKit media state and routes next-track controls", async () => {
     const handlers = new Map<
       MediaSessionAction,

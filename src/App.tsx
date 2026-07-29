@@ -3306,8 +3306,10 @@ export default function App() {
     if (!audio || !streamUrl) return;
     let active = true;
     if (playing) {
-      audio.play().catch(() => {
-        if (active) setPlaying(false);
+      audio.play().catch((cause: unknown) => {
+        const interrupted =
+          cause instanceof DOMException && cause.name === "AbortError";
+        if (active && !interrupted) setPlaying(false);
       });
     } else {
       audio.pause();
