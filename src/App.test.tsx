@@ -2470,6 +2470,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       name: "Glass Taxi",
     });
     expect(artistHeading).toBeInTheDocument();
+    expect(artistHeading.closest("section")).toHaveClass("select-none");
     expect(screen.getByRole("button", { name: "All artists" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Play all" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Shuffle artist" })).toBeInTheDocument();
