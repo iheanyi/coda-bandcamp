@@ -58,6 +58,13 @@ test("scopes release secrets to build jobs without gating the publish job", () =
   expect(publishRelease).not.toMatch(/^    environment: release$/m);
 });
 
+test("serializes release uploads so updater platforms cannot overwrite each other", () => {
+  const releaseBuild = jobBlock(releaseWorkflow, "build-release");
+
+  expect(releaseBuild).toMatch(/^      max-parallel: 1$/m);
+  expect(releaseBuild).toContain("uploadUpdaterJson: true");
+});
+
 test("cryptographically verifies every signed updater artifact before publishing", () => {
   const publishRelease = jobBlock(releaseWorkflow, "publish-release");
   const signatureVerification = publishRelease.indexOf(
