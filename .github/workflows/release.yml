@@ -181,7 +181,6 @@ jobs:
       contents: write
     strategy:
       fail-fast: false
-      max-parallel: 1
       matrix:
         include:
           - name: Linux x64
@@ -256,7 +255,7 @@ jobs:
           releaseDraft: true
           prerelease: false
           generateReleaseNotes: false
-          uploadUpdaterJson: true
+          uploadUpdaterJson: false
           uploadUpdaterSignatures: true
           updaterJsonPreferNsis: true
           args: --target ${{ matrix.target }}
@@ -302,9 +301,6 @@ jobs:
           RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
         run: |
           mkdir -p "$RUNNER_TEMP/coda-release"
-          gh release download "$RELEASE_TAG" \
-            --pattern latest.json \
-            --dir "$RUNNER_TEMP/coda-release"
           gh release view "$RELEASE_TAG" \
             --json assets,body,isDraft,tagName \
             > "$RUNNER_TEMP/coda-release/release.json"
@@ -320,6 +316,42 @@ jobs:
           "$RELEASE_COMMIT"
           "$RELEASE_RUN_ID"
           "$RUNNER_TEMP/coda-release/release.json"
+
+      - name: Download signed updater assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
+          SIGNED_ASSET_DIR: ${{ runner.temp }}/coda-release/signed-assets
+        run: |
+          mkdir -p "$SIGNED_ASSET_DIR"
+          gh release download "$RELEASE_TAG" \
+            --pattern '*.sig' \
+            --pattern '*.app.tar.gz' \
+            --pattern '*.AppImage' \
+            --pattern '*.deb' \
+            --pattern '*.rpm' \
+            --pattern '*.exe' \
+            --pattern '*.msi' \
+            --dir "$SIGNED_ASSET_DIR"
+
+      - name: Assemble updater manifest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
+          SIGNED_ASSET_DIR: ${{ runner.temp }}/coda-release/signed-assets
+          UPDATER_MANIFEST_PATH: ${{ runner.temp }}/coda-release/latest.json
+        run: |
+          node tools/assemble-updater-manifest.mjs \
+            "$RELEASE_TAG" \
+            "$RUNNER_TEMP/coda-release/release.json" \
+            "$SIGNED_ASSET_DIR" \
+            "$UPDATER_MANIFEST_PATH"
+          gh release upload "$RELEASE_TAG" "$UPDATER_MANIFEST_PATH" --clobber
+          gh release view "$RELEASE_TAG" \
+            --json assets,body,isDraft,tagName \
+            > "$RUNNER_TEMP/coda-release/release.json"
 
       - name: Verify signed updater assets
         env:
@@ -342,17 +374,6 @@ jobs:
 
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends minisign
-
-          mkdir -p "$SIGNED_ASSET_DIR"
-          gh release download "$RELEASE_TAG" \
-            --pattern '*.sig' \
-            --pattern '*.app.tar.gz' \
-            --pattern '*.AppImage' \
-            --pattern '*.deb' \
-            --pattern '*.rpm' \
-            --pattern '*.exe' \
-            --pattern '*.msi' \
-            --dir "$SIGNED_ASSET_DIR"
 
           node --input-type=module <<'NODE'
           import { readFileSync, writeFileSync } from "node:fs";

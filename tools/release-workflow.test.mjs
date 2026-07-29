@@ -58,11 +58,28 @@ test("scopes release secrets to build jobs without gating the publish job", () =
   expect(publishRelease).not.toMatch(/^    environment: release$/m);
 });
 
-test("serializes release uploads so updater platforms cannot overwrite each other", () => {
+test("builds platforms in parallel and assembles the updater manifest once after fan-in", () => {
   const releaseBuild = jobBlock(releaseWorkflow, "build-release");
+  const publishRelease = jobBlock(releaseWorkflow, "publish-release");
+  const assembly = publishRelease.indexOf(
+    "- name: Assemble updater manifest",
+  );
+  const verification = publishRelease.indexOf(
+    "- name: Verify signed updater assets",
+  );
 
-  expect(releaseBuild).toMatch(/^      max-parallel: 1$/m);
-  expect(releaseBuild).toContain("uploadUpdaterJson: true");
+  expect(releaseBuild).not.toContain("max-parallel:");
+  expect(releaseBuild).toContain("uploadUpdaterJson: false");
+  expect(releaseBuild).not.toContain("uploadUpdaterJson: true");
+  expect(publishRelease).toContain("- build-release");
+  expect(assembly).toBeGreaterThan(-1);
+  expect(verification).toBeGreaterThan(assembly);
+  expect(publishRelease).toContain(
+    "node tools/assemble-updater-manifest.mjs",
+  );
+  expect(publishRelease).toContain(
+    'gh release upload "$RELEASE_TAG" "$UPDATER_MANIFEST_PATH" --clobber',
+  );
 });
 
 test("cryptographically verifies every signed updater artifact before publishing", () => {
