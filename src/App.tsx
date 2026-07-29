@@ -1363,14 +1363,13 @@ const PlayerTrack = memo(function PlayerTrack({
                 </Button>
                 <span aria-hidden="true" className="shrink-0">·</span>
                 <Button
-                  className="h-auto min-w-0 max-w-[46%] truncate p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73]"
+                  className="h-auto min-w-0 max-w-[46%] overflow-hidden p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73]"
                   data-player-album-link
                   onClick={(event) => onAlbum(track, event.currentTarget)}
                   aria-busy={albumLoading || undefined}
                   aria-label={albumLoading ? `Loading album ${track.album}` : undefined}
                   disabled={albumLoading}
                   size="compact"
-                  title={track.album}
                   variant="text"
                 >
                   {albumLoading ? (
@@ -1379,7 +1378,7 @@ const PlayerTrack = memo(function PlayerTrack({
                       className="size-3.5"
                     />
                   ) : null}
-                  {track.album}
+                  <OverflowMarquee className="flex-1" text={track.album} />
                 </Button>
               </span>
             </div>

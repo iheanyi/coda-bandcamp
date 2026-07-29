@@ -621,7 +621,7 @@ function NowPlayingViewComponent({
                 <Button
                   variant="text"
                   size="compact"
-                  className="h-auto max-w-[46%] truncate p-0 text-sm font-medium text-[#c1c2bc] hover:bg-transparent hover:text-primary"
+                  className="h-auto min-w-0 max-w-[46%] overflow-hidden p-0 text-sm font-medium text-[#c1c2bc] hover:bg-transparent hover:text-primary"
                   onClick={(event) => onAlbum(track, event.currentTarget)}
                   aria-busy={albumLoading}
                   aria-label={albumLoading ? `Loading album ${track.album}` : undefined}
@@ -633,7 +633,7 @@ function NowPlayingViewComponent({
                       className="size-3 shrink-0 text-current motion-reduce:animate-none"
                     />
                   ) : null}
-                  {track.album}
+                  <OverflowMarquee className="flex-1" text={track.album} />
                 </Button>
               </>
             )}

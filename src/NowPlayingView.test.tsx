@@ -112,6 +112,8 @@ describe("NowPlayingView Radio metadata", () => {
     const artistLink = screen.getByRole("button", { name: "Night Archive" });
     expect(within(artistLink).getByTestId("overflow-marquee"))
       .toHaveTextContent("Night Archive");
+    expect(within(albumLink).getByTestId("overflow-marquee"))
+      .toHaveTextContent("Soft Focus");
     fireEvent.click(albumLink);
     expect(onAlbum).toHaveBeenCalledOnce();
 

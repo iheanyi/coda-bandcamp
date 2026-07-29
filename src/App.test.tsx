@@ -1211,8 +1211,13 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       );
       expect(within(artistControl).getByTestId("overflow-marquee"))
         .toHaveTextContent(longArtist);
-      expect(albumControl).toHaveClass("min-w-0", "max-w-[46%]", "truncate");
-      expect(albumControl).toHaveAttribute("title", longAlbumTitle);
+      expect(albumControl).toHaveClass(
+        "min-w-0",
+        "max-w-[46%]",
+        "overflow-hidden",
+      );
+      expect(within(albumControl).getByTestId("overflow-marquee"))
+        .toHaveTextContent(longAlbumTitle);
 
       queryClient.removeQueries({ queryKey: albumQueryKey(longAlbum.id) });
       fireEvent.click(albumControl);
