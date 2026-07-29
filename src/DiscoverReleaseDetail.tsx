@@ -4,6 +4,7 @@ import {
   MapPin,
   Plus,
 } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { PlaybackIcon } from "./components/ui/playback-icon";
@@ -35,15 +36,20 @@ export function DiscoverReleaseDetail({
   const track = discoverPreviewTrack(release);
   const active = Boolean(track && currentTrackId === track.id);
   const palette = paletteFor(release.id);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+
+  useEffect(() => {
+    headingRef.current?.focus({ preventScroll: true });
+  }, []);
 
   return (
     <article
       className="mx-auto -mt-2 mb-8 w-full max-w-4xl animate-[album-page-in_180ms_ease-out] motion-reduce:animate-none"
-      aria-label={`${release.title} Discover release details`}
+      aria-labelledby="discover-release-heading"
     >
       <Button
         className="mb-4 -ml-1 h-auto gap-1.5 p-1 text-xs text-muted-foreground hover:bg-transparent hover:text-foreground"
-        onClick={onBack}
+        onClick={() => onBack()}
         size="compact"
         variant="text"
       >
@@ -73,7 +79,12 @@ export function DiscoverReleaseDetail({
         </div>
         <div className="min-w-0 pb-1">
           <Badge variant="artwork" className="mb-3">Discover release</Badge>
-          <h1 className="m-0 max-w-xl wrap-anywhere font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-4xl leading-none font-semibold tracking-tighter text-foreground max-xl:text-3xl">
+          <h1
+            ref={headingRef}
+            id="discover-release-heading"
+            className="m-0 max-w-xl font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-4xl leading-none font-semibold tracking-tighter wrap-anywhere text-foreground outline-none max-xl:text-3xl"
+            tabIndex={-1}
+          >
             {release.title}
           </h1>
           <Button

@@ -3059,16 +3059,32 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Discover" }));
     await screen.findByText("Blue Hours");
+    fireEvent.click(screen.getByRole("button", { name: "Rock" }));
+    await waitFor(() =>
+      expect(mocks.fetchDiscover).toHaveBeenLastCalledWith(
+        expect.objectContaining({ tag: "rock", sort: "top" }),
+        "*",
+      ),
+    );
+    await screen.findByText("Blue Hours");
+    const libraryPane = screen.getByRole("main");
+    libraryPane.scrollTop = 312;
     fireEvent.click(screen.getByRole("button", { name: "Preview Glass Lines" }));
     fireEvent.click(await screen.findByRole("button", { name: "Open Now Playing" }));
 
     const nowPlaying = screen.getByRole("article", { name: "Glass Lines" });
+    expect(libraryPane.scrollTop).toBe(0);
+    libraryPane.scrollTop = 88;
     mocks.fetchAlbum.mockClear();
     fireEvent.click(within(nowPlaying).getByRole("button", { name: "Blue Hours" }));
 
     const releaseDetail = await screen.findByRole("article", {
-      name: "Blue Hours Discover release details",
+      name: "Blue Hours",
     });
+    await waitFor(() =>
+      expect(within(releaseDetail).getByRole("heading", { name: "Blue Hours" }))
+        .toHaveFocus(),
+    );
     expect(within(releaseDetail).getByRole("button", { name: "Signal Garden" }))
       .toBeInTheDocument();
     expect(mocks.fetchAlbum).not.toHaveBeenCalled();
@@ -3076,13 +3092,233 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     fireEvent.click(within(releaseDetail).getByRole("button", { name: "Back" }));
     const restoredNowPlaying = screen.getByRole("article", { name: "Glass Lines" });
     expect(restoredNowPlaying).toBeInTheDocument();
+    await waitFor(() =>
+      expect(within(restoredNowPlaying).getByRole("heading", {
+        name: "Glass Lines",
+      })).toHaveFocus(),
+    );
+    expect(libraryPane.scrollTop).toBe(88);
     expect(mocks.fetchAlbum).not.toHaveBeenCalled();
 
     fireEvent.click(within(restoredNowPlaying).getByRole("button", { name: "Back" }));
     expect(screen.getByRole("heading", { name: "Discover" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Rock" }))
+      .toHaveAttribute("aria-pressed", "true");
+    expect(libraryPane.scrollTop).toBe(312);
     expect(within(screen.getByRole("main")).getByRole("button", {
       name: "Blue Hours",
     })).toBeInTheDocument();
+  });
+
+  it("preserves the Discover parent through detail and compact-player navigation", async () => {
+    renderApp();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Discover" }));
+    await screen.findByText("Blue Hours");
+    fireEvent.click(screen.getByRole("button", { name: "Rock" }));
+    await waitFor(() =>
+      expect(mocks.fetchDiscover).toHaveBeenLastCalledWith(
+        expect.objectContaining({ tag: "rock", sort: "top" }),
+        "*",
+      ),
+    );
+    await screen.findByText("Blue Hours");
+    fireEvent.click(screen.getByRole("button", { name: "Preview Glass Lines" }));
+
+    const libraryPane = screen.getByRole("main");
+    libraryPane.scrollTop = 312;
+    const player = document.querySelector<HTMLElement>(
+      '[data-player-mode="full"]',
+    );
+    expect(player).not.toBeNull();
+    const compactAlbumLink = within(player!).getByRole("button", {
+      name: "Blue Hours",
+    });
+    fireEvent.click(compactAlbumLink);
+
+    let releaseDetail = await screen.findByRole("article", {
+      name: "Blue Hours",
+    });
+    libraryPane.scrollTop = 88;
+    fireEvent.click(within(player!).getByRole("button", {
+      name: "Blue Hours",
+    }));
+    releaseDetail = await screen.findByRole("article", { name: "Blue Hours" });
+    libraryPane.scrollTop = 88;
+    fireEvent.click(within(player!).getByRole("button", {
+      name: "Open Now Playing",
+    }));
+
+    const nowPlaying = await screen.findByRole("article", {
+      name: "Glass Lines",
+    });
+    expect(libraryPane.scrollTop).toBe(0);
+    fireEvent.click(within(nowPlaying).getByRole("button", { name: "Back" }));
+
+    releaseDetail = await screen.findByRole("article", { name: "Blue Hours" });
+    expect(libraryPane.scrollTop).toBe(88);
+    await waitFor(() =>
+      expect(within(releaseDetail).getByRole("heading", { name: "Blue Hours" }))
+        .toHaveFocus(),
+    );
+    fireEvent.click(within(releaseDetail).getByRole("button", { name: "Back" }));
+
+    expect(await screen.findByRole("button", { name: "Rock" }))
+      .toHaveAttribute("aria-pressed", "true");
+    expect(libraryPane.scrollTop).toBe(312);
+    await waitFor(() => {
+      expect(document.activeElement).toHaveAttribute(
+        "data-player-album-link",
+      );
+      expect(document.activeElement).toHaveTextContent("Blue Hours");
+    });
+  });
+
+  it("restores Discover filters and scroll after opening release artwork", async () => {
+    renderApp();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Discover" }));
+    await screen.findByRole("button", {
+      name: "Open Blue Hours Discover details",
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Rock" }));
+    await waitFor(() =>
+      expect(mocks.fetchDiscover).toHaveBeenLastCalledWith(
+        expect.objectContaining({ tag: "rock", sort: "top" }),
+        "*",
+      ),
+    );
+    await screen.findByRole("button", {
+      name: "Open Blue Hours Discover details",
+    });
+
+    const libraryPane = screen.getByRole("main");
+    libraryPane.scrollTop = 312;
+    fireEvent.scroll(libraryPane);
+    const artworkLink = within(libraryPane).getByRole("button", {
+      name: "Open Blue Hours Discover details",
+    });
+    fireEvent.click(artworkLink);
+
+    const releaseDetail = await screen.findByRole("article", {
+      name: "Blue Hours",
+    });
+    const backButton = within(releaseDetail).getByRole("button", { name: "Back" });
+    await waitFor(() =>
+      expect(within(releaseDetail).getByRole("heading", { name: "Blue Hours" }))
+        .toHaveFocus(),
+    );
+    libraryPane.scrollTop = 0;
+    fireEvent.click(backButton);
+
+    expect(await screen.findByRole("button", { name: "Rock" }))
+      .toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("Search Discover by tag")).toHaveValue("rock");
+    await waitFor(() => expect(libraryPane.scrollTop).toBe(312));
+    await waitFor(() => expect(artworkLink).toHaveFocus());
+  });
+
+  it("uses the Discover sidebar as a state-preserving detail exit", async () => {
+    renderApp();
+
+    const discoverNavigation = await screen.findByRole("button", {
+      name: "Discover",
+    });
+    fireEvent.click(discoverNavigation);
+    await screen.findByText("Blue Hours");
+    fireEvent.click(screen.getByRole("button", { name: "Rock" }));
+    await waitFor(() =>
+      expect(mocks.fetchDiscover).toHaveBeenLastCalledWith(
+        expect.objectContaining({ tag: "rock", sort: "top" }),
+        "*",
+      ),
+    );
+    await screen.findByText("Blue Hours");
+
+    const libraryPane = screen.getByRole("main");
+    libraryPane.scrollTop = 312;
+    fireEvent.click(screen.getByRole("button", {
+      name: "Open Blue Hours Discover details",
+    }));
+    await screen.findByRole("article", { name: "Blue Hours" });
+    libraryPane.scrollTop = 88;
+
+    discoverNavigation.focus();
+    fireEvent.click(discoverNavigation);
+
+    expect(await screen.findByRole("button", { name: "Rock" }))
+      .toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("article", { name: "Blue Hours" }))
+      .not.toBeInTheDocument();
+    expect(libraryPane.scrollTop).toBe(312);
+    expect(discoverNavigation).toHaveFocus();
+  });
+
+  it("returns focus to the Discover release title that opened the detail", async () => {
+    renderApp();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Discover" }));
+    const libraryPane = screen.getByRole("main");
+    const titleLink = await within(libraryPane).findByRole("button", {
+      name: "Blue Hours",
+    });
+    fireEvent.click(titleLink);
+
+    const releaseDetail = await screen.findByRole("article", {
+      name: "Blue Hours",
+    });
+    fireEvent.click(within(releaseDetail).getByRole("button", { name: "Back" }));
+
+    await waitFor(() => expect(titleLink).toHaveFocus());
+  });
+
+  it("keeps loaded Discover pages mounted while viewing release details", async () => {
+    mocks.fetchDiscover
+      .mockResolvedValueOnce({
+        results: [{
+          id: "discover:release-1",
+          title: "Blue Hours",
+          artist: "Signal Garden",
+          location: "Chicago, Illinois",
+          itemUrl: "https://signal-garden.bandcamp.com/album/blue-hours",
+          artworkUrl: "https://f4.bcbits.com/img/blue-hours.jpg",
+        }],
+        resultCount: 2,
+        hasMore: true,
+        cursor: "next-page",
+      })
+      .mockResolvedValueOnce({
+        results: [{
+          id: "discover:release-2",
+          title: "Amber Transit",
+          artist: "Signal Garden",
+          location: "Chicago, Illinois",
+          itemUrl: "https://signal-garden.bandcamp.com/album/amber-transit",
+        }],
+        resultCount: 2,
+        hasMore: false,
+      });
+    renderApp();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Discover" }));
+    await screen.findByText("Blue Hours");
+    fireEvent.click(screen.getByRole("button", {
+      name: "View more discoveries",
+    }));
+    expect(await screen.findByText("Amber Transit")).toBeInTheDocument();
+    expect(mocks.fetchDiscover).toHaveBeenCalledTimes(2);
+
+    fireEvent.click(screen.getByRole("button", {
+      name: "Open Blue Hours Discover details",
+    }));
+    const releaseDetail = await screen.findByRole("article", {
+      name: "Blue Hours",
+    });
+    fireEvent.click(within(releaseDetail).getByRole("button", { name: "Back" }));
+
+    expect(await screen.findByText("Blue Hours")).toBeInTheDocument();
+    expect(screen.getByText("Amber Transit")).toBeInTheDocument();
+    expect(mocks.fetchDiscover).toHaveBeenCalledTimes(2);
   });
 
   it("opens a Discover artist on Bandcamp without entering a same-name library artist", async () => {

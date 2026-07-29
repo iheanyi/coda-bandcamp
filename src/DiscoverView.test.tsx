@@ -125,10 +125,31 @@ describe("Discover", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Blue Hours" }));
 
-    expect(onOpenRelease).toHaveBeenCalledWith(expect.objectContaining({
-      id: "release-1",
-      title: "Blue Hours",
+    expect(onOpenRelease).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "release-1",
+        title: "Blue Hours",
+      }),
+      expect.any(HTMLButtonElement),
+    );
+    expect(mocks.openBandcampUrl).not.toHaveBeenCalled();
+  });
+
+  it("routes release artwork to the same internal Discover detail handler", async () => {
+    const onOpenRelease = vi.fn();
+    renderDiscover(vi.fn(), { onOpenRelease });
+
+    fireEvent.click(await screen.findByRole("button", {
+      name: "Open Blue Hours Discover details",
     }));
+
+    expect(onOpenRelease).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "release-1",
+        title: "Blue Hours",
+      }),
+      expect.any(HTMLButtonElement),
+    );
     expect(mocks.openBandcampUrl).not.toHaveBeenCalled();
   });
 

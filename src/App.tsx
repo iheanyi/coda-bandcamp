@@ -44,6 +44,7 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -226,6 +227,7 @@ type DiscoverDetailNavigation = {
   release: DiscoverRelease;
   previousView: LibraryView;
   returnToNowPlaying: boolean;
+  returnScrollTop: number;
 };
 type PlaybackSession = {
   trackId: string;
@@ -911,7 +913,7 @@ const QueuePanel = memo(function QueuePanel({
   onShuffle: () => void;
   onMove: (from: number, to: number) => void;
   onArtist: (artist: string, albumId?: string, sourceTrack?: Track) => void;
-  onAlbum: (track: Track) => void;
+  onAlbum: (track: Track, trigger?: HTMLButtonElement) => void;
   onNowPlaying: () => void;
   onOpenRadioItem: (url: string) => void;
   getRadioChapterLocalLinks: (chapter: RadioChapter) => RadioChapterLocalLinks;
@@ -1181,7 +1183,7 @@ const QueuePanel = memo(function QueuePanel({
             <div className="flex min-w-0 items-center gap-2 text-left">
               <Button
                 className="relative h-auto shrink-0 overflow-hidden p-0 text-left hover:bg-transparent"
-                onClick={() => onAlbum(track)}
+                onClick={(event) => onAlbum(track, event.currentTarget)}
                 aria-label={`Open ${track.album}`}
                 aria-busy={loadingAlbumId === track.albumId || undefined}
                 disabled={loadingAlbumId === track.albumId}
@@ -1281,7 +1283,7 @@ const PlayerTrack = memo(function PlayerTrack({
   favorite: boolean;
   onToggleFavorite: () => void;
   onArtist: (artist: string, albumId?: string, sourceTrack?: Track) => void;
-  onAlbum: (track: Track) => void;
+  onAlbum: (track: Track, trigger?: HTMLButtonElement) => void;
   albumLoading: boolean;
   onNowPlaying: () => void;
   onOpenRadioItem: (url: string) => void;
@@ -1371,7 +1373,8 @@ const PlayerTrack = memo(function PlayerTrack({
                 <span aria-hidden="true" className="shrink-0">·</span>
                 <Button
                   className="h-auto min-w-0 max-w-[46%] truncate p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
-                  onClick={() => onAlbum(track)}
+                  data-player-album-link
+                  onClick={(event) => onAlbum(track, event.currentTarget)}
                   aria-busy={albumLoading || undefined}
                   aria-label={albumLoading ? `Loading album ${track.album}` : undefined}
                   disabled={albumLoading}
@@ -1541,7 +1544,7 @@ function Player({
   airPlayAvailable: boolean;
   onAirPlay: () => void;
   onArtist: (artist: string, albumId?: string, sourceTrack?: Track) => void;
-  onAlbum: (track: Track) => void;
+  onAlbum: (track: Track, trigger?: HTMLButtonElement) => void;
   albumLoading: boolean;
   onNowPlaying: () => void;
   onOpenRadioItem: (url: string) => void;
@@ -2317,8 +2320,14 @@ export default function App() {
   const queueControlRef = useRef<HTMLButtonElement>(null);
   const queueFocusRequestedRef = useRef(false);
   const nowPlayingFocusRequestedRef = useRef(false);
+  const discoverDetailReturnFocusRef = useRef<HTMLElement | null>(null);
+  const discoverDetailReturnPlayerAlbumFocusRef = useRef(false);
+  const discoverDetailFocusRequestedRef = useRef(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const libraryPaneRef = useRef<HTMLElement>(null);
+  const discoverListScrollTopRef = useRef(0);
+  const nowPlayingReturnScrollTopRef = useRef(0);
+  const pendingLibraryScrollTopRef = useRef<number | undefined>(undefined);
   const libraryShuffleActiveRef = useRef(false);
   const randomPickActiveRef = useRef(false);
   const restoreGenerationRef = useRef(0);
@@ -2508,6 +2517,32 @@ export default function App() {
       preventScroll: true,
     });
   }, [nowPlayingOpen]);
+
+  useEffect(() => {
+    if (discoverDetail || !discoverDetailFocusRequestedRef.current) return;
+    discoverDetailFocusRequestedRef.current = false;
+    const returnFocus = discoverDetailReturnFocusRef.current;
+    const playerAlbumFallback =
+      discoverDetailReturnPlayerAlbumFocusRef.current;
+    discoverDetailReturnFocusRef.current = null;
+    discoverDetailReturnPlayerAlbumFocusRef.current = false;
+    const focusTarget = returnFocus?.isConnected
+      ? returnFocus
+      : playerAlbumFallback
+        ? document.querySelector<HTMLButtonElement>(
+            "[data-player-album-link]",
+          )
+        : null;
+    focusTarget?.focus({ preventScroll: true });
+  }, [discoverDetail]);
+
+  useLayoutEffect(() => {
+    const pendingScrollTop = pendingLibraryScrollTopRef.current;
+    const libraryPane = libraryPaneRef.current;
+    if (pendingScrollTop === undefined || !libraryPane) return;
+    libraryPane.scrollTop = pendingScrollTop;
+    pendingLibraryScrollTopRef.current = undefined;
+  }, [discoverDetail, nowPlayingOpen, view]);
 
   useEffect(() => {
     if (!isDesktop()) return;
@@ -3767,7 +3802,10 @@ export default function App() {
     void prefetchAlbumQueryData(queryClient, album);
   }, [queryClient]);
 
-  const openTrackAlbum = useCallback((track: Track) => {
+  const openTrackAlbum = useCallback((
+    track: Track,
+    trigger?: HTMLButtonElement,
+  ) => {
     if (track.id.startsWith("discover:")) {
       const release = track.discoverRelease;
       if (
@@ -3778,11 +3816,23 @@ export default function App() {
         notify(`Could not open ${track.album} from Discover`, "bad");
         return;
       }
+      const returnScrollTop = libraryPaneRef.current?.scrollTop ?? 0;
+      if (!nowPlayingOpen && view === "discover" && !discoverDetail) {
+        discoverListScrollTopRef.current = returnScrollTop;
+      }
+      discoverDetailReturnFocusRef.current = nowPlayingOpen
+        ? null
+        : trigger ?? null;
+      discoverDetailReturnPlayerAlbumFocusRef.current =
+        !nowPlayingOpen &&
+        Boolean(trigger?.hasAttribute("data-player-album-link"));
+      pendingLibraryScrollTopRef.current = 0;
       void transitionCodaView(() => {
         setDiscoverDetail({
           release,
           previousView: view,
           returnToNowPlaying: nowPlayingOpen,
+          returnScrollTop,
         });
         setNowPlayingOpen(false);
         setView("discover");
@@ -3807,7 +3857,7 @@ export default function App() {
       return;
     }
     notify(`Could not find ${track.album} in this library`, "bad");
-  }, [albums, notify, nowPlayingOpen, openAlbum, view]);
+  }, [albums, discoverDetail, notify, nowPlayingOpen, openAlbum, view]);
 
   const playAlbum = useCallback(async (album: Album) => {
     const sessionGeneration = bandcampSessionGenerationRef.current;
@@ -4334,13 +4384,20 @@ export default function App() {
   }, []);
   const openNowPlaying = useCallback(() => {
     if (currentTrack) {
+      const returnScrollTop = libraryPaneRef.current?.scrollTop ?? 0;
+      nowPlayingReturnScrollTopRef.current = returnScrollTop;
+      if (view === "discover" && !discoverDetail) {
+        discoverListScrollTopRef.current = returnScrollTop;
+      }
+      pendingLibraryScrollTopRef.current = 0;
       void transitionCodaView(() => setNowPlayingOpen(true), "now-playing");
     }
-  }, [currentTrack]);
+  }, [currentTrack, discoverDetail, view]);
   const backFromNowPlaying = useCallback(() => {
-    nowPlayingFocusRequestedRef.current = true;
+    nowPlayingFocusRequestedRef.current = !discoverDetail;
+    pendingLibraryScrollTopRef.current = nowPlayingReturnScrollTopRef.current;
     void transitionCodaView(() => setNowPlayingOpen(false), "now-playing");
-  }, []);
+  }, [discoverDetail]);
   const playSelectedAlbum = useCallback(() => {
     if (selectedAlbum) void playAlbum(selectedAlbum);
   }, [playAlbum, selectedAlbum]);
@@ -4361,7 +4418,49 @@ export default function App() {
     setSyncState("idle");
     notify(`${countLabel(library.length, "album")} synced`, "good");
   }, [notify]);
+  const closeDiscoverRelease = useCallback((
+    options: { restoreFocus?: boolean } = {},
+  ) => {
+    if (!discoverDetail) return;
+    const returnToNowPlaying =
+      discoverDetail.returnToNowPlaying && Boolean(currentTrack);
+    discoverDetailFocusRequestedRef.current =
+      options.restoreFocus !== false &&
+      !returnToNowPlaying &&
+      Boolean(
+        discoverDetailReturnFocusRef.current ||
+        discoverDetailReturnPlayerAlbumFocusRef.current,
+      );
+    if (options.restoreFocus === false) {
+      discoverDetailReturnFocusRef.current = null;
+      discoverDetailReturnPlayerAlbumFocusRef.current = false;
+    }
+    if (returnToNowPlaying) {
+      discoverDetailReturnFocusRef.current = null;
+      discoverDetailReturnPlayerAlbumFocusRef.current = false;
+    }
+    pendingLibraryScrollTopRef.current = returnToNowPlaying
+      ? discoverDetail.returnScrollTop
+      : discoverDetail.previousView === "discover"
+        ? discoverListScrollTopRef.current
+        : discoverDetail.returnScrollTop;
+    void transitionCodaView(() => {
+      setDiscoverDetail(undefined);
+      setView(discoverDetail.previousView);
+      if (returnToNowPlaying) {
+        setNowPlayingOpen(true);
+      }
+    }, "page-back");
+  }, [currentTrack, discoverDetail]);
   const chooseView = useCallback((nextView: LibraryView) => {
+    if (
+      nextView === "discover" &&
+      discoverDetail?.previousView === "discover" &&
+      !discoverDetail.returnToNowPlaying
+    ) {
+      closeDiscoverRelease({ restoreFocus: false });
+      return;
+    }
     if (
       nextView === view &&
       !selectedAlbum &&
@@ -4370,6 +4469,12 @@ export default function App() {
       !nowPlayingOpen
     ) {
       return;
+    }
+    if (nextView === "discover" && discoverDetail) {
+      discoverDetailReturnFocusRef.current = null;
+      discoverDetailReturnPlayerAlbumFocusRef.current = false;
+      discoverDetailFocusRequestedRef.current = false;
+      pendingLibraryScrollTopRef.current = 0;
     }
     void transitionCodaView(() => {
       setNowPlayingOpen(false);
@@ -4385,7 +4490,14 @@ export default function App() {
         setSelectedArtist(undefined);
       }
     }, "page-crossfade", { skipSnapshot: true });
-  }, [discoverDetail, nowPlayingOpen, selectedAlbum, selectedArtist, view]);
+  }, [
+    closeDiscoverRelease,
+    discoverDetail,
+    nowPlayingOpen,
+    selectedAlbum,
+    selectedArtist,
+    view,
+  ]);
   const chooseBrowseMode = useCallback((mode: LibraryBrowseMode) => {
     setNowPlayingOpen(false);
     setBrowseMode(mode);
@@ -4463,30 +4575,31 @@ export default function App() {
       setSelectedAlbum(undefined);
     }, "page-forward");
   }, [albums, notify, openDiscoverArtist]);
-  const openDiscoverRelease = useCallback((release: DiscoverRelease) => {
+  const openDiscoverRelease = useCallback((
+    release: DiscoverRelease,
+    trigger: HTMLButtonElement,
+  ) => {
     if (!release.id.startsWith("discover:")) {
       notify(`Could not open ${release.title} from Discover`, "bad");
       return;
     }
+    const returnScrollTop = libraryPaneRef.current?.scrollTop ?? 0;
+    if (view === "discover") {
+      discoverListScrollTopRef.current = returnScrollTop;
+    }
+    discoverDetailReturnFocusRef.current = trigger;
+    discoverDetailReturnPlayerAlbumFocusRef.current = false;
+    pendingLibraryScrollTopRef.current = 0;
     void transitionCodaView(() => {
       setDiscoverDetail({
         release,
         previousView: view,
         returnToNowPlaying: false,
+        returnScrollTop,
       });
       setView("discover");
     }, "page-forward");
   }, [notify, view]);
-  const closeDiscoverRelease = useCallback(() => {
-    if (!discoverDetail) return;
-    void transitionCodaView(() => {
-      setDiscoverDetail(undefined);
-      setView(discoverDetail.previousView);
-      if (discoverDetail.returnToNowPlaying && currentTrack) {
-        setNowPlayingOpen(true);
-      }
-    }, "page-back");
-  }, [currentTrack, discoverDetail]);
   const browseRadioSeries = useCallback((seriesId?: number) => {
     void transitionCodaView(() => {
       setRadioSeriesId(seriesId);
@@ -4716,6 +4829,25 @@ export default function App() {
           data-coda-library-scroll
           ref={libraryPaneRef}
         >
+          {view === "discover" &&
+          (!discoverDetail || discoverDetail.previousView === "discover") ? (
+            <div
+              hidden={nowPlayingOpen || Boolean(discoverDetail)}
+              inert={nowPlayingOpen || Boolean(discoverDetail) || undefined}
+            >
+              <Suspense fallback={<LibrarySkeleton label="Opening Discover" />}>
+                <DiscoverView
+                  onPlay={playTrack}
+                  onQueue={queueTrack}
+                  currentTrackId={currentTrack?.id}
+                  playing={playing}
+                  onTogglePlayback={togglePlayback}
+                  onOpenRelease={openDiscoverRelease}
+                  onOpenArtist={openDiscoverArtist}
+                />
+              </Suspense>
+            </div>
+          ) : null}
           {nowPlayingOpen && currentTrack ? (
             <NowPlayingView
               track={currentTrack}
@@ -4830,17 +4962,7 @@ export default function App() {
               />
             </Suspense>
           ) : view === "discover" ? (
-            <Suspense fallback={<LibrarySkeleton label="Opening Discover" />}>
-              <DiscoverView
-                onPlay={playTrack}
-                onQueue={queueTrack}
-                currentTrackId={currentTrack?.id}
-                playing={playing}
-                onTogglePlayback={togglePlayback}
-                onOpenRelease={openDiscoverRelease}
-                onOpenArtist={openDiscoverArtist}
-              />
-            </Suspense>
+            null
           ) : view === "radio" ? (
             <Suspense fallback={<LibrarySkeleton label="Tuning Bandcamp Radio" />}>
               <RadioView

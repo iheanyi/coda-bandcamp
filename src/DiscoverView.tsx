@@ -58,7 +58,10 @@ const DiscoverCard = memo(function DiscoverCard({
   onPlay: (track: Track) => void;
   onTogglePlayback: () => void;
   onQueue: (track: Track) => void;
-  onOpenRelease: (release: DiscoverRelease) => void;
+  onOpenRelease: (
+    release: DiscoverRelease,
+    trigger: HTMLButtonElement,
+  ) => void;
   onOpenArtist: (release: DiscoverRelease) => void;
 }) {
   const track = discoverPreviewTrack(release);
@@ -88,11 +91,19 @@ const DiscoverCard = memo(function DiscoverCard({
         ) : (
           <span>{initials(release.title)}</span>
         )}
+        <Button
+          variant="ghost"
+          size="compact"
+          className="absolute inset-0 z-1 size-full rounded-none p-0 hover:bg-white/4 focus-visible:-outline-offset-2"
+          onClick={(event) => onOpenRelease(release, event.currentTarget)}
+          aria-label={`Open ${release.title} Discover details`}
+          title={`Open ${release.title}`}
+        />
         {track ? (
           <Button
             variant="primary"
             size="icon"
-            className={`absolute right-2 bottom-2 size-9 rounded-full p-0 opacity-0 shadow-[0_5px_17px_rgba(0,0,0,0.42)] translate-y-1 transition-[opacity,transform] duration-(--duration-coda-fast) group-hover/card:translate-y-0 group-hover/card:opacity-100 group-focus-within/card:translate-y-0 group-focus-within/card:opacity-100 motion-reduce:transition-none ${active ? "translate-y-0 opacity-100" : ""} ${active && playing ? "bg-[color-mix(in_srgb,var(--primary)_80%,#17191b)] shadow-[0_5px_17px_rgba(0,0,0,0.42),0_0_0_3px_rgba(221,101,73,0.16)]" : ""}`}
+            className={`absolute right-2 bottom-2 z-2 size-9 translate-y-1 rounded-full p-0 opacity-0 shadow-[0_5px_17px_rgba(0,0,0,0.42)] transition-[opacity,transform] duration-(--duration-coda-fast) group-focus-within/card:translate-y-0 group-focus-within/card:opacity-100 group-hover/card:translate-y-0 group-hover/card:opacity-100 motion-reduce:transition-none ${active ? "translate-y-0 opacity-100" : ""} ${active && playing ? "bg-[color-mix(in_srgb,var(--primary)_80%,#17191b)] shadow-[0_5px_17px_rgba(0,0,0,0.42),0_0_0_3px_rgba(221,101,73,0.16)]" : ""}`}
             onClick={active ? onTogglePlayback : () => onPlay(track)}
             aria-label={
               active
@@ -111,7 +122,7 @@ const DiscoverCard = memo(function DiscoverCard({
             variant="text"
             size="compact"
             className="h-auto min-w-0 justify-start truncate p-0 text-xs font-bold text-[#e8e5de] hover:bg-transparent hover:text-primary hover:underline"
-            onClick={() => onOpenRelease(release)}
+            onClick={(event) => onOpenRelease(release, event.currentTarget)}
             title={release.title}
           >
             {release.title}
@@ -178,7 +189,10 @@ export default function DiscoverView({
   currentTrackId?: string;
   playing: boolean;
   onTogglePlayback: () => void;
-  onOpenRelease: (release: DiscoverRelease) => void;
+  onOpenRelease: (
+    release: DiscoverRelease,
+    trigger: HTMLButtonElement,
+  ) => void;
   onOpenArtist: (release: DiscoverRelease) => void;
 }) {
   const [draftTag, setDraftTag] = useState("");

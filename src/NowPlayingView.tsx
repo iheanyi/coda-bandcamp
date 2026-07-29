@@ -81,7 +81,7 @@ type NowPlayingViewProps = {
   onRepeat: () => void;
   onAirPlay: () => void;
   onArtist: (artist: string, albumId?: string, sourceTrack?: Track) => void;
-  onAlbum: (track: Track) => void;
+  onAlbum: (track: Track, trigger?: HTMLButtonElement) => void;
   albumLoading?: boolean;
   onPlayQueueIndex: (index: number) => void;
   onRadioSeries: (seriesId?: number) => void;
@@ -621,7 +621,7 @@ function NowPlayingViewComponent({
                   variant="text"
                   size="compact"
                   className="h-auto max-w-[46%] truncate p-0 text-sm font-medium text-[#c1c2bc] hover:bg-transparent hover:text-primary hover:underline"
-                  onClick={() => onAlbum(track)}
+                  onClick={(event) => onAlbum(track, event.currentTarget)}
                   aria-busy={albumLoading}
                   aria-label={albumLoading ? `Loading album ${track.album}` : undefined}
                   disabled={albumLoading}
