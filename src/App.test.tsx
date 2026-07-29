@@ -3059,7 +3059,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(mocks.setFavorite).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Favorites" }));
-    expect(await screen.findByText("Local")).toBeInTheDocument();
+    expect(await screen.findByText("On this device")).toBeInTheDocument();
     expect(screen.getByText("Soft Focus")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Soft Focus" }));
     const reopenedAlbum = await screen.findByRole("article", {
@@ -3080,7 +3080,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
     fireEvent.click(within(albumPage).getByRole("button", { name: "Favorite" }));
     fireEvent.click(screen.getByRole("button", { name: "Favorites" }));
-    await screen.findByText("Local");
+    await screen.findByText("On this device");
 
     mocks.fetchAlbum.mockClear();
     const originalDescriptor = Object.getOwnPropertyDescriptor(

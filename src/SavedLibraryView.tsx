@@ -1447,28 +1447,23 @@ export default function SavedLibraryView({
     favoriteTrackCount + favoriteAlbumCount + favoriteRadioShowCount;
   return (
     <section className={savedPageClassName}>
-      <header className="mb-7 flex items-start justify-between gap-6">
-        <div>
-          <Eyebrow className="inline-flex items-center gap-1.5">
+      <header className="mb-8 flex items-start justify-between gap-6">
+        <div className="flex min-w-0 flex-col gap-2.5">
+          <Eyebrow className="mb-0 inline-flex items-center gap-1.5">
             {favoritesLocal ? <><HardDrive size={12} /> On this device</> : "Your keepers"}
           </Eyebrow>
-          <h1 className="m-0 font-display text-4xl leading-none font-semibold tracking-tighter text-foreground">
-            Favorites
-          </h1>
-          <p className="mt-2 mb-0 text-xs text-muted-foreground">
-            {favoritesLocal
-              ? "Your personal shortlist, saved only in Coda on this computer."
-              : "Starred releases and tracks from your Bandcamp collection."}
-          </p>
+          <div className="flex flex-col gap-2">
+            <h1 className="m-0 font-display text-4xl leading-none font-semibold tracking-tighter text-foreground">
+              Favorites
+            </h1>
+            <p className="m-0 max-w-xl text-xs text-muted-foreground">
+              {favoritesLocal
+                ? "Your personal shortlist, saved only in Coda on this computer."
+                : "Starred releases and tracks from your Bandcamp collection."}
+            </p>
+          </div>
         </div>
-        {favoritesLocal ? (
-          <Badge
-            className="gap-2 rounded-full border-white/7 bg-white/2.5 px-2.5 py-2 tracking-wider text-[#91958f] uppercase"
-            variant="secondary"
-          >
-            <HardDrive size={14} /> Local
-          </Badge>
-        ) : (
+        {!favoritesLocal ? (
           <Button
             onClick={onRefreshFavorites}
             disabled={favoritesLoading}
@@ -1480,7 +1475,7 @@ export default function SavedLibraryView({
               : <RefreshCw size={15} />}
             {favoritesLoading ? "Refreshing…" : "Refresh"}
           </Button>
-        )}
+        ) : null}
       </header>
       {favoritesLoading ? (
         <SavedEmpty
@@ -1543,14 +1538,20 @@ export default function SavedLibraryView({
           ) : null}
           {favoriteTracks.length ? (
             <section>
-              <div className="mb-4 flex items-baseline justify-between">
-                <h2 className="m-0 font-display text-base leading-none font-semibold tracking-tight">
-                  Tracks
-                </h2>
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-[#6f736e]">
+              <div className="mb-3 flex items-center justify-between gap-4">
+                <div className="flex min-w-0 items-center gap-2">
+                  <h2 className="m-0 font-display text-base leading-none font-semibold tracking-tight">
+                    Tracks
+                  </h2>
+                  <Badge
+                    className="border-white/8 bg-white/2 text-[#777b76]"
+                    size="compact"
+                    variant="outline"
+                  >
                     {countLabel(favoriteTrackCount, "track")}
-                  </span>
+                  </Badge>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
                   <Button
                     className={cn(
                       activeFavoriteTrack && "border-primary/30 bg-primary/10 text-accent-foreground",
@@ -1585,7 +1586,7 @@ export default function SavedLibraryView({
               </div>
               <VirtualizedSavedTrackList
                 aria-label="Favorite tracks"
-                className="rounded-lg border border-border bg-coda-field"
+                className="border-y border-white/7"
                 getItemKey={favoriteTrackKey}
                 items={favoriteTracks}
                 renderItem={(track, { index }, rowProps) => {
@@ -1595,8 +1596,8 @@ export default function SavedLibraryView({
                   <div
                     {...rowProps}
                     className={cn(
-                      "group grid h-14 grid-cols-[2rem_2.5rem_minmax(0,1fr)_3rem_repeat(3,2rem)] items-center gap-x-1.5 border-b border-white/5 pr-2 pl-1 last:border-b-0 hover:bg-white/3 lg:grid-cols-[2rem_2.5rem_minmax(0,1fr)_4rem_repeat(3,2rem)] lg:gap-x-2 lg:pr-3",
-                      activeTrack && "bg-primary/7.5",
+                      "group relative grid h-14 grid-cols-[2rem_2.5rem_minmax(0,1fr)_3rem_repeat(3,2rem)] items-center gap-x-1.5 border-b border-white/7 pr-2 pl-1 transition-colors last:border-b-0 hover:bg-white/3 lg:grid-cols-[2rem_2.5rem_minmax(0,1fr)_4rem_repeat(3,2rem)] lg:gap-x-2 lg:pr-3",
+                      activeTrack && "bg-primary/5 before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-primary before:content-['']",
                     )}
                   >
                     <Button
@@ -1625,10 +1626,10 @@ export default function SavedLibraryView({
                       />
                     </Button>
                     <FavoriteArtwork item={track} />
-                    <div className="flex min-w-0 flex-col gap-1">
+                    <div className="flex min-w-0 flex-col gap-0.5">
                       <Button
                         className={cn(
-                          "h-auto w-fit max-w-full justify-start truncate rounded-none p-0 text-xs text-[#d9d8d2] hover:bg-transparent hover:text-accent-foreground",
+                          "h-auto w-fit max-w-full justify-start truncate rounded-none p-0 text-xs/4 text-[#d9d8d2] hover:bg-transparent hover:text-accent-foreground",
                           activeTrack && "text-[#f0d7cf]",
                         )}
                         onClick={activeTrack ? onTogglePlayback : () => onPlayTrack(track)}
@@ -1636,7 +1637,7 @@ export default function SavedLibraryView({
                       >
                         {track.title}
                       </Button>
-                      <span className="flex min-w-0 items-center gap-1">
+                      <div className="flex min-w-0 items-center gap-1">
                         <Button
                           className={metadataLinkClassName}
                           onClick={() =>
@@ -1665,7 +1666,7 @@ export default function SavedLibraryView({
                           ) : null}
                           {track.album}
                         </Button>
-                      </span>
+                      </div>
                     </div>
                     <span className="flex items-center justify-center gap-1 text-xs text-[#777b76] tabular-nums">
                       <Clock3 size={12} /> {formatTime(track.duration)}

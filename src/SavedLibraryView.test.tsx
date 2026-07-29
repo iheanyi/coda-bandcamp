@@ -547,6 +547,18 @@ describe("saved Bandcamp library views", () => {
     expect(screen.getByRole("heading", { name: "Releases" }))
       .toHaveClass("font-display");
     const favoriteTracks = screen.getByLabelText("Favorite tracks");
+    expect(favoriteTracks).toHaveClass(
+      "border-y",
+      "border-white/7",
+    );
+    expect(favoriteTracks).not.toHaveClass(
+      "rounded-lg",
+      "bg-coda-field",
+    );
+    expect(screen.getByText("1 track")).toHaveClass(
+      "h-4",
+      "tabular-nums",
+    );
     expect(within(favoriteTracks).getByRole("listitem")).toHaveClass(
       "h-14",
       "grid-cols-[2rem_2.5rem_minmax(0,1fr)_3rem_repeat(3,2rem)]",
@@ -589,7 +601,8 @@ describe("saved Bandcamp library views", () => {
     expect(albumArtwork.parentElement).toHaveClass(
       "grid-cols-[3rem_minmax(0,1fr)]",
     );
-    expect(screen.getByText("Local")).toBeInTheDocument();
+    expect(screen.getByText("On this device")).toBeInTheDocument();
+    expect(screen.queryByText("Local")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", {
       name: "Remove The Hip Hop Show from favorites",
     }));
