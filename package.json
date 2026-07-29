@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "tauri dev",
+    "dev": "node tools/dev-instance.mjs",
     "dev:grove": "node tools/dev-instance.mjs",
     "web:dev": "vite",
     "build": "tsc && vite build",
@@ -13,7 +13,7 @@
     "test:dev-instance": "node --test tools/dev-instance.node-tests.mjs",
     "test:coverage": "vitest run --coverage",
     "tauri": "tauri",
-    "desktop:dev": "tauri dev",
+    "desktop:dev": "node tools/dev-instance.mjs",
     "desktop:build": "tauri build",
     "desktop:build:local": "node --env-file=.env.local tools/local-desktop-build.mjs"
   },
