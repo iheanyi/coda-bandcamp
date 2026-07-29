@@ -7,7 +7,7 @@
     "node": "^20.19.0 || >=22.12.0"
   },
   "scripts": {
-    "dev": "node tools/dev-instance.mjs",
+    "dev": "tauri dev",
     "dev:grove": "node tools/dev-instance.mjs",
     "web:dev": "vite",
     "build": "tsc && vite build",
@@ -16,7 +16,7 @@
     "test:dev-instance": "node --test tools/dev-instance.node-tests.mjs",
     "test:coverage": "vitest run --coverage",
     "tauri": "tauri",
-    "desktop:dev": "node tools/dev-instance.mjs",
+    "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
     "desktop:build:local": "node --env-file=.env.local tools/local-desktop-build.mjs"
   },

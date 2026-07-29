@@ -56,14 +56,15 @@ const baseConfig = {
   },
 };
 
-test("routes standard desktop development through the stable native launcher", async () => {
+test("keeps Grove opt-in for standard desktop development", async () => {
   const packageManifest = JSON.parse(
     await readFile(new URL("../package.json", import.meta.url), "utf8"),
   );
 
-  assert.equal(packageManifest.scripts.dev, "node tools/dev-instance.mjs");
+  assert.equal(packageManifest.scripts.dev, "tauri dev");
+  assert.equal(packageManifest.scripts["desktop:dev"], "tauri dev");
   assert.equal(
-    packageManifest.scripts["desktop:dev"],
+    packageManifest.scripts["dev:grove"],
     "node tools/dev-instance.mjs",
   );
 });

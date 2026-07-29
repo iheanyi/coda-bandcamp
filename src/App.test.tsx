@@ -2761,7 +2761,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       .not.toBeInTheDocument();
   });
 
-  it("prefetches a deliberate album hover and opens cached tracks immediately", async () => {
+  it("prefetches an album immediately on hover and opens cached tracks without loading", async () => {
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
     const { queryClient } = renderApp();
@@ -2771,17 +2771,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     const albumCard = openButton.closest("article");
     if (!albumCard) throw new Error("Expected the album control inside a card");
     mocks.fetchAlbum.mockClear();
-    vi.useFakeTimers();
-    try {
-      fireEvent.pointerEnter(albumCard);
-      fireEvent.pointerLeave(albumCard);
-      await act(async () => vi.runAllTimers());
-      expect(mocks.fetchAlbum).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-    }
 
     fireEvent.pointerEnter(albumCard);
+    expect(mocks.fetchAlbum).toHaveBeenCalledOnce();
     await waitFor(() =>
       expect(queryClient.getQueryData(albumQueryKey(album.id))).toEqual(tracks),
     );
@@ -2796,6 +2788,69 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(within(albumPage).getByText("Afterimage")).toBeInTheDocument();
     expect(within(albumPage).queryByText("Loading tracks…")).not.toBeInTheDocument();
     expect(mocks.fetchAlbum).not.toHaveBeenCalled();
+  });
+
+  it("starts album prefetch on primary pointer intent before a rapid click", async () => {
+    const request = deferred<Track[]>();
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    mocks.fetchAlbum.mockReturnValueOnce(request.promise);
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    const openButton = screen.getByRole("button", { name: "Open Soft Focus" });
+    const albumCard = openButton.closest("article");
+    if (!albumCard) throw new Error("Expected the album control inside a card");
+
+    fireEvent.pointerEnter(albumCard);
+    fireEvent.pointerDown(albumCard, {
+      button: 0,
+      isPrimary: true,
+      pointerType: "mouse",
+    });
+
+    expect(mocks.fetchAlbum).toHaveBeenCalledOnce();
+
+    fireEvent.click(openButton);
+    const albumPage = screen.getByRole("article", {
+      name: "Soft Focus release details",
+    });
+    expect(within(albumPage).getByRole("status", {
+      name: "Loading album tracks",
+    })).toBeVisible();
+    expect(mocks.fetchAlbum).toHaveBeenCalledOnce();
+
+    await act(async () => request.resolve(tracks));
+    expect(within(albumPage).getByText("First Light")).toBeInTheDocument();
+  });
+
+  it("reuses an in-flight hover prefetch during album navigation", async () => {
+    const request = deferred<Track[]>();
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    mocks.fetchAlbum.mockReturnValueOnce(request.promise);
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    const openButton = screen.getByRole("button", { name: "Open Soft Focus" });
+    const albumCard = openButton.closest("article");
+    if (!albumCard) throw new Error("Expected the album control inside a card");
+
+    fireEvent.pointerEnter(albumCard);
+    expect(mocks.fetchAlbum).toHaveBeenCalledOnce();
+
+    fireEvent.click(openButton);
+    const albumPage = screen.getByRole("article", {
+      name: "Soft Focus release details",
+    });
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(within(albumPage).getByRole("status", {
+      name: "Loading album tracks",
+    })).toBeVisible();
+    expect(mocks.fetchAlbum).toHaveBeenCalledOnce();
+
+    await act(async () => request.resolve(tracks));
+    expect(within(albumPage).getByText("First Light")).toBeInTheDocument();
   });
 
   it("keeps album track rows on the exact 56px rhythm without content overflow", async () => {
@@ -3148,18 +3203,16 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     }
   });
 
-  it("keeps the page transition for a prefetched album without adding a loader", async () => {
+  it("opens a prefetched album immediately without a snapshot or loader", async () => {
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
     const originalDescriptor = Object.getOwnPropertyDescriptor(
       document,
       "startViewTransition",
     );
-    let applyTransitionUpdate: (() => void) | undefined;
-    const startViewTransition = vi.fn((update: () => void) => {
-      applyTransitionUpdate = update;
-      return { finished: Promise.resolve() };
-    });
+    const startViewTransition = vi.fn(() => ({
+      finished: Promise.resolve(),
+    }));
     Object.defineProperty(document, "startViewTransition", {
       configurable: true,
       value: startViewTransition,
@@ -3176,16 +3229,8 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
       fireEvent.click(openButton);
 
-      expect(startViewTransition).toHaveBeenCalledOnce();
+      expect(startViewTransition).not.toHaveBeenCalled();
       expect(screen.queryByRole("status")).not.toBeInTheDocument();
-      expect(screen.queryByRole("article", {
-        name: "Soft Focus release details",
-      })).not.toBeInTheDocument();
-
-      await act(async () => {
-        applyTransitionUpdate?.();
-        await Promise.resolve();
-      });
       const albumPage = screen.getByRole("article", {
         name: "Soft Focus release details",
       });

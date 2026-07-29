@@ -277,7 +277,6 @@ const SEARCH_QUEUE_CONCURRENCY = 6;
 const PLAYER_STATE_SAVE_DEBOUNCE_MS = 450;
 const PLAYER_STATE_CHECKPOINT_MS = 5_000;
 const PREVIOUS_RESTART_THRESHOLD_SECONDS = 4;
-const ALBUM_PREFETCH_DELAY_MS = 120;
 const CODA_APP_NAME = import.meta.env.VITE_CODA_APP_NAME?.trim() || "Coda";
 const LIBRARY_COLLATOR = new Intl.Collator(undefined, {
   numeric: true,
@@ -585,31 +584,19 @@ const AlbumCard = memo(function AlbumCard({
   playing: boolean;
   onTogglePlayback: () => void;
 }) {
-  const prefetchTimerRef = useRef<number | undefined>(undefined);
-  const cancelScheduledPrefetch = () => {
-    if (prefetchTimerRef.current === undefined) return;
-    window.clearTimeout(prefetchTimerRef.current);
-    prefetchTimerRef.current = undefined;
+  const prefetchNow = () => {
+    onPrefetch(album);
   };
-  const schedulePrefetch = () => {
-    if (prefetchTimerRef.current !== undefined) return;
-    prefetchTimerRef.current = window.setTimeout(() => {
-      prefetchTimerRef.current = undefined;
-      onPrefetch(album);
-    }, ALBUM_PREFETCH_DELAY_MS);
-  };
-
-  useEffect(() => cancelScheduledPrefetch, [album.id, onPrefetch]);
 
   return (
     <article
       className="group relative min-w-0 [contain-intrinsic-size:170px_235px] [content-visibility:auto]"
-      onPointerEnter={schedulePrefetch}
-      onPointerLeave={cancelScheduledPrefetch}
-      onFocusCapture={() => {
-        cancelScheduledPrefetch();
-        onPrefetch(album);
+      onPointerEnter={prefetchNow}
+      onPointerDown={(event) => {
+        if (!event.isPrimary || event.button !== 0) return;
+        prefetchNow();
       }}
+      onFocusCapture={prefetchNow}
     >
       <div className="relative block w-full">
         <CoverArt album={album} />
@@ -3776,7 +3763,7 @@ export default function App() {
     void transitionCodaView(
       () => setSelectedAlbum(albumForDetail),
       "page-forward",
-      { skipSnapshot: coldLoad },
+      { skipSnapshot: true },
     );
     try {
       const ready = await ensureTracks(album, sessionGeneration);
