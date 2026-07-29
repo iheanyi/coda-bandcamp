@@ -24,6 +24,8 @@ function renderDiscover(
     currentTrackId?: string;
     playing?: boolean;
     onTogglePlayback?: () => void;
+    onOpenRelease?: () => void;
+    onOpenArtist?: () => void;
   } = {},
 ) {
   const client = new QueryClient({
@@ -42,6 +44,8 @@ function renderDiscover(
           currentTrackId={playback.currentTrackId}
           playing={playback.playing ?? false}
           onTogglePlayback={onTogglePlayback}
+          onOpenRelease={playback.onOpenRelease ?? vi.fn()}
+          onOpenArtist={playback.onOpenArtist ?? vi.fn()}
         />
       </QueryClientProvider>,
     ),
@@ -113,6 +117,32 @@ describe("Discover", () => {
       ),
     );
     expect(await screen.findByText("Jazz · Chicago, Illinois")).toBeInTheDocument();
+  });
+
+  it("routes a release name to the internal Discover detail handler", async () => {
+    const onOpenRelease = vi.fn();
+    renderDiscover(vi.fn(), { onOpenRelease });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Blue Hours" }));
+
+    expect(onOpenRelease).toHaveBeenCalledWith(expect.objectContaining({
+      id: "release-1",
+      title: "Blue Hours",
+    }));
+    expect(mocks.openBandcampUrl).not.toHaveBeenCalled();
+  });
+
+  it("routes an artist name to the external Discover artist handler", async () => {
+    const onOpenArtist = vi.fn();
+    renderDiscover(vi.fn(), { onOpenArtist });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Signal Garden" }));
+
+    expect(onOpenArtist).toHaveBeenCalledWith(expect.objectContaining({
+      id: "release-1",
+      artist: "Signal Garden",
+    }));
+    expect(mocks.openBandcampUrl).not.toHaveBeenCalled();
   });
 
   it("queries Hip-Hop/Rap with Bandcamp's canonical genre tag", async () => {

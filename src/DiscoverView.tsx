@@ -21,6 +21,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { countLabel } from "./countLabel";
+import { discoverPreviewTrack } from "./discover";
 import { DISCOVER_GENRES, normalizeGenre } from "./genres";
 import {
   fetchDiscover,
@@ -39,22 +40,6 @@ import type {
 const PRIMARY_GENRES: readonly string[] = DISCOVER_GENRES.slice(0, 11);
 const EXTRA_GENRES: readonly string[] = DISCOVER_GENRES.slice(PRIMARY_GENRES.length);
 
-function previewTrack(release: DiscoverRelease): Track | undefined {
-  if (!release.featuredTrack) return undefined;
-  return {
-    id: release.featuredTrack.id,
-    title: release.featuredTrack.title,
-    artist: release.artist,
-    album: release.title,
-    albumId: release.id,
-    duration: release.featuredTrack.duration,
-    track: 0,
-    artworkUrl: release.artworkUrl,
-    streamUrl: release.featuredTrack.streamUrl,
-    palette: paletteFor(release.id),
-  };
-}
-
 const DiscoverCard = memo(function DiscoverCard({
   release,
   fallbackGenre,
@@ -63,6 +48,8 @@ const DiscoverCard = memo(function DiscoverCard({
   onPlay,
   onTogglePlayback,
   onQueue,
+  onOpenRelease,
+  onOpenArtist,
 }: {
   release: DiscoverRelease;
   fallbackGenre?: string;
@@ -71,8 +58,10 @@ const DiscoverCard = memo(function DiscoverCard({
   onPlay: (track: Track) => void;
   onTogglePlayback: () => void;
   onQueue: (track: Track) => void;
+  onOpenRelease: (release: DiscoverRelease) => void;
+  onOpenArtist: (release: DiscoverRelease) => void;
 }) {
-  const track = previewTrack(release);
+  const track = discoverPreviewTrack(release);
   const palette = paletteFor(release.id);
   const active = Boolean(track && currentTrackId === track.id);
 
@@ -118,8 +107,24 @@ const DiscoverCard = memo(function DiscoverCard({
       </div>
       <div className="flex min-w-0 flex-col px-3 pt-3 pb-2">
         <div className="flex min-w-0 flex-col gap-1">
-          <strong className="truncate text-xs text-[#e8e5de]" title={release.title}>{release.title}</strong>
-          <span className="truncate text-xs text-[#9b9e99]" title={release.artist}>{release.artist}</span>
+          <Button
+            variant="text"
+            size="compact"
+            className="h-auto min-w-0 justify-start truncate p-0 text-xs font-bold text-[#e8e5de] hover:bg-transparent hover:text-primary hover:underline"
+            onClick={() => onOpenRelease(release)}
+            title={release.title}
+          >
+            {release.title}
+          </Button>
+          <Button
+            variant="text"
+            size="compact"
+            className="h-auto min-w-0 justify-start truncate p-0 text-xs font-medium text-[#9b9e99] hover:bg-transparent hover:text-primary hover:underline"
+            onClick={() => onOpenArtist(release)}
+            title={release.artist}
+          >
+            {release.artist}
+          </Button>
         </div>
         <p className="mt-2 truncate text-xs text-[#696d68]">
           {[release.genre ?? fallbackGenre, release.location]
@@ -165,12 +170,16 @@ export default function DiscoverView({
   currentTrackId,
   playing,
   onTogglePlayback,
+  onOpenRelease,
+  onOpenArtist,
 }: {
   onPlay: (track: Track) => void;
   onQueue: (track: Track) => void;
   currentTrackId?: string;
   playing: boolean;
   onTogglePlayback: () => void;
+  onOpenRelease: (release: DiscoverRelease) => void;
+  onOpenArtist: (release: DiscoverRelease) => void;
 }) {
   const [draftTag, setDraftTag] = useState("");
   const [filters, setFilters] = useState<DiscoverFilters>({ tag: "", sort: "top" });
@@ -354,6 +363,8 @@ export default function DiscoverView({
                 onPlay={onPlay}
                 onTogglePlayback={onTogglePlayback}
                 onQueue={onQueue}
+                onOpenRelease={onOpenRelease}
+                onOpenArtist={onOpenArtist}
               />
             ))}
           </div>

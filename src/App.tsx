@@ -56,6 +56,7 @@ import {
   useAppUpdater,
 } from "./AppUpdater";
 import { AppSidebar, type AppSidebarView } from "./AppSidebar";
+import { DiscoverReleaseDetail } from "./DiscoverReleaseDetail";
 import { Alert } from "./components/ui/alert";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
@@ -153,6 +154,7 @@ import {
   writeLocalFavorites,
 } from "./localFavorites";
 import { countLabel } from "./countLabel";
+import { discoverArtistUrl } from "./discover";
 import {
   installMediaSessionTrackHandlers,
   showAirPlayPicker,
@@ -204,6 +206,7 @@ import { resolveRadioChapterLibraryTargets } from "./radioNavigation";
 import type {
   Album,
   ConnectionInput,
+  DiscoverRelease,
   LastFmPlaybackProgress,
   LastFmStatus,
   LastFmTrackInput,
@@ -219,6 +222,11 @@ import { transitionCodaView } from "./viewTransitions";
 
 type LibraryView = AppSidebarView;
 type SyncState = "checking" | "idle" | "syncing" | "error";
+type DiscoverDetailNavigation = {
+  release: DiscoverRelease;
+  previousView: LibraryView;
+  returnToNowPlaying: boolean;
+};
 type PlaybackSession = {
   trackId: string;
   startedAt: number;
@@ -2290,6 +2298,7 @@ export default function App() {
   const [nowPlayingOpen, setNowPlayingOpen] = useState(false);
   const [playerStateReady, setPlayerStateReady] = useState(false);
   const [selectedAlbum, setSelectedAlbum] = useState<Album>();
+  const [discoverDetail, setDiscoverDetail] = useState<DiscoverDetailNavigation>();
   const [loadingAlbumId, setLoadingAlbumId] = useState<string>();
   const [artworkRefreshing, setArtworkRefreshing] = useState(false);
   const [artistAction, setArtistAction] = useState<"play" | "shuffle" | "queue">();
@@ -3759,6 +3768,27 @@ export default function App() {
   }, [queryClient]);
 
   const openTrackAlbum = useCallback((track: Track) => {
+    if (track.id.startsWith("discover:")) {
+      const release = track.discoverRelease;
+      if (
+        !release ||
+        release.id !== track.albumId ||
+        !release.id.startsWith("discover:")
+      ) {
+        notify(`Could not open ${track.album} from Discover`, "bad");
+        return;
+      }
+      void transitionCodaView(() => {
+        setDiscoverDetail({
+          release,
+          previousView: view,
+          returnToNowPlaying: nowPlayingOpen,
+        });
+        setNowPlayingOpen(false);
+        setView("discover");
+      }, "page-forward");
+      return;
+    }
     if (track.id.startsWith("radio:")) {
       const series = radioSeriesByTitle(track.album);
       setNowPlayingOpen(false);
@@ -3777,7 +3807,7 @@ export default function App() {
       return;
     }
     notify(`Could not find ${track.album} in this library`, "bad");
-  }, [albums, notify, openAlbum]);
+  }, [albums, notify, nowPlayingOpen, openAlbum, view]);
 
   const playAlbum = useCallback(async (album: Album) => {
     const sessionGeneration = bandcampSessionGenerationRef.current;
@@ -4336,6 +4366,7 @@ export default function App() {
       nextView === view &&
       !selectedAlbum &&
       !selectedArtist &&
+      !discoverDetail &&
       !nowPlayingOpen
     ) {
       return;
@@ -4344,6 +4375,7 @@ export default function App() {
       setNowPlayingOpen(false);
       setView(nextView);
       setSelectedAlbum(undefined);
+      setDiscoverDetail(undefined);
       if (nextView === "radio") {
         setRadioSeriesId(undefined);
         setRadioRequestedShowId(undefined);
@@ -4353,7 +4385,7 @@ export default function App() {
         setSelectedArtist(undefined);
       }
     }, "page-crossfade", { skipSnapshot: true });
-  }, [nowPlayingOpen, selectedAlbum, selectedArtist, view]);
+  }, [discoverDetail, nowPlayingOpen, selectedAlbum, selectedArtist, view]);
   const chooseBrowseMode = useCallback((mode: LibraryBrowseMode) => {
     setNowPlayingOpen(false);
     setBrowseMode(mode);
@@ -4367,11 +4399,28 @@ export default function App() {
     setSelectedArtistFallback(undefined);
     void transitionCodaView(() => setSelectedArtist(undefined), "page-back");
   }, []);
+  const openDiscoverArtist = useCallback((release: DiscoverRelease) => {
+    const artistUrl = discoverArtistUrl(release);
+    if (!artistUrl) {
+      notify(`Could not open ${release.artist} on Bandcamp`, "bad");
+      return;
+    }
+    openRadioItem(artistUrl);
+  }, [notify, openRadioItem]);
   const browseArtist = useCallback((
     artist: string,
     albumId?: string,
     sourceTrack?: Track,
   ) => {
+    if (sourceTrack?.id.startsWith("discover:")) {
+      const release = sourceTrack.discoverRelease;
+      if (!release || release.id !== sourceTrack.albumId) {
+        notify(`Could not open ${artist} on Bandcamp`, "bad");
+        return;
+      }
+      openDiscoverArtist(release);
+      return;
+    }
     void transitionCodaView(() => {
       setNowPlayingOpen(false);
       if (artist === "Bandcamp Radio") {
@@ -4413,7 +4462,31 @@ export default function App() {
       setGenre("All");
       setSelectedAlbum(undefined);
     }, "page-forward");
-  }, [albums, notify]);
+  }, [albums, notify, openDiscoverArtist]);
+  const openDiscoverRelease = useCallback((release: DiscoverRelease) => {
+    if (!release.id.startsWith("discover:")) {
+      notify(`Could not open ${release.title} from Discover`, "bad");
+      return;
+    }
+    void transitionCodaView(() => {
+      setDiscoverDetail({
+        release,
+        previousView: view,
+        returnToNowPlaying: false,
+      });
+      setView("discover");
+    }, "page-forward");
+  }, [notify, view]);
+  const closeDiscoverRelease = useCallback(() => {
+    if (!discoverDetail) return;
+    void transitionCodaView(() => {
+      setDiscoverDetail(undefined);
+      setView(discoverDetail.previousView);
+      if (discoverDetail.returnToNowPlaying && currentTrack) {
+        setNowPlayingOpen(true);
+      }
+    }, "page-back");
+  }, [currentTrack, discoverDetail]);
   const browseRadioSeries = useCallback((seriesId?: number) => {
     void transitionCodaView(() => {
       setRadioSeriesId(seriesId);
@@ -4704,6 +4777,18 @@ export default function App() {
                   : undefined
               }
             />
+          ) : discoverDetail ? (
+            <DiscoverReleaseDetail
+              release={discoverDetail.release}
+              currentTrackId={currentTrack?.id}
+              playing={playing}
+              onBack={closeDiscoverRelease}
+              onPlay={playTrack}
+              onQueue={queueTrack}
+              onTogglePlayback={togglePlayback}
+              onArtist={openDiscoverArtist}
+              onOpenBandcamp={openRadioItem}
+            />
           ) : view === "favorites" || view === "playlists" ? (
             <Suspense
               fallback={(
@@ -4752,6 +4837,8 @@ export default function App() {
                 currentTrackId={currentTrack?.id}
                 playing={playing}
                 onTogglePlayback={togglePlayback}
+                onOpenRelease={openDiscoverRelease}
+                onOpenArtist={openDiscoverArtist}
               />
             </Suspense>
           ) : view === "radio" ? (
@@ -5252,7 +5339,7 @@ export default function App() {
         currentTrack={currentTrack}
         radioTimeline={currentRadioTimeline}
         nowPlayingOpen={nowPlayingOpen}
-        selectedAlbumTitle={selectedAlbum?.title}
+        selectedAlbumTitle={discoverDetail?.release.title ?? selectedAlbum?.title}
         activeArtistName={activeArtist?.name}
         view={view}
       />

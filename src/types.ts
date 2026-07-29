@@ -28,6 +28,7 @@ export type Track = {
   artworkUrl?: string;
   streamUrl?: string;
   radioChapters?: RadioChapter[];
+  discoverRelease?: DiscoverRelease;
   palette: [string, string];
 };
 

@@ -77,6 +77,7 @@ const mocks = vi.hoisted(() => ({
   disconnectLastFm: vi.fn(),
   fetchAlbum: vi.fn(),
   fetchCoverUrl: vi.fn(),
+  fetchDiscover: vi.fn(),
   fetchLibrary: vi.fn(),
   fetchFavorites: vi.fn(),
   fetchRadioShow: vi.fn(),
@@ -111,6 +112,7 @@ vi.mock("./lib", async (importOriginal) => {
     disconnectLastFm: mocks.disconnectLastFm,
     fetchAlbum: mocks.fetchAlbum,
     fetchCoverUrl: mocks.fetchCoverUrl,
+    fetchDiscover: mocks.fetchDiscover,
     fetchLibrary: mocks.fetchLibrary,
     fetchFavorites: mocks.fetchFavorites,
     fetchRadioShow: mocks.fetchRadioShow,
@@ -234,6 +236,24 @@ beforeEach(() => {
   mocks.fetchCoverUrl
     .mockReset()
     .mockResolvedValue("https://t4.bcbits.com/img/restored-cover.jpg");
+  mocks.fetchDiscover.mockReset().mockResolvedValue({
+    results: [{
+      id: "discover:release-1",
+      title: "Blue Hours",
+      artist: "Signal Garden",
+      location: "Chicago, Illinois",
+      itemUrl: "https://signal-garden.bandcamp.com/album/blue-hours",
+      artworkUrl: "https://f4.bcbits.com/img/blue-hours.jpg",
+      featuredTrack: {
+        id: "discover:preview-1",
+        title: "Glass Lines",
+        duration: 201,
+        streamUrl: "https://t4.bcbits.com/stream/blue-hours",
+      },
+    }],
+    resultCount: 1,
+    hasMore: false,
+  });
   mocks.fetchLibrary.mockReset();
   mocks.fetchFavorites.mockReset().mockResolvedValue({
     albumIds: [],
@@ -3032,6 +3052,109 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(await screen.findByRole("article", {
       name: "Soft Focus release details",
     })).toBeInTheDocument();
+  });
+
+  it("opens Discover album metadata as an internal release and returns to Now Playing", async () => {
+    renderApp();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Discover" }));
+    await screen.findByText("Blue Hours");
+    fireEvent.click(screen.getByRole("button", { name: "Preview Glass Lines" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open Now Playing" }));
+
+    const nowPlaying = screen.getByRole("article", { name: "Glass Lines" });
+    mocks.fetchAlbum.mockClear();
+    fireEvent.click(within(nowPlaying).getByRole("button", { name: "Blue Hours" }));
+
+    const releaseDetail = await screen.findByRole("article", {
+      name: "Blue Hours Discover release details",
+    });
+    expect(within(releaseDetail).getByRole("button", { name: "Signal Garden" }))
+      .toBeInTheDocument();
+    expect(mocks.fetchAlbum).not.toHaveBeenCalled();
+
+    fireEvent.click(within(releaseDetail).getByRole("button", { name: "Back" }));
+    const restoredNowPlaying = screen.getByRole("article", { name: "Glass Lines" });
+    expect(restoredNowPlaying).toBeInTheDocument();
+    expect(mocks.fetchAlbum).not.toHaveBeenCalled();
+
+    fireEvent.click(within(restoredNowPlaying).getByRole("button", { name: "Back" }));
+    expect(screen.getByRole("heading", { name: "Discover" })).toBeInTheDocument();
+    expect(within(screen.getByRole("main")).getByRole("button", {
+      name: "Blue Hours",
+    })).toBeInTheDocument();
+  });
+
+  it("opens a Discover artist on Bandcamp without entering a same-name library artist", async () => {
+    const sameNameLibraryAlbum: Album = {
+      ...album,
+      id: "saved-signal-garden",
+      title: "Saved Signals",
+      artist: "Signal Garden",
+      tracks: tracks.map((track) => ({
+        ...track,
+        albumId: "saved-signal-garden",
+        album: "Saved Signals",
+        artist: "Signal Garden",
+      })),
+    };
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([sameNameLibraryAlbum]);
+    renderApp();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Discover" }));
+    await screen.findByText("Blue Hours");
+    fireEvent.click(screen.getByRole("button", { name: "Preview Glass Lines" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open Now Playing" }));
+
+    const nowPlaying = screen.getByRole("article", { name: "Glass Lines" });
+    mocks.fetchAlbum.mockClear();
+    fireEvent.click(within(nowPlaying).getByRole("button", { name: "Signal Garden" }));
+
+    await waitFor(() =>
+      expect(mocks.openBandcampUrl).toHaveBeenCalledWith(
+        "https://signal-garden.bandcamp.com/",
+      ),
+    );
+    expect(screen.getByRole("article", { name: "Glass Lines" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Signal Garden" }))
+      .not.toBeInTheDocument();
+    expect(mocks.fetchAlbum).not.toHaveBeenCalled();
+  });
+
+  it("keeps Now Playing intact when a Discover release destination is invalid", async () => {
+    mocks.fetchDiscover.mockResolvedValue({
+      results: [{
+        id: "release-without-discover-provenance",
+        title: "Blue Hours",
+        artist: "Signal Garden",
+        itemUrl: "https://signal-garden.bandcamp.com/album/blue-hours",
+        featuredTrack: {
+          id: "discover:preview-1",
+          title: "Glass Lines",
+          duration: 201,
+          streamUrl: "https://t4.bcbits.com/stream/blue-hours",
+        },
+      }],
+      resultCount: 1,
+      hasMore: false,
+    });
+    renderApp();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Discover" }));
+    await screen.findByText("Blue Hours");
+    fireEvent.click(screen.getByRole("button", { name: "Preview Glass Lines" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open Now Playing" }));
+
+    const nowPlaying = screen.getByRole("article", { name: "Glass Lines" });
+    mocks.fetchAlbum.mockClear();
+    fireEvent.click(within(nowPlaying).getByRole("button", { name: "Blue Hours" }));
+
+    expect(screen.getByRole("article", { name: "Glass Lines" })).toBeInTheDocument();
+    expect((await screen.findAllByText(
+      "Could not open Blue Hours from Discover",
+    )).length).toBeGreaterThan(0);
+    expect(mocks.fetchAlbum).not.toHaveBeenCalled();
   });
 
   it("drives the shared player state from the Now Playing controls", async () => {
