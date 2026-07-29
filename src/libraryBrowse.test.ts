@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { groupAlbumsByArtist, matchesBrowseMode } from "./libraryBrowse";
-import type { Album } from "./types";
+import {
+  groupAlbumsByArtist,
+  matchesBrowseMode,
+  tracksForArtistGroupAlbum,
+} from "./libraryBrowse";
+import type { Album, Track } from "./types";
 
 const album = (
   id: string,
@@ -48,5 +52,37 @@ describe("library browsing", () => {
         album("a", "Alpha", 1),
       ]).map((group) => group.name),
     ).toEqual(["Alpha", "Zulu"]);
+  });
+
+  it("filters only the selected compilation while preserving an artist's own releases", () => {
+    const ownTrack = {
+      id: "own",
+      title: "Own track",
+      artist: "Night Archive",
+      album: "Own release",
+      albumId: "own-release",
+      duration: 180,
+      track: 1,
+      palette: ["#777", "#222"],
+    } satisfies Track;
+    const compilationTracks = [
+      { ...ownTrack, id: "appearance", albumId: "compilation" },
+      {
+        ...ownTrack,
+        id: "other",
+        artist: "Other Artist",
+        albumId: "compilation",
+      },
+    ];
+    const scope = {
+      trackFilterAlbumId: "compilation",
+      trackFilterArtistKey: "night archive",
+    };
+
+    expect(tracksForArtistGroupAlbum(scope, "own-release", [ownTrack]))
+      .toEqual([ownTrack]);
+    expect(
+      tracksForArtistGroupAlbum(scope, "compilation", compilationTracks),
+    ).toEqual([compilationTracks[0]]);
   });
 });

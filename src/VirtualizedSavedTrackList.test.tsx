@@ -71,16 +71,17 @@ function List({
   threshold?: number;
 }) {
   return (
-    <div className="library-pane" data-testid="saved-scroll">
+    <div data-coda-library-scroll data-testid="saved-scroll">
       <div style={{ height: LIST_TOP }} />
-      <VirtualizedSavedTrackList
-        aria-label="Saved tracks"
-        className="saved-tracklist"
-        getItemKey={(item) => item.id}
-        items={items}
-        renderItem={(item, _context, rowProps) => row(item, rowProps)}
-        virtualizationThreshold={threshold}
-      />
+      <div data-testid="saved-list-parent">
+        <VirtualizedSavedTrackList
+          aria-label="Saved tracks"
+          getItemKey={(item) => item.id}
+          items={items}
+          renderItem={(item, _context, rowProps) => row(item, rowProps)}
+          virtualizationThreshold={threshold}
+        />
+      </div>
     </div>
   );
 }
@@ -139,6 +140,22 @@ describe("VirtualizedSavedTrackList", () => {
       expect(rows.length).toBeLessThan(30);
     });
     expect(list).toHaveAttribute("data-virtualized", "true");
+    expect(list).toHaveStyle({ height: "1400000px" });
+    const initialRows = within(list).getAllByRole("listitem");
+    const adjacentRows = [...initialRows]
+      .sort(
+        (left, right) =>
+          Number(left.dataset.index) - Number(right.dataset.index),
+      )
+      .slice(0, 2);
+    const rowOffset = (element: HTMLElement) => {
+      const match = element.style.transform.match(/translateY\((-?\d+)px\)/);
+      return Number(match?.[1]);
+    };
+    expect(adjacentRows).toHaveLength(2);
+    expect(adjacentRows[0]).toHaveStyle({ height: "56px" });
+    expect(adjacentRows[1]).toHaveStyle({ height: "56px" });
+    expect(rowOffset(adjacentRows[1]) - rowOffset(adjacentRows[0])).toBe(56);
     expect(screen.queryByText("Saved track 24999")).not.toBeInTheDocument();
 
     scroll.scrollTop = items.length * SAVED_TRACK_ROW_HEIGHT + LIST_TOP;
@@ -146,6 +163,21 @@ describe("VirtualizedSavedTrackList", () => {
 
     expect(await screen.findByText("Saved track 24999")).toBeInTheDocument();
     expect(within(list).getAllByRole("listitem").length).toBeLessThan(30);
+  });
+
+  it("binds the data-marked ancestor instead of the immediate parent", async () => {
+    const items = Array.from({ length: 1_000 }, (_, index) => track(index));
+    render(<List items={items} />);
+
+    const scroll = screen.getByTestId("saved-scroll");
+    expect(screen.getByTestId("saved-list-parent")).not.toHaveAttribute(
+      "data-coda-library-scroll",
+    );
+
+    scroll.scrollTop = items.length * SAVED_TRACK_ROW_HEIGHT + LIST_TOP;
+    fireEvent.scroll(scroll);
+
+    expect(await screen.findByText("Saved track 999")).toBeInTheDocument();
   });
 
   it("pins a focused track while the shared scroller moves far away", async () => {

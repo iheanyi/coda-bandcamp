@@ -1,5 +1,7 @@
 import { ExternalLink } from "lucide-react";
 import { memo } from "react";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import type { RadioChapter } from "./types";
 
 export type RadioChapterLocalLinks = {
@@ -11,16 +13,26 @@ export type RadioChapterLocalLinks = {
 export const RadioChapterArtwork = memo(function RadioChapterArtwork({
   chapter,
   index,
+  active = false,
 }: {
   chapter: RadioChapter;
   index: number;
+  active?: boolean;
 }) {
   const number = String(index + 1).padStart(2, "0");
   return (
-    <span className="radio-chapter-artwork" aria-hidden="true">
+    <span
+      className={cn(
+        "relative grid size-10 shrink-0 place-items-center justify-self-center overflow-hidden rounded-md border border-white/7 bg-[#232628] text-xs text-[#858984] tabular-nums",
+        active &&
+          "border-primary/42 shadow-[0_0_0_1px_rgba(221,101,73,0.08)]",
+      )}
+      aria-hidden="true"
+    >
       <span>{number}</span>
       {chapter.artworkUrl ? (
         <img
+          className="absolute inset-0 size-full object-cover"
           src={chapter.artworkUrl}
           alt=""
           loading="lazy"
@@ -54,12 +66,12 @@ export const RadioChapterCopy = memo(function RadioChapterCopy({
     (chapter.albumUrl ? () => onOpen(chapter.albumUrl!) : undefined);
 
   return (
-    <div className={className}>
+    <div className={cn("flex min-w-0 flex-col gap-1", className)}>
       {openTrack ? (
-        <button
-          className={`metadata-link radio-chapter-title-link ${
-            localLinks?.track ? "is-local" : "is-external"
-          }`}
+        <Button
+          variant="text"
+          size="compact"
+          className="h-auto w-fit max-w-full justify-start gap-1.5 overflow-hidden p-0 text-left text-xs/tight font-semibold text-[#deddd7] hover:bg-transparent hover:text-[#ee927b]"
           onClick={openTrack}
           aria-label={
             localLinks?.track
@@ -72,19 +84,26 @@ export const RadioChapterCopy = memo(function RadioChapterCopy({
               : "Not in your library — open track on Bandcamp"
           }
         >
-          {chapter.title}
-          {!localLinks?.track ? <ExternalLink size={13} aria-hidden="true" /> : null}
-        </button>
+          <span className="truncate">{chapter.title}</span>
+          {!localLinks?.track ? (
+            <ExternalLink className="size-3 shrink-0 text-[#777b76]" aria-hidden="true" />
+          ) : null}
+        </Button>
       ) : (
-        <strong>{chapter.title}</strong>
+        <strong className="w-fit max-w-full truncate text-xs/tight font-semibold text-[#d8d7d1]">
+          {chapter.title}
+        </strong>
       )}
-      <span className="radio-chapter-byline">
-        <span>by</span>
+      <span className="flex min-w-0 items-baseline gap-1 overflow-hidden text-xs text-[#7d817c]">
+        <span className="shrink-0">by</span>
         {openArtist ? (
-          <button
-            className={`metadata-link radio-chapter-metadata-link ${
-              localLinks?.artist ? "is-local" : "is-external"
-            }`}
+          <Button
+            variant="text"
+            size="compact"
+            className={cn(
+              "h-auto max-w-2/5 shrink-0 truncate p-0 text-xs font-semibold text-[#999c96] hover:bg-transparent hover:text-[#e58b74]",
+              localLinks?.artist && "hover:text-[#dadbd5]",
+            )}
             onClick={openArtist}
             aria-label={
               localLinks?.artist
@@ -98,19 +117,25 @@ export const RadioChapterCopy = memo(function RadioChapterCopy({
             }
           >
             {chapter.artist}
-          </button>
+            {!localLinks?.artist ? (
+              <span className="ml-0.5 text-[#686d68]" aria-hidden="true">↗</span>
+            ) : null}
+          </Button>
         ) : (
-          <span>{chapter.artist}</span>
+          <span className="max-w-2/5 shrink-0 truncate">{chapter.artist}</span>
         )}
         {chapter.album ? (
           <>
-            <span aria-hidden="true">·</span>
-            <span>from</span>
+            <span className="shrink-0" aria-hidden="true">·</span>
+            <span className="shrink-0">from</span>
             {openAlbum ? (
-              <button
-                className={`metadata-link radio-chapter-metadata-link ${
-                  localLinks?.album ? "is-local" : "is-external"
-                }`}
+              <Button
+                variant="text"
+                size="compact"
+                className={cn(
+                  "h-auto max-w-2/5 shrink-0 truncate p-0 text-xs font-semibold text-[#999c96] hover:bg-transparent hover:text-[#e58b74]",
+                  localLinks?.album && "hover:text-[#dadbd5]",
+                )}
                 onClick={openAlbum}
                 aria-label={
                   localLinks?.album
@@ -124,9 +149,12 @@ export const RadioChapterCopy = memo(function RadioChapterCopy({
                 }
               >
                 {chapter.album}
-              </button>
+                {!localLinks?.album ? (
+                  <span className="ml-0.5 text-[#686d68]" aria-hidden="true">↗</span>
+                ) : null}
+              </Button>
             ) : (
-              <span>{chapter.album}</span>
+              <span className="max-w-2/5 shrink-0 truncate">{chapter.album}</span>
             )}
           </>
         ) : null}

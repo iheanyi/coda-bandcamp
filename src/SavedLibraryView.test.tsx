@@ -1,5 +1,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   LocalFavoriteCollection,
@@ -110,6 +119,28 @@ function deferred<Value>() {
   return { promise, reject, resolve };
 }
 
+function AddDialogHarness({
+  onNotify = vi.fn(),
+}: {
+  onNotify?: (message: string, tone?: "good" | "bad") => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        Add selected to playlist
+      </button>
+      {open ? (
+        <AddToPlaylistDialog
+          tracks={[track]}
+          onClose={() => setOpen(false)}
+          onNotify={onNotify}
+        />
+      ) : null}
+    </>
+  );
+}
+
 const commonProps = {
   connected: true,
   favorites,
@@ -146,27 +177,80 @@ beforeEach(() => {
 });
 
 describe("saved Bandcamp library views", () => {
+  it("opens a cold playlist directly into its live loading state", async () => {
+    const playlistRequest = deferred<PlaylistDetail>();
+    mocks.fetchPlaylist.mockReturnValueOnce(playlistRequest.promise);
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      document,
+      "startViewTransition",
+    );
+    const startViewTransition = vi.fn();
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: startViewTransition,
+    });
+
+    try {
+      withQueryClient(<SavedLibraryView mode="playlists" {...commonProps} />);
+
+      const playlistButton = await screen.findByRole("button", {
+        name: /Night drive/,
+      });
+      fireEvent.click(playlistButton);
+
+      expect(startViewTransition).not.toHaveBeenCalled();
+      expect(screen.getByText("Loading playlist")).toBeVisible();
+    } finally {
+      await act(async () => {
+        playlistRequest.resolve(detail);
+        await Promise.resolve();
+      });
+      if (originalDescriptor) {
+        Object.defineProperty(
+          document,
+          "startViewTransition",
+          originalDescriptor,
+        );
+      } else {
+        Reflect.deleteProperty(document, "startViewTransition");
+      }
+    }
+  });
+
   it("opens a synced playlist and exposes playback and editing actions", async () => {
     withQueryClient(<SavedLibraryView mode="playlists" {...commonProps} />);
 
-    const createCopy = (await screen.findByText("Create a playlist")).parentElement;
-    expect(createCopy).toHaveClass("playlist-create__copy");
-    expect(within(createCopy!).getByText("New playlist")).toBeInTheDocument();
+    expect(await screen.findByText("Create a playlist")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Playlists" }))
+      .toHaveClass("font-display");
+    expect(screen.getByText("New playlist")).toBeInTheDocument();
     expect(
-      within(createCopy!).getByText("Playlists sync with your Bandcamp collection."),
+      screen.getByText("Playlists sync with your Bandcamp collection."),
     ).toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: /Night drive/ }));
-    expect(await screen.findByRole("heading", { name: "Night drive" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Night drive" }))
+      .toHaveClass("font-display");
     fireEvent.click(screen.getByRole("button", { name: "Play" }));
     expect(commonProps.onPlayTracks).toHaveBeenCalledWith([track]);
     const playlistTracks = screen.getByLabelText("Night drive tracks");
+    expect(within(playlistTracks).getByRole("listitem")).toHaveClass(
+      "h-14",
+      "grid-cols-[2rem_minmax(0,1fr)_3rem_repeat(2,2rem)]",
+      "lg:grid-cols-[2rem_minmax(0,1fr)_4rem_repeat(2,2rem)]",
+    );
+    expect(within(playlistTracks).getByRole("listitem")).not.toHaveClass(
+      "min-h-14",
+    );
     fireEvent.click(within(playlistTracks).getByRole("button", { name: "Sweeps" }));
-    expect(commonProps.onOpenArtist).toHaveBeenCalledWith("Sweeps");
-    const playlistAlbumLink = within(playlistTracks)
-      .getAllByRole("button", { name: "Mirage" })
-      .find((button) => button.classList.contains("metadata-link"));
-    fireEvent.click(playlistAlbumLink!);
+    expect(commonProps.onOpenArtist).toHaveBeenCalledWith(
+      "Sweeps",
+      "album-1",
+      track,
+    );
+    fireEvent.click(within(playlistTracks).getByRole("button", {
+      name: "Open Mirage album",
+    }));
     expect(commonProps.onOpenTrackAlbum).toHaveBeenCalledWith(track);
 
     fireEvent.click(screen.getByRole("button", { name: "Rename Night drive" }));
@@ -218,6 +302,73 @@ describe("saved Bandcamp library views", () => {
 
     resolveCreate(detail);
     await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it("focuses the add form and restores its opener after idle dismissal", async () => {
+    const user = userEvent.setup();
+    withQueryClient(<AddDialogHarness />);
+
+    const trigger = screen.getByRole("button", {
+      name: "Add selected to playlist",
+    });
+    await user.click(trigger);
+    await waitFor(() =>
+      expect(screen.getByLabelText("New playlist name")).toHaveFocus(),
+    );
+    expect(screen.getByRole("heading", { name: "Add to playlist" }))
+      .toHaveClass("font-display");
+
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Add to playlist" }))
+        .not.toBeInTheDocument(),
+    );
+    expect(trigger).toHaveFocus();
+
+    await user.click(trigger);
+    const backdrop = document.querySelector<HTMLElement>(
+      "[data-slot=dialog-overlay]",
+    );
+    expect(backdrop).not.toBeNull();
+    await user.click(backdrop!);
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Add to playlist" }))
+        .not.toBeInTheDocument(),
+    );
+    expect(trigger).toHaveFocus();
+  });
+
+  it("rejects Escape and backdrop dismissal while an add mutation is pending", async () => {
+    const user = userEvent.setup();
+    const pendingCreate = deferred<PlaylistDetail>();
+    mocks.createPlaylist.mockReturnValue(pendingCreate.promise);
+    withQueryClient(<AddDialogHarness />);
+
+    await user.click(screen.getByRole("button", {
+      name: "Add selected to playlist",
+    }));
+    await user.type(screen.getByLabelText("New playlist name"), "Fresh finds");
+    await user.click(screen.getByRole("button", { name: "Create" }));
+    expect(await screen.findByRole("button", { name: "Creating…" }))
+      .toBeDisabled();
+
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "Add to playlist" }))
+      .toBeVisible();
+    const backdrop = document.querySelector<HTMLElement>(
+      "[data-slot=dialog-overlay]",
+    );
+    expect(backdrop).not.toBeNull();
+    await user.click(backdrop!);
+    expect(screen.getByRole("dialog", { name: "Add to playlist" }))
+      .toBeVisible();
+    expect(mocks.createPlaylist).toHaveBeenCalledTimes(1);
+
+    pendingCreate.resolve(detail);
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Add to playlist" }))
+        .not.toBeInTheDocument(),
+    );
   });
 
   it("shows a newly created playlist immediately and removes it on failure", async () => {
@@ -289,28 +440,99 @@ describe("saved Bandcamp library views", () => {
     expect(commonProps.onNotify).toHaveBeenCalledWith("Remove failed", "bad");
   });
 
-  it("optimistically removes a deleted playlist summary and restores it on failure", async () => {
+  it("keeps a committed optimistic removal when playlist revalidation fails", async () => {
+    const twoTrackDetail: PlaylistDetail = {
+      ...detail,
+      duration: track.duration + secondTrack.duration,
+      songCount: 2,
+      tracks: [track, secondTrack],
+    };
+    mocks.fetchPlaylist
+      .mockResolvedValueOnce(twoTrackDetail)
+      .mockRejectedValueOnce(new Error("Refresh failed"));
+    mocks.updatePlaylist.mockResolvedValueOnce(undefined);
+    withQueryClient(<SavedLibraryView mode="playlists" {...commonProps} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Night drive/ }));
+    fireEvent.click(await screen.findByRole("button", {
+      name: "Remove Lanterns from Night drive",
+    }));
+
+    await waitFor(() =>
+      expect(screen.queryByText("Lanterns")).not.toBeInTheDocument()
+    );
+    await waitFor(() => expect(mocks.fetchPlaylist).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("Lanterns")).not.toBeInTheDocument();
+    expect(commonProps.onNotify).not.toHaveBeenCalledWith(
+      "Refresh failed",
+      "bad",
+    );
+  });
+
+  it("keeps deletion confirmation open while pending and retryable after failure", async () => {
+    const user = userEvent.setup();
     const pendingDelete = deferred<void>();
     mocks.deletePlaylist.mockReturnValue(pendingDelete.promise);
     const { queryClient } = withQueryClient(
       <SavedLibraryView mode="playlists" {...commonProps} />,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: /Night drive/ }));
-    fireEvent.click(await screen.findByRole("button", { name: "Delete playlist" }));
-    fireEvent.click(screen.getByRole("button", { name: "Delete playlist" }));
+    await user.click(await screen.findByRole("button", { name: /Night drive/ }));
+    const deleteTrigger = await screen.findByRole("button", {
+      name: "Delete playlist",
+    });
+    await user.click(deleteTrigger);
+    const deleteDialog = screen.getByRole("alertdialog", {
+      name: "Delete Night drive?",
+    });
+    expect(deleteDialog).toBeVisible();
+
+    await user.keyboard("{Escape}");
+    expect(deleteDialog).toBeVisible();
+    expect(mocks.deletePlaylist).not.toHaveBeenCalled();
+
+    const backdrop = document.querySelector<HTMLElement>(
+      "[data-slot=alert-dialog-overlay]",
+    );
+    expect(backdrop).not.toBeNull();
+    await user.click(backdrop!);
+    expect(deleteDialog).toBeVisible();
+    expect(mocks.deletePlaylist).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Keep playlist" }));
+    expect(mocks.deletePlaylist).not.toHaveBeenCalled();
+    await waitFor(() => expect(deleteTrigger).toHaveFocus());
+
+    await user.click(deleteTrigger);
+    await user.click(screen.getByRole("button", {
+      name: "Delete playlist from Bandcamp",
+    }));
+    expect(mocks.deletePlaylist).toHaveBeenCalledTimes(1);
+    expect(mocks.deletePlaylist.mock.calls[0]?.[0]).toBe("playlist-1");
 
     await waitFor(() =>
       expect(queryClient.getQueryData<PlaylistSummary[]>(["bandcamp", "playlists"]))
         .toEqual([]),
     );
+    expect(screen.getByRole("alertdialog", {
+      name: "Delete Night drive?",
+    })).toBeVisible();
+    expect(screen.getByRole("button", {
+      name: "Delete playlist from Bandcamp",
+    })).toBeDisabled();
+    expect(screen.getByText("Deleting…")).toBeInTheDocument();
     pendingDelete.reject(new Error("Delete failed"));
 
     await waitFor(() =>
       expect(queryClient.getQueryData<PlaylistSummary[]>(["bandcamp", "playlists"]))
         .toEqual([summary]),
     );
-    expect(screen.getByRole("heading", { name: "Night drive" })).toBeInTheDocument();
+    expect(screen.getByRole("alertdialog", {
+      name: "Delete Night drive?",
+    })).toBeVisible();
+    expect(screen.getByRole("button", {
+      name: "Delete playlist from Bandcamp",
+    })).toBeEnabled();
     expect(commonProps.onNotify).toHaveBeenCalledWith("Delete failed", "bad");
   });
 
@@ -338,18 +560,95 @@ describe("saved Bandcamp library views", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it("closes Add to playlist with optimistic counts after a committed empty response", async () => {
+    mocks.updatePlaylist.mockResolvedValueOnce(undefined);
+    const onClose = vi.fn();
+    const onNotify = vi.fn();
+    const { queryClient } = withQueryClient(
+      <AddToPlaylistDialog
+        tracks={[secondTrack]}
+        onClose={onClose}
+        onNotify={onNotify}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /Night drive/ }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(
+      queryClient.getQueryData<PlaylistSummary[]>(["bandcamp", "playlists"]),
+    ).toEqual([{
+      ...summary,
+      duration: summary.duration + secondTrack.duration,
+      songCount: 2,
+    }]);
+    expect(onNotify).toHaveBeenCalledWith(
+      "1 track added to Night drive",
+      "good",
+    );
+  });
+
   it("renders favorites and removes a starred track through the supplied action", () => {
     withQueryClient(<SavedLibraryView mode="favorites" {...commonProps} />);
 
+    expect(screen.getByRole("heading", { name: "Favorites" }))
+      .toHaveClass("font-display");
+    expect(screen.getByRole("heading", { name: "Tracks" }))
+      .toHaveClass("font-display");
+    expect(screen.getByRole("heading", { name: "Radio shows" }))
+      .toHaveClass("font-display");
+    expect(screen.getByRole("heading", { name: "Releases" }))
+      .toHaveClass("font-display");
     const favoriteTracks = screen.getByLabelText("Favorite tracks");
+    expect(favoriteTracks).toHaveClass(
+      "border-y",
+      "border-white/7",
+    );
+    expect(favoriteTracks).not.toHaveClass(
+      "rounded-lg",
+      "bg-coda-field",
+    );
+    expect(screen.getByText("1 track")).toHaveClass(
+      "h-4",
+      "tabular-nums",
+    );
+    const favoriteTrackRow = within(favoriteTracks).getByRole("listitem");
+    expect(favoriteTrackRow).toHaveClass(
+      "h-14",
+      "overflow-hidden",
+      "grid-cols-[2rem_2.5rem_minmax(0,1fr)_3rem_repeat(3,2rem)]",
+      "lg:grid-cols-[2rem_2.5rem_minmax(0,1fr)_4rem_repeat(3,2rem)]",
+    );
+    expect(favoriteTrackRow).not.toHaveClass(
+      "min-h-14",
+    );
+    const favoriteArtist = within(favoriteTracks).getByRole("button", {
+      name: "Sweeps",
+    });
+    expect(favoriteArtist).toHaveClass(
+      "h-auto",
+      "min-w-0",
+      "rounded-none",
+    );
+    expect(favoriteArtist).not.toHaveClass("h-10");
+    expect(within(favoriteTracks).getByText("3:08")).toHaveClass(
+      "justify-self-end",
+      "tabular-nums",
+    );
+    expect(within(favoriteTracks).getByRole("button", {
+      name: "Add Mirage to queue",
+    })).toHaveClass("size-8", "p-0");
     fireEvent.click(within(favoriteTracks).getByRole("button", { name: "Remove Mirage from favorites" }));
     expect(commonProps.onToggleFavorite).toHaveBeenCalledWith("song-1", "song", false);
     fireEvent.click(within(favoriteTracks).getByRole("button", { name: "Sweeps" }));
-    expect(commonProps.onOpenArtist).toHaveBeenCalledWith("Sweeps");
-    const favoriteAlbumLink = within(favoriteTracks)
-      .getAllByRole("button", { name: "Mirage" })
-      .find((button) => button.classList.contains("metadata-link"));
-    fireEvent.click(favoriteAlbumLink!);
+    expect(commonProps.onOpenArtist).toHaveBeenCalledWith(
+      "Sweeps",
+      "album-1",
+      track,
+    );
+    fireEvent.click(within(favoriteTracks).getByRole("button", {
+      name: "Open Mirage album",
+    }));
     expect(commonProps.onOpenTrackAlbum).toHaveBeenCalledWith(track);
     fireEvent.click(screen.getByRole("button", {
       name: "Browse The Hip Hop Show",
@@ -361,7 +660,23 @@ describe("saved Bandcamp library views", () => {
     expect(commonProps.onOpenRadioShow).toHaveBeenCalledWith(
       favorites.radioShows[0],
     );
-    expect(screen.getByText("Local")).toBeInTheDocument();
+    const radioArtwork = screen.getByRole("button", {
+      name: "Open The Hip Hop Show episode",
+    });
+    expect(radioArtwork).toHaveClass("lg:size-12");
+    expect(radioArtwork.closest("article")).toHaveClass(
+      "lg:grid-cols-[3rem_minmax(0,1fr)_auto]",
+    );
+    expect(screen.getByRole("button", {
+      name: "Add The Hip Hop Show to queue",
+    })).toHaveClass("size-8", "p-0");
+    const albumArtwork = screen.getByRole("button", { name: "Open Mirage" });
+    expect(albumArtwork).toHaveClass("size-12");
+    expect(albumArtwork.parentElement).toHaveClass(
+      "grid-cols-[3rem_minmax(0,1fr)]",
+    );
+    expect(screen.getByText("On this device")).toBeInTheDocument();
+    expect(screen.queryByText("Local")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", {
       name: "Remove The Hip Hop Show from favorites",
     }));
@@ -369,6 +684,94 @@ describe("saved Bandcamp library views", () => {
       favorites.radioShows[0],
       false,
     );
+  });
+
+  it("marks favorite release artwork and title busy while that album opens", () => {
+    withQueryClient(
+      <SavedLibraryView
+        mode="favorites"
+        {...commonProps}
+        loadingAlbumId="album-1"
+      />,
+    );
+
+    const releases = screen.getByRole("heading", { name: "Releases" })
+      .closest("section");
+    if (!releases) throw new Error("Expected a releases section");
+    const artworkButton = within(releases).getByRole("button", {
+      name: "Open Mirage",
+    });
+    const titleButton = within(releases).getByRole("button", {
+      name: "Mirage",
+    });
+
+    expect(artworkButton).toBeDisabled();
+    expect(artworkButton).toHaveAttribute("aria-busy", "true");
+    expect(within(artworkButton).getByRole("status", {
+      name: "Loading Mirage artwork",
+    })).toBeVisible();
+    expect(titleButton).toBeDisabled();
+    expect(titleButton).toHaveAttribute("aria-busy", "true");
+    expect(within(titleButton).getByRole("status", {
+      name: "Loading Mirage release",
+    })).toBeVisible();
+  });
+
+  it("marks a favorite track album link busy while that album opens", () => {
+    withQueryClient(
+      <SavedLibraryView
+        mode="favorites"
+        {...commonProps}
+        loadingAlbumId="album-1"
+      />,
+    );
+
+    const favoriteTracks = screen.getByLabelText("Favorite tracks");
+    const albumButton = within(favoriteTracks).getByRole("button", {
+      name: "Open Mirage album",
+    });
+
+    expect(albumButton).toBeDisabled();
+    expect(albumButton).toHaveAttribute("aria-busy", "true");
+    expect(within(albumButton).getByRole("status", {
+      name: "Loading Mirage album",
+    })).toBeVisible();
+  });
+
+  it("marks a playlist track album link busy while that album opens", async () => {
+    withQueryClient(
+      <SavedLibraryView
+        mode="playlists"
+        {...commonProps}
+        loadingAlbumId="album-1"
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /Night drive/ }));
+    const playlistTracks = await screen.findByLabelText("Night drive tracks");
+    const albumButton = within(playlistTracks).getByRole("button", {
+      name: "Open Mirage album",
+    });
+
+    expect(albumButton).toBeDisabled();
+    expect(albumButton).toHaveAttribute("aria-busy", "true");
+    expect(within(albumButton).getByRole("status", {
+      name: "Loading Mirage album",
+    })).toBeVisible();
+  });
+
+  it("uses the display token for saved empty-state headings", () => {
+    withQueryClient(
+      <SavedLibraryView
+        mode="playlists"
+        {...commonProps}
+        connected={false}
+      />,
+    );
+
+    expect(screen.getByRole("heading", {
+      name: "Connect Bandcamp to see playlists",
+    })).toHaveClass("font-display");
   });
 
   it("matches playlist and track play controls to the current player state", async () => {
@@ -416,7 +819,7 @@ describe("saved Bandcamp library views", () => {
     }
     globalThis.ResizeObserver = ResizeObserverMock;
     HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
-      const scrollElement = this.classList.contains("library-pane");
+      const scrollElement = this.hasAttribute("data-coda-library-scroll");
       const top = scrollElement ? 0 : 90;
       const height = scrollElement ? 240 : 0;
       return {
@@ -449,7 +852,7 @@ describe("saved Bandcamp library views", () => {
       };
       const onTogglePlayback = vi.fn();
       withQueryClient(
-        <div className="library-pane">
+        <div data-coda-library-scroll>
           <SavedLibraryView
             mode="favorites"
             {...commonProps}

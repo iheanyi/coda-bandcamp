@@ -61,11 +61,12 @@ describe("RadioChapterCopy navigation", () => {
     const trackLink = screen.getByRole("button", {
       name: "Open Mirage by Sweeps on Bandcamp",
     });
-    expect(trackLink).toHaveClass("is-external");
     expect(trackLink).toHaveAttribute(
       "title",
       "Not in your library — open track on Bandcamp",
     );
+    expect(trackLink).toHaveTextContent("Mirage");
+    expect(trackLink.querySelector("svg")).toBeInTheDocument();
 
     fireEvent.click(trackLink);
     expect(onOpen).toHaveBeenCalledWith(

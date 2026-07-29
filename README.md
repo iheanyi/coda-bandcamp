@@ -9,7 +9,7 @@ Coda adds the listening experience Bandcamp's website is missing: a persistent
 queue, session restore, library navigation, playlists, favorites, Radio,
 Discover, and Last.fm scrobbling in a focused native app.
 
-![Coda browsing a Bandcamp collection, artists, Now Playing, and Bandcamp Radio](docs/assets/coda-demo.gif)
+![Coda opening a Collection album, controlling playback and volume, showing and hiding the queue, opening Now Playing, browsing Favorites, and opening a Discover release](docs/assets/coda-demo.gif)
 
 > [!IMPORTANT]
 > Coda is pre-release software. There are no packaged releases yet, so it must
@@ -31,7 +31,7 @@ Discover, and Last.fm scrobbling in a focused native app.
 
 ### Prerequisites
 
-- [Node.js 22 or later](https://nodejs.org/)
+- [Node.js `^20.19.0` or `>=22.12.0`](https://nodejs.org/)
 - [Rust stable](https://rustup.rs/)
 - The [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for
   your operating system
@@ -45,28 +45,6 @@ npm run dev
 
 `npm run dev` opens the desktop app with frontend hot reload and automatic Rust
 rebuilds.
-
-When developing in multiple worktrees, install
-[Grove](https://github.com/iheanyi/grove) and run this from each worktree:
-
-```sh
-grove start
-```
-
-Grove assigns each worktree a stable port, while Coda gives the native process,
-window titles, app data, and saved window state a matching development identity.
-Bandcamp and Last.fm credentials remain shared through the operating system
-vault. Use `grove ls`, `grove logs`, `grove restart`, and `grove stop` to manage
-the instances.
-
-To override the derived native name for a one-off launch:
-
-```sh
-CODA_DEV_INSTANCE=chrome-review grove start
-```
-
-The normal `npm run dev` command remains available for a single development
-instance.
 
 To create a native installer for the current platform:
 

@@ -28,7 +28,6 @@
         "minimizable": true,
         "maximizable": true,
         "resizable": true,
-        "center": true,
         "visible": true,
         "backgroundColor": "#111315",
         "devtools": false

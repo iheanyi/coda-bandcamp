@@ -2736,11 +2736,13 @@ fn bounded_track_from_value(value: &Value, fallback_album_id: &str) -> Option<Tr
 fn playlist_detail_from_value(value: &Value) -> Result<PlaylistDetail, String> {
     let summary = playlist_summary_from_value(value)
         .ok_or_else(|| "Bandcamp returned invalid playlist metadata.".to_string())?;
-    let entries = value
-        .get("entry")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
+    let entries = match value.get("entry") {
+        None | Some(Value::Null) => &[][..],
+        Some(Value::Array(entries)) => entries.as_slice(),
+        Some(_) => {
+            return Err("Bandcamp returned invalid playlist track data.".to_string());
+        }
+    };
     if entries.len() > MAX_PLAYLIST_TRACKS {
         return Err(format!(
             "Bandcamp returned a playlist with more than {MAX_PLAYLIST_TRACKS} tracks."
@@ -2749,7 +2751,7 @@ fn playlist_detail_from_value(value: &Value) -> Result<PlaylistDetail, String> {
     let tracks = entries
         .iter()
         .map(|entry| {
-            let fallback_album_id = string_field(entry, &["albumId"]).unwrap_or_default();
+            let fallback_album_id = string_field(entry, &["albumId", "parent"]).unwrap_or_default();
             bounded_track_from_value(entry, &fallback_album_id).ok_or_else(|| {
                 "Bandcamp returned invalid track metadata in a playlist.".to_string()
             })
@@ -2771,11 +2773,17 @@ fn playlist_detail_from_value(value: &Value) -> Result<PlaylistDetail, String> {
 }
 
 fn playlists_from_response(body: &Value) -> Result<Vec<PlaylistSummary>, String> {
-    let values = body
-        .pointer("/subsonic-response/playlists/playlist")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
+    let playlists = body
+        .pointer("/subsonic-response/playlists")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "Bandcamp did not return a valid playlist list.".to_string())?;
+    let values = match playlists.get("playlist") {
+        None | Some(Value::Null) => &[][..],
+        Some(Value::Array(values)) => values.as_slice(),
+        Some(_) => {
+            return Err("Bandcamp returned an invalid playlist list.".to_string());
+        }
+    };
     if values.len() > MAX_PLAYLISTS {
         return Err(format!(
             "Bandcamp returned more than {MAX_PLAYLISTS} playlists."
@@ -2795,6 +2803,26 @@ fn playlist_from_response(body: &Value) -> Result<PlaylistDetail, String> {
         .pointer("/subsonic-response/playlist")
         .ok_or_else(|| "Bandcamp did not return the requested playlist.".to_string())?;
     playlist_detail_from_value(value)
+}
+
+fn playlist_from_optional_response(body: &Value) -> Result<Option<PlaylistDetail>, String> {
+    body.pointer("/subsonic-response/playlist")
+        .map(playlist_detail_from_value)
+        .transpose()
+}
+
+fn playlist_update_from_response(
+    body: &Value,
+    playlist_id: &str,
+) -> Result<Option<PlaylistDetail>, String> {
+    let playlist = playlist_from_optional_response(body)?;
+    if playlist
+        .as_ref()
+        .is_some_and(|playlist| playlist.id != playlist_id)
+    {
+        return Err("Bandcamp returned a different playlist than Coda updated.".into());
+    }
+    Ok(playlist)
 }
 
 #[tauri::command]
@@ -3636,9 +3664,21 @@ async fn fetch_playlists() -> Result<Vec<PlaylistSummary>, String> {
 async fn fetch_playlist(playlist_id: String) -> Result<PlaylistDetail, String> {
     validate_subsonic_id(&playlist_id, "playlist")?;
     let credentials = load_credentials()?;
-    let body = request_json("getPlaylist", &credentials, &[("id", playlist_id.clone())])
+    fetch_playlist_from_bandcamp(&playlist_id, &credentials)
         .await
-        .map_err(|error| beta_feature_error("Playlist loading", error))?;
+        .map_err(|error| beta_feature_error("Playlist loading", error))
+}
+
+async fn fetch_playlist_from_bandcamp(
+    playlist_id: &str,
+    credentials: &ConnectionInput,
+) -> Result<PlaylistDetail, String> {
+    let body = request_json(
+        "getPlaylist",
+        credentials,
+        &[("id", playlist_id.to_string())],
+    )
+    .await?;
     let playlist = playlist_from_response(&body)?;
     if playlist.id != playlist_id {
         return Err("Bandcamp returned a different playlist than Coda requested.".into());
@@ -3665,7 +3705,7 @@ async fn create_playlist(name: String, song_ids: Vec<String>) -> Result<Playlist
 }
 
 #[tauri::command]
-async fn update_playlist(input: PlaylistUpdateInput) -> Result<PlaylistDetail, String> {
+async fn update_playlist(input: PlaylistUpdateInput) -> Result<Option<PlaylistDetail>, String> {
     validate_playlist_update(&input)?;
     let credentials = load_credentials()?;
     let playlist_id = input.playlist_id.clone();
@@ -3694,11 +3734,7 @@ async fn update_playlist(input: PlaylistUpdateInput) -> Result<PlaylistDetail, S
     let body = request_mutation_json("updatePlaylist", &credentials, &parameters)
         .await
         .map_err(|error| beta_feature_error("Playlist update", error))?;
-    let playlist = playlist_from_response(&body)?;
-    if playlist.id != playlist_id {
-        return Err("Bandcamp returned a different playlist than Coda updated.".into());
-    }
-    Ok(playlist)
+    playlist_update_from_response(&body, &playlist_id)
 }
 
 #[tauri::command]
@@ -3895,11 +3931,30 @@ async fn radio_show(show_id: u64) -> Result<RadioShow, String> {
     radio_show_from_raw(body)
 }
 
+#[cfg(desktop)]
+fn with_window_state_plugin<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    builder.plugin(
+        tauri_plugin_window_state::Builder::default()
+            .with_state_flags(
+                StateFlags::POSITION
+                    | StateFlags::SIZE
+                    | StateFlags::MAXIMIZED
+                    | StateFlags::VISIBLE,
+            )
+            .with_denylist(&["mini-player"])
+            .build(),
+    )
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_process::init());
+    #[cfg(desktop)]
+    let builder = with_window_state_plugin(builder);
+
+    builder
         .on_page_load(|webview, _| {
             if webview.label() == "main" {
                 let window = webview.window();
@@ -3913,17 +3968,16 @@ pub fn run() {
             {
                 app.handle()
                     .plugin(tauri_plugin_updater::Builder::new().build())?;
-                app.handle().plugin(
-                    tauri_plugin_window_state::Builder::default()
-                        .with_state_flags(
-                            StateFlags::POSITION
-                                | StateFlags::SIZE
-                                | StateFlags::MAXIMIZED
-                                | StateFlags::VISIBLE,
-                        )
-                        .with_denylist(&["mini-player"])
-                        .build(),
-                )?;
+                let should_maximize_main_window = app
+                    .path()
+                    .app_config_dir()
+                    .map(|directory| should_maximize_main_window_on_startup(&directory))
+                    .unwrap_or(false);
+                if should_maximize_main_window {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.maximize();
+                    }
+                }
                 ensure_window_is_visible(app);
 
                 #[cfg(target_os = "macos")]
@@ -4066,6 +4120,17 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Coda");
+}
+
+#[cfg(desktop)]
+fn should_maximize_main_window_for_state_lookup(state_file_exists: std::io::Result<bool>) -> bool {
+    matches!(state_file_exists, Ok(false))
+}
+
+#[cfg(desktop)]
+fn should_maximize_main_window_on_startup(app_config_dir: &Path) -> bool {
+    let state_path = app_config_dir.join(tauri_plugin_window_state::DEFAULT_FILENAME);
+    should_maximize_main_window_for_state_lookup(state_path.try_exists())
 }
 
 #[cfg(desktop)]
@@ -4289,6 +4354,105 @@ mod tests {
         assert_eq!(main_window["minimizable"], Value::Bool(true));
         assert_eq!(main_window["maximizable"], Value::Bool(true));
         assert_eq!(main_window["resizable"], Value::Bool(true));
+        assert_ne!(
+            main_window.get("maximized").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_ne!(
+            main_window.get("center").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_ne!(
+            main_window.get("fullscreen").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_ne!(
+            main_window.get("simpleFullscreen").and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn window_state_plugin_registration_precedes_user_setup() {
+        let source = include_str!("lib.rs");
+        let run_source = source
+            .split_once("pub fn run()")
+            .map(|(_, run_source)| run_source)
+            .expect("run function");
+        let setup_index = run_source.find(".setup(|app|").expect("user setup");
+        let registration_index = run_source
+            .find("let builder = with_window_state_plugin(builder);")
+            .expect("static window-state plugin registration");
+
+        assert!(
+            registration_index < setup_index,
+            "window-state plugin must be registered before user setup"
+        );
+
+        let setup_source = &run_source[setup_index
+            ..run_source
+                .find(".on_window_event")
+                .expect("end of user setup")];
+        assert!(
+            !setup_source.contains("tauri_plugin_window_state::Builder"),
+            "window-state plugin must not be registered dynamically in user setup"
+        );
+    }
+
+    // Tauri's mock runtime test feature currently produces a test executable
+    // that cannot start on the hosted Windows runner. The source-order guard
+    // above still covers Windows; macOS and Linux exercise the runtime state.
+    #[cfg(all(desktop, not(target_os = "windows")))]
+    #[test]
+    fn window_state_plugin_is_initialized_before_user_setup_runs() {
+        let setup_observed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let setup_observed_from_callback = setup_observed.clone();
+
+        let mut app = with_window_state_plugin(tauri::test::mock_builder())
+            .setup(move |app| {
+                setup_observed_from_callback.store(
+                    app.handle().filename() == tauri_plugin_window_state::DEFAULT_FILENAME,
+                    std::sync::atomic::Ordering::SeqCst,
+                );
+                Ok(())
+            })
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app with static window-state plugin");
+
+        #[allow(deprecated)]
+        app.run_iteration(|_, _| {});
+        assert!(setup_observed.load(std::sync::atomic::Ordering::SeqCst));
+        drop(app);
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn first_launch_maximization_requires_an_absent_window_state_file() {
+        let suffix: String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(16)
+            .map(char::from)
+            .collect();
+        let app_config_dir = std::env::temp_dir().join(format!("coda-window-state-{suffix}"));
+        let state_path = app_config_dir.join(tauri_plugin_window_state::DEFAULT_FILENAME);
+
+        assert!(should_maximize_main_window_on_startup(&app_config_dir));
+
+        fs::create_dir_all(&app_config_dir).unwrap();
+        fs::write(&state_path, b"{}").unwrap();
+        assert!(!should_maximize_main_window_on_startup(&app_config_dir));
+
+        fs::remove_file(state_path).unwrap();
+        fs::remove_dir(app_config_dir).unwrap();
+    }
+
+    #[cfg(desktop)]
+    #[test]
+    fn window_state_lookup_errors_do_not_override_a_restored_window() {
+        let error = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+
+        assert!(!should_maximize_main_window_for_state_lookup(Err(error)));
     }
 
     fn sample_player_track(id: &str) -> PlayerStateTrack {
@@ -5006,6 +5170,130 @@ mod tests {
         assert_eq!(detail.tracks.len(), 1);
         assert_eq!(detail.tracks[0].album_id, "album-1");
         assert_eq!(detail.tracks[0].duration, 245);
+    }
+
+    #[test]
+    fn reports_an_empty_successful_playlist_update_as_committed_without_detail() {
+        let body = serde_json::json!({
+            "subsonic-response": {
+                "status": "ok",
+                "version": "1.16.1"
+            }
+        });
+
+        assert!(playlist_update_from_response(&body, "playlist-1")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn rejects_playlist_detail_for_a_different_committed_update() {
+        let body = serde_json::json!({
+            "subsonic-response": {
+                "status": "ok",
+                "version": "1.16.1",
+                "playlist": {
+                    "id": "playlist-2",
+                    "name": "Different playlist",
+                    "songCount": 0,
+                    "duration": 0
+                }
+            }
+        });
+
+        assert_eq!(
+            playlist_update_from_response(&body, "playlist-1").unwrap_err(),
+            "Bandcamp returned a different playlist than Coda updated."
+        );
+    }
+
+    #[test]
+    fn loads_playlist_tracks_using_the_parent_when_album_id_is_absent() {
+        let detail = playlist_detail_from_value(&serde_json::json!({
+            "id": "playlist-1",
+            "name": "Night drives",
+            "songCount": 1,
+            "duration": 245,
+            "entry": [{
+                "id": "song-1",
+                "parent": "album-1",
+                "title": "Afterimage",
+                "artist": "Night Archive",
+                "album": "Soft Focus",
+                "duration": 245,
+                "track": 2
+            }]
+        }))
+        .unwrap();
+
+        assert_eq!(detail.tracks[0].album_id, "album-1");
+
+        let orphaned_track = serde_json::json!({
+            "id": "playlist-1",
+            "name": "Night drives",
+            "songCount": 1,
+            "duration": 245,
+            "entry": [{
+                "id": "song-1",
+                "title": "Afterimage",
+                "artist": "Night Archive",
+                "album": "Soft Focus",
+                "duration": 245
+            }]
+        });
+        assert!(playlist_detail_from_value(&orphaned_track).is_err());
+    }
+
+    #[test]
+    fn accepts_an_empty_playlist_list_but_rejects_a_non_array_list() {
+        let empty = serde_json::json!({
+            "subsonic-response": {
+                "playlists": {}
+            }
+        });
+        assert!(playlists_from_response(&empty).unwrap().is_empty());
+
+        let non_array = serde_json::json!({
+            "subsonic-response": {
+                "playlists": {
+                    "playlist": {
+                        "id": "playlist-1",
+                        "name": "Night drives",
+                        "songCount": 1,
+                        "duration": 245
+                    }
+                }
+            }
+        });
+        assert!(playlists_from_response(&non_array).is_err());
+    }
+
+    #[test]
+    fn accepts_an_empty_playlist_but_rejects_non_array_entries() {
+        let empty = playlist_detail_from_value(&serde_json::json!({
+            "id": "playlist-1",
+            "name": "Night drives",
+            "songCount": 0,
+            "duration": 0
+        }))
+        .unwrap();
+        assert!(empty.tracks.is_empty());
+
+        let non_array = serde_json::json!({
+            "id": "playlist-1",
+            "name": "Night drives",
+            "songCount": 1,
+            "duration": 245,
+            "entry": {
+                "id": "song-1",
+                "parent": "album-1",
+                "title": "Afterimage",
+                "artist": "Night Archive",
+                "album": "Soft Focus",
+                "duration": 245
+            }
+        });
+        assert!(playlist_detail_from_value(&non_array).is_err());
     }
 
     #[test]

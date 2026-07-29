@@ -78,11 +78,18 @@ function renderRadio(
     playing?: boolean;
     onTogglePlayback?: () => void;
     requestedShowId?: number;
+    warmArchive?: boolean;
   } = {},
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  if (playback.warmArchive) {
+    client.setQueryData(["bandcamp-radio", "all"], {
+      pages: [{ results: shows, hasMore: false }],
+      pageParams: [null],
+    });
+  }
   const onTogglePlayback = playback.onTogglePlayback ?? vi.fn();
   const onToggleFavorite = vi.fn();
   function ControlledRadioView() {
@@ -108,12 +115,19 @@ function renderRadio(
       />
     );
   }
-  render(
+  const view = render(
     <QueryClientProvider client={client}>
       <ControlledRadioView />
     </QueryClientProvider>,
   );
-  return { onPlay, onQueue, onPlayAt, onTogglePlayback, onToggleFavorite };
+  return {
+    onPlay,
+    onQueue,
+    onPlayAt,
+    onTogglePlayback,
+    onToggleFavorite,
+    unmount: view.unmount,
+  };
 }
 
 beforeEach(() => {
@@ -130,6 +144,43 @@ afterEach(() => {
 });
 
 describe("Bandcamp Radio", () => {
+  it("keeps the Radio entrance motion on the loading state", () => {
+    mocks.fetchRadioShows.mockReturnValue(new Promise(() => {}));
+    renderRadio();
+
+    const root = screen.getByLabelText("Tuning Bandcamp Radio").closest("section");
+    expect(root).toHaveClass(
+      "animate-[radio-view-in_320ms_var(--ease-coda-enter)]",
+      "motion-reduce:animate-none",
+    );
+  });
+
+  it("keeps the Radio entrance motion on error and empty states", async () => {
+    mocks.fetchRadioShows.mockRejectedValueOnce(new Error("Signal lost"));
+    const errorRender = renderRadio();
+
+    const errorRoot = (await screen.findByText("Bandcamp Radio is off the air"))
+      .closest("section");
+    expect(errorRoot).toHaveClass(
+      "animate-[radio-view-in_320ms_var(--ease-coda-enter)]",
+      "motion-reduce:animate-none",
+    );
+
+    errorRender.unmount();
+    mocks.fetchRadioShows.mockResolvedValueOnce({
+      results: [],
+      hasMore: false,
+    });
+    renderRadio();
+
+    const emptyRoot = (await screen.findByText("No episodes found"))
+      .closest("section");
+    expect(emptyRoot).toHaveClass(
+      "animate-[radio-view-in_320ms_var(--ease-coda-enter)]",
+      "motion-reduce:animate-none",
+    );
+  });
+
   it("disables show actions and labels the request while loading playback", async () => {
     let resolveShow!: (value: RadioShow) => void;
     mocks.fetchRadioShow.mockReturnValue(new Promise((resolve) => {
@@ -151,7 +202,12 @@ describe("Bandcamp Radio", () => {
   it("loads the archive and plays the latest signed show stream", async () => {
     const { onPlay } = renderRadio();
 
-    expect(await screen.findByRole("heading", { name: "Kinrose" })).toBeInTheDocument();
+    const latestHeading = await screen.findByRole("heading", { name: "Kinrose" });
+    expect(latestHeading).toBeInTheDocument();
+    expect(latestHeading.closest("section")).toHaveClass(
+      "animate-[radio-view-in_320ms_var(--ease-coda-enter)]",
+      "motion-reduce:animate-none",
+    );
     expect(screen.getByText("2 broadcasts loaded")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Play latest show" }));
 
@@ -188,9 +244,11 @@ describe("Bandcamp Radio", () => {
     const { onQueue } = renderRadio();
 
     await screen.findByRole("heading", { name: "The Best of 2026" });
-    fireEvent.click(screen.getByRole("button", {
+    const queueShow = screen.getByRole("button", {
       name: "Add The Best of 2026 to queue",
-    }));
+    });
+    expect(queueShow).toHaveClass("size-8", "p-0");
+    fireEvent.click(queueShow);
     await waitFor(() => expect(onQueue).toHaveBeenCalledWith(
       expect.objectContaining({ id: "radio:978" }),
     ));
@@ -282,9 +340,13 @@ describe("Bandcamp Radio", () => {
     expect(mocks.fetchRadioShow).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "View tracklist" }));
 
-    expect(await screen.findByRole("heading", {
+    const detailRoot = (await screen.findByRole("heading", {
       name: "Songs in this show",
-    })).toBeInTheDocument();
+    })).closest("section");
+    expect(detailRoot).toHaveClass(
+      "animate-[saved-page-in_180ms_ease-out]",
+      "motion-reduce:animate-none",
+    );
     expect(mocks.fetchRadioShow).toHaveBeenCalledWith(979);
 
     fireEvent.click(screen.getByRole("button", {
@@ -305,7 +367,7 @@ describe("Bandcamp Radio", () => {
     expect(mocks.openBandcampUrl).toHaveBeenCalledWith(
       "https://sweepsbeats.bandcamp.com/album/mirage",
     );
-    expect(document.querySelector(".radio-chapter-artwork img")).toHaveAttribute(
+    expect(document.querySelector('img[src="https://f4.bcbits.com/img/0161226005_10.jpg"]')).toHaveAttribute(
       "src",
       "https://f4.bcbits.com/img/0161226005_10.jpg",
     );
@@ -340,7 +402,12 @@ describe("Bandcamp Radio", () => {
 
     const pauseChapter = await screen.findByRole("button", { name: "Pause Mirage" });
     expect(pauseChapter).toHaveAttribute("aria-pressed", "true");
-    expect(pauseChapter.closest("li")).toHaveClass("is-current");
+    expect(pauseChapter.closest("li")).toHaveAttribute("aria-current", "true");
+    expect(pauseChapter.closest("li")?.querySelector("img")?.parentElement)
+      .toHaveClass(
+        "border-primary/42",
+        "shadow-[0_0_0_1px_rgba(221,101,73,0.08)]",
+      );
   });
 
   it("opens a requested favorite episode through the shared TanStack detail cache", async () => {
@@ -350,5 +417,37 @@ describe("Bandcamp Radio", () => {
       name: "Songs in this show",
     })).toBeInTheDocument();
     expect(mocks.fetchRadioShow).toHaveBeenCalledWith(979);
+  });
+
+  it("keeps requested show loading visible over a warm archive until details arrive", async () => {
+    const requestedShow = {
+      ...show,
+      id: 977,
+      subtitle: "Deep Focus",
+    };
+    let resolveShow!: (value: RadioShow) => void;
+    mocks.fetchRadioShow.mockReturnValue(new Promise((resolve) => {
+      resolveShow = resolve;
+    }));
+
+    renderRadio(vi.fn(), vi.fn(), vi.fn(), {
+      requestedShowId: requestedShow.id,
+      warmArchive: true,
+    });
+
+    expect(await screen.findByRole("status", {
+      name: "Loading Radio show details",
+    })).toBeVisible();
+
+    resolveShow(requestedShow);
+
+    expect(await screen.findByRole("heading", {
+      name: "Deep Focus",
+    })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByRole("status", {
+        name: "Loading Radio show details",
+      })).not.toBeInTheDocument()
+    );
   });
 });

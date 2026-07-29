@@ -477,9 +477,12 @@ export async function createPlaylist(
   return hydratePlaylist(playlist);
 }
 
-export async function updatePlaylist(input: PlaylistUpdateInput): Promise<PlaylistDetail> {
+export async function updatePlaylist(
+  input: PlaylistUpdateInput,
+): Promise<PlaylistDetail | undefined> {
   const playlist = await invoke<
-    Omit<PlaylistDetail, "tracks"> & { tracks: Omit<Track, "palette">[] }
+    | (Omit<PlaylistDetail, "tracks"> & { tracks: Omit<Track, "palette">[] })
+    | null
   >("update_playlist", {
     input: {
       ...input,
@@ -487,7 +490,7 @@ export async function updatePlaylist(input: PlaylistUpdateInput): Promise<Playli
       songIndexesToRemove: input.songIndexesToRemove ?? [],
     },
   });
-  return hydratePlaylist(playlist);
+  return playlist ? hydratePlaylist(playlist) : undefined;
 }
 
 export async function deletePlaylist(playlistId: string): Promise<void> {

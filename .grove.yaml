@@ -1,4 +1,0 @@
-command: ./tools/dev-instance.mjs
-health_check:
-  path: /
-  timeout: 60s
