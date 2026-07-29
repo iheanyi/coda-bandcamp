@@ -667,22 +667,22 @@ const AlbumCard = memo(function AlbumCard({
           <OverflowMarquee className="w-full" text={album.title} />
         </Button>
         <Button
-          className="mt-1 h-auto w-full min-w-0 justify-start truncate p-0 text-left text-xs font-medium text-[#868984] hover:bg-transparent hover:text-[#dc8973]"
+          className="mt-1 h-auto w-full min-w-0 justify-start overflow-hidden p-0 text-left text-xs font-medium text-[#868984] hover:bg-transparent hover:text-[#dc8973]"
           onClick={() => onArtist(album.artist, album.id)}
           size="compact"
           title={`Browse ${album.artist}`}
           variant="text"
         >
-          {album.artist}
+          <OverflowMarquee className="w-full" text={album.artist} />
         </Button>
       </div>
       <Button
-        className="absolute right-0 bottom-0 border border-transparent bg-[#171a1c]/92 text-[#777b76] opacity-0 shadow-[0_2px_8px_rgba(0,0,0,0.2)] group-focus-within:opacity-100 group-hover:opacity-100 hover:border-(--line-strong) hover:bg-coda-button-hover hover:text-[#dddcd7]"
+        className="absolute right-0 bottom-0 border-0 bg-transparent text-[#777b76] opacity-0 shadow-none group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-transparent hover:text-primary"
         onClick={() => onQueue(album)}
         size="icon-compact"
         title="Add album to queue"
         aria-label={`Add ${album.title} to queue`}
-        variant="ghost"
+        variant="text"
       >
         <Plus size={17} />
       </Button>

@@ -2447,7 +2447,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(screen.getAllByText("Streetlight").length).toBeGreaterThan(0);
   });
 
-  it("uses a polished square queue action inside each Collection card", async () => {
+  it("uses streamlined queue and overflow metadata actions in each Collection card", async () => {
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
     renderApp();
@@ -2461,9 +2461,26 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       "p-0",
       "right-0",
       "bottom-0",
+      "border-0",
+      "bg-transparent",
+      "shadow-none",
+      "hover:bg-transparent",
+      "hover:text-primary",
       "rounded-sm",
     );
+    expect(queueAlbum).not.toHaveClass(
+      "hover:bg-coda-button-hover",
+      "hover:border-(--line-strong)",
+    );
     expect(queueAlbum).not.toHaveClass("-right-1", "-bottom-1");
+
+    const albumCard = queueAlbum.closest("article");
+    if (!albumCard) throw new Error("Expected queue action inside an album card");
+    const artistControl = within(albumCard).getByTitle("Browse Night Archive");
+    expect(artistControl).toHaveClass("overflow-hidden");
+    expect(
+      within(artistControl).getByTestId("overflow-marquee"),
+    ).toHaveTextContent("Night Archive");
 
     fireEvent.click(queueAlbum);
     expect(await screen.findByRole("contentinfo")).toBeInTheDocument();
