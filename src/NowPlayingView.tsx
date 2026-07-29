@@ -612,10 +612,10 @@ function NowPlayingViewComponent({
                 <Button
                   variant="text"
                   size="compact"
-                  className="h-auto max-w-[46%] truncate p-0 text-sm font-medium text-[#c1c2bc] hover:bg-transparent hover:text-primary"
+                  className="h-auto min-w-0 max-w-[46%] overflow-hidden p-0 text-sm font-medium text-[#c1c2bc] hover:bg-transparent hover:text-primary"
                   onClick={() => onArtist(track.artist, track.albumId, track)}
                 >
-                  {track.artist}
+                  <OverflowMarquee text={track.artist} />
                 </Button>
                 <span aria-hidden="true">·</span>
                 <Button

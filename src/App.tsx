@@ -1344,7 +1344,7 @@ const PlayerTrack = memo(function PlayerTrack({
               {favoriteControl}
             </div>
           ) : (
-            <div className="flex min-w-0 flex-[0_1_auto] flex-col gap-1">
+            <div className="flex min-w-0 flex-1 flex-col gap-1">
               <div className="flex min-w-0 items-center gap-1">
                 <OverflowMarquee
                   className="max-w-full text-xs font-bold text-[#e6e4de]"
@@ -1354,13 +1354,12 @@ const PlayerTrack = memo(function PlayerTrack({
               </div>
               <span className="flex min-w-0 items-center gap-1 text-xs text-[#7f827e]">
                 <Button
-                  className="h-auto min-w-0 max-w-[46%] truncate p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73]"
+                  className="h-auto min-w-0 max-w-[46%] overflow-hidden p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73]"
                   onClick={() => onArtist(track.artist, track.albumId, track)}
                   size="compact"
-                  title={track.artist}
                   variant="text"
                 >
-                  {track.artist}
+                  <OverflowMarquee text={track.artist} />
                 </Button>
                 <span aria-hidden="true" className="shrink-0">·</span>
                 <Button

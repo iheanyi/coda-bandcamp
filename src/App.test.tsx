@@ -1202,9 +1202,16 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       const albumControl = within(player).getByRole("button", {
         name: longAlbumTitle,
       });
-      expect(artistControl).toHaveClass("min-w-0", "max-w-[46%]", "truncate");
+      const trackCopy = artistControl.parentElement?.parentElement;
+      expect(trackCopy).toHaveClass("min-w-0", "flex-1");
+      expect(artistControl).toHaveClass(
+        "min-w-0",
+        "max-w-[46%]",
+        "overflow-hidden",
+      );
+      expect(within(artistControl).getByTestId("overflow-marquee"))
+        .toHaveTextContent(longArtist);
       expect(albumControl).toHaveClass("min-w-0", "max-w-[46%]", "truncate");
-      expect(artistControl).toHaveAttribute("title", longArtist);
       expect(albumControl).toHaveAttribute("title", longAlbumTitle);
 
       queryClient.removeQueries({ queryKey: albumQueryKey(longAlbum.id) });
