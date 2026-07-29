@@ -15,6 +15,8 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
+import { AnimatePresence, useIsPresent } from "motion/react";
+import * as m from "motion/react-m";
 import {
   memo,
   type CSSProperties,
@@ -39,6 +41,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { codaMotion } from "./motion";
 import { formatTime, openBandcampUrl } from "./lib";
 import { countLabel } from "./countLabel";
 import {
@@ -96,6 +99,40 @@ type NowPlayingViewProps = {
   onToggleFavorite?: () => void;
   onAddToPlaylist?: () => void;
 };
+
+function PresencePanel({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className: string;
+}) {
+  const isPresent = useIsPresent();
+  return (
+    <m.div
+      aria-hidden={!isPresent || undefined}
+      className={className}
+      inert={!isPresent || undefined}
+      initial={{
+        opacity: 0,
+        transform: "translateY(6px)",
+      }}
+      animate={{
+        opacity: 1,
+        transform: "translateY(0px)",
+        transition: codaMotion.componentEnter,
+      }}
+      exit={{
+        opacity: 0,
+        transform: "translateY(4px)",
+        transition: codaMotion.componentExit,
+      }}
+      style={{ pointerEvents: isPresent ? "auto" : "none" }}
+    >
+      {children}
+    </m.div>
+  );
+}
 
 const UPCOMING_PREVIEW_LIMIT = 4;
 
@@ -420,7 +457,7 @@ const NowPlayingRadioTimeline = memo(function NowPlayingRadioTimeline({
                 >
                   <i
                     className={cn(
-                      "inline-flex size-2.5 items-end gap-px [&>i]:min-h-1 [&>i]:w-0.5 [&>i]:animate-[radio-equalizer_850ms_ease-in-out_infinite_alternate] [&>i]:rounded-sm [&>i]:bg-current [&>i]:motion-reduce:animate-none [&>i:nth-child(2)]:min-h-2 [&>i:nth-child(2)]:[animation-delay:-410ms] [&>i:nth-child(3)]:min-h-1.5 [&>i:nth-child(3)]:[animation-delay:-210ms]",
+                      "inline-flex size-2.5 items-end gap-px [&>i]:h-[9px] [&>i]:w-0.5 [&>i]:origin-bottom [&>i]:animate-[radio-equalizer_850ms_ease-in-out_infinite_alternate] [&>i]:rounded-sm [&>i]:bg-current [&>i]:[transform:scaleY(0.444444)] [&>i]:motion-reduce:animate-none [&>i:nth-child(2)]:[animation-delay:-410ms] [&>i:nth-child(2)]:[transform:scaleY(0.888889)] [&>i:nth-child(3)]:[animation-delay:-210ms] [&>i:nth-child(3)]:[transform:scaleY(0.666667)]",
                       !playing && "[&>i]:paused",
                     )}
                     aria-hidden="true"
@@ -768,84 +805,97 @@ function NowPlayingViewComponent({
             </h2>
           </div>
         </div>
-        {upcoming.length ? (
-          <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 max-xl:grid-cols-1">
-            {upcoming.map((item, index) => {
-              const queueIndex = currentIndex + index + 1;
-              return (
-                <Button
-                  variant="ghost"
-                  size="compact"
-                  className="grid h-auto min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-2.5 rounded-md px-2.5 py-2 text-left hover:bg-white/4"
-                  key={`${item.id}-${queueIndex}`}
-                  onClick={() => onPlayQueueIndex(queueIndex)}
-                  aria-label={`Play ${item.title}`}
-                >
-                  <span className="text-xs font-normal text-[#686c67] tabular-nums">
-                    {String(queueIndex + 1).padStart(2, "0")}
-                  </span>
-                  <span className="flex min-w-0 flex-col gap-0.5 overflow-hidden">
-                    <OverflowMarquee
-                      className="text-xs/snug text-[#d4d3cd]"
-                      text={item.title}
-                    />
-                    <small className="truncate text-xs font-normal text-[#737772]">{item.artist} · {item.album}</small>
-                  </span>
-                  <span className="text-xs font-normal text-[#686c67] tabular-nums">{formatTime(item.duration)}</span>
-                </Button>
-              );
-            })}
-          </div>
-        ) : recommendation ? (
-          <div className="grid min-h-20 grid-cols-[3.5rem_minmax(0,1fr)_auto] items-center gap-3.5 rounded-lg border border-white/7 bg-[radial-gradient(circle_at_0_0,rgba(221,101,73,0.1),transparent_42%),rgba(255,255,255,0.025)] p-3 max-lg:grid-cols-[3rem_minmax(0,1fr)]">
-            <div className="size-14 overflow-hidden rounded-lg **:data-[slot=cover]:size-full max-lg:size-12">
-              {recommendationArtwork}
-            </div>
-            <div className="flex min-w-0 flex-col overflow-hidden">
-              <span className="text-xs font-bold tracking-widest text-[#d37e68] uppercase">
-                Picked from your collection
-              </span>
-              <OverflowMarquee
-                className="mt-1 text-sm text-[#e2e0da]"
-                text={recommendation.album.title}
-              />
-              <small className="mt-1 truncate text-xs text-[#777b76]">
-                {recommendation.album.artist} · {recommendation.reason}
-              </small>
-            </div>
-            <div className="flex items-center gap-2 max-lg:col-span-full">
-              <Button
-                variant="primary"
-                size="compact"
-                className="h-8 px-2.5"
-                onClick={onPlayRecommendation}
-                disabled={recommendationLoading}
-                aria-label={`Play something from ${recommendation.album.title}`}
+        <div className="grid [&>*]:col-start-1 [&>*]:row-start-1">
+          <AnimatePresence initial={false}>
+            {upcoming.length ? (
+              <PresencePanel
+                key="upcoming"
+                className="grid grid-cols-2 gap-x-3 gap-y-0.5 max-xl:grid-cols-1"
               >
-                {recommendationLoading ? (
-                  <Spinner aria-hidden="true" className="size-4 text-current motion-reduce:animate-none" />
-                ) : (
-                  <Play size={15} fill="currentColor" />
-                )}
-                {recommendationLoading ? "Picking…" : "Play something"}
-              </Button>
-              <Button
-                size="compact"
-                className="h-8 px-2.5"
-                onClick={onAnotherRecommendation}
-                disabled={recommendationLoading}
+                {upcoming.map((item, index) => {
+                  const queueIndex = currentIndex + index + 1;
+                  return (
+                    <Button
+                      variant="ghost"
+                      size="compact"
+                      className="grid h-auto min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-2.5 rounded-md px-2.5 py-2 text-left hover:bg-white/4"
+                      key={`${item.id}-${queueIndex}`}
+                      onClick={() => onPlayQueueIndex(queueIndex)}
+                      aria-label={`Play ${item.title}`}
+                    >
+                      <span className="text-xs font-normal text-[#686c67] tabular-nums">
+                        {String(queueIndex + 1).padStart(2, "0")}
+                      </span>
+                      <span className="flex min-w-0 flex-col gap-0.5 overflow-hidden">
+                        <OverflowMarquee
+                          className="text-xs/snug text-[#d4d3cd]"
+                          text={item.title}
+                        />
+                        <small className="truncate text-xs font-normal text-[#737772]">{item.artist} · {item.album}</small>
+                      </span>
+                      <span className="text-xs font-normal text-[#686c67] tabular-nums">{formatTime(item.duration)}</span>
+                    </Button>
+                  );
+                })}
+              </PresencePanel>
+            ) : recommendation ? (
+              <PresencePanel
+                key={`recommendation:${recommendation.album.id}`}
+                className="grid min-h-20 grid-cols-[3.5rem_minmax(0,1fr)_auto] items-center gap-3.5 rounded-lg border border-white/7 bg-[radial-gradient(circle_at_0_0,rgba(221,101,73,0.1),transparent_42%),rgba(255,255,255,0.025)] p-3 max-lg:grid-cols-[3rem_minmax(0,1fr)]"
               >
-                <Dices size={15} />
-                Another pick
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <div className="flex flex-col items-start gap-1 rounded-lg bg-white/2.5 p-4 text-xs text-[#747873]">
-            <strong className="text-xs text-[#c9c8c2]">You reached the end.</strong>
-            <span className="text-xs text-[#717570]">Open the queue or browse your collection to keep listening.</span>
-          </div>
-        )}
+                <div className="size-14 overflow-hidden rounded-lg **:data-[slot=cover]:size-full max-lg:size-12">
+                  {recommendationArtwork}
+                </div>
+                <div className="flex min-w-0 flex-col overflow-hidden">
+                  <span className="text-xs font-bold tracking-widest text-[#d37e68] uppercase">
+                    Picked from your collection
+                  </span>
+                  <OverflowMarquee
+                    className="mt-1 text-sm text-[#e2e0da]"
+                    text={recommendation.album.title}
+                  />
+                  <small className="mt-1 truncate text-xs text-[#777b76]">
+                    {recommendation.album.artist} · {recommendation.reason}
+                  </small>
+                </div>
+                <div className="flex items-center gap-2 max-lg:col-span-full">
+                  <Button
+                    variant="primary"
+                    size="compact"
+                    className="h-8 px-2.5"
+                    onClick={onPlayRecommendation}
+                    disabled={recommendationLoading}
+                    aria-label={`Play something from ${recommendation.album.title}`}
+                  >
+                    {recommendationLoading ? (
+                      <Spinner aria-hidden="true" className="size-4 text-current motion-reduce:animate-none" />
+                    ) : (
+                      <Play size={15} fill="currentColor" />
+                    )}
+                    {recommendationLoading ? "Picking…" : "Play something"}
+                  </Button>
+                  <Button
+                    size="compact"
+                    className="h-8 px-2.5"
+                    onClick={onAnotherRecommendation}
+                    disabled={recommendationLoading}
+                  >
+                    <Dices size={15} />
+                    Another pick
+                  </Button>
+                </div>
+              </PresencePanel>
+            ) : (
+              <PresencePanel
+                key="empty"
+                className="flex flex-col items-start gap-1 rounded-lg bg-white/2.5 p-4 text-xs text-[#747873]"
+              >
+                <strong className="text-xs text-[#c9c8c2]">You reached the end.</strong>
+                <span className="text-xs text-[#717570]">Open the queue or browse your collection to keep listening.</span>
+              </PresencePanel>
+            )}
+          </AnimatePresence>
+        </div>
         {moreUpcoming ? (
           <span className="mt-2 block text-right text-xs text-[#747873]">{moreUpcoming} more in the full queue</span>
         ) : null}

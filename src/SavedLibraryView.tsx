@@ -23,6 +23,7 @@ import {
 import {
   type FormEvent,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -68,6 +69,13 @@ import {
 } from "./lib";
 import { countLabel } from "./countLabel";
 import { shuffled } from "./queue";
+import {
+  createNavigationTransactionState,
+  replaceNavigationTransaction,
+  resolveNavigationReturnFocus,
+  resolveNavigationReturnScrollTop,
+  settleNavigationTransaction,
+} from "./navigationTransaction";
 import { boundRadioChapters } from "./radioPlayback";
 import type {
   Album,
@@ -105,8 +113,8 @@ type SavedLibraryViewProps = {
   onQueueTracks: (tracks: Track[]) => void;
   onPlayTrack: (track: Track) => void;
   onQueueTrack: (track: Track) => void;
-  onOpenAlbum: (album: Album) => void;
-  onOpenTrackAlbum: (track: Track) => void;
+  onOpenAlbum: (album: Album, trigger: HTMLElement) => void;
+  onOpenTrackAlbum: (track: Track, trigger: HTMLElement) => void;
   onOpenArtist: (
     artist: string,
     albumId?: string,
@@ -131,7 +139,7 @@ const eyebrowClassName =
 const metadataLinkClassName =
   "h-auto min-w-0 max-w-[48%] cursor-pointer truncate rounded-none border-0 bg-transparent p-0 text-left text-xs font-normal text-[#777b76] hover:text-accent-foreground";
 const savedPageClassName =
-  "mx-auto min-h-full w-full max-w-5xl animate-[saved-page-in_180ms_ease-out] pt-2 pb-12 motion-reduce:animate-none";
+  "mx-auto min-h-full w-full max-w-5xl pt-2 pb-12";
 
 type PlaylistListMutationContext = {
   optimisticId?: string;
@@ -380,7 +388,7 @@ function PlaylistList({
   openingPlaylistId,
 }: {
   playlists: PlaylistSummary[];
-  onOpen: (playlist: PlaylistSummary) => void;
+  onOpen: (playlist: PlaylistSummary, trigger: HTMLButtonElement) => void;
   onCreate: (name: string) => void;
   creating: boolean;
   openingPlaylistId?: string;
@@ -436,10 +444,11 @@ function PlaylistList({
             return (
               <Button
                 aria-busy={optimistic || opening || undefined}
-                className="grid h-auto min-h-20 grid-cols-[3.25rem_minmax(0,1fr)_auto] items-center gap-3 rounded-lg border-border bg-white/2 p-3.5 text-left font-normal transition-[border-color,background-color,transform] duration-150 hover:-translate-y-px hover:border-input hover:bg-white/3.5"
+                className="grid h-auto min-h-20 grid-cols-[3.25rem_minmax(0,1fr)_auto] items-center gap-3 rounded-lg border-border bg-white/2 p-3.5 text-left font-normal transition-[border-color,background-color,transform] duration-(--duration-coda-fast) hover:-translate-y-px hover:border-input hover:bg-white/3.5"
                 disabled={optimistic || opening}
+                data-playlist-open={playlist.id}
                 key={playlist.id}
-                onClick={() => onOpen(playlist)}
+                onClick={(event) => onOpen(playlist, event.currentTarget)}
               >
                 <span className="grid size-13 place-items-center rounded-lg border border-white/7 bg-coda-hover text-[#e1846d]">
                   <ListMusic size={25} />
@@ -514,7 +523,7 @@ function PlaylistDetailView({
   loadingAlbumId?: string;
   onTogglePlayback: () => void;
   onAddToPlaylist: (tracks: Track[]) => void;
-  onOpenTrackAlbum: (track: Track) => void;
+  onOpenTrackAlbum: (track: Track, trigger: HTMLElement) => void;
   onOpenArtist: (
     artist: string,
     albumId?: string,
@@ -627,7 +636,11 @@ function PlaylistDetailView({
             </form>
           ) : (
             <div className="flex items-center gap-2">
-              <h1 className="m-0 max-w-2xl truncate font-display text-4xl leading-none font-semibold tracking-tighter text-[#f1efe9]">
+              <h1
+                id="playlist-detail-heading"
+                className="m-0 max-w-2xl truncate font-display text-4xl leading-none font-semibold tracking-tighter text-[#f1efe9] outline-none"
+                tabIndex={-1}
+              >
                 {playlist.name}
               </h1>
               <Button
@@ -758,8 +771,11 @@ function PlaylistDetailView({
                       metadataLinkClassName,
                       "gap-1 disabled:opacity-100",
                     )}
+                    data-album-open={track.albumId}
+                    data-navigation-slot={`playlist-track:${track.id}`}
                     disabled={albumLoading}
-                    onClick={() => onOpenTrackAlbum(track)}
+                    onClick={(event) =>
+                      onOpenTrackAlbum(track, event.currentTarget)}
                     variant="ghost"
                   >
                     {albumLoading ? (
@@ -861,12 +877,16 @@ function PlaylistDetailView({
 }
 
 export function AddToPlaylistDialog({
+  open = true,
   tracks,
   onClose,
+  onExited,
   onNotify,
 }: {
+  open?: boolean;
   tracks: Track[];
   onClose: () => void;
+  onExited?: () => void;
   onNotify: ToastNotifier;
 }) {
   const queryClient = useQueryClient();
@@ -993,7 +1013,8 @@ export function AddToPlaylistDialog({
 
   return (
     <Dialog
-      open
+      open={open}
+      onExitComplete={onExited}
       onOpenChange={(open, details) => {
         if (open) return;
         if (pending) {
@@ -1139,10 +1160,44 @@ export default function SavedLibraryView({
   const queryClient = useQueryClient();
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string>();
   const [openingPlaylistId, setOpeningPlaylistId] = useState<string>();
+  const playlistNavigationRef = useRef(createNavigationTransactionState());
+  const playlistReturnFocusRequestedRef = useRef(false);
+  const playlistScrollTopRef = useRef<number | undefined>(undefined);
   const [radioAction, setRadioAction] = useState<{
     id: number;
     action: "play" | "queue";
   }>();
+  const closePlaylist = () => {
+    const transaction = playlistNavigationRef.current.active;
+    playlistReturnFocusRequestedRef.current = Boolean(transaction);
+    playlistScrollTopRef.current = transaction
+      ? resolveNavigationReturnScrollTop(transaction)
+      : 0;
+    void transitionCodaView(
+      () => setSelectedPlaylistId(undefined),
+      "page-back",
+    );
+  };
+  const beginPlaylistNavigation = (
+    _playlistId: string,
+    sourceTrigger?: HTMLElement,
+  ) => {
+    const returnScrollTop =
+      document.querySelector<HTMLElement>("[data-coda-library-scroll]")
+        ?.scrollTop ?? 0;
+    playlistReturnFocusRequestedRef.current = false;
+    playlistNavigationRef.current = replaceNavigationTransaction(
+      playlistNavigationRef.current,
+      {
+        routeKey: "playlist-detail",
+        intent: "forward",
+        sourceTrigger,
+        returnScrollTop,
+        destinationHeadingId: "playlist-detail-heading",
+      },
+    );
+    playlistScrollTopRef.current = 0;
+  };
   const playlists = useQuery({
     queryKey: PLAYLISTS_QUERY_KEY,
     queryFn: fetchPlaylists,
@@ -1153,6 +1208,41 @@ export default function SavedLibraryView({
     queryFn: () => fetchPlaylist(selectedPlaylistId!),
     enabled: connected && mode === "playlists" && Boolean(selectedPlaylistId),
   });
+
+  useLayoutEffect(() => {
+    const scrollRoot = document.querySelector<HTMLElement>(
+      "[data-coda-library-scroll]",
+    );
+    if (playlistScrollTopRef.current !== undefined && scrollRoot) {
+      scrollRoot.scrollTop = playlistScrollTopRef.current;
+      playlistScrollTopRef.current = undefined;
+    }
+
+    const transaction = playlistNavigationRef.current.active;
+    if (!transaction) return;
+    if (selectedPlaylistId) {
+      if (!playlist.data || playlist.data.id !== selectedPlaylistId) return;
+      document
+        .getElementById(transaction.destinationHeadingId)
+        ?.focus({ preventScroll: true });
+      return;
+    }
+    if (!playlistReturnFocusRequestedRef.current) return;
+    playlistReturnFocusRequestedRef.current = false;
+    const replacement = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-playlist-open]"),
+    ).find(
+      (candidate) =>
+        candidate.dataset.playlistOpen ===
+        transaction.sourceTrigger?.dataset.playlistOpen,
+    );
+    const result = resolveNavigationReturnFocus(transaction, replacement);
+    result.target?.focus({ preventScroll: true });
+    playlistNavigationRef.current = settleNavigationTransaction(
+      playlistNavigationRef.current,
+      transaction.identity,
+    );
+  }, [playlist.data, selectedPlaylistId]);
   const createMutation = useMutation({
     mutationFn: (name: string) => createPlaylist(name),
     onMutate: async (name): Promise<PlaylistListMutationContext> => {
@@ -1183,6 +1273,12 @@ export default function SavedLibraryView({
           context?.optimisticId,
           playlistSummary(created),
         ),
+      );
+      beginPlaylistNavigation(
+        created.id,
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : undefined,
       );
       void transitionCodaView(
         () => setSelectedPlaylistId(created.id),
@@ -1282,10 +1378,7 @@ export default function SavedLibraryView({
         queryKey: playlistQueryKey(playlistId),
         exact: true,
       });
-      void transitionCodaView(
-        () => setSelectedPlaylistId(undefined),
-        "page-back",
-      );
+      closePlaylist();
       onNotify("Playlist deleted", "good");
     },
     onError: (cause, playlistId, context) => {
@@ -1353,10 +1446,7 @@ export default function SavedLibraryView({
             playlist={playlist.data}
             loading={playlist.isLoading}
             onBack={() => {
-              void transitionCodaView(
-                () => setSelectedPlaylistId(undefined),
-                "page-back",
-              );
+              closePlaylist();
             }}
             onPlay={onPlayTracks}
             onQueue={onQueueTracks}
@@ -1443,10 +1533,11 @@ export default function SavedLibraryView({
         ) : (
           <PlaylistList
             playlists={playlists.data ?? []}
-            onOpen={(item) => {
+            onOpen={(item, trigger) => {
               const hasCachedDetail = queryClient.getQueryData<PlaylistDetail>(
                 playlistQueryKey(item.id),
               ) !== undefined;
+              beginPlaylistNavigation(item.id, trigger);
               setOpeningPlaylistId(item.id);
               void transitionCodaView(
                 () => {
@@ -1685,8 +1776,11 @@ export default function SavedLibraryView({
                             metadataLinkClassName,
                             "gap-1 disabled:opacity-100",
                           )}
+                          data-album-open={track.albumId}
+                          data-navigation-slot={`favorite-track:${track.id}`}
                           disabled={albumLoading}
-                          onClick={() => onOpenTrackAlbum(track)}
+                          onClick={(event) =>
+                            onOpenTrackAlbum(track, event.currentTarget)}
                           variant="ghost"
                         >
                           {albumLoading ? (
@@ -1755,7 +1849,7 @@ export default function SavedLibraryView({
                   return (
                     <article
                       className={cn(
-                        "grid min-w-0 grid-cols-[2.75rem_minmax(0,1fr)] items-center gap-3 rounded-lg border border-border bg-white/2 p-3 transition-[border-color,background-color,transform] duration-150 hover:-translate-y-px hover:border-white/12 hover:bg-white/3 lg:grid-cols-[3rem_minmax(0,1fr)_auto]",
+                        "grid min-w-0 grid-cols-[2.75rem_minmax(0,1fr)] items-center gap-3 rounded-lg border border-border bg-white/2 p-3 transition-[border-color,background-color,transform] duration-(--duration-coda-fast) hover:-translate-y-px hover:border-white/12 hover:bg-white/3 lg:grid-cols-[3rem_minmax(0,1fr)_auto]",
                         activeShow && "border-primary/30 bg-primary/7",
                       )}
                       key={show.id}
@@ -1885,8 +1979,11 @@ export default function SavedLibraryView({
                           aria-busy={albumLoading || undefined}
                           aria-label={`Open ${album.title}`}
                           className="relative size-12 overflow-hidden rounded-md p-0 disabled:opacity-100"
+                          data-album-open={album.id}
+                          data-navigation-slot="artwork"
                           disabled={albumLoading}
-                          onClick={() => onOpenAlbum(album)}
+                          onClick={(event) =>
+                            onOpenAlbum(album, event.currentTarget)}
                           variant="ghost"
                         >
                           <FavoriteArtwork
@@ -1908,8 +2005,11 @@ export default function SavedLibraryView({
                             aria-busy={albumLoading || undefined}
                             aria-label={albumLoading ? album.title : undefined}
                             className="h-auto w-fit max-w-full justify-start gap-1 overflow-hidden rounded-none p-0 text-xs text-[#d8d7d1] hover:bg-transparent hover:text-accent-foreground disabled:opacity-100"
+                            data-album-open={album.id}
+                            data-navigation-slot="title"
                             disabled={albumLoading}
-                            onClick={() => onOpenAlbum(album)}
+                            onClick={(event) =>
+                              onOpenAlbum(album, event.currentTarget)}
                             variant="ghost"
                           >
                             {albumLoading ? (

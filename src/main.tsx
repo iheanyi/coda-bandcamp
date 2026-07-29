@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
+import { CodaMotionProvider } from "./MotionProvider";
 import MiniPlayerWindow from "./MiniPlayerWindow";
 import { TooltipProvider } from "./components/ui/tooltip";
 import "./styles.css";
@@ -13,9 +14,11 @@ if (windowView === "mini-player") {
   document.documentElement.dataset.codaWindow = "mini-player";
   root.render(
     <StrictMode>
-      <TooltipProvider>
-        <MiniPlayerWindow />
-      </TooltipProvider>
+      <CodaMotionProvider>
+        <TooltipProvider>
+          <MiniPlayerWindow />
+        </TooltipProvider>
+      </CodaMotionProvider>
     </StrictMode>,
   );
 } else {
@@ -32,11 +35,13 @@ if (windowView === "mini-player") {
 
   root.render(
     <StrictMode>
-      <TooltipProvider>
-        <QueryClientProvider client={queryClient}>
-          <App />
-        </QueryClientProvider>
-      </TooltipProvider>
+      <CodaMotionProvider>
+        <TooltipProvider>
+          <QueryClientProvider client={queryClient}>
+            <App />
+          </QueryClientProvider>
+        </TooltipProvider>
+      </CodaMotionProvider>
     </StrictMode>,
   );
 }

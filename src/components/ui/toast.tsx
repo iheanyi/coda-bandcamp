@@ -8,9 +8,12 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react"
+import { AnimatePresence } from "motion/react"
+import * as m from "motion/react-m"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { codaMotion } from "@/motion"
 
 const toast = ToastPrimitive.createToastManager()
 
@@ -54,13 +57,12 @@ function Toast({ className, ...props }: ToastPrimitive.Root.Props) {
     <ToastPrimitive.Root
       data-slot="toast"
       className={cn(
-        "group/toast pointer-events-auto absolute right-0 bottom-0 z-[calc(1000-var(--toast-index))] w-full origin-bottom rounded-md border border-(--line-strong) bg-popover text-popover-foreground shadow-[0_10px_28px_rgba(0,0,0,0.3)] will-change-transform outline-none select-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50",
+        "group/toast pointer-events-auto relative w-full origin-bottom rounded-md border border-(--line-strong) bg-popover text-popover-foreground shadow-[0_10px_28px_rgba(0,0,0,0.3)] outline-none select-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50",
         "[--gap:0.5rem] [--height:var(--toast-frontmost-height,var(--toast-height))] [--offset-y:calc(var(--toast-offset-y)*-1+calc(var(--toast-index)*var(--gap)*-1)+var(--toast-swipe-movement-y))] [--peek:0.5rem] [--scale:calc(max(0,1-(var(--toast-index)*0.06)))] [--shrink:calc(1-var(--scale))]",
-        "h-(--height) transform-[translateX(var(--toast-swipe-movement-x))_translateY(calc(var(--toast-swipe-movement-y)-(var(--toast-index)*var(--peek))-(var(--shrink)*var(--height))))_scale(var(--scale))] [transition:transform_var(--duration-coda-view)_var(--ease-coda-enter),opacity_var(--duration-coda-standard),height_var(--duration-coda-fast)]",
+        "h-(--height) transform-[translateX(var(--toast-swipe-movement-x))_translateY(calc(var(--toast-swipe-movement-y)-(var(--toast-index)*var(--peek))-(var(--shrink)*var(--height))))_scale(var(--scale))] [transition:transform_var(--duration-coda-view)_var(--ease-coda-enter),opacity_var(--duration-coda-standard)]",
         "after:absolute after:top-full after:left-0 after:h-[calc(var(--gap)+1px)] after:w-full after:content-['']",
         "data-expanded:h-(--toast-height) data-expanded:transform-[translateX(var(--toast-swipe-movement-x))_translateY(var(--offset-y))]",
-        "data-limited:opacity-0 data-starting-style:transform-[translateY(150%)]",
-        "[&[data-ending-style]:not([data-limited]):not([data-swipe-direction])]:transform-[translateY(150%)]",
+        "data-limited:opacity-0",
         "data-ending-style:data-[swipe-direction=down]:transform-[translateY(calc(var(--toast-swipe-movement-y)+150%))]",
         "data-ending-style:data-[swipe-direction=left]:transform-[translateX(calc(var(--toast-swipe-movement-x)-150%))_translateY(var(--offset-y))]",
         "data-ending-style:data-[swipe-direction=right]:transform-[translateX(calc(var(--toast-swipe-movement-x)+150%))_translateY(var(--offset-y))]",
@@ -182,19 +184,44 @@ function ToastIcon({ type }: { type: string | undefined }) {
 function ToastList() {
   const { toasts } = ToastPrimitive.useToastManager()
 
-  return toasts.map((toastItem) => (
-    <Toast key={toastItem.id} toast={toastItem}>
-      <ToastContent>
-        <ToastIcon type={toastItem.type} />
-        <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <ToastTitle />
-          <ToastDescription />
-        </div>
-        <ToastAction />
-        <ToastClose />
-      </ToastContent>
-    </Toast>
-  ))
+  return (
+    <AnimatePresence initial={false}>
+      {toasts.map((toastItem, index) => (
+        <m.div
+          key={toastItem.id}
+          data-slot="toast-motion"
+          className="pointer-events-none absolute right-0 bottom-0 w-full origin-bottom"
+          style={{ zIndex: 1000 - index }}
+          initial={{
+            opacity: 0,
+            transform: "translateY(12px) scale(0.98)",
+          }}
+          animate={{
+            opacity: 1,
+            transform: "translateY(0px) scale(1)",
+            transition: codaMotion.componentEnter,
+          }}
+          exit={{
+            opacity: 0,
+            transform: "translateY(8px) scale(0.98)",
+            transition: codaMotion.componentExit,
+          }}
+        >
+          <Toast toast={toastItem}>
+            <ToastContent>
+              <ToastIcon type={toastItem.type} />
+              <div className="flex min-w-0 flex-1 flex-col gap-1">
+                <ToastTitle />
+                <ToastDescription />
+              </div>
+              <ToastAction />
+              <ToastClose />
+            </ToastContent>
+          </Toast>
+        </m.div>
+      ))}
+    </AnimatePresence>
+  )
 }
 
 function Toaster({

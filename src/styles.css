@@ -110,7 +110,9 @@
   --coda-label: #b3b5af;
   --duration-coda-fast: 140ms;
   --duration-coda-standard: 180ms;
+  --duration-coda-panel: 240ms;
   --duration-coda-view: 220ms;
+  --duration-coda-shared-artwork: 440ms;
   --bg: #111315;
   --panel: #17191b;
   --panel-raised: #1d2022;
@@ -139,41 +141,9 @@
   }
 }
 
-@keyframes queue-panel-in {
-  from {
-    transform: translateX(24px) scale(0.99);
-  }
-
-  to {
-    transform: translateX(0) scale(1);
-  }
-}
-
-@keyframes queue-panel-out {
-  from {
-    transform: translateX(0) scale(1);
-  }
-
-  to {
-    transform: translateX(20px) scale(0.992);
-  }
-}
-
-@keyframes queue-now-in {
-  from {
-    opacity: 0;
-    transform: translateY(-7px) scale(0.985);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
 @keyframes bar {
   to {
-    height: 3px;
+    transform: scaleY(0.25);
   }
 }
 
@@ -193,65 +163,46 @@
   }
 }
 
-@keyframes queue-track-in {
-  from {
-    opacity: 0;
-    transform: translateX(13px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-@keyframes queue-count-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes album-page-in {
-  from {
-    opacity: 0;
-    transform: translateX(7px);
-  }
-}
-
-@keyframes saved-page-in {
-  from {
-    opacity: 0;
-    transform: translateY(5px);
-  }
-}
-
-
 /* Radio and Now Playing CSS-native behavior */
 
-@keyframes radio-view-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-}
-
 @supports (view-transition-name: coda-now-playing-artwork) {
-  html.coda-transition--now-playing .player__art-link,
-  html.coda-transition--now-playing .now-playing__artwork {
+  /*
+   * Album drill-ins only snapshot the artwork. Capturing the scrollable
+   * Collection pane makes WebKit rasterize the virtualized grid before it can
+   * begin the transition, which turns the shared-element morph into a visible
+   * pause on larger libraries.
+   */
+  html.coda-transition--album-detail {
+    view-transition-name: none;
+  }
+
+  html.coda-transition--album-detail .coda-album-artwork-source,
+  html.coda-transition--album-detail .album-detail__artwork [data-slot="cover"] {
+    view-transition-name: coda-album-artwork;
+  }
+
+  html:is(
+    .coda-transition--now-playing-open,
+    .coda-transition--now-playing-close
+  ) .player__art-link,
+  html:is(
+    .coda-transition--now-playing-open,
+    .coda-transition--now-playing-close
+  ) .now-playing__artwork {
     view-transition-name: coda-now-playing-artwork;
   }
 
-  html.coda-transition--now-playing .now-playing__header {
+  html:is(
+    .coda-transition--now-playing-open,
+    .coda-transition--now-playing-close
+  ) .now-playing__header {
     view-transition-name: coda-now-playing-header;
   }
 
-  html.coda-transition--now-playing .now-playing__details {
+  html:is(
+    .coda-transition--now-playing-open,
+    .coda-transition--now-playing-close
+  ) .now-playing__details {
     view-transition-name: coda-now-playing-details;
   }
 
@@ -264,10 +215,30 @@
   }
 }
 
+::view-transition-group(coda-album-artwork) {
+  z-index: 35;
+  animation-duration: var(--duration-coda-shared-artwork);
+  animation-timing-function: var(--ease-coda-enter);
+}
+
+::view-transition-image-pair(coda-album-artwork) {
+  overflow: clip;
+  border-radius: 11px;
+  background: #17191b;
+  box-shadow: 0 26px 52px rgba(0, 0, 0, 0.34);
+}
+
+::view-transition-old(coda-album-artwork),
+::view-transition-new(coda-album-artwork) {
+  height: 100%;
+  object-fit: cover;
+  animation: none;
+}
+
 ::view-transition-group(coda-now-playing-artwork) {
   z-index: 40;
-  animation-duration: 520ms;
-  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  animation-duration: var(--duration-coda-shared-artwork);
+  animation-timing-function: var(--ease-coda-enter);
 }
 
 ::view-transition-image-pair(coda-now-playing-artwork) {
@@ -284,28 +255,33 @@
   animation: none;
 }
 
-html.coda-transition--now-playing::view-transition-old(root) {
-  animation: coda-view-old-out 180ms cubic-bezier(0.4, 0, 1, 1) both;
+html.coda-transition--now-playing-open::view-transition-old(root) {
+  animation: coda-view-old-out var(--duration-coda-standard) var(--ease-coda-exit) both;
 }
 
-html.coda-transition--now-playing::view-transition-new(root) {
-  animation: coda-view-new-in 400ms cubic-bezier(0.22, 1, 0.36, 1) both;
+html.coda-transition--now-playing-open::view-transition-new(root) {
+  animation: coda-view-new-in var(--duration-coda-shared-artwork) var(--ease-coda-enter) both;
 }
 
-html.coda-transition--now-playing::view-transition-old(coda-now-playing-header) {
-  animation: coda-view-content-out 130ms cubic-bezier(0.4, 0, 1, 1) both;
+html.coda-transition--now-playing-open::view-transition-new(coda-now-playing-header) {
+  animation: coda-view-content-in var(--duration-coda-panel) 50ms var(--ease-coda-enter) both;
 }
 
-html.coda-transition--now-playing::view-transition-new(coda-now-playing-header) {
-  animation: coda-view-content-in 330ms 90ms cubic-bezier(0.22, 1, 0.36, 1) both;
+html.coda-transition--now-playing-open::view-transition-new(coda-now-playing-details) {
+  animation: coda-view-content-in var(--duration-coda-panel) 80ms var(--ease-coda-enter) both;
 }
 
-html.coda-transition--now-playing::view-transition-old(coda-now-playing-details) {
-  animation: coda-view-content-out 150ms cubic-bezier(0.4, 0, 1, 1) both;
+html.coda-transition--now-playing-close::view-transition-old(root) {
+  animation: coda-view-old-out var(--duration-coda-standard) var(--ease-coda-exit) both;
 }
 
-html.coda-transition--now-playing::view-transition-new(coda-now-playing-details) {
-  animation: coda-view-content-in 390ms 130ms cubic-bezier(0.22, 1, 0.36, 1) both;
+html.coda-transition--now-playing-close::view-transition-new(root) {
+  animation: coda-view-new-in var(--duration-coda-panel) var(--ease-coda-enter) both;
+}
+
+html.coda-transition--now-playing-close::view-transition-old(coda-now-playing-header),
+html.coda-transition--now-playing-close::view-transition-old(coda-now-playing-details) {
+  animation: coda-view-content-close-out var(--duration-coda-fast) var(--ease-coda-exit) both;
 }
 
 html:is(
@@ -314,6 +290,7 @@ html:is(
   .coda-transition--page-crossfade
 )::view-transition-old(root),
 html:is(
+  .coda-transition--album-detail,
   .coda-transition--page-forward,
   .coda-transition--page-back,
   .coda-transition--page-crossfade
@@ -321,28 +298,32 @@ html:is(
   animation: none;
 }
 
-html.coda-transition--page-forward::view-transition-old(coda-page-content) {
-  animation: coda-page-forward-out 140ms cubic-bezier(0.4, 0, 1, 1) both;
+html:is(
+  .coda-transition--page-forward
+)::view-transition-old(coda-page-content) {
+  animation: coda-page-forward-out var(--duration-coda-fast) var(--ease-coda-exit) both;
 }
 
-html.coda-transition--page-forward::view-transition-new(coda-page-content) {
-  animation: coda-page-forward-in 220ms 35ms cubic-bezier(0.22, 1, 0.36, 1) both;
+html:is(
+  .coda-transition--page-forward
+)::view-transition-new(coda-page-content) {
+  animation: coda-page-forward-in var(--duration-coda-view) 35ms var(--ease-coda-enter) both;
 }
 
 html.coda-transition--page-back::view-transition-old(coda-page-content) {
-  animation: coda-page-back-out 140ms cubic-bezier(0.4, 0, 1, 1) both;
+  animation: coda-page-back-out var(--duration-coda-fast) var(--ease-coda-exit) both;
 }
 
 html.coda-transition--page-back::view-transition-new(coda-page-content) {
-  animation: coda-page-back-in 220ms 35ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: coda-page-back-in var(--duration-coda-view) 35ms var(--ease-coda-enter) both;
 }
 
 html.coda-transition--page-crossfade::view-transition-old(coda-page-content) {
-  animation: coda-page-fade-out 120ms ease-out both;
+  animation: coda-page-fade-out var(--duration-coda-fast) var(--ease-coda-exit) both;
 }
 
 html.coda-transition--page-crossfade::view-transition-new(coda-page-content) {
-  animation: coda-page-fade-in 190ms 25ms ease-out both;
+  animation: coda-page-fade-in var(--duration-coda-standard) 25ms var(--ease-coda-enter) both;
 }
 
 @keyframes coda-view-old-out {
@@ -357,17 +338,17 @@ html.coda-transition--page-crossfade::view-transition-new(coda-page-content) {
   }
 }
 
-@keyframes coda-view-content-out {
-  to {
-    opacity: 0;
-    transform: translateY(-5px);
-  }
-}
-
 @keyframes coda-view-content-in {
   from {
     opacity: 0;
-    transform: translateY(12px);
+    transform: translateY(8px);
+  }
+}
+
+@keyframes coda-view-content-close-out {
+  to {
+    opacity: 0;
+    transform: translateY(6px);
   }
 }
 
@@ -412,24 +393,24 @@ html.coda-transition--page-crossfade::view-transition-new(coda-page-content) {
 }
 
 html:not(.coda-view-transitions-supported) .now-playing__wash {
-  animation: now-playing-wash-in 650ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: now-playing-wash-in var(--duration-coda-shared-artwork) var(--ease-coda-enter) both;
 }
 
 html:not(.coda-view-transitions-supported) .now-playing__header {
-  animation: now-playing-content-in 330ms 40ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: now-playing-content-in var(--duration-coda-panel) 40ms var(--ease-coda-enter) both;
 }
 
 html:not(.coda-view-transitions-supported) .now-playing__artwork {
-  animation: now-playing-artwork-in 480ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: now-playing-artwork-in var(--duration-coda-shared-artwork) var(--ease-coda-enter) both;
 }
 
 html:not(.coda-view-transitions-supported) .now-playing__details {
-  animation: now-playing-content-in 410ms 90ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: now-playing-content-in var(--duration-coda-panel) 80ms var(--ease-coda-enter) both;
 }
 
 html:not(.coda-view-transitions-supported) .now-playing__radio-timeline,
 html:not(.coda-view-transitions-supported) .now-playing__up-next {
-  animation: now-playing-lower-content-in 420ms 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: now-playing-lower-content-in var(--duration-coda-panel) 100ms var(--ease-coda-enter) both;
 }
 
 @keyframes now-playing-wash-in {
@@ -474,7 +455,9 @@ html:not(.coda-view-transitions-supported) .now-playing__up-next {
 }
 
 @keyframes radio-equalizer {
-  to { height: 9px; }
+  to {
+    transform: scaleY(1);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -9,17 +9,21 @@ const originalMatchMedia = window.matchMedia;
 
 function deferred() {
   let resolve!: () => void;
-  const promise = new Promise<void>((next) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<void>((next, fail) => {
     resolve = next;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, reject, resolve };
 }
 
 afterEach(() => {
   document.documentElement.classList.remove(
     "coda-view-transitioning",
     "coda-view-transitions-supported",
-    "coda-transition--now-playing",
+    "coda-transition--album-detail",
+    "coda-transition--now-playing-open",
+    "coda-transition--now-playing-close",
     "coda-transition--page-forward",
     "coda-transition--page-back",
     "coda-transition--page-crossfade",
@@ -65,6 +69,47 @@ describe("transitionCodaView", () => {
     expect(capturedClasses[0]).toContain("coda-transition--page-back");
     expect(document.documentElement).toHaveClass("coda-view-transitions-supported");
     expect(document.documentElement).not.toHaveClass("coda-transition--page-back");
+  });
+
+  it("distinguishes Now Playing open and close snapshots", async () => {
+    const capturedClasses: string[] = [];
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: vi.fn((update: () => void) => {
+        capturedClasses.push(document.documentElement.className);
+        update();
+        return { finished: Promise.resolve() };
+      }),
+    });
+
+    await transitionCodaView(vi.fn(), "now-playing-open");
+    await transitionCodaView(vi.fn(), "now-playing-close");
+
+    expect(capturedClasses[0]).toContain(
+      "coda-transition--now-playing-open",
+    );
+    expect(capturedClasses[1]).toContain(
+      "coda-transition--now-playing-close",
+    );
+  });
+
+  it("exposes the album-detail snapshot while artwork is armed", async () => {
+    const capturedClasses: string[] = [];
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: vi.fn((update: () => void) => {
+        capturedClasses.push(document.documentElement.className);
+        update();
+        return { finished: Promise.resolve() };
+      }),
+    });
+
+    await transitionCodaView(vi.fn(), "album-detail");
+
+    expect(capturedClasses[0]).toContain("coda-transition--album-detail");
+    expect(document.documentElement).not.toHaveClass(
+      "coda-transition--album-detail",
+    );
   });
 
   it("bypasses automatic motion when reduced motion is requested", async () => {
@@ -128,6 +173,127 @@ describe("transitionCodaView", () => {
       "coda-view-transitioning",
       "coda-transition--page-back",
     );
+  });
+
+  it("cleans transition support when snapshot readiness rejects", async () => {
+    const ready = deferred();
+    const finished = deferred();
+    const update = vi.fn();
+    let capturedUpdate: (() => void) | undefined;
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: vi.fn((nextUpdate: () => void) => {
+        capturedUpdate = nextUpdate;
+        return {
+          finished: finished.promise,
+          ready: ready.promise,
+          updateCallbackDone: Promise.resolve(),
+        };
+      }),
+    });
+
+    const activeTransition = transitionCodaView(update, "page-forward");
+
+    expect(document.documentElement).toHaveClass(
+      "coda-view-transitions-supported",
+      "coda-view-transitioning",
+      "coda-transition--page-forward",
+    );
+
+    ready.reject(new DOMException("Snapshot failed", "InvalidStateError"));
+    await vi.waitFor(() => {
+      expect(update).toHaveBeenCalledOnce();
+      expect(document.documentElement).not.toHaveClass(
+        "coda-view-transitions-supported",
+        "coda-view-transitioning",
+        "coda-transition--page-forward",
+      );
+    });
+
+    capturedUpdate?.();
+    expect(update).toHaveBeenCalledOnce();
+
+    finished.resolve();
+    await activeTransition;
+  });
+
+  it("commits once when the browser rejects the update callback lifecycle", async () => {
+    const updateCallbackDone = deferred();
+    const finished = deferred();
+    const update = vi.fn();
+    let capturedUpdate: (() => void) | undefined;
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: vi.fn((nextUpdate: () => void) => {
+        capturedUpdate = nextUpdate;
+        return {
+          finished: finished.promise,
+          ready: Promise.resolve(),
+          updateCallbackDone: updateCallbackDone.promise,
+        };
+      }),
+    });
+
+    const activeTransition = transitionCodaView(update, "page-back");
+    updateCallbackDone.reject(new Error("Update callback failed"));
+
+    await vi.waitFor(() => {
+      expect(update).toHaveBeenCalledOnce();
+      expect(document.documentElement).not.toHaveClass(
+        "coda-view-transitions-supported",
+        "coda-view-transitioning",
+        "coda-transition--page-back",
+      );
+    });
+
+    capturedUpdate?.();
+    expect(update).toHaveBeenCalledOnce();
+
+    finished.resolve();
+    await activeTransition;
+  });
+
+  it("does not let a superseded readiness failure clear the newest transition", async () => {
+    const firstReady = deferred();
+    const secondReady = deferred();
+    const firstFinished = deferred();
+    const secondFinished = deferred();
+    const transitions = [
+      { finished: firstFinished, ready: firstReady },
+      { finished: secondFinished, ready: secondReady },
+    ];
+    const skipTransition = vi.fn();
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: vi.fn((update: () => void) => {
+        const transition = transitions.shift()!;
+        update();
+        return {
+          finished: transition.finished.promise,
+          ready: transition.ready.promise,
+          updateCallbackDone: Promise.resolve(),
+          skipTransition,
+        };
+      }),
+    });
+
+    const firstTransition = transitionCodaView(vi.fn(), "page-forward");
+    const secondTransition = transitionCodaView(vi.fn(), "page-back");
+
+    firstReady.reject(new DOMException("Skipped", "AbortError"));
+    await Promise.resolve();
+
+    expect(skipTransition).toHaveBeenCalledOnce();
+    expect(document.documentElement).toHaveClass(
+      "coda-view-transitions-supported",
+      "coda-view-transitioning",
+      "coda-transition--page-back",
+    );
+
+    firstFinished.resolve();
+    secondReady.resolve();
+    secondFinished.resolve();
+    await Promise.all([firstTransition, secondTransition]);
   });
 
   it("ignores a superseded transition update that arrives late", async () => {

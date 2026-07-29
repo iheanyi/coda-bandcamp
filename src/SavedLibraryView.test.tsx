@@ -10,6 +10,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { CodaMotionProvider } from "./MotionProvider";
 import type {
   LocalFavoriteCollection,
   PlaylistDetail,
@@ -104,7 +105,11 @@ function withQueryClient(node: React.ReactNode) {
     },
   });
   return {
-    ...render(<QueryClientProvider client={queryClient}>{node}</QueryClientProvider>),
+    ...render(
+      <CodaMotionProvider>
+        <QueryClientProvider client={queryClient}>{node}</QueryClientProvider>
+      </CodaMotionProvider>,
+    ),
     queryClient,
   };
 }
@@ -248,10 +253,14 @@ describe("saved Bandcamp library views", () => {
       "album-1",
       track,
     );
-    fireEvent.click(within(playlistTracks).getByRole("button", {
+    const playlistAlbumButton = within(playlistTracks).getByRole("button", {
       name: "Open Mirage album",
-    }));
-    expect(commonProps.onOpenTrackAlbum).toHaveBeenCalledWith(track);
+    });
+    fireEvent.click(playlistAlbumButton);
+    expect(commonProps.onOpenTrackAlbum).toHaveBeenCalledWith(
+      track,
+      playlistAlbumButton,
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Rename Night drive" }));
     fireEvent.change(screen.getByLabelText("Playlist name"), { target: { value: "After hours" } });
@@ -262,6 +271,28 @@ describe("saved Bandcamp library views", () => {
         name: "After hours",
       }),
     );
+  });
+
+  it("moves focus into playlist details and restores the opening row on Back", async () => {
+    withQueryClient(<SavedLibraryView mode="playlists" {...commonProps} />);
+
+    const playlistButton = await screen.findByRole("button", {
+      name: /Night drive/,
+    });
+    playlistButton.focus();
+    fireEvent.click(playlistButton);
+
+    const heading = await screen.findByRole("heading", {
+      name: "Night drive",
+    });
+    await waitFor(() => expect(heading).toHaveFocus());
+
+    fireEvent.click(screen.getByRole("button", { name: "All playlists" }));
+
+    const restoredPlaylistButton = await screen.findByRole("button", {
+      name: /Night drive/,
+    });
+    await waitFor(() => expect(restoredPlaylistButton).toHaveFocus());
   });
 
   it("creates a playlist with selected tracks from the add dialog", async () => {
@@ -485,7 +516,7 @@ describe("saved Bandcamp library views", () => {
     const deleteDialog = screen.getByRole("alertdialog", {
       name: "Delete Night drive?",
     });
-    expect(deleteDialog).toBeVisible();
+    await waitFor(() => expect(deleteDialog).toBeVisible());
 
     await user.keyboard("{Escape}");
     expect(deleteDialog).toBeVisible();
@@ -646,10 +677,14 @@ describe("saved Bandcamp library views", () => {
       "album-1",
       track,
     );
-    fireEvent.click(within(favoriteTracks).getByRole("button", {
+    const favoriteAlbumButton = within(favoriteTracks).getByRole("button", {
       name: "Open Mirage album",
-    }));
-    expect(commonProps.onOpenTrackAlbum).toHaveBeenCalledWith(track);
+    });
+    fireEvent.click(favoriteAlbumButton);
+    expect(commonProps.onOpenTrackAlbum).toHaveBeenCalledWith(
+      track,
+      favoriteAlbumButton,
+    );
     fireEvent.click(screen.getByRole("button", {
       name: "Browse The Hip Hop Show",
     }));

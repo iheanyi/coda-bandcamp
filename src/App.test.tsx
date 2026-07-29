@@ -6,6 +6,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { CodaMotionProvider } from "./MotionProvider";
 import { albumQueryKey } from "./libraryQueries";
 import type { Album, Track } from "./types";
 
@@ -145,9 +146,11 @@ function renderApp(strict = false) {
     },
   });
   const app = (
-    <QueryClientProvider client={queryClient}>
-      <App />
-    </QueryClientProvider>
+    <CodaMotionProvider>
+      <QueryClientProvider client={queryClient}>
+        <App />
+      </QueryClientProvider>
+    </CodaMotionProvider>
   );
   const view = render(
     strict ? <StrictMode>{app}</StrictMode> : app,
@@ -424,7 +427,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument()
     );
-    expect(dialog).toBeVisible();
+    await waitFor(() => expect(dialog).toBeVisible());
   });
 
   it("shows dismissible app feedback through the shared Coda toast", async () => {
@@ -2454,14 +2457,19 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     const singleTrackControl = within(singlePage).getByRole("button", {
       name: "Play Streetlight",
     });
-    expect(within(singleTrackControl.parentElement!).getByText("2:44"))
-      .toBeVisible();
+    await waitFor(() =>
+      expect(within(singleTrackControl.parentElement!).getByText("2:44"))
+        .toBeVisible(),
+    );
     expect(screen.getByRole("heading", { name: "1 song" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Shuffle album" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Back to releases" }));
 
     fireEvent.click(screen.getByTitle("Browse Glass Taxi"));
-    expect(await screen.findByRole("heading", { name: "Glass Taxi" })).toBeInTheDocument();
+    const artistHeading = await screen.findByRole("heading", {
+      name: "Glass Taxi",
+    });
+    expect(artistHeading).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "All artists" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Play all" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Shuffle artist" })).toBeInTheDocument();
@@ -3146,12 +3154,20 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     await screen.findByText("Soft Focus");
     const libraryPane = screen.getByRole("main");
     libraryPane.scrollTop = 312;
+    const openAlbumButton = screen.getByRole("button", {
+      name: "Open Soft Focus",
+    });
+    openAlbumButton.focus();
 
-    fireEvent.click(screen.getByRole("button", { name: "Open Soft Focus" }));
+    fireEvent.click(openAlbumButton);
 
     const albumPage = screen.getByRole("article", {
       name: "Soft Focus release details",
     });
+    await waitFor(() =>
+      expect(within(albumPage).getByRole("heading", { name: "Soft Focus" }))
+        .toHaveFocus(),
+    );
     expect(within(albumPage).getByRole("status", {
       name: "Loading album tracks",
     })).toBeVisible();
@@ -3166,6 +3182,10 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       name: "All releases",
     })).toBeInTheDocument();
     expect(libraryPane.scrollTop).toBe(312);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Open Soft Focus" }))
+        .toHaveFocus(),
+    );
   });
 
   it("keeps Back scroll restoration pending while cold album hydration settles", async () => {
@@ -3227,16 +3247,29 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     }
   });
 
-  it("opens a prefetched album immediately without a snapshot or loader", async () => {
+  it("opens a prefetched album through a warm snapshot without a loader", async () => {
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
+    let destinationArtworkArmed = false;
+    let sourceArtworkArmed = false;
+    let transitionClassName = "";
     const originalDescriptor = Object.getOwnPropertyDescriptor(
       document,
       "startViewTransition",
     );
-    const startViewTransition = vi.fn(() => ({
-      finished: Promise.resolve(),
-    }));
+    const startViewTransition = vi.fn((update: () => void) => {
+      transitionClassName = document.documentElement.className;
+      sourceArtworkArmed = Boolean(
+        document.querySelector(".coda-album-artwork-source"),
+      );
+      update();
+      destinationArtworkArmed = Boolean(
+        document.querySelector(
+          ".album-detail__artwork [data-slot=cover]",
+        ),
+      );
+      return { finished: Promise.resolve() };
+    });
     Object.defineProperty(document, "startViewTransition", {
       configurable: true,
       value: startViewTransition,
@@ -3253,7 +3286,12 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
       fireEvent.click(openButton);
 
-      expect(startViewTransition).not.toHaveBeenCalled();
+      expect(startViewTransition).toHaveBeenCalledOnce();
+      expect(transitionClassName).toContain(
+        "coda-transition--album-detail",
+      );
+      expect(sourceArtworkArmed).toBe(true);
+      expect(destinationArtworkArmed).toBe(true);
       expect(screen.queryByRole("status")).not.toBeInTheDocument();
       const albumPage = screen.getByRole("article", {
         name: "Soft Focus release details",
@@ -3261,6 +3299,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       expect(within(albumPage).getByText("First Light")).toBeVisible();
       expect(within(albumPage).queryByRole("status")).not.toBeInTheDocument();
     } finally {
+      document.documentElement.classList.remove(
+        "coda-transition--album-detail",
+      );
       if (originalDescriptor) {
         Object.defineProperty(document, "startViewTransition", originalDescriptor);
       } else {
@@ -3450,7 +3491,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     }
   });
 
-  it("switches primary destinations without waiting for a WebView snapshot", async () => {
+  it("switches synchronous primary destinations through a WebView snapshot", async () => {
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
     renderApp();
@@ -3462,7 +3503,10 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     );
     Object.defineProperty(document, "startViewTransition", {
       configurable: true,
-      value: vi.fn(() => ({ finished: Promise.resolve() })),
+      value: vi.fn((update: () => void) => {
+        update();
+        return { finished: Promise.resolve() };
+      }),
     });
 
     try {
@@ -3965,11 +4009,94 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     fireEvent.click(screen.getByRole("button", { name: "Favorites" }));
     expect(await screen.findByText("On this device")).toBeInTheDocument();
     expect(screen.getByText("Soft Focus")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Soft Focus" }));
+    const favoriteAlbumTrigger = screen.getByRole("button", {
+      name: "Soft Focus",
+    });
+    favoriteAlbumTrigger.focus();
+    fireEvent.click(favoriteAlbumTrigger);
     const reopenedAlbum = await screen.findByRole("article", {
       name: "Soft Focus release details",
     });
     expect(within(reopenedAlbum).getByText("First Light")).toBeInTheDocument();
+
+    fireEvent.click(within(reopenedAlbum).getByRole("button", {
+      name: "Back to releases",
+    }));
+
+    expect(await screen.findByText("On this device")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Soft Focus" }))
+        .toHaveFocus(),
+    );
+  });
+
+  it("restores the exact favorite-track album link after album Back", async () => {
+    window.localStorage.setItem(
+      "coda.local-favorites.v1",
+      JSON.stringify({
+        version: 2,
+        albumIds: [],
+        songIds: [tracks[0].id],
+        albums: [],
+        tracks: [tracks[0]],
+        radioShowIds: [],
+        radioShows: [],
+      }),
+    );
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    fireEvent.click(screen.getByRole("button", { name: "Favorites" }));
+    await screen.findByText("On this device");
+
+    const favoriteTrackAlbumLink = screen.getByRole("button", {
+      name: "Open Soft Focus album",
+    });
+    favoriteTrackAlbumLink.focus();
+    fireEvent.click(favoriteTrackAlbumLink);
+
+    const albumPage = await screen.findByRole("article", {
+      name: "Soft Focus release details",
+    });
+    const transitionFinished = deferred<void>();
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      document,
+      "startViewTransition",
+    );
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: vi.fn((update: () => void) => {
+        update();
+        return { finished: transitionFinished.promise };
+      }),
+    });
+
+    try {
+      fireEvent.click(within(albumPage).getByRole("button", {
+        name: "Back to releases",
+      }));
+
+      await screen.findByText("On this device");
+
+      await act(async () => transitionFinished.resolve());
+      await waitFor(() =>
+        expect(screen.getByRole("button", {
+          name: "Open Soft Focus album",
+        })).toHaveFocus(),
+      );
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(
+          document,
+          "startViewTransition",
+          originalDescriptor,
+        );
+      } else {
+        Reflect.deleteProperty(document, "startViewTransition");
+      }
+    }
   });
 
   it("opens a favorite Radio detail without snapshotting its loading state", async () => {

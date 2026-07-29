@@ -1,10 +1,36 @@
 import * as React from "react"
 import { Select as SelectPrimitive } from "@base-ui/react/select"
+import * as m from "motion/react-m"
 
 import { cn } from "@/lib/utils"
+import { codaMotion } from "@/motion"
 import { ChevronDownIcon, CheckIcon, ChevronUpIcon } from "lucide-react"
 
-const Select = SelectPrimitive.Root
+const SelectPresenceContext = React.createContext(false)
+
+function Select<Value, Multiple extends boolean | undefined = false>({
+  open: openProp,
+  defaultOpen = false,
+  onOpenChange,
+  ...props
+}: SelectPrimitive.Root.Props<Value, Multiple>) {
+  const [uncontrolledOpen, setUncontrolledOpen] =
+    React.useState(defaultOpen)
+  const open = openProp ?? uncontrolledOpen
+
+  return (
+    <SelectPresenceContext.Provider value={open}>
+      <SelectPrimitive.Root
+        open={open}
+        onOpenChange={(nextOpen, details) => {
+          if (openProp === undefined) setUncontrolledOpen(nextOpen)
+          onOpenChange?.(nextOpen, details)
+        }}
+        {...props}
+      />
+    </SelectPresenceContext.Provider>
+  )
+}
 
 function SelectGroup({ className, ...props }: SelectPrimitive.Group.Props) {
   return (
@@ -69,6 +95,9 @@ function SelectContent({
     SelectPrimitive.Positioner.Props,
     "align" | "alignOffset" | "side" | "sideOffset" | "alignItemWithTrigger"
   >) {
+  const open = React.useContext(SelectPresenceContext)
+  const animatePopup = !alignItemWithTrigger
+
   return (
     <SelectPrimitive.Portal>
       <SelectPrimitive.Positioner
@@ -82,8 +111,26 @@ function SelectContent({
         <SelectPrimitive.Popup
           data-slot="select-content"
           data-align-trigger={alignItemWithTrigger}
-          className={cn("relative isolate z-50 max-h-(--available-height) w-(--anchor-width) min-w-36 origin-(--transform-origin) overflow-x-hidden overflow-y-auto rounded-lg bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10 duration-100 data-[align-trigger=true]:animate-none data-[side=bottom]:slide-in-from-top-2 data-[side=inline-end]:slide-in-from-left-2 data-[side=inline-start]:slide-in-from-right-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95", className )}
+          className={cn(
+            "relative isolate z-50 max-h-(--available-height) w-(--anchor-width) min-w-36 origin-(--transform-origin) overflow-x-hidden overflow-y-auto rounded-lg bg-popover text-popover-foreground opacity-100 shadow-md ring-1 ring-foreground/10 transition-opacity duration-(--duration-coda-fast) ease-coda-enter data-closed:opacity-0",
+            className
+          )}
           {...props}
+          render={
+            <m.div
+              initial={false}
+              animate={{
+                transform:
+                  open || !animatePopup ? "scale(1)" : "scale(0.96)",
+                transition: open
+                  ? codaMotion.feedback
+                  : codaMotion.componentExit,
+              }}
+              style={{
+                pointerEvents: open ? "auto" : "none",
+              }}
+            />
+          }
         >
           <SelectScrollUpButton />
           <SelectPrimitive.List>{children}</SelectPrimitive.List>

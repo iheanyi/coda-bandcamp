@@ -199,12 +199,14 @@ export function AppUpdateSettings({
 
 export function AppUpdatePrompt({
   updater,
+  suppressed = false,
 }: {
   updater: AppUpdaterController;
+  suppressed?: boolean;
 }) {
   const primaryActionRef = useRef<HTMLButtonElement>(null);
   const update = updater.update;
-  if (!updater.supported || !updater.promptVisible || !update) return null;
+  if (!updater.supported || !update) return null;
 
   const busy =
     updater.installState === "installing" ||
@@ -212,7 +214,7 @@ export function AppUpdatePrompt({
 
   return (
     <Dialog
-      open
+      open={updater.promptVisible && !suppressed}
       onOpenChange={(open, details) => {
         if (open) return;
         if (busy) {
