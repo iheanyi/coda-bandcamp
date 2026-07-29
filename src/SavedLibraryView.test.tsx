@@ -627,13 +627,28 @@ describe("saved Bandcamp library views", () => {
       "h-4",
       "tabular-nums",
     );
-    expect(within(favoriteTracks).getByRole("listitem")).toHaveClass(
+    const favoriteTrackRow = within(favoriteTracks).getByRole("listitem");
+    expect(favoriteTrackRow).toHaveClass(
       "h-14",
+      "overflow-hidden",
       "grid-cols-[2rem_2.5rem_minmax(0,1fr)_3rem_repeat(3,2rem)]",
       "lg:grid-cols-[2rem_2.5rem_minmax(0,1fr)_4rem_repeat(3,2rem)]",
     );
-    expect(within(favoriteTracks).getByRole("listitem")).not.toHaveClass(
+    expect(favoriteTrackRow).not.toHaveClass(
       "min-h-14",
+    );
+    const favoriteArtist = within(favoriteTracks).getByRole("button", {
+      name: "Sweeps",
+    });
+    expect(favoriteArtist).toHaveClass(
+      "h-auto",
+      "min-w-0",
+      "rounded-none",
+    );
+    expect(favoriteArtist).not.toHaveClass("h-10");
+    expect(within(favoriteTracks).getByText("3:08")).toHaveClass(
+      "justify-self-end",
+      "tabular-nums",
     );
     expect(within(favoriteTracks).getByRole("button", {
       name: "Add Mirage to queue",

@@ -1,7 +1,6 @@
 import {
   ArrowLeft,
   Check,
-  Clock3,
   HardDrive,
   Heart,
   ListMusic,
@@ -130,7 +129,7 @@ const radioDateFormatter = new Intl.DateTimeFormat(undefined, {
 const eyebrowClassName =
   "mb-2.5 text-xs font-bold tracking-widest text-[#777b76] uppercase";
 const metadataLinkClassName =
-  "max-w-[48%] cursor-pointer truncate border-0 bg-transparent p-0 text-left text-xs font-normal text-[#777b76] hover:text-accent-foreground";
+  "h-auto min-w-0 max-w-[48%] cursor-pointer truncate rounded-none border-0 bg-transparent p-0 text-left text-xs font-normal text-[#777b76] hover:text-accent-foreground";
 const savedPageClassName =
   "mx-auto min-h-full w-full max-w-5xl animate-[saved-page-in_180ms_ease-out] pt-2 pb-12 motion-reduce:animate-none";
 
@@ -1624,7 +1623,7 @@ export default function SavedLibraryView({
                   <div
                     {...rowProps}
                     className={cn(
-                      "group relative grid h-14 grid-cols-[2rem_2.5rem_minmax(0,1fr)_3rem_repeat(3,2rem)] items-center gap-x-1.5 border-b border-white/7 pr-2 pl-1 transition-colors last:border-b-0 hover:bg-white/3 lg:grid-cols-[2rem_2.5rem_minmax(0,1fr)_4rem_repeat(3,2rem)] lg:gap-x-2 lg:pr-3",
+                      "group relative grid h-14 grid-cols-[2rem_2.5rem_minmax(0,1fr)_3rem_repeat(3,2rem)] items-center gap-x-1.5 overflow-hidden border-b border-white/7 pr-2 pl-1 transition-colors last:border-b-0 hover:bg-white/3 lg:grid-cols-[2rem_2.5rem_minmax(0,1fr)_4rem_repeat(3,2rem)] lg:gap-x-2 lg:pr-3",
                       activeTrack && "bg-primary/5 before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-primary before:content-['']",
                     )}
                   >
@@ -1696,8 +1695,8 @@ export default function SavedLibraryView({
                         </Button>
                       </div>
                     </div>
-                    <span className="flex items-center justify-center gap-1 text-xs text-[#777b76] tabular-nums">
-                      <Clock3 size={12} /> {formatTime(track.duration)}
+                    <span className="justify-self-end pr-1 text-right text-xs text-[#777b76] tabular-nums">
+                      {formatTime(track.duration)}
                     </span>
                     <Button
                       onClick={() => onQueueTrack(track)}
