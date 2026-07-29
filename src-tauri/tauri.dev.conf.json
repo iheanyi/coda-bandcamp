@@ -1,0 +1,11 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Coda Dev",
+  "identifier": "com.coda.bandcamp.dev",
+  "bundle": {
+    "targets": [
+      "app"
+    ],
+    "createUpdaterArtifacts": false
+  }
+}

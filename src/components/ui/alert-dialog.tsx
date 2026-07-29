@@ -79,7 +79,7 @@ function AlertDialogOverlay({
     <AlertDialogPrimitive.Backdrop
       data-slot="alert-dialog-overlay"
       className={cn(
-        "fixed inset-x-0 top-0 bottom-23 isolate z-50 bg-[rgba(5,6,7,0.72)] backdrop-blur-sm",
+        "fixed inset-0 isolate z-50 bg-[rgba(5,6,7,0.72)] backdrop-blur-sm",
         className
       )}
       {...props}
@@ -111,7 +111,7 @@ function AlertDialogContent({
       >
         {open ? (
           <React.Fragment key="alert-dialog-presence">
-            <AlertDialogOverlay />
+            <AlertDialogOverlay forceRender />
             <AlertDialogPrimitive.Popup
               data-slot="alert-dialog-content"
               data-size={size}
@@ -124,18 +124,16 @@ function AlertDialogContent({
                 <m.div
                   initial={{
                     opacity: 0,
-                    transform:
-                      "translate(-50%, calc(-50% + 6px)) scale(0.985)",
+                    transform: "scale(0.985)",
                   }}
                   animate={{
                     opacity: 1,
-                    transform: "translate(-50%, -50%) scale(1)",
+                    transform: "scale(1)",
                     transition: codaMotion.componentEnter,
                   }}
                   exit={{
                     opacity: 0,
-                    transform:
-                      "translate(-50%, calc(-50% + 4px)) scale(0.985)",
+                    transform: "scale(0.985)",
                     transition: codaMotion.componentExit,
                   }}
                 />

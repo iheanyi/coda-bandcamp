@@ -43,6 +43,13 @@ describe("AlertDialog", () => {
       name: "Delete Night drive?",
     })
     await waitFor(() => expect(dialog).toBeVisible())
+    expect(dialog).toHaveClass("top-1/2", "left-1/2", "-translate-1/2")
+    expect(dialog.style.transform).toMatch(/^scale\(/)
+    expect(dialog.style.transform).not.toContain("translate")
+    expect(document.querySelector('[data-slot="alert-dialog-overlay"]'))
+      .toHaveClass("inset-0")
+    expect(document.querySelector('[data-slot="alert-dialog-overlay"]'))
+      .not.toHaveClass("bottom-23")
 
     await user.keyboard("{Escape}")
     expect(dialog).toBeInTheDocument()

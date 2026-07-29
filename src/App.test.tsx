@@ -394,9 +394,11 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
     trigger.focus();
     fireEvent.click(trigger);
-    expect(await screen.findByRole("dialog", {
+    const dialog = await screen.findByRole("dialog", {
       name: "Bring in your collection",
-    })).toBeInTheDocument();
+    });
+    expect(dialog).toHaveClass("top-1/2", "left-1/2", "-translate-1/2");
+    expect(dialog.className).not.toContain("top-[calc(");
 
     fireEvent.keyDown(document, { key: "Escape" });
 
@@ -408,7 +410,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(trigger).toHaveFocus();
   });
 
-  it("keeps the exposed compact player interactive while settings are open", async () => {
+  it("locks the application behind connection settings", async () => {
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
     renderApp();
@@ -421,12 +423,15 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       name: "Bandcamp is connected",
     });
 
-    expect(pause.closest("[inert]")).toBeNull();
-    expect(pause.closest('[aria-hidden="true"]')).toBeNull();
-    fireEvent.click(pause);
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument()
+      expect(pause.closest("[data-base-ui-inert]")).not.toBeNull()
     );
+    expect(document.querySelector('[data-slot="dialog-overlay"]'))
+      .toHaveClass("inset-0");
+    expect(document.querySelector('[data-slot="dialog-overlay"]'))
+      .not.toHaveClass("bottom-23");
+    expect(dialog.querySelector('[data-slot="connection-dialog-scroll"]'))
+      .toHaveClass("min-h-0", "overflow-y-auto");
     await waitFor(() => expect(dialog).toBeVisible());
   });
 

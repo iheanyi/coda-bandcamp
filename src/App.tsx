@@ -2156,7 +2156,6 @@ function ConnectionDialog({
   return (
     <Dialog
       disablePointerDismissal
-      modal={false}
       open={open}
       onExitComplete={() => {
         setUsername("");
@@ -2181,7 +2180,7 @@ function ConnectionDialog({
     >
       <DialogContent
         aria-busy={dialogBusy}
-        className="top-[calc(50%-(--spacing(12)))] max-h-[calc(100%-(--spacing(38)))] [scrollbar-color:#3e4142_transparent] scrollbar-thin gap-0 overflow-auto p-8"
+        className="max-h-[calc(100%-(--spacing(8)))] grid-rows-[minmax(0,1fr)] gap-0 overflow-hidden p-0"
         showCloseButton={false}
       >
         <Button
@@ -2190,10 +2189,15 @@ function ConnectionDialog({
           aria-label="Close"
           disabled={dialogBusy}
           size="icon"
+          type="button"
           variant="ghost"
         >
           <X size={19} />
         </Button>
+        <div
+          className="min-h-0 overflow-y-auto p-8 [scrollbar-color:#3e4142_transparent] scrollbar-thin"
+          data-slot="connection-dialog-scroll"
+        >
         <div className="mb-5 grid size-12 place-items-center rounded-full bg-accent text-[#e77b60]">
           <Radio size={24} />
         </div>
@@ -2338,6 +2342,7 @@ function ConnectionDialog({
           </>
         ) : null}
         <small className="mt-4 block text-xs/normal text-[#656965]">Bandcamp’s Subsonic service is currently in beta. Coda is an independent client and is not affiliated with Bandcamp or Last.fm.</small>
+        </div>
       </DialogContent>
     </Dialog>
   );

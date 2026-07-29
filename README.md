@@ -46,6 +46,12 @@ npm run dev
 `npm run dev` opens the desktop app with frontend hot reload and automatic Rust
 rebuilds.
 
+On macOS, the command packages and launches
+`src-tauri/target/debug/bundle/macos/Coda Dev.app`. The development flavor uses
+`com.coda.bandcamp.dev`, so macOS can discover it independently from an
+installed production build while Vite and Tauri continue to provide hot
+reloading.
+
 To create a native installer for the current platform:
 
 ```sh

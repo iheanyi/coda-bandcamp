@@ -3,11 +3,13 @@
 set -eu
 
 identity="${CODA_DEV_CODESIGN_IDENTITY:-Coda Local Development}"
-signing_identifier="com.coda.bandcamp"
+signing_identifier="com.coda.bandcamp.dev"
 fingerprint_schema="coda-dev-native-fingerprint-v2"
 script_directory="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 script_path="$script_directory/$(basename -- "$0")"
 fingerprint_script="$script_directory/../tools/dev-instance.mjs"
+dev_configuration="$script_directory/tauri.dev.conf.json"
+tauri_cli="$script_directory/../node_modules/@tauri-apps/cli/tauri.js"
 
 compute_native_fingerprint() {
   node "$fingerprint_script" native-fingerprint
@@ -36,6 +38,41 @@ find_signing_identity_hash() {
   security find-identity -v -p codesigning |
     grep -F "\"$identity\"" |
     awk 'NR == 1 { print $2 }'
+}
+
+bundle_dev_app() {
+  signed_executable="$1"
+  identity_hash="$2"
+  executable_directory="$(dirname -- "$signed_executable")"
+  target_triple="$(basename -- "$(dirname -- "$executable_directory")")"
+
+  set -- bundle --debug --bundles app --config "$dev_configuration" --no-sign
+  case "$target_triple" in
+    *-apple-darwin)
+      set -- "$@" --target "$target_triple"
+      ;;
+  esac
+
+  (
+    cd "$script_directory"
+    node "$tauri_cli" "$@"
+  )
+
+  app_bundle="$executable_directory/bundle/macos/Coda Dev.app"
+  bundled_executable="$app_bundle/Contents/MacOS/coda"
+  if [ ! -d "$app_bundle" ] || [ ! -x "$bundled_executable" ]; then
+    printf 'Coda could not find the bundled development app at "%s".\n' "$app_bundle" >&2
+    exit 1
+  fi
+
+  cp "$signed_executable" "$bundled_executable"
+  codesign \
+    --force \
+    --sign "$identity_hash" \
+    --timestamp=none \
+    --identifier "$signing_identifier" \
+    "$app_bundle"
+  codesign --verify --deep --strict "$app_bundle"
 }
 
 same_native_executable() {
@@ -140,10 +177,8 @@ case "${1:-}" in
       if [ "$cached_schema" = "$fingerprint_schema" ] &&
         [ "$cached_fingerprint" = "$native_fingerprint" ] &&
         codesign --verify --strict -R "$code_requirement" "$instance_executable"; then
-        exec "$instance_executable" "$@"
-      fi
-
-      if {
+        executable="$instance_executable"
+      elif {
         [ ! -e "$fingerprint_file" ] ||
           {
             printf '%s\n' "$cached_schema" | grep -Eq '^[0-9a-f]{64}$' &&
@@ -154,32 +189,32 @@ case "${1:-}" in
         codesign --verify --strict -R "$code_requirement" "$instance_executable" &&
         same_native_executable "$executable" "$instance_executable"; then
         write_native_fingerprint "$fingerprint_file" "$native_fingerprint"
-        exec "$instance_executable" "$@"
+        executable="$instance_executable"
+      else
+        signing_executable="$instance_executable.signing.$$"
+        fingerprint_temp="$fingerprint_file.tmp.$$"
+        trap cleanup_signing_replacement EXIT
+        trap 'exit_after_signal 129' HUP
+        trap 'exit_after_signal 130' INT
+        trap 'exit_after_signal 143' TERM
+        cp "$executable" "$signing_executable"
+        codesign \
+          --force \
+          --sign "$identity_hash" \
+          --timestamp=none \
+          --identifier "$signing_identifier" \
+          "$signing_executable"
+        codesign --verify --strict -R "$code_requirement" "$signing_executable"
+        printf '%s\n%s\n' \
+          "$fingerprint_schema" \
+          "$native_fingerprint" >"$fingerprint_temp"
+        unlink "$fingerprint_file" 2>/dev/null || true
+        mv -f "$signing_executable" "$instance_executable"
+        mv -f "$fingerprint_temp" "$fingerprint_file"
+        trap - HUP INT TERM
+        trap - EXIT
+        executable="$instance_executable"
       fi
-
-      signing_executable="$instance_executable.signing.$$"
-      fingerprint_temp="$fingerprint_file.tmp.$$"
-      trap cleanup_signing_replacement EXIT
-      trap 'exit_after_signal 129' HUP
-      trap 'exit_after_signal 130' INT
-      trap 'exit_after_signal 143' TERM
-      cp "$executable" "$signing_executable"
-      codesign \
-        --force \
-        --sign "$identity_hash" \
-        --timestamp=none \
-        --identifier "$signing_identifier" \
-        "$signing_executable"
-      codesign --verify --strict -R "$code_requirement" "$signing_executable"
-      printf '%s\n%s\n' \
-        "$fingerprint_schema" \
-        "$native_fingerprint" >"$fingerprint_temp"
-      unlink "$fingerprint_file" 2>/dev/null || true
-      mv -f "$signing_executable" "$instance_executable"
-      mv -f "$fingerprint_temp" "$fingerprint_file"
-      trap - HUP INT TERM
-      trap - EXIT
-      executable="$instance_executable"
     else
       codesign \
         --force \
@@ -190,7 +225,8 @@ case "${1:-}" in
       codesign --verify --strict -R "$code_requirement" "$executable"
     fi
 
-    exec "$executable" "$@"
+    bundle_dev_app "$executable" "$identity_hash"
+    exec "$bundled_executable" "$@"
     ;;
   *)
     exec cargo "$@"

@@ -225,7 +225,7 @@ export function AppUpdatePrompt({
       }}
     >
       <DialogContent
-        className="top-[calc(50%-(--spacing(12)))] max-h-[calc(100%-(--spacing(38)))] max-w-120 scrollbar-thin [scrollbar-color:#3e4142_transparent] gap-0 overflow-auto p-8"
+        className="max-h-[calc(100%-(--spacing(8)))] max-w-120 scrollbar-thin [scrollbar-color:#3e4142_transparent] gap-0 overflow-auto p-8"
         showCloseButton={false}
         aria-busy={busy}
         initialFocus={primaryActionRef}
