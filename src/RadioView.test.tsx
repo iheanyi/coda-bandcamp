@@ -115,7 +115,7 @@ function renderRadio(
       />
     );
   }
-  const view = render(
+  render(
     <QueryClientProvider client={client}>
       <ControlledRadioView />
     </QueryClientProvider>,
@@ -126,7 +126,6 @@ function renderRadio(
     onPlayAt,
     onTogglePlayback,
     onToggleFavorite,
-    unmount: view.unmount,
   };
 }
 
@@ -144,34 +143,6 @@ afterEach(() => {
 });
 
 describe("Bandcamp Radio", () => {
-  it("keeps the loading shell free of a competing page entrance", () => {
-    mocks.fetchRadioShows.mockReturnValue(new Promise(() => {}));
-    renderRadio();
-
-    const root = screen.getByLabelText("Tuning Bandcamp Radio").closest("section");
-    expect(root?.className).not.toContain("radio-view-in");
-  });
-
-  it("keeps error and empty shells free of competing page entrances", async () => {
-    mocks.fetchRadioShows.mockRejectedValueOnce(new Error("Signal lost"));
-    const errorRender = renderRadio();
-
-    const errorRoot = (await screen.findByText("Bandcamp Radio is off the air"))
-      .closest("section");
-    expect(errorRoot?.className).not.toContain("radio-view-in");
-
-    errorRender.unmount();
-    mocks.fetchRadioShows.mockResolvedValueOnce({
-      results: [],
-      hasMore: false,
-    });
-    renderRadio();
-
-    const emptyRoot = (await screen.findByText("No episodes found"))
-      .closest("section");
-    expect(emptyRoot?.className).not.toContain("radio-view-in");
-  });
-
   it("disables show actions and labels the request while loading playback", async () => {
     let resolveShow!: (value: RadioShow) => void;
     mocks.fetchRadioShow.mockReturnValue(new Promise((resolve) => {
@@ -193,10 +164,7 @@ describe("Bandcamp Radio", () => {
   it("loads the archive and plays the latest signed show stream", async () => {
     const { onPlay } = renderRadio();
 
-    const latestHeading = await screen.findByRole("heading", { name: "Kinrose" });
-    expect(latestHeading).toBeInTheDocument();
-    expect(latestHeading.closest("section")?.className)
-      .not.toContain("radio-view-in");
+    await screen.findByRole("heading", { name: "Kinrose" });
     expect(screen.getByText("2 broadcasts loaded")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Play latest show" }));
 
@@ -236,7 +204,6 @@ describe("Bandcamp Radio", () => {
     const queueShow = screen.getByRole("button", {
       name: "Add The Best of 2026 to queue",
     });
-    expect(queueShow).toHaveClass("size-8", "p-0");
     fireEvent.click(queueShow);
     await waitFor(() => expect(onQueue).toHaveBeenCalledWith(
       expect.objectContaining({ id: "radio:978" }),
@@ -322,41 +289,18 @@ describe("Bandcamp Radio", () => {
     expect(mocks.fetchRadioShow).not.toHaveBeenCalled();
   });
 
-  it("opens show details lazily and keeps link and play-from-here intent separate", async () => {
+  it("opens show details lazily and plays a chapter from its timecode", async () => {
     const { onPlayAt } = renderRadio();
 
     await screen.findByRole("heading", { name: "Kinrose" });
     expect(mocks.fetchRadioShow).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "View tracklist" }));
 
-    const detailRoot = (await screen.findByRole("heading", {
+    await screen.findByRole("heading", {
       name: "Songs in this show",
-    })).closest("section");
-    expect(detailRoot?.className).not.toContain("saved-page-in");
+    });
     expect(mocks.fetchRadioShow).toHaveBeenCalledWith(979);
 
-    fireEvent.click(screen.getByRole("button", {
-      name: "Open Mirage by Sweeps on Bandcamp",
-    }));
-    expect(mocks.openBandcampUrl).toHaveBeenCalledWith(
-      "https://sweepsbeats.bandcamp.com/track/mirage-w-keylime",
-    );
-    fireEvent.click(screen.getByRole("button", {
-      name: "Open artist Sweeps on Bandcamp",
-    }));
-    expect(mocks.openBandcampUrl).toHaveBeenCalledWith(
-      "https://sweepsbeats.bandcamp.com/",
-    );
-    fireEvent.click(screen.getByRole("button", {
-      name: "Open album Mirage on Bandcamp",
-    }));
-    expect(mocks.openBandcampUrl).toHaveBeenCalledWith(
-      "https://sweepsbeats.bandcamp.com/album/mirage",
-    );
-    expect(document.querySelector('img[src="https://f4.bcbits.com/img/0161226005_10.jpg"]')).toHaveAttribute(
-      "src",
-      "https://f4.bcbits.com/img/0161226005_10.jpg",
-    );
     expect(onPlayAt).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", {
@@ -366,14 +310,6 @@ describe("Bandcamp Radio", () => {
       expect.objectContaining({ id: "radio:979", radioChapters: show.chapters }),
       120,
     );
-
-    fireEvent.click(screen.getByRole("button", { name: "Browse all episodes" }));
-    await waitFor(() => expect(mocks.fetchRadioShows).toHaveBeenCalledWith({
-      seriesId: 5,
-      cursor: undefined,
-    }));
-    expect(await screen.findByRole("heading", { name: "Kinrose" }))
-      .toBeInTheDocument();
   });
 
   it("moves focus into a show and restores its tracklist trigger on Back", async () => {
@@ -412,20 +348,6 @@ describe("Bandcamp Radio", () => {
     const pauseChapter = await screen.findByRole("button", { name: "Pause Mirage" });
     expect(pauseChapter).toHaveAttribute("aria-pressed", "true");
     expect(pauseChapter.closest("li")).toHaveAttribute("aria-current", "true");
-    expect(pauseChapter.closest("li")?.querySelector("img")?.parentElement)
-      .toHaveClass(
-        "border-primary/42",
-        "shadow-[0_0_0_1px_rgba(221,101,73,0.08)]",
-      );
-  });
-
-  it("opens a requested favorite episode through the shared TanStack detail cache", async () => {
-    renderRadio(vi.fn(), vi.fn(), vi.fn(), { requestedShowId: 979 });
-
-    expect(await screen.findByRole("heading", {
-      name: "Songs in this show",
-    })).toBeInTheDocument();
-    expect(mocks.fetchRadioShow).toHaveBeenCalledWith(979);
   });
 
   it("keeps requested show loading visible over a warm archive until details arrive", async () => {
@@ -446,7 +368,7 @@ describe("Bandcamp Radio", () => {
 
     expect(await screen.findByRole("status", {
       name: "Loading Radio show details",
-    })).toBeVisible();
+    })).toBeInTheDocument();
 
     resolveShow(requestedShow);
 

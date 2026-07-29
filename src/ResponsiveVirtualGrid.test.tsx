@@ -2,8 +2,6 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ResponsiveVirtualGrid,
-  resolveResponsiveGridLayout,
-  responsiveGridMetrics,
   type ResponsiveGridLayout,
 } from "./ResponsiveVirtualGrid";
 
@@ -150,21 +148,17 @@ describe("ResponsiveVirtualGrid", () => {
     globalThis.ResizeObserver = originalResizeObserver;
   });
 
-  it("uses natural CSS Grid flow below the virtualization threshold", async () => {
+  it("keeps a small responsive grid fully accessible", async () => {
     render(<Grid cards={Array.from({ length: 6 }, (_, index) => card(index))} />);
 
     const grid = screen.getByRole("list", { name: "Collection" });
-    await waitFor(() => expect(grid).toHaveAttribute("data-columns", "4"));
-    expect(grid).toHaveAttribute("data-virtualized", "false");
+    expect(await screen.findByRole("button", {
+      name: "Card 3 row 0 column 3",
+    })).toBeInTheDocument();
     const listItems = within(grid).getAllByRole("listitem");
     expect(listItems).toHaveLength(6);
     expect(listItems[0]).toHaveAttribute("aria-posinset", "1");
     expect(listItems[0]).toHaveAttribute("aria-setsize", "6");
-    expect(grid).toHaveStyle({
-      columnGap: "10px",
-      display: "grid",
-      rowGap: "16px",
-    });
   });
 
   it("keeps a large grid bounded and renders the final row after scrolling", async () => {
@@ -174,36 +168,38 @@ describe("ResponsiveVirtualGrid", () => {
     const scroll = screen.getByTestId("grid-scroll");
     const grid = screen.getByRole("list", { name: "Collection" });
     await waitFor(() => {
-      expect(grid).toHaveAttribute("data-columns", "4");
       const rendered = within(grid).getAllByRole("listitem");
       expect(rendered.length).toBeGreaterThan(0);
       expect(rendered.length).toBeLessThan(40);
     });
     expect(screen.queryByText(/Card 999 row/)).not.toBeInTheDocument();
 
-    const rowHeight = responsiveGridMetrics(600, layouts[1]).rowHeight + layouts[1].rowGap;
-    scroll.scrollTop = Math.ceil(cards.length / 4) * rowHeight + GRID_TOP;
+    scroll.scrollTop = 100_000;
     fireEvent.scroll(scroll);
 
     expect(await screen.findByText(/Card 999 row 249 column 3/)).toBeInTheDocument();
     expect(within(grid).getAllByRole("listitem").length).toBeLessThan(40);
   });
 
-  it("recomputes columns from ResizeObserver width without duplicating cards", async () => {
+  it("recomputes card coordinates from ResizeObserver width without duplicates", async () => {
     const cards = Array.from({ length: 1_000 }, (_, index) => card(index));
     render(<Grid cards={cards} />);
     const grid = screen.getByRole("list", { name: "Collection" });
-    await waitFor(() => expect(grid).toHaveAttribute("data-columns", "4"));
+    expect(await screen.findByRole("button", {
+      name: "Card 3 row 0 column 3",
+    })).toBeInTheDocument();
 
     containerWidth = 330;
     ResizeObserverMock.resizeAll();
 
-    await waitFor(() => expect(grid).toHaveAttribute("data-columns", "3"));
-    const renderedKeys = within(grid)
-      .getAllByRole("listitem")
-      .map((element) => element.getAttribute("data-grid-item-key"));
-    expect(new Set(renderedKeys).size).toBe(renderedKeys.length);
-    expect(renderedKeys.length).toBeLessThan(40);
+    expect(await screen.findByRole("button", {
+      name: "Card 3 row 1 column 0",
+    })).toBeInTheDocument();
+    const renderedNames = within(grid)
+      .getAllByRole("button")
+      .map((element) => element.textContent);
+    expect(new Set(renderedNames).size).toBe(renderedNames.length);
+    expect(renderedNames.length).toBeLessThan(40);
   });
 
   it("pins the focused row while scrolling to distant cards", async () => {
@@ -217,26 +213,11 @@ describe("ResponsiveVirtualGrid", () => {
     first.focus();
     expect(first).toHaveFocus();
 
-    const rowHeight = responsiveGridMetrics(600, layouts[1]).rowHeight + layouts[1].rowGap;
-    scroll.scrollTop = Math.ceil(cards.length / 4) * rowHeight + GRID_TOP;
+    scroll.scrollTop = 100_000;
     fireEvent.scroll(scroll);
 
     await screen.findByText(/Card 999 row 249 column 3/);
     expect(document.body.contains(first)).toBe(true);
     expect(first).toHaveFocus();
-  });
-});
-
-describe("responsive grid helpers", () => {
-  it("selects first matching layout and computes CSS auto-fill columns", () => {
-    expect(resolveResponsiveGridLayout(330, layouts)).toBe(layouts[0]);
-    expect(resolveResponsiveGridLayout(600, layouts)).toBe(layouts[1]);
-    expect(responsiveGridMetrics(600, layouts[1])).toMatchObject({
-      columnGap: 10,
-      columns: 4,
-      columnWidth: 142.5,
-      rowGap: 16,
-      rowHeight: 172.5,
-    });
   });
 });

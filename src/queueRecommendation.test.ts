@@ -29,17 +29,7 @@ const seed: Track = {
 };
 
 describe("queue recommendations", () => {
-  it("never recommends the current album when another release is available", () => {
-    const result = recommendQueueAlbum(
-      [album("seed", "Artist A", "Hip-Hop"), album("next", "Artist B", "Jazz")],
-      seed,
-      new Set(),
-    );
-
-    expect(result?.album.id).toBe("next");
-  });
-
-  it("weights owned albums related to the last track without fetching metadata", () => {
+  it("excludes the current release and weights related owned albums without fetching metadata", () => {
     const result = recommendQueueAlbum(
       [
         album("seed", "Artist A", "Electronic"),

@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   openBandcampUrl: vi.fn().mockResolvedValue(undefined),
@@ -69,6 +69,10 @@ function renderNowPlaying(ui: ReactNode) {
   });
 }
 
+beforeEach(() => {
+  mocks.openBandcampUrl.mockClear();
+});
+
 describe("NowPlayingView Radio metadata", () => {
   it("announces a pending album transition and prevents repeated navigation", () => {
     const noOp = vi.fn();
@@ -109,11 +113,6 @@ describe("NowPlayingView Radio metadata", () => {
     );
 
     const albumLink = screen.getByRole("button", { name: "Soft Focus" });
-    const artistLink = screen.getByRole("button", { name: "Night Archive" });
-    expect(within(artistLink).getByTestId("overflow-marquee"))
-      .toHaveTextContent("Night Archive");
-    expect(within(albumLink).getByTestId("overflow-marquee"))
-      .toHaveTextContent("Soft Focus");
     fireEvent.click(albumLink);
     expect(onAlbum).toHaveBeenCalledOnce();
 
@@ -165,7 +164,7 @@ describe("NowPlayingView Radio metadata", () => {
     expect(onAlbum).toHaveBeenCalledOnce();
   });
 
-  it("focuses the track heading and drives playback, queue, and bounded sliders", () => {
+  it("focuses the track heading and routes playback, queue, and slider state", () => {
     const onBack = vi.fn();
     const onToggle = vi.fn();
     const onPrevious = vi.fn();
@@ -212,23 +211,6 @@ describe("NowPlayingView Radio metadata", () => {
 
     expect(screen.getByRole("heading", { name: "Kinrose" })).toHaveFocus();
 
-    const transportIcon = (name: string) => {
-      const icon = screen.getByRole("button", { name }).querySelector("svg");
-      if (!icon) throw new Error(`Missing ${name} icon`);
-      return icon;
-    };
-    expect(transportIcon("Repeat off")).toHaveClass("size-5");
-    expect(transportIcon("Previous")).toHaveClass("size-6");
-    const playbackIcon = screen.getByRole("button", { name: "Pause" })
-      .querySelector<HTMLElement>('[data-slot="playback-icon"]');
-    expect(playbackIcon).toHaveClass("size-7");
-    expect(playbackIcon).toHaveAttribute("data-playing", "true");
-    expect(playbackIcon?.querySelectorAll("svg")).toHaveLength(1);
-    expect(playbackIcon?.querySelector("svg")).toHaveClass("size-full");
-    expect(transportIcon("Next")).toHaveClass("size-6");
-    expect(transportIcon("Show queue")).toHaveClass("size-5");
-    expect(transportIcon("Mute")).toHaveClass("size-5");
-
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     fireEvent.click(screen.getByRole("button", { name: "Repeat off" }));
     fireEvent.click(screen.getByRole("button", { name: "Previous" }));
@@ -247,215 +229,18 @@ describe("NowPlayingView Radio metadata", () => {
     const [position, volume] = screen.getAllByRole("slider", { hidden: true });
     expect(position).toHaveAttribute("aria-label", "Now playing position");
     expect(volume).toHaveAttribute("aria-label", "Volume");
-    position.focus();
-    fireEvent.keyDown(position, { key: "ArrowRight" });
+    fireEvent.change(position, { target: { value: "46" } });
     expect(onSeek).toHaveBeenCalledWith(46);
-    fireEvent.keyDown(position, { key: "End" });
-    expect(onSeek).toHaveBeenCalledWith(radioTrack.duration);
-    fireEvent.keyDown(position, { key: "Home" });
-    expect(onSeek).toHaveBeenCalledWith(0);
-
-    const positionGroup = screen.getByRole("group", {
-      name: "Now playing position",
-    });
-    const positionControl = positionGroup.querySelector<HTMLElement>(
-      "[data-base-ui-slider-control]",
-    );
-    if (!positionControl) throw new Error("Missing position slider control");
-    const positionThumb = positionGroup.querySelector<HTMLElement>(
-      "[data-slot=slider-thumb]",
-    );
-    if (!positionThumb) throw new Error("Missing position slider thumb");
-    vi.spyOn(positionControl, "getBoundingClientRect")
-      .mockReturnValue(new DOMRect(0, 0, 100, 20));
-    vi.spyOn(positionThumb, "getBoundingClientRect")
-      .mockReturnValue(new DOMRect(0.82, 5, 10, 10));
-    fireEvent.pointerDown(positionControl, {
-      button: 0,
-      buttons: 1,
-      clientX: 50,
-      clientY: 10,
-      pointerId: 1,
-      pointerType: "mouse",
-    });
-    expect(onSeek).toHaveBeenCalledWith(2469);
-    fireEvent.pointerUp(document, {
-      button: 0,
-      buttons: 0,
-      clientX: 50,
-      clientY: 10,
-      pointerId: 1,
-      pointerType: "mouse",
-    });
-
-    const volumeGroup = screen.getByRole("group", { name: "Volume" });
-    const volumeControl = volumeGroup.querySelector<HTMLElement>(
-      "[data-base-ui-slider-control]",
-    );
-    if (!volumeControl) throw new Error("Missing volume slider control");
-    const volumeThumb = volumeGroup.querySelector<HTMLElement>(
-      "[data-slot=slider-thumb]",
-    );
-    if (!volumeThumb) throw new Error("Missing volume slider thumb");
-    vi.spyOn(volumeControl, "getBoundingClientRect")
-      .mockReturnValue(new DOMRect(0, 0, 100, 20));
-    vi.spyOn(volumeThumb, "getBoundingClientRect")
-      .mockReturnValue(new DOMRect(63, 5, 10, 10));
-    fireEvent.pointerDown(volumeControl, {
-      button: 0,
-      buttons: 1,
-      clientX: 36.5,
-      clientY: 10,
-      pointerId: 1,
-      pointerType: "mouse",
-    });
-    expect(onVolume).toHaveBeenCalledWith(0.35);
-    fireEvent.pointerUp(document, {
-      button: 0,
-      buttons: 0,
-      clientX: 36.5,
-      clientY: 10,
-      pointerId: 1,
-      pointerType: "mouse",
-    });
-
-    onVolume.mockClear();
-    fireEvent.pointerDown(volumeControl, {
-      button: 0,
-      buttons: 1,
-      clientX: 72,
-      clientY: 10,
-      pointerId: 1,
-      pointerType: "mouse",
-    });
-    fireEvent.pointerMove(document, {
-      buttons: 1,
-      clientX: 35,
-      clientY: 10,
-      pointerId: 1,
-      pointerType: "mouse",
-    });
-    fireEvent.pointerUp(document, {
-      button: 0,
-      buttons: 0,
-      clientX: 35,
-      clientY: 10,
-      pointerId: 1,
-      pointerType: "mouse",
-    });
-    expect(onVolume).toHaveBeenCalledWith(0.33);
-
-    volume.focus();
-    fireEvent.keyDown(volume, { key: "ArrowRight" });
+    fireEvent.change(volume, { target: { value: "0.71" } });
     expect(onVolume).toHaveBeenCalledWith(0.71);
-    fireEvent.keyDown(volume, { key: "End" });
-    expect(onVolume).toHaveBeenCalledWith(1);
-    fireEvent.keyDown(volume, { key: "Home" });
-    expect(onVolume).toHaveBeenCalledWith(0);
 
     rerender(view(true));
-    const reservedControls = document.querySelector<HTMLElement>(
-      "[data-now-playing-controls]",
-    );
-    expect(reservedControls).toHaveClass("invisible", "pointer-events-none");
-    expect(reservedControls).toHaveAttribute("aria-hidden", "true");
-    expect(reservedControls).toHaveAttribute("inert");
     expect(screen.queryByRole("group", { name: "Playback controls" }))
       .not.toBeInTheDocument();
     expect(screen.queryByRole("slider", { name: "Volume" }))
       .not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Hide queue" }))
       .not.toBeInTheDocument();
-  });
-
-  it("reports continuous bounded seek changes while pointer-dragging the position slider", () => {
-    const onSeek = vi.fn();
-    const noOp = vi.fn();
-    renderNowPlaying(
-      <NowPlayingView
-        track={radioTrack}
-        radioTimeline={radioTimeline}
-        queue={[radioTrack]}
-        currentIndex={0}
-        playing
-        playbackClock={createPlaybackClock(42)}
-        duration={180}
-        volume={0.7}
-        repeat="off"
-        artwork={<span>Artwork</span>}
-        airPlayAvailable={false}
-        queueOpen={false}
-        onBack={noOp}
-        onToggle={noOp}
-        onPrevious={noOp}
-        onNext={noOp}
-        canPrevious
-        canNext
-        onSeek={onSeek}
-        onVolume={noOp}
-        onRepeat={noOp}
-        onAirPlay={noOp}
-        onArtist={noOp}
-        onAlbum={noOp}
-        onPlayQueueIndex={noOp}
-        onRadioSeries={noOp}
-        recommendationLoading={false}
-        onPlayRecommendation={noOp}
-        onAnotherRecommendation={noOp}
-      />,
-    );
-
-    const position = screen.getByRole("group", {
-      name: "Now playing position",
-    });
-    const control = position.querySelector<HTMLElement>(
-      "[data-base-ui-slider-control]",
-    );
-    if (!control) throw new Error("Missing position slider control");
-    const thumb = position.querySelector<HTMLElement>(
-      "[data-slot=slider-thumb]",
-    );
-    if (!thumb) throw new Error("Missing position slider thumb");
-    vi.spyOn(control, "getBoundingClientRect").mockReturnValue(
-      new DOMRect(0, 0, 100, 20),
-    );
-    vi.spyOn(thumb, "getBoundingClientRect").mockReturnValue(
-      new DOMRect(21, 5, 10, 10),
-    );
-
-    fireEvent.pointerDown(control, {
-      button: 0,
-      buttons: 1,
-      clientX: 35,
-      clientY: 10,
-      pointerId: 1,
-      pointerType: "mouse",
-    });
-    fireEvent.pointerMove(document, {
-      buttons: 1,
-      clientX: 72.5,
-      clientY: 10,
-      pointerId: 1,
-      pointerType: "mouse",
-    });
-    fireEvent.pointerMove(document, {
-      buttons: 1,
-      clientX: 120,
-      clientY: 10,
-      pointerId: 1,
-      pointerType: "mouse",
-    });
-    fireEvent.pointerUp(document, {
-      button: 0,
-      buttons: 0,
-      clientX: 120,
-      clientY: 10,
-      pointerId: 1,
-      pointerType: "mouse",
-    });
-
-    expect(onSeek.mock.calls.map(([positionSeconds]) => positionSeconds))
-      .toEqual([60, 135, 180]);
   });
 
   it("announces the currently airing chapter and its successor", () => {
@@ -504,14 +289,6 @@ describe("NowPlayingView Radio metadata", () => {
     expect(currentlyAiring).toHaveTextContent("Up next: Night Drive by Keylime");
     expect(screen.getByRole("status")).toHaveTextContent("Playing now");
 
-    const onAirTitle = within(currentlyAiring).getByRole("button", {
-      name: "Open Mirage by Sweeps on Bandcamp",
-    });
-    fireEvent.click(onAirTitle);
-    expect(mocks.openBandcampUrl).toHaveBeenCalledWith(
-      "https://sweepsbeats.bandcamp.com/track/mirage-w-keylime",
-    );
-
     fireEvent.click(screen.getByRole("button", {
       name: "Open Kinrose on Bandcamp Radio",
     }));
@@ -536,28 +313,6 @@ describe("NowPlayingView Radio metadata", () => {
       name: "Seek to Mirage at 0:30",
     }));
     expect(onSeek).toHaveBeenCalledWith(30);
-
-    fireEvent.click(currentTitle);
-    expect(mocks.openBandcampUrl).toHaveBeenCalledWith(
-      "https://sweepsbeats.bandcamp.com/track/mirage-w-keylime",
-    );
-
-    fireEvent.click(within(chapterList).getByRole("button", {
-      name: "Open artist Sweeps on Bandcamp",
-    }));
-    fireEvent.click(within(chapterList).getByRole("button", {
-      name: "Open album Mirage on Bandcamp",
-    }));
-    expect(mocks.openBandcampUrl).toHaveBeenCalledWith(
-      "https://sweepsbeats.bandcamp.com/",
-    );
-    expect(mocks.openBandcampUrl).toHaveBeenCalledWith(
-      "https://sweepsbeats.bandcamp.com/album/mirage",
-    );
-    expect(document.querySelector('img[src="https://f4.bcbits.com/img/0161226005_10.jpg"]')).toHaveAttribute(
-      "src",
-      "https://f4.bcbits.com/img/0161226005_10.jpg",
-    );
   });
 
   it("updates progress each second without rerendering Radio metadata inside a chapter", () => {

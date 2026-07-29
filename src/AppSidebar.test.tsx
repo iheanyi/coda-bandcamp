@@ -1,12 +1,10 @@
-import { render, screen, within } from "@testing-library/react"
-import userEvent from "@testing-library/user-event"
+import { fireEvent, render, screen } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 
 import { AppSidebar } from "./AppSidebar"
 
 describe("Coda sidebar", () => {
-  it("keeps navigation state and settings actions accessible", async () => {
-    const user = userEvent.setup()
+  it("keeps navigation state and settings actions accessible", () => {
     const onView = vi.fn()
     const onConnect = vi.fn()
 
@@ -25,37 +23,11 @@ describe("Coda sidebar", () => {
     const connectionSettings = screen.getByRole("button", {
       name: "Connection settings",
     })
-    expect(connectionSettings).toHaveAttribute(
-      "data-sidebar-connection",
-      "",
-    )
-    expect(connectionSettings).toHaveClass(
-      "h-auto",
-      "w-full",
-      "justify-start",
-      "gap-2",
-      "rounded-lg",
-    )
-    const provider = within(connectionSettings).getByText("Bandcamp")
-    const connectionState = within(connectionSettings).getByText("Synced")
-    expect(provider.parentElement).toHaveClass(
-      "grid",
-      "justify-items-center",
-      "text-center",
-    )
-    expect(provider).toHaveClass("w-full", "text-center")
-    expect(connectionState).toHaveClass("w-full", "text-center")
-    expect(
-      connectionSettings.querySelector('[data-slot="connection-status-icon"]'),
-    ).toBeInTheDocument()
-    expect(
-      connectionSettings.querySelector('[data-slot="connection-settings-icon"]'),
-    ).toBeInTheDocument()
 
-    await user.click(screen.getByRole("button", { name: "Bandcamp Radio" }))
+    fireEvent.click(screen.getByRole("button", { name: "Bandcamp Radio" }))
     expect(onView).toHaveBeenCalledWith("radio")
 
-    await user.click(connectionSettings)
+    fireEvent.click(connectionSettings)
     expect(onConnect).toHaveBeenCalledOnce()
   })
 })

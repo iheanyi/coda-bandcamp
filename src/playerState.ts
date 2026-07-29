@@ -388,9 +388,3 @@ export function createPlayerStateCheckpoint(
     ...(radioScrobbleProgress ? { radioScrobbleProgress } : {}),
   };
 }
-
-export function stripTrackForPersistence(track: Track): PlayerStateTrack {
-  const parsed = parseTrack(track);
-  if (!parsed) throw new Error("A queue track is invalid and was not saved.");
-  return parsed;
-}

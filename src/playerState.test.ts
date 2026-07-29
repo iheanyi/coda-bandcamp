@@ -5,7 +5,6 @@ import {
   MAX_PERSISTED_QUEUE_LENGTH,
   parsePlayerState,
   PLAYER_STATE_CONTRACT_VERSION,
-  stripTrackForPersistence,
 } from "./playerState";
 import radioContract from "../test/fixtures/player-state-radio-contract.json";
 import type {
@@ -83,25 +82,21 @@ describe("player state persistence", () => {
   });
 
   it("creates a versioned snapshot without signed stream URLs", () => {
-    const state = createPlayerState(input, 1_700_000_000_000);
+    const trackWithEmbeddedArtwork: Track = {
+      ...track,
+      artworkUrl: "data:image/png;base64,secret",
+    };
+    const state = createPlayerState({
+      ...input,
+      queue: [trackWithEmbeddedArtwork],
+    }, 1_700_000_000_000);
 
     expect(state.version).toBe(1);
     expect(state.savedAt).toBe(1_700_000_000_000);
     expect(state.queue[0]).not.toHaveProperty("streamUrl");
-    expect(JSON.stringify(state)).not.toContain("signed");
+    expect(JSON.stringify(state)).not.toContain("secret");
     expect(state.queue[0]).not.toHaveProperty("artworkUrl");
-  });
-
-  it("strips all artwork URLs while retaining the refreshable cover ID", () => {
-    const persisted = stripTrackForPersistence({
-      ...track,
-      artworkUrl: "https://bandcamp.com/api/subsonic/rest/getCoverArt.view?u=fan&t=token",
-    });
-    expect(persisted).not.toHaveProperty("artworkUrl");
-    expect(persisted.coverArt).toBe("cover-1");
-    expect(
-      stripTrackForPersistence({ ...track, artworkUrl: "data:image/png;base64,secret" }),
-    ).not.toHaveProperty("artworkUrl");
+    expect(state.queue[0].coverArt).toBe("cover-1");
   });
 
   it("normalizes nullable optional fields from native Subsonic payloads", () => {

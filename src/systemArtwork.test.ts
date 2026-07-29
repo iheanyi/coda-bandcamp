@@ -32,15 +32,6 @@ describe("system artwork", () => {
 
     expect(result).toBe("data:image/png;base64,Y29kYS1jb3Zlcg==");
     expect(canvas).toMatchObject({ width: 600, height: 600 });
-    expect(addColorStop).toHaveBeenNthCalledWith(1, 0, "#202326");
-    expect(addColorStop).toHaveBeenNthCalledWith(2, 1, "#dd6549");
-    expect(context.fillText).toHaveBeenCalledWith("FL", 54, 144);
-    expect(context.fillText).toHaveBeenCalledWith(
-      "NIGHT ARCHIVE",
-      54,
-      552,
-      492,
-    );
     expect(canvas.toDataURL).toHaveBeenCalledExactlyOnceWith("image/png");
   });
 

@@ -2,12 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   boundRadioChapters,
   MAX_RADIO_CHAPTERS,
-  nextRadioChapterTime,
   nextRadioChapterTimeInTimeline,
-  previousRadioChapterTime,
   previousRadioChapterTimeInTimeline,
-  radioAiringAt,
-  radioAiringAtTimeline,
   radioAiringIndexesAt,
   radioShowIdFromTrackId,
 } from "./radioPlayback";
@@ -19,60 +15,34 @@ const chapters: RadioChapter[] = [
   { title: "Night Drive", artist: "Keylime", timecode: 120 },
 ];
 
-describe("radioAiringAt", () => {
-  it("returns the first upcoming chapter before the first timestamp", () => {
-    expect(radioAiringAt(chapters, 4)).toEqual({
-      next: chapters[0],
+describe("radioAiringIndexesAt", () => {
+  it("finds current and upcoming chapters across the show timeline", () => {
+    const cases = [
+      { position: 4, expected: { currentIndex: -1, nextIndex: 0 } },
+      { position: 60, expected: { currentIndex: 1, nextIndex: 2 } },
+      { position: 9_999, expected: { currentIndex: 2, nextIndex: -1 } },
+    ];
+    for (const { position, expected } of cases) {
+      expect(radioAiringIndexesAt(chapters, position), `${position}s`)
+        .toEqual(expected);
+    }
+    expect(radioAiringIndexesAt([], 20)).toEqual({
+      currentIndex: -1,
+      nextIndex: -1,
     });
-  });
-
-  it("selects an already bounded timeline by index without changing semantics", () => {
-    const timeline = boundRadioChapters([
-      chapters[2],
-      chapters[1],
-      { ...chapters[1], title: "Corrected Mirage" },
-      chapters[0],
-    ]);
-
-    expect(radioAiringIndexesAt(timeline, 45)).toEqual({
-      currentIndex: 2,
-      nextIndex: 3,
-    });
-    expect(radioAiringAtTimeline(timeline, 45)).toEqual({
-      current: timeline[2],
-      next: timeline[3],
-    });
-  });
-
-  it("returns the currently airing and next chapters within the show", () => {
-    expect(radioAiringAt(chapters, 60)).toEqual({
-      current: chapters[1],
-      next: chapters[2],
-    });
-  });
-
-  it("keeps the final chapter current after its timestamp", () => {
-    expect(radioAiringAt(chapters, 9_999)).toEqual({
-      current: chapters[2],
-    });
-  });
-
-  it("returns no chapter state for an empty timeline", () => {
-    expect(radioAiringAt([], 20)).toEqual({});
-    expect(radioAiringAt(undefined, 20)).toEqual({});
   });
 
   it("uses the last chapter at a duplicate timestamp and skips duplicates for next", () => {
-    const duplicateTimeline: RadioChapter[] = [
+    const duplicateTimeline = boundRadioChapters([
+      { title: "Later", artist: "Artist C", timecode: 70 },
       { title: "Station ID", artist: "Bandcamp Radio", timecode: 0 },
       { title: "First version", artist: "Artist A", timecode: 30 },
       { title: "Corrected version", artist: "Artist B", timecode: 30 },
-      { title: "Later", artist: "Artist C", timecode: 70 },
-    ];
+    ]);
 
-    expect(radioAiringAt(duplicateTimeline, 30)).toEqual({
-      current: duplicateTimeline[2],
-      next: duplicateTimeline[3],
+    expect(radioAiringIndexesAt(duplicateTimeline, 30)).toEqual({
+      currentIndex: 2,
+      nextIndex: 3,
     });
   });
 });
@@ -98,15 +68,17 @@ describe("boundRadioChapters", () => {
 
 describe("Radio chapter transport", () => {
   it("moves Next to the next distinct chapter, including before the show starts", () => {
-    expect(nextRadioChapterTime(chapters, 4)).toBe(15);
-    expect(nextRadioChapterTime(chapters, 45)).toBe(120);
-    expect(nextRadioChapterTime(chapters, 9_999)).toBeUndefined();
+    const timeline = boundRadioChapters(chapters);
+    expect(nextRadioChapterTimeInTimeline(timeline, 4)).toBe(15);
+    expect(nextRadioChapterTimeInTimeline(timeline, 45)).toBe(120);
+    expect(nextRadioChapterTimeInTimeline(timeline, 9_999)).toBeUndefined();
   });
 
   it("restarts the current chapter or moves to the previous one near its start", () => {
-    expect(previousRadioChapterTime(chapters, 70)).toBe(45);
-    expect(previousRadioChapterTime(chapters, 47)).toBe(15);
-    expect(previousRadioChapterTime(chapters, 16)).toBeUndefined();
+    const timeline = boundRadioChapters(chapters);
+    expect(previousRadioChapterTimeInTimeline(timeline, 70)).toBe(45);
+    expect(previousRadioChapterTimeInTimeline(timeline, 47)).toBe(15);
+    expect(previousRadioChapterTimeInTimeline(timeline, 16)).toBeUndefined();
   });
 
   it("skips duplicate timecodes so transport cannot get stuck", () => {
@@ -116,18 +88,10 @@ describe("Radio chapter transport", () => {
       { title: "Later", artist: "Artist C", timecode: 70 },
     ];
 
-    expect(nextRadioChapterTime(duplicateTimeline, 30)).toBe(70);
-    expect(previousRadioChapterTime(duplicateTimeline, 71)).toBe(30);
+    expect(nextRadioChapterTimeInTimeline(duplicateTimeline, 30)).toBe(70);
+    expect(previousRadioChapterTimeInTimeline(duplicateTimeline, 71)).toBe(30);
   });
 
-  it("uses the same transport behavior with a pre-bounded timeline", () => {
-    const timeline = boundRadioChapters(chapters);
-
-    expect(nextRadioChapterTimeInTimeline(timeline, 4)).toBe(15);
-    expect(nextRadioChapterTimeInTimeline(timeline, 45)).toBe(120);
-    expect(previousRadioChapterTimeInTimeline(timeline, 70)).toBe(45);
-    expect(previousRadioChapterTimeInTimeline(timeline, 47)).toBe(15);
-  });
 });
 
 describe("radioShowIdFromTrackId", () => {

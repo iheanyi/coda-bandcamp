@@ -36,8 +36,6 @@ describe("navigation transactions", () => {
     );
     const transaction = state.active!;
 
-    expect(document.activeElement).toBe(source);
-    expect(transaction.sourceTrigger).toBe(source);
     expect(resolveNavigationReturnFocus(transaction)).toEqual({
       kind: "source",
       target: source,

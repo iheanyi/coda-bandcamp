@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   BANDCAMP_RADIO_SERIES,
-  radioEpisodeUrl,
   radioSeriesByTitle,
 } from "./radioSeries";
 
@@ -15,10 +14,6 @@ describe("Bandcamp Radio links", () => {
       { id: 6, slug: "the-indie-show" },
       { id: 7, slug: "the-metal-show" },
     ]);
-  });
-
-  it("keeps episode links separate from show archive links", () => {
-    expect(radioEpisodeUrl(979)).toBe("https://bandcamp.com/radio?show=979");
   });
 
   it("resolves a Now Playing album label to its in-Coda archive", () => {

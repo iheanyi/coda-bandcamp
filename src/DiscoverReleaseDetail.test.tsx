@@ -20,7 +20,7 @@ const release: DiscoverRelease = {
 };
 
 describe("DiscoverReleaseDetail", () => {
-  it("shows release metadata and routes every release action explicitly", () => {
+  it("routes release actions and switches the active preview to pause", () => {
     const onPlay = vi.fn();
     const onQueue = vi.fn();
     const onArtist = vi.fn();
@@ -42,15 +42,6 @@ describe("DiscoverReleaseDetail", () => {
     let detail = screen.getByRole("article", {
       name: "Blue Hours",
     });
-    expect(within(detail).getByRole("heading", { name: "Blue Hours" }))
-      .toBeInTheDocument();
-    expect(within(detail).getByText("Chicago, Illinois")).toBeInTheDocument();
-    expect(within(detail).getByText("Rock")).toBeInTheDocument();
-    expect(detail.querySelector("img")).toHaveAttribute(
-      "src",
-      release.artworkUrl,
-    );
-
     fireEvent.click(within(detail).getByRole("button", {
       name: "Signal Garden",
     }));

@@ -217,25 +217,6 @@ export function readLibraryCache(now = Date.now()): Album[] {
   }
 }
 
-export function writeLibraryCache(albums: Album[]): void {
-  const payload: LibraryCache = {
-    savedAt: Date.now(),
-    albums: albums.slice(0, MAX_CACHED_ALBUMS).map(stripAlbumForCache),
-  };
-  const write = () => {
-    try {
-      window.localStorage.setItem(LIBRARY_CACHE_KEY, JSON.stringify(payload));
-    } catch {
-      // A full or unavailable cache must never prevent playback.
-    }
-  };
-  if ("requestIdleCallback" in window) {
-    window.requestIdleCallback(write, { timeout: 1_500 });
-  } else {
-    globalThis.setTimeout(write, 0);
-  }
-}
-
 export function clearRuntimeCaches(): void {
   coverUrlCache.clear();
   streamUrlCache.clear();

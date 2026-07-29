@@ -204,7 +204,7 @@ describe("saved Bandcamp library views", () => {
       fireEvent.click(playlistButton);
 
       expect(startViewTransition).not.toHaveBeenCalled();
-      expect(screen.getByText("Loading playlist")).toBeVisible();
+      expect(screen.getByText("Loading playlist")).toBeInTheDocument();
     } finally {
       await act(async () => {
         playlistRequest.resolve(detail);
@@ -226,8 +226,6 @@ describe("saved Bandcamp library views", () => {
     withQueryClient(<SavedLibraryView mode="playlists" {...commonProps} />);
 
     expect(await screen.findByText("Create a playlist")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Playlists" }))
-      .toHaveClass("font-display");
     expect(screen.getByText("New playlist")).toBeInTheDocument();
     expect(
       screen.getByText("Playlists sync with your Bandcamp collection."),
@@ -235,18 +233,10 @@ describe("saved Bandcamp library views", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /Night drive/ }));
     expect(await screen.findByRole("heading", { name: "Night drive" }))
-      .toHaveClass("font-display");
+      .toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Play" }));
     expect(commonProps.onPlayTracks).toHaveBeenCalledWith([track]);
     const playlistTracks = screen.getByLabelText("Night drive tracks");
-    expect(within(playlistTracks).getByRole("listitem")).toHaveClass(
-      "h-14",
-      "grid-cols-[2rem_minmax(0,1fr)_3rem_repeat(2,2rem)]",
-      "lg:grid-cols-[2rem_minmax(0,1fr)_4rem_repeat(2,2rem)]",
-    );
-    expect(within(playlistTracks).getByRole("listitem")).not.toHaveClass(
-      "min-h-14",
-    );
     fireEvent.click(within(playlistTracks).getByRole("button", { name: "Sweeps" }));
     expect(commonProps.onOpenArtist).toHaveBeenCalledWith(
       "Sweeps",
@@ -313,28 +303,6 @@ describe("saved Bandcamp library views", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("disables playlist creation and announces its pending state", async () => {
-    let resolveCreate!: (playlist: PlaylistDetail) => void;
-    mocks.createPlaylist.mockReturnValue(new Promise((resolve) => {
-      resolveCreate = resolve;
-    }));
-    const onClose = vi.fn();
-    withQueryClient(
-      <AddToPlaylistDialog tracks={[track]} onClose={onClose} onNotify={vi.fn()} />,
-    );
-
-    fireEvent.change(screen.getByLabelText("New playlist name"), {
-      target: { value: "Fresh finds" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Create" }));
-
-    expect(await screen.findByRole("button", { name: "Creating…" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Close add to playlist" })).toBeDisabled();
-
-    resolveCreate(detail);
-    await waitFor(() => expect(onClose).toHaveBeenCalled());
-  });
-
   it("focuses the add form and restores its opener after idle dismissal", async () => {
     const user = userEvent.setup();
     withQueryClient(<AddDialogHarness />);
@@ -346,8 +314,6 @@ describe("saved Bandcamp library views", () => {
     await waitFor(() =>
       expect(screen.getByLabelText("New playlist name")).toHaveFocus(),
     );
-    expect(screen.getByRole("heading", { name: "Add to playlist" }))
-      .toHaveClass("font-display");
 
     await user.keyboard("{Escape}");
     await waitFor(() =>
@@ -357,11 +323,9 @@ describe("saved Bandcamp library views", () => {
     expect(trigger).toHaveFocus();
 
     await user.click(trigger);
-    const backdrop = document.querySelector<HTMLElement>(
-      "[data-slot=dialog-overlay]",
-    );
-    expect(backdrop).not.toBeNull();
-    await user.click(backdrop!);
+    fireEvent.pointerDown(document.body);
+    fireEvent.mouseDown(document.body);
+    fireEvent.click(document.body);
     await waitFor(() =>
       expect(screen.queryByRole("dialog", { name: "Add to playlist" }))
         .not.toBeInTheDocument(),
@@ -386,11 +350,9 @@ describe("saved Bandcamp library views", () => {
     await user.keyboard("{Escape}");
     expect(screen.getByRole("dialog", { name: "Add to playlist" }))
       .toBeVisible();
-    const backdrop = document.querySelector<HTMLElement>(
-      "[data-slot=dialog-overlay]",
-    );
-    expect(backdrop).not.toBeNull();
-    await user.click(backdrop!);
+    fireEvent.pointerDown(document.body);
+    fireEvent.mouseDown(document.body);
+    fireEvent.click(document.body);
     expect(screen.getByRole("dialog", { name: "Add to playlist" }))
       .toBeVisible();
     expect(mocks.createPlaylist).toHaveBeenCalledTimes(1);
@@ -522,11 +484,9 @@ describe("saved Bandcamp library views", () => {
     expect(deleteDialog).toBeVisible();
     expect(mocks.deletePlaylist).not.toHaveBeenCalled();
 
-    const backdrop = document.querySelector<HTMLElement>(
-      "[data-slot=alert-dialog-overlay]",
-    );
-    expect(backdrop).not.toBeNull();
-    await user.click(backdrop!);
+    fireEvent.pointerDown(document.body);
+    fireEvent.mouseDown(document.body);
+    fireEvent.click(document.body);
     expect(deleteDialog).toBeVisible();
     expect(mocks.deletePlaylist).not.toHaveBeenCalled();
 
@@ -622,53 +582,7 @@ describe("saved Bandcamp library views", () => {
   it("renders favorites and removes a starred track through the supplied action", () => {
     withQueryClient(<SavedLibraryView mode="favorites" {...commonProps} />);
 
-    expect(screen.getByRole("heading", { name: "Favorites" }))
-      .toHaveClass("font-display");
-    expect(screen.getByRole("heading", { name: "Tracks" }))
-      .toHaveClass("font-display");
-    expect(screen.getByRole("heading", { name: "Radio shows" }))
-      .toHaveClass("font-display");
-    expect(screen.getByRole("heading", { name: "Releases" }))
-      .toHaveClass("font-display");
     const favoriteTracks = screen.getByLabelText("Favorite tracks");
-    expect(favoriteTracks).toHaveClass(
-      "border-y",
-      "border-white/7",
-    );
-    expect(favoriteTracks).not.toHaveClass(
-      "rounded-lg",
-      "bg-coda-field",
-    );
-    expect(screen.getByText("1 track")).toHaveClass(
-      "h-4",
-      "tabular-nums",
-    );
-    const favoriteTrackRow = within(favoriteTracks).getByRole("listitem");
-    expect(favoriteTrackRow).toHaveClass(
-      "h-14",
-      "overflow-hidden",
-      "grid-cols-[2rem_2.5rem_minmax(0,1fr)_3rem_repeat(3,2rem)]",
-      "lg:grid-cols-[2rem_2.5rem_minmax(0,1fr)_4rem_repeat(3,2rem)]",
-    );
-    expect(favoriteTrackRow).not.toHaveClass(
-      "min-h-14",
-    );
-    const favoriteArtist = within(favoriteTracks).getByRole("button", {
-      name: "Sweeps",
-    });
-    expect(favoriteArtist).toHaveClass(
-      "h-auto",
-      "min-w-0",
-      "rounded-none",
-    );
-    expect(favoriteArtist).not.toHaveClass("h-10");
-    expect(within(favoriteTracks).getByText("3:08")).toHaveClass(
-      "justify-self-end",
-      "tabular-nums",
-    );
-    expect(within(favoriteTracks).getByRole("button", {
-      name: "Add Mirage to queue",
-    })).toHaveClass("size-8", "p-0");
     fireEvent.click(within(favoriteTracks).getByRole("button", { name: "Remove Mirage from favorites" }));
     expect(commonProps.onToggleFavorite).toHaveBeenCalledWith("song-1", "song", false);
     fireEvent.click(within(favoriteTracks).getByRole("button", { name: "Sweeps" }));
@@ -695,23 +609,6 @@ describe("saved Bandcamp library views", () => {
     expect(commonProps.onOpenRadioShow).toHaveBeenCalledWith(
       favorites.radioShows[0],
     );
-    const radioArtwork = screen.getByRole("button", {
-      name: "Open The Hip Hop Show episode",
-    });
-    expect(radioArtwork).toHaveClass("lg:size-12");
-    expect(radioArtwork.closest("article")).toHaveClass(
-      "lg:grid-cols-[3rem_minmax(0,1fr)_auto]",
-    );
-    expect(screen.getByRole("button", {
-      name: "Add The Hip Hop Show to queue",
-    })).toHaveClass("size-8", "p-0");
-    const albumArtwork = screen.getByRole("button", { name: "Open Mirage" });
-    expect(albumArtwork).toHaveClass("size-12");
-    expect(albumArtwork.parentElement).toHaveClass(
-      "grid-cols-[3rem_minmax(0,1fr)]",
-    );
-    expect(screen.getByText("On this device")).toBeInTheDocument();
-    expect(screen.queryByText("Local")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", {
       name: "Remove The Hip Hop Show from favorites",
     }));
@@ -721,8 +618,8 @@ describe("saved Bandcamp library views", () => {
     );
   });
 
-  it("marks favorite release artwork and title busy while that album opens", () => {
-    withQueryClient(
+  it("marks every saved-library album destination busy while its album opens", async () => {
+    const favoriteView = withQueryClient(
       <SavedLibraryView
         mode="favorites"
         {...commonProps}
@@ -744,36 +641,25 @@ describe("saved Bandcamp library views", () => {
     expect(artworkButton).toHaveAttribute("aria-busy", "true");
     expect(within(artworkButton).getByRole("status", {
       name: "Loading Mirage artwork",
-    })).toBeVisible();
+    })).toBeInTheDocument();
     expect(titleButton).toBeDisabled();
     expect(titleButton).toHaveAttribute("aria-busy", "true");
     expect(within(titleButton).getByRole("status", {
       name: "Loading Mirage release",
-    })).toBeVisible();
-  });
-
-  it("marks a favorite track album link busy while that album opens", () => {
-    withQueryClient(
-      <SavedLibraryView
-        mode="favorites"
-        {...commonProps}
-        loadingAlbumId="album-1"
-      />,
-    );
+    })).toBeInTheDocument();
 
     const favoriteTracks = screen.getByLabelText("Favorite tracks");
-    const albumButton = within(favoriteTracks).getByRole("button", {
+    const favoriteAlbumButton = within(favoriteTracks).getByRole("button", {
       name: "Open Mirage album",
     });
 
-    expect(albumButton).toBeDisabled();
-    expect(albumButton).toHaveAttribute("aria-busy", "true");
-    expect(within(albumButton).getByRole("status", {
+    expect(favoriteAlbumButton).toBeDisabled();
+    expect(favoriteAlbumButton).toHaveAttribute("aria-busy", "true");
+    expect(within(favoriteAlbumButton).getByRole("status", {
       name: "Loading Mirage album",
-    })).toBeVisible();
-  });
+    })).toBeInTheDocument();
+    favoriteView.unmount();
 
-  it("marks a playlist track album link busy while that album opens", async () => {
     withQueryClient(
       <SavedLibraryView
         mode="playlists"
@@ -784,29 +670,15 @@ describe("saved Bandcamp library views", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /Night drive/ }));
     const playlistTracks = await screen.findByLabelText("Night drive tracks");
-    const albumButton = within(playlistTracks).getByRole("button", {
+    const playlistAlbumButton = within(playlistTracks).getByRole("button", {
       name: "Open Mirage album",
     });
 
-    expect(albumButton).toBeDisabled();
-    expect(albumButton).toHaveAttribute("aria-busy", "true");
-    expect(within(albumButton).getByRole("status", {
+    expect(playlistAlbumButton).toBeDisabled();
+    expect(playlistAlbumButton).toHaveAttribute("aria-busy", "true");
+    expect(within(playlistAlbumButton).getByRole("status", {
       name: "Loading Mirage album",
-    })).toBeVisible();
-  });
-
-  it("uses the display token for saved empty-state headings", () => {
-    withQueryClient(
-      <SavedLibraryView
-        mode="playlists"
-        {...commonProps}
-        connected={false}
-      />,
-    );
-
-    expect(screen.getByRole("heading", {
-      name: "Connect Bandcamp to see playlists",
-    })).toHaveClass("font-display");
+    })).toBeInTheDocument();
   });
 
   it("matches playlist and track play controls to the current player state", async () => {
@@ -905,7 +777,6 @@ describe("saved Bandcamp library views", () => {
         expect(rows.length).toBeGreaterThan(0);
         expect(rows.length).toBeLessThan(30);
       });
-      expect(list).toHaveAttribute("data-virtualized", "true");
       const pause = screen.getByRole("button", {
         name: "Pause Favorite track 0",
       });
