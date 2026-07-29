@@ -5,11 +5,21 @@ import { cn } from "@/lib/utils"
 function Progress({
   className,
   children,
+  max = 100,
+  min = 0,
   value,
   ...props
 }: ProgressPrimitive.Root.Props) {
+  const range = max - min
+  const progressScale =
+    value === null || !Number.isFinite(value) || range <= 0
+      ? null
+      : Math.min(1, Math.max(0, (value - min) / range))
+
   return (
     <ProgressPrimitive.Root
+      max={max}
+      min={min}
       value={value}
       data-slot="progress"
       className={cn("flex flex-wrap gap-3", className)}
@@ -17,7 +27,15 @@ function Progress({
     >
       {children}
       <ProgressTrack>
-        <ProgressIndicator />
+        <ProgressIndicator
+          style={{
+            width: "100%",
+            transform:
+              progressScale === null
+                ? "scaleX(1)"
+                : `scaleX(${progressScale})`,
+          }}
+        />
       </ProgressTrack>
     </ProgressPrimitive.Root>
   )
@@ -43,7 +61,10 @@ function ProgressIndicator({
   return (
     <ProgressPrimitive.Indicator
       data-slot="progress-indicator"
-      className={cn("h-full bg-primary transition-all", className)}
+      className={cn(
+        "h-full origin-left bg-primary transition-transform duration-(--duration-coda-panel) ease-coda-enter data-[indeterminate]:animate-pulse motion-reduce:transition-none motion-reduce:data-[indeterminate]:animate-none",
+        className
+      )}
       {...props}
     />
   )

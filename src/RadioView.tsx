@@ -18,6 +18,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -53,6 +54,13 @@ import {
   radioAiringIndexesAt,
 } from "./radioPlayback";
 import type { PlaybackClock } from "./playbackClock";
+import {
+  createNavigationTransactionState,
+  replaceNavigationTransaction,
+  resolveNavigationReturnFocus,
+  resolveNavigationReturnScrollTop,
+  settleNavigationTransaction,
+} from "./navigationTransaction";
 import type { RadioShow, RadioShowSummary, Track } from "./types";
 import {
   BANDCAMP_RADIO_SERIES,
@@ -228,7 +236,10 @@ const RadioCard = memo(function RadioCard({
   onPlay: (show: RadioShowSummary) => void;
   onTogglePlayback: () => void;
   onQueue: (show: RadioShowSummary) => void;
-  onDetails: (show: RadioShowSummary) => void;
+  onDetails: (
+    show: RadioShowSummary,
+    trigger: HTMLButtonElement,
+  ) => void;
   favorite: boolean;
   onToggleFavorite: (show: RadioShowSummary) => void;
   onOpenItem: (url: string) => void;
@@ -313,7 +324,9 @@ const RadioCard = memo(function RadioCard({
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={() => onDetails(show)}
+                  data-radio-show-open={show.id}
+                  onClick={(event) =>
+                    onDetails(show, event.currentTarget)}
                   disabled={Boolean(busyAction)}
                   aria-label={`View tracklist for ${show.subtitle}`}
                 />
@@ -421,7 +434,7 @@ const RadioDetail = memo(function RadioDetail({
 
   return (
     <section
-      className="mx-auto w-full max-w-5xl animate-[saved-page-in_180ms_ease-out] pt-2 pb-12 motion-reduce:animate-none"
+      className="mx-auto w-full max-w-5xl pt-2 pb-12"
       aria-labelledby="radio-detail-title"
     >
       <Button
@@ -450,7 +463,8 @@ const RadioDetail = memo(function RadioDetail({
           </Badge>
           <h1
             id="radio-detail-title"
-            className="m-0 max-w-2xl font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-5xl/tight font-semibold tracking-tighter text-balance text-[#f3f0ea] max-lg:text-3xl"
+            className="m-0 max-w-2xl font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-5xl/tight font-semibold tracking-tighter text-balance text-[#f3f0ea] outline-none max-lg:text-3xl"
+            tabIndex={-1}
           >
             {show.subtitle}
           </h1>
@@ -633,6 +647,9 @@ export default function RadioView({
   const queryClient = useQueryClient();
   const [seriesPending, startSeriesTransition] = useTransition();
   const paginationRef = useRef<HTMLDivElement>(null);
+  const radioNavigationRef = useRef(createNavigationTransactionState());
+  const radioReturnFocusRequestedRef = useRef(false);
+  const radioScrollTopRef = useRef<number | undefined>(undefined);
   const showsQuery = useInfiniteQuery({
     queryKey: ["bandcamp-radio", selectedSeriesId ?? "all"],
     queryFn: ({ pageParam }) =>
@@ -665,6 +682,36 @@ export default function RadioView({
   }, [showsQuery.data?.pages]);
   const featured = shows[0];
   const visibleShows = shows.slice(1);
+
+  useLayoutEffect(() => {
+    const scrollRoot = document.querySelector<HTMLElement>(
+      "[data-coda-library-scroll]",
+    );
+    if (radioScrollTopRef.current !== undefined && scrollRoot) {
+      scrollRoot.scrollTop = radioScrollTopRef.current;
+      radioScrollTopRef.current = undefined;
+    }
+    if (selectedShow) {
+      document
+        .getElementById("radio-detail-title")
+        ?.focus({ preventScroll: true });
+      return;
+    }
+    if (!radioReturnFocusRequestedRef.current) return;
+    radioReturnFocusRequestedRef.current = false;
+    const transaction = radioNavigationRef.current.active;
+    if (!transaction) return;
+    const showId = transaction.sourceTrigger?.dataset.radioShowOpen;
+    const replacement = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-radio-show-open]"),
+    ).find((candidate) => candidate.dataset.radioShowOpen === showId);
+    const result = resolveNavigationReturnFocus(transaction, replacement);
+    result.target?.focus({ preventScroll: true });
+    radioNavigationRef.current = settleNavigationTransaction(
+      radioNavigationRef.current,
+      transaction.identity,
+    );
+  }, [selectedShow]);
 
   const loadShow = useCallback(
     (id: number) =>
@@ -699,8 +746,22 @@ export default function RadioView({
   );
 
   const viewShow = useCallback(
-    async (show: RadioShowSummary) => {
+    async (show: RadioShowSummary, sourceTrigger?: HTMLElement) => {
       if (busy) return;
+      const returnScrollTop =
+        document.querySelector<HTMLElement>("[data-coda-library-scroll]")
+          ?.scrollTop ?? 0;
+      radioReturnFocusRequestedRef.current = false;
+      radioNavigationRef.current = replaceNavigationTransaction(
+        radioNavigationRef.current,
+        {
+          routeKey: "radio-detail",
+          intent: "forward",
+          sourceTrigger,
+          returnScrollTop,
+          destinationHeadingId: "radio-detail-title",
+        },
+      );
       setBusy({ id: show.id, action: "detail" });
       setActionError("");
       try {
@@ -713,6 +774,13 @@ export default function RadioView({
           setSelectedShow(details);
         }, "page-forward");
       } catch (cause) {
+        const activeTransaction = radioNavigationRef.current.active;
+        if (activeTransaction) {
+          radioNavigationRef.current = settleNavigationTransaction(
+            radioNavigationRef.current,
+            activeTransaction.identity,
+          );
+        }
         setActionError(String(cause).replace(/^Error:\s*/, ""));
       } finally {
         setBusy(undefined);
@@ -808,7 +876,7 @@ export default function RadioView({
 
   if (showsQuery.isPending) {
     return (
-      <section className="min-h-full animate-[radio-view-in_320ms_var(--ease-coda-enter)] pb-2.5 motion-reduce:animate-none">
+      <section className="min-h-full pb-2.5">
         {seriesNavigation}
         <div className="flex min-h-108 flex-col items-center justify-center text-center text-[#6e726d]">
           <Spinner className="size-7 motion-reduce:animate-none" aria-label="Tuning Bandcamp Radio" />
@@ -823,7 +891,7 @@ export default function RadioView({
 
   if (showsQuery.isError) {
     return (
-      <section className="min-h-full animate-[radio-view-in_320ms_var(--ease-coda-enter)] pb-2.5 motion-reduce:animate-none">
+      <section className="min-h-full pb-2.5">
         {seriesNavigation}
         <div className="flex min-h-108 flex-col items-center justify-center text-center text-[#6e726d]">
           <Radio size={30} />
@@ -856,7 +924,7 @@ export default function RadioView({
   ) {
     return (
       <section
-        className="min-h-full animate-[radio-view-in_320ms_var(--ease-coda-enter)] pb-2.5 motion-reduce:animate-none"
+        className="min-h-full pb-2.5"
         aria-busy="true"
         aria-live="polite"
       >
@@ -879,7 +947,7 @@ export default function RadioView({
 
   if (!featured) {
     return (
-      <section className="min-h-full animate-[radio-view-in_320ms_var(--ease-coda-enter)] pb-2.5 motion-reduce:animate-none">
+      <section className="min-h-full pb-2.5">
         {seriesNavigation}
         <div className="flex min-h-108 flex-col items-center justify-center text-center text-[#6e726d]">
           <Radio size={30} />
@@ -900,6 +968,11 @@ export default function RadioView({
         show={selectedShow}
         actionError={actionError}
         onBack={() => {
+          const transaction = radioNavigationRef.current.active;
+          radioReturnFocusRequestedRef.current = Boolean(transaction);
+          radioScrollTopRef.current = transaction
+            ? resolveNavigationReturnScrollTop(transaction)
+            : 0;
           void transitionCodaView(() => {
             setSelectedShow(undefined);
             onRequestedShowChange(undefined);
@@ -923,7 +996,7 @@ export default function RadioView({
 
   return (
     <section
-      className="min-h-full animate-[radio-view-in_320ms_var(--ease-coda-enter)] pb-2.5 motion-reduce:animate-none"
+      className="min-h-full pb-2.5"
       aria-live="polite"
       aria-busy={Boolean(busy)}
     >
@@ -1022,7 +1095,9 @@ export default function RadioView({
               {actionFor(featured) === "queue" ? "Adding…" : "Add to queue"}
             </Button>
             <Button
-              onClick={() => void viewShow(featured)}
+              data-radio-show-open={featured.id}
+              onClick={(event) =>
+                void viewShow(featured, event.currentTarget)}
               disabled={Boolean(busy)}
             >
               {actionFor(featured) === "detail" ? (
@@ -1074,7 +1149,7 @@ export default function RadioView({
             onPlay={(item) => void actOnShow(item, "play")}
             onTogglePlayback={onTogglePlayback}
             onQueue={(item) => void actOnShow(item, "queue")}
-            onDetails={(item) => void viewShow(item)}
+            onDetails={(item, trigger) => void viewShow(item, trigger)}
             favorite={favoriteShowIds.has(show.id)}
             onToggleFavorite={onToggleFavorite}
             onOpenItem={openItem}

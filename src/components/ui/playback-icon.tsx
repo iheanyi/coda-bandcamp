@@ -1,6 +1,9 @@
 import { Pause, Play } from "lucide-react";
+import { AnimatePresence } from "motion/react";
+import * as m from "motion/react-m";
 
 import { cn } from "@/lib/utils";
+import { codaMotion } from "@/motion";
 
 function PlaybackIcon({
   className,
@@ -9,9 +12,6 @@ function PlaybackIcon({
   className?: string;
   playing: boolean;
 }) {
-  const transitionClassName =
-    "absolute size-full transition-[opacity,transform] duration-(--duration-coda-fast) ease-coda-enter motion-reduce:transition-none";
-
   return (
     <span
       aria-hidden="true"
@@ -19,24 +19,30 @@ function PlaybackIcon({
       data-playing={playing}
       data-slot="playback-icon"
     >
-      <Play
-        className={cn(
-          transitionClassName,
-          playing
-            ? "scale-75 rotate-12 opacity-0"
-            : "scale-100 rotate-0 opacity-100",
-        )}
-        fill="currentColor"
-      />
-      <Pause
-        className={cn(
-          transitionClassName,
-          playing
-            ? "scale-100 rotate-0 opacity-100"
-            : "scale-75 -rotate-12 opacity-0",
-        )}
-        fill="currentColor"
-      />
+      <AnimatePresence initial={false}>
+        <m.span
+          animate={{ opacity: 1, transform: "scale(1) rotate(0deg)" }}
+          className="absolute inset-0 grid place-items-center"
+          exit={{
+            opacity: 0,
+            transform: playing
+              ? "scale(0.78) rotate(-10deg)"
+              : "scale(0.78) rotate(10deg)",
+          }}
+          initial={{
+            opacity: 0,
+            transform: playing
+              ? "scale(0.78) rotate(10deg)"
+              : "scale(0.78) rotate(-10deg)",
+          }}
+          key={playing ? "pause" : "play"}
+          transition={codaMotion.feedback}
+        >
+          {playing
+            ? <Pause className="size-full" fill="currentColor" />
+            : <Play className="size-full" fill="currentColor" />}
+        </m.span>
+      </AnimatePresence>
     </span>
   );
 }

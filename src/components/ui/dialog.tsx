@@ -1,22 +1,59 @@
 import * as React from "react"
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
+import { AnimatePresence } from "motion/react"
+import * as m from "motion/react-m"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { codaMotion } from "@/motion"
 import { XIcon } from "lucide-react"
+
+type DialogPresenceContextValue = {
+  actionsRef: React.RefObject<DialogPrimitive.Root.Actions | null>
+  onExitComplete?: () => void
+  open: boolean
+}
+
+const DialogPresenceContext =
+  React.createContext<DialogPresenceContextValue | null>(null)
 
 function Dialog({
   disablePointerDismissal = false,
   modal = true,
+  open: openProp,
+  defaultOpen = false,
+  onOpenChange,
+  onExitComplete,
+  actionsRef: actionsRefProp,
   ...props
-}: DialogPrimitive.Root.Props) {
+}: DialogPrimitive.Root.Props & {
+  onExitComplete?: () => void
+}) {
+  const [uncontrolledOpen, setUncontrolledOpen] =
+    React.useState(defaultOpen)
+  const internalActionsRef =
+    React.useRef<DialogPrimitive.Root.Actions | null>(null)
+  const actionsRef = actionsRefProp ?? internalActionsRef
+  const open = openProp ?? uncontrolledOpen
+
   return (
-    <DialogPrimitive.Root
-      data-slot="dialog"
-      disablePointerDismissal={disablePointerDismissal}
-      modal={modal}
-      {...props}
-    />
+    <DialogPresenceContext.Provider
+      value={{ actionsRef, onExitComplete, open }}
+    >
+      <DialogPrimitive.Root
+        data-slot="dialog"
+        actionsRef={actionsRef}
+        disablePointerDismissal={disablePointerDismissal}
+        modal={modal}
+        open={open}
+        onOpenChange={(nextOpen, details) => {
+          if (!nextOpen) details.preventUnmountOnClose()
+          if (openProp === undefined) setUncontrolledOpen(nextOpen)
+          onOpenChange?.(nextOpen, details)
+        }}
+        {...props}
+      />
+    </DialogPresenceContext.Provider>
   )
 }
 
@@ -24,8 +61,17 @@ function DialogTrigger({ ...props }: DialogPrimitive.Trigger.Props) {
   return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />
 }
 
-function DialogPortal({ ...props }: DialogPrimitive.Portal.Props) {
-  return <DialogPrimitive.Portal data-slot="dialog-portal" {...props} />
+function DialogPortal({
+  keepMounted = true,
+  ...props
+}: DialogPrimitive.Portal.Props) {
+  return (
+    <DialogPrimitive.Portal
+      data-slot="dialog-portal"
+      keepMounted={keepMounted}
+      {...props}
+    />
+  )
 }
 
 function DialogClose({ ...props }: DialogPrimitive.Close.Props) {
@@ -40,10 +86,17 @@ function DialogOverlay({
     <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
       className={cn(
-        "fixed inset-x-0 top-0 bottom-23 isolate z-50 bg-[rgba(5,6,7,0.72)] backdrop-blur-sm transition-opacity duration-150 ease-coda-enter motion-reduce:animate-none motion-reduce:transition-none data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:ease-(--ease-coda-exit) data-closed:fade-out-0",
+        "fixed inset-x-0 top-0 bottom-23 isolate z-50 bg-[rgba(5,6,7,0.72)] backdrop-blur-sm",
         className
       )}
       {...props}
+      render={
+        <m.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1, transition: codaMotion.componentEnter }}
+          exit={{ opacity: 0, transition: codaMotion.componentExit }}
+        />
+      }
     />
   )
 }
@@ -56,34 +109,68 @@ function DialogContent({
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean
 }) {
+  const presence = React.useContext(DialogPresenceContext)
+  const open = presence?.open ?? true
+
   return (
     <DialogPortal>
-      <DialogOverlay />
-      <DialogPrimitive.Popup
-        data-slot="dialog-content"
-        className={cn(
-          "fixed top-1/2 left-1/2 z-50 grid w-[calc(100%-2rem)] max-w-lg -translate-1/2 gap-4 rounded-lg border border-(--line-strong) bg-coda-radio p-6 text-sm text-popover-foreground shadow-[0_26px_70px_rgba(0,0,0,0.45)] transition-[transform,opacity] duration-150 ease-coda-enter outline-none motion-reduce:animate-none motion-reduce:transition-none data-open:animate-in data-open:fade-in-0 data-open:slide-in-from-bottom-2 data-closed:animate-out data-closed:ease-(--ease-coda-exit) data-closed:fade-out-0 data-closed:slide-out-to-bottom-2",
-          className
-        )}
-        {...props}
+      <AnimatePresence
+        onExitComplete={() => {
+          presence?.actionsRef.current?.unmount()
+          presence?.onExitComplete?.()
+        }}
       >
-        {children}
-        {showCloseButton && (
-          <DialogPrimitive.Close
-            data-slot="dialog-close"
-            render={
-              <Button
-                variant="ghost"
-                className="absolute top-3 right-3"
-                size="icon-sm"
-              />
-            }
-          >
-            <XIcon />
-            <span className="sr-only">Close</span>
-          </DialogPrimitive.Close>
-        )}
-      </DialogPrimitive.Popup>
+        {open ? (
+          <React.Fragment key="dialog-presence">
+            <DialogOverlay />
+            <DialogPrimitive.Popup
+              data-slot="dialog-content"
+              className={cn(
+                "fixed top-1/2 left-1/2 z-50 grid w-[calc(100%-2rem)] max-w-lg -translate-1/2 gap-4 rounded-lg border border-(--line-strong) bg-coda-radio p-6 text-sm text-popover-foreground shadow-[0_26px_70px_rgba(0,0,0,0.45)] outline-none",
+                className
+              )}
+              {...props}
+              render={
+                <m.div
+                  initial={{
+                    opacity: 0,
+                    transform:
+                      "translate(-50%, calc(-50% + 6px)) scale(0.985)",
+                  }}
+                  animate={{
+                    opacity: 1,
+                    transform: "translate(-50%, -50%) scale(1)",
+                    transition: codaMotion.componentEnter,
+                  }}
+                  exit={{
+                    opacity: 0,
+                    transform:
+                      "translate(-50%, calc(-50% + 4px)) scale(0.985)",
+                    transition: codaMotion.componentExit,
+                  }}
+                />
+              }
+            >
+              {children}
+              {showCloseButton && (
+                <DialogPrimitive.Close
+                  data-slot="dialog-close"
+                  render={
+                    <Button
+                      variant="ghost"
+                      className="absolute top-3 right-3"
+                      size="icon-sm"
+                    />
+                  }
+                >
+                  <XIcon />
+                  <span className="sr-only">Close</span>
+                </DialogPrimitive.Close>
+              )}
+            </DialogPrimitive.Popup>
+          </React.Fragment>
+        ) : null}
+      </AnimatePresence>
     </DialogPortal>
   )
 }

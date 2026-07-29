@@ -1,14 +1,18 @@
 import { flushSync } from "react-dom";
 
 export type CodaViewTransitionKind =
-  | "now-playing"
+  | "album-detail"
+  | "now-playing-open"
+  | "now-playing-close"
   | "page-forward"
   | "page-back"
   | "page-crossfade";
 
 type CodaViewTransition = {
   finished: Promise<void>;
+  ready?: Promise<void>;
   skipTransition?: () => void;
+  updateCallbackDone?: Promise<void>;
 };
 
 type CodaViewTransitionOptions = {
@@ -20,7 +24,9 @@ type ViewTransitionDocument = Document & {
 };
 
 const TRANSITION_CLASSES: Record<CodaViewTransitionKind, string> = {
-  "now-playing": "coda-transition--now-playing",
+  "album-detail": "coda-transition--album-detail",
+  "now-playing-open": "coda-transition--now-playing-open",
+  "now-playing-close": "coda-transition--now-playing-close",
   "page-forward": "coda-transition--page-forward",
   "page-back": "coda-transition--page-back",
   "page-crossfade": "coda-transition--page-crossfade",
@@ -35,6 +41,12 @@ function clearTransitionClasses() {
   document.documentElement.classList.remove(
     "coda-view-transitioning",
     ...TRANSITION_CLASS_NAMES,
+  );
+}
+
+function clearTransitionSupport() {
+  document.documentElement.classList.remove(
+    "coda-view-transitions-supported",
   );
 }
 
@@ -64,6 +76,29 @@ export function transitionCodaView(
 
   const transitionClass = TRANSITION_CLASSES[kind];
   let updated = false;
+  let failed = false;
+  const commitUpdate = (snapshot: boolean) => {
+    if (latestTransitionId !== transitionId || updated || failed) {
+      return;
+    }
+    updated = true;
+    if (snapshot) {
+      flushSync(update);
+    } else {
+      update();
+    }
+  };
+  const handleTransitionFailure = () => {
+    if (latestTransitionId !== transitionId || failed) return;
+    failed = true;
+    activeTransition = undefined;
+    clearTransitionClasses();
+    clearTransitionSupport();
+    if (!updated) {
+      updated = true;
+      update();
+    }
+  };
   document.documentElement.classList.add(
     "coda-view-transitions-supported",
     "coda-view-transitioning",
@@ -73,9 +108,7 @@ export function transitionCodaView(
     const transition = transitionDocument.startViewTransition.call(
       transitionDocument,
       () => {
-        if (latestTransitionId !== transitionId) return;
-        updated = true;
-        flushSync(update);
+        commitUpdate(true);
       },
     );
     if (latestTransitionId === transitionId) {
@@ -83,8 +116,16 @@ export function transitionCodaView(
     } else {
       transition.skipTransition?.();
     }
-    return transition.finished
-      .catch(() => undefined)
+    const lifecycle = [
+      transition.finished.then(undefined, handleTransitionFailure),
+      transition.ready?.then(undefined, handleTransitionFailure),
+      transition.updateCallbackDone?.then(
+        undefined,
+        handleTransitionFailure,
+      ),
+    ].filter((promise): promise is Promise<void> => Boolean(promise));
+    return Promise.all(lifecycle)
+      .then(() => undefined)
       .finally(() => {
         if (latestTransitionId !== transitionId) return;
         activeTransition = undefined;
@@ -92,8 +133,7 @@ export function transitionCodaView(
       });
   } catch {
     if (latestTransitionId === transitionId) {
-      clearTransitionClasses();
-      if (!updated) update();
+      handleTransitionFailure();
     }
     return Promise.resolve();
   }

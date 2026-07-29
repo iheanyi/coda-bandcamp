@@ -2,26 +2,53 @@
 
 import * as React from "react"
 import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog"
+import { AnimatePresence } from "motion/react"
+import * as m from "motion/react-m"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { codaMotion } from "@/motion"
+
+type AlertDialogPresenceContextValue = {
+  actionsRef: React.RefObject<AlertDialogPrimitive.Root.Actions | null>
+  open: boolean
+}
+
+const AlertDialogPresenceContext =
+  React.createContext<AlertDialogPresenceContextValue | null>(null)
 
 function AlertDialog({
+  open: openProp,
+  defaultOpen = false,
   onOpenChange,
+  actionsRef: actionsRefProp,
   ...props
 }: AlertDialogPrimitive.Root.Props) {
+  const [uncontrolledOpen, setUncontrolledOpen] =
+    React.useState(defaultOpen)
+  const internalActionsRef =
+    React.useRef<AlertDialogPrimitive.Root.Actions | null>(null)
+  const actionsRef = actionsRefProp ?? internalActionsRef
+  const open = openProp ?? uncontrolledOpen
+
   return (
-    <AlertDialogPrimitive.Root
-      data-slot="alert-dialog"
-      onOpenChange={(open, details) => {
-        if (!open && details.reason === "escape-key") {
-          details.cancel()
-          return
-        }
-        onOpenChange?.(open, details)
-      }}
-      {...props}
-    />
+    <AlertDialogPresenceContext.Provider value={{ actionsRef, open }}>
+      <AlertDialogPrimitive.Root
+        data-slot="alert-dialog"
+        actionsRef={actionsRef}
+        open={open}
+        onOpenChange={(nextOpen, details) => {
+          if (!nextOpen && details.reason === "escape-key") {
+            details.cancel()
+            return
+          }
+          if (!nextOpen) details.preventUnmountOnClose()
+          if (openProp === undefined) setUncontrolledOpen(nextOpen)
+          onOpenChange?.(nextOpen, details)
+        }}
+        {...props}
+      />
+    </AlertDialogPresenceContext.Provider>
   )
 }
 
@@ -31,9 +58,16 @@ function AlertDialogTrigger({ ...props }: AlertDialogPrimitive.Trigger.Props) {
   )
 }
 
-function AlertDialogPortal({ ...props }: AlertDialogPrimitive.Portal.Props) {
+function AlertDialogPortal({
+  keepMounted = true,
+  ...props
+}: AlertDialogPrimitive.Portal.Props) {
   return (
-    <AlertDialogPrimitive.Portal data-slot="alert-dialog-portal" {...props} />
+    <AlertDialogPrimitive.Portal
+      data-slot="alert-dialog-portal"
+      keepMounted={keepMounted}
+      {...props}
+    />
   )
 }
 
@@ -45,10 +79,17 @@ function AlertDialogOverlay({
     <AlertDialogPrimitive.Backdrop
       data-slot="alert-dialog-overlay"
       className={cn(
-        "fixed inset-x-0 top-0 bottom-23 isolate z-50 bg-[rgba(5,6,7,0.72)] backdrop-blur-sm transition-opacity duration-150 ease-coda-enter motion-reduce:animate-none motion-reduce:transition-none data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:ease-(--ease-coda-exit) data-closed:fade-out-0",
+        "fixed inset-x-0 top-0 bottom-23 isolate z-50 bg-[rgba(5,6,7,0.72)] backdrop-blur-sm",
         className
       )}
       {...props}
+      render={
+        <m.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1, transition: codaMotion.componentEnter }}
+          exit={{ opacity: 0, transition: codaMotion.componentExit }}
+        />
+      }
     />
   )
 }
@@ -60,18 +101,49 @@ function AlertDialogContent({
 }: AlertDialogPrimitive.Popup.Props & {
   size?: "default" | "sm"
 }) {
+  const presence = React.useContext(AlertDialogPresenceContext)
+  const open = presence?.open ?? true
+
   return (
     <AlertDialogPortal>
-      <AlertDialogOverlay />
-      <AlertDialogPrimitive.Popup
-        data-slot="alert-dialog-content"
-        data-size={size}
-        className={cn(
-          "group/alert-dialog-content fixed top-1/2 left-1/2 z-50 grid w-[calc(100%-2rem)] max-w-md -translate-1/2 gap-4 rounded-lg border border-(--line-strong) bg-coda-radio p-6 text-popover-foreground shadow-[0_26px_70px_rgba(0,0,0,0.45)] transition-[transform,opacity] duration-150 ease-coda-enter outline-none motion-reduce:animate-none motion-reduce:transition-none data-open:animate-in data-open:fade-in-0 data-open:slide-in-from-bottom-2 data-closed:animate-out data-closed:ease-(--ease-coda-exit) data-closed:fade-out-0 data-closed:slide-out-to-bottom-2",
-          className
-        )}
-        {...props}
-      />
+      <AnimatePresence
+        onExitComplete={() => presence?.actionsRef.current?.unmount()}
+      >
+        {open ? (
+          <React.Fragment key="alert-dialog-presence">
+            <AlertDialogOverlay />
+            <AlertDialogPrimitive.Popup
+              data-slot="alert-dialog-content"
+              data-size={size}
+              className={cn(
+                "group/alert-dialog-content fixed top-1/2 left-1/2 z-50 grid w-[calc(100%-2rem)] max-w-md -translate-1/2 gap-4 rounded-lg border border-(--line-strong) bg-coda-radio p-6 text-popover-foreground shadow-[0_26px_70px_rgba(0,0,0,0.45)] outline-none",
+                className
+              )}
+              {...props}
+              render={
+                <m.div
+                  initial={{
+                    opacity: 0,
+                    transform:
+                      "translate(-50%, calc(-50% + 6px)) scale(0.985)",
+                  }}
+                  animate={{
+                    opacity: 1,
+                    transform: "translate(-50%, -50%) scale(1)",
+                    transition: codaMotion.componentEnter,
+                  }}
+                  exit={{
+                    opacity: 0,
+                    transform:
+                      "translate(-50%, calc(-50% + 4px)) scale(0.985)",
+                    transition: codaMotion.componentExit,
+                  }}
+                />
+              }
+            />
+          </React.Fragment>
+        ) : null}
+      </AnimatePresence>
     </AlertDialogPortal>
   )
 }

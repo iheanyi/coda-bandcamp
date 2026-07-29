@@ -44,7 +44,7 @@ export function DiscoverReleaseDetail({
 
   return (
     <article
-      className="mx-auto -mt-2 mb-8 w-full max-w-4xl animate-[album-page-in_180ms_ease-out] motion-reduce:animate-none"
+      className="mx-auto -mt-2 mb-8 w-full max-w-4xl"
       aria-labelledby="discover-release-heading"
     >
       <Button

@@ -144,27 +144,21 @@ afterEach(() => {
 });
 
 describe("Bandcamp Radio", () => {
-  it("keeps the Radio entrance motion on the loading state", () => {
+  it("keeps the loading shell free of a competing page entrance", () => {
     mocks.fetchRadioShows.mockReturnValue(new Promise(() => {}));
     renderRadio();
 
     const root = screen.getByLabelText("Tuning Bandcamp Radio").closest("section");
-    expect(root).toHaveClass(
-      "animate-[radio-view-in_320ms_var(--ease-coda-enter)]",
-      "motion-reduce:animate-none",
-    );
+    expect(root?.className).not.toContain("radio-view-in");
   });
 
-  it("keeps the Radio entrance motion on error and empty states", async () => {
+  it("keeps error and empty shells free of competing page entrances", async () => {
     mocks.fetchRadioShows.mockRejectedValueOnce(new Error("Signal lost"));
     const errorRender = renderRadio();
 
     const errorRoot = (await screen.findByText("Bandcamp Radio is off the air"))
       .closest("section");
-    expect(errorRoot).toHaveClass(
-      "animate-[radio-view-in_320ms_var(--ease-coda-enter)]",
-      "motion-reduce:animate-none",
-    );
+    expect(errorRoot?.className).not.toContain("radio-view-in");
 
     errorRender.unmount();
     mocks.fetchRadioShows.mockResolvedValueOnce({
@@ -175,10 +169,7 @@ describe("Bandcamp Radio", () => {
 
     const emptyRoot = (await screen.findByText("No episodes found"))
       .closest("section");
-    expect(emptyRoot).toHaveClass(
-      "animate-[radio-view-in_320ms_var(--ease-coda-enter)]",
-      "motion-reduce:animate-none",
-    );
+    expect(emptyRoot?.className).not.toContain("radio-view-in");
   });
 
   it("disables show actions and labels the request while loading playback", async () => {
@@ -204,10 +195,8 @@ describe("Bandcamp Radio", () => {
 
     const latestHeading = await screen.findByRole("heading", { name: "Kinrose" });
     expect(latestHeading).toBeInTheDocument();
-    expect(latestHeading.closest("section")).toHaveClass(
-      "animate-[radio-view-in_320ms_var(--ease-coda-enter)]",
-      "motion-reduce:animate-none",
-    );
+    expect(latestHeading.closest("section")?.className)
+      .not.toContain("radio-view-in");
     expect(screen.getByText("2 broadcasts loaded")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Play latest show" }));
 
@@ -343,10 +332,7 @@ describe("Bandcamp Radio", () => {
     const detailRoot = (await screen.findByRole("heading", {
       name: "Songs in this show",
     })).closest("section");
-    expect(detailRoot).toHaveClass(
-      "animate-[saved-page-in_180ms_ease-out]",
-      "motion-reduce:animate-none",
-    );
+    expect(detailRoot?.className).not.toContain("saved-page-in");
     expect(mocks.fetchRadioShow).toHaveBeenCalledWith(979);
 
     fireEvent.click(screen.getByRole("button", {
@@ -388,6 +374,29 @@ describe("Bandcamp Radio", () => {
     }));
     expect(await screen.findByRole("heading", { name: "Kinrose" }))
       .toBeInTheDocument();
+  });
+
+  it("moves focus into a show and restores its tracklist trigger on Back", async () => {
+    renderRadio();
+
+    await screen.findByRole("heading", { name: "Kinrose" });
+    const tracklistButton = screen.getByRole("button", {
+      name: "View tracklist",
+    });
+    tracklistButton.focus();
+    fireEvent.click(tracklistButton);
+
+    await screen.findByRole("heading", { name: "Songs in this show" });
+    const detailHeading = document.getElementById("radio-detail-title");
+    expect(detailHeading).not.toBeNull();
+    await waitFor(() => expect(detailHeading).toHaveFocus());
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to Radio" }));
+
+    const restoredTracklistButton = await screen.findByRole("button", {
+      name: "View tracklist",
+    });
+    await waitFor(() => expect(restoredTracklistButton).toHaveFocus());
   });
 
   it("keeps the live chapter highlighted in the Radio detail tracklist", async () => {
