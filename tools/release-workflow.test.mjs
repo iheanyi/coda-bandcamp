@@ -50,7 +50,7 @@ test("shares target-specific Rust caches between CI and release builds", () => {
   expect(releaseBuild).toContain(mainOnlySave);
 });
 
-test("requires one release approval before building but not before publishing", () => {
+test("scopes release secrets to build jobs without gating the publish job", () => {
   const releaseBuild = jobBlock(releaseWorkflow, "build-release");
   const publishRelease = jobBlock(releaseWorkflow, "publish-release");
 
@@ -67,6 +67,7 @@ test("cryptographically verifies every signed updater artifact before publishing
 
   expect(signatureVerification).toBeGreaterThan(-1);
   expect(publication).toBeGreaterThan(signatureVerification);
+  expect(publishRelease).toMatch(/^    runs-on: ubuntu-24\.04$/m);
   expect(publishRelease).toContain(
     "sudo apt-get install --yes --no-install-recommends minisign",
   );
