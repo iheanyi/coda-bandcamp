@@ -55,6 +55,7 @@ import { Label } from "@/components/ui/label";
 import { PlaybackIcon } from "@/components/ui/playback-icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import type { ToastNotifier } from "@/components/ui/toast";
 import {
   createPlaylist,
   deletePlaylist,
@@ -115,7 +116,7 @@ type SavedLibraryViewProps = {
   onOpenRadioShow: (show: RadioShowSummary) => void;
   onOpenRadioSeries: (seriesId?: number) => void;
   onAddToPlaylist: (tracks: Track[]) => void;
-  onNotify: (message: string, tone?: "good" | "bad") => void;
+  onNotify: ToastNotifier;
 };
 
 const RADIO_STALE_TIME_MS = 10 * 60 * 1_000;
@@ -851,7 +852,7 @@ export function AddToPlaylistDialog({
 }: {
   tracks: Track[];
   onClose: () => void;
-  onNotify: (message: string, tone?: "good" | "bad") => void;
+  onNotify: ToastNotifier;
 }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState("");

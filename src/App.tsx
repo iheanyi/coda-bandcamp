@@ -87,6 +87,10 @@ import { Skeleton } from "./components/ui/skeleton";
 import { Slider } from "./components/ui/slider";
 import { Spinner } from "./components/ui/spinner";
 import {
+  notifyToast,
+  Toaster,
+} from "./components/ui/toast";
+import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -213,7 +217,6 @@ import type {
 } from "./types";
 import { transitionCodaView } from "./viewTransitions";
 
-type Toast = { id: number; message: string; tone?: "good" | "bad" };
 type LibraryView = AppSidebarView;
 type SyncState = "checking" | "idle" | "syncing" | "error";
 type PlaybackSession = {
@@ -2296,7 +2299,6 @@ export default function App() {
   const [queueRecommendationNonce, setQueueRecommendationNonce] = useState(0);
   const [connectionOpen, setConnectionOpen] = useState(false);
   const [playlistTarget, setPlaylistTarget] = useState<Track[]>();
-  const [toasts, setToasts] = useState<Toast[]>([]);
   const [streamUrl, setStreamUrl] = useState<string>();
   const [airPlayAvailable, setAirPlayAvailable] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -2526,11 +2528,7 @@ export default function App() {
       });
   }, []);
 
-  const notify = useCallback((message: string, tone?: Toast["tone"]) => {
-    const id = Date.now();
-    setToasts((items) => [...items, { id, message, tone }]);
-    window.setTimeout(() => setToasts((items) => items.filter((item) => item.id !== id)), 2800);
-  }, []);
+  const notify = notifyToast;
   const openRadioItem = useCallback((url: string) => {
     void openBandcampUrl(url).catch((cause) => {
       notify(String(cause).replace(/^Error:\s*/, ""), "bad");
@@ -5279,23 +5277,7 @@ export default function App() {
           />
         </Suspense>
       ) : null}
-      <div className="pointer-events-none fixed right-4 bottom-28 z-30 flex flex-col items-end gap-2" aria-live="polite">
-        {toasts.map((toast) => (
-          <div
-            key={toast.id}
-            className={`flex max-w-xs items-center gap-2 rounded-md border border-(--line-strong) bg-[#282b2d] px-3 py-2.5 text-xs text-[#dddcd6] shadow-[0_10px_28px_rgba(0,0,0,0.3)] animate-[toast-in_180ms_ease-out] ${
-              toast.tone === "good"
-                ? "[&>svg]:text-coda-success"
-                : toast.tone === "bad"
-                  ? "[&>svg]:text-[#d77868]"
-                  : ""
-            }`}
-          >
-            {toast.tone === "good" ? <Check size={16} /> : toast.tone === "bad" ? <X size={16} /> : null}
-            {toast.message}
-          </div>
-        ))}
-      </div>
+      <Toaster timeout={2_800} />
     </div>
     </Drawer>
   );

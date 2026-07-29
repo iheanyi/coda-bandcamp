@@ -208,13 +208,6 @@
   }
 }
 
-@keyframes toast-in {
-  from {
-    opacity: 0;
-    transform: translateY(5px);
-  }
-}
-
 @keyframes saved-page-in {
   from {
     opacity: 0;

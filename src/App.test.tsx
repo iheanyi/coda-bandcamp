@@ -352,6 +352,34 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(trigger).toHaveFocus();
   });
 
+  it("shows dismissible app feedback through the shared Coda toast", async () => {
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    renderApp();
+
+    await screen.findByText("Bandcamp synced");
+    fireEvent.click(screen.getByRole("button", {
+      name: "Connection settings",
+    }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Bandcamp is connected",
+    });
+    fireEvent.click(within(dialog).getByRole("button", {
+      name: "Disconnect and remove Bandcamp credentials",
+    }));
+
+    const feedback = await screen.findByText("Bandcamp credentials removed");
+    const toast = feedback.closest<HTMLElement>("[data-slot='toast']");
+    expect(toast).toBeInTheDocument();
+    toast?.focus();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Close toast" }));
+    await waitFor(() =>
+      expect(screen.queryByText("Bandcamp credentials removed"))
+        .not.toBeInTheDocument(),
+    );
+  });
+
   it("rejects Escape and outside dismissal while Bandcamp connection is busy", async () => {
     mocks.connectBandcamp.mockReturnValue(new Promise(() => undefined));
     renderApp();
@@ -1785,15 +1813,15 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
   });
 
   it("reports the actual native restore failure instead of blaming a pause", async () => {
+    const message =
+      "Coda could not restore the previous listening session: " +
+      "The native player-state contract is temporarily unavailable.";
     mocks.loadPlayerState.mockRejectedValue(
       new Error("The native player-state contract is temporarily unavailable."),
     );
     renderApp();
 
-    expect(await screen.findByText(
-      "Coda could not restore the previous listening session: " +
-      "The native player-state contract is temporarily unavailable.",
-    )).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
   });
 
   it("connects Last.fm without asking Coda for a Last.fm password", async () => {
