@@ -428,7 +428,8 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       .toHaveBeenCalledWith("deferred-token");
   });
 
-  it("wires collection sort and overflow-genre native selections to rendered results", async () => {
+  it("wires the collection sort select and scrollable genre navigation to rendered results", async () => {
+    const user = userEvent.setup();
     const collection = [
       { artist: "Zulu", genre: "Ambient", title: "Zulu Ambient" },
       { artist: "Cobalt", genre: "Electronic", title: "Cobalt Electronic" },
@@ -449,21 +450,49 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     const sort = screen.getByRole("combobox", {
       name: "Sort collection",
     });
-    fireEvent.change(sort, { target: { value: "artist" } });
-    expect(sort).toHaveValue("artist");
+    await user.click(sort);
+    await user.click(await screen.findByRole("option", {
+      name: "Artist A–Z",
+    }));
+    expect(sort).toHaveTextContent("Artist A–Z");
     await waitFor(() =>
       expect(screen.getAllByRole("button", {
         name: /^Open /,
       })[0]).toHaveAccessibleName("Open Aardvark Rock"),
     );
 
-    const moreGenres = screen.getByRole("combobox", {
-      name: "More collection genres",
+    const genres = screen.getByRole("navigation", {
+      name: "Filter collection by genre",
     });
-    expect(within(moreGenres).getByRole("option", {
-      name: "Rock",
+    expect(genres).toHaveClass("overflow-x-auto");
+    expect(screen.queryByRole("combobox", {
+      name: "More collection genres",
+    })).not.toBeInTheDocument();
+    Object.defineProperties(genres, {
+      clientWidth: { configurable: true, value: 240 },
+      scrollWidth: { configurable: true, value: 720 },
+    });
+    fireEvent(window, new Event("resize"));
+    expect(screen.getByRole("button", {
+      name: "Show more genres",
     })).toBeInTheDocument();
-    fireEvent.change(moreGenres, { target: { value: "Rock" } });
+
+    Object.defineProperty(genres, "scrollLeft", {
+      configurable: true,
+      value: 480,
+      writable: true,
+    });
+    fireEvent.scroll(genres);
+    expect(screen.getByRole("button", {
+      name: "Show previous genres",
+    })).toBeInTheDocument();
+    expect(screen.queryByRole("button", {
+      name: "Show more genres",
+    })).not.toBeInTheDocument();
+
+    await user.click(within(genres).getByRole("button", {
+      name: "Rock",
+    }));
 
     expect(await screen.findByRole("button", { name: "Rock" }))
       .toHaveAttribute("aria-pressed", "true");

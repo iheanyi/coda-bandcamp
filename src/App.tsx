@@ -4,7 +4,7 @@ import {
   ArrowDownUp,
   ArrowLeft,
   Check,
-  ChevronDown,
+  ChevronLeft,
   ChevronRight,
   CircleAlert,
   Clock3,
@@ -84,9 +84,12 @@ import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
 import { OverflowMarquee } from "./components/ui/overflow-marquee";
 import {
-  NativeSelect,
-  NativeSelectOption,
-} from "./components/ui/native-select";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./components/ui/select";
 import { PlaybackIcon } from "./components/ui/playback-icon";
 import { Separator } from "./components/ui/separator";
 import { Skeleton } from "./components/ui/skeleton";
@@ -340,6 +343,15 @@ const LIBRARY_BROWSE_OPTIONS: ReadonlyArray<{
   { mode: "artists", label: "Artists", title: "Group purchases by artist" },
   { mode: "albums", label: "Albums & EPs", title: "Multi-track purchases" },
   { mode: "singles", label: "Singles", title: "One-track purchases" },
+];
+const COLLECTION_SORT_OPTIONS: ReadonlyArray<{
+  value: SortMode;
+  label: string;
+}> = [
+  { value: "recent", label: "Recently added" },
+  { value: "artist", label: "Artist A–Z" },
+  { value: "title", label: "Album A–Z" },
+  { value: "year", label: "Release year" },
 ];
 const DiscoverView = lazy(() => import("./DiscoverView"));
 const RadioView = lazy(() => import("./RadioView"));
@@ -2435,6 +2447,10 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortMode>("recent");
   const [genre, setGenre] = useState("All");
+  const [genreRailEdges, setGenreRailEdges] = useState({
+    start: false,
+    end: false,
+  });
   const [browseMode, setBrowseMode] = useState<LibraryBrowseMode>("releases");
   const [selectedArtist, setSelectedArtist] = useState<string>();
   const [selectedArtistFallback, setSelectedArtistFallback] = useState<{
@@ -2482,6 +2498,7 @@ export default function App() {
   const discoverDetailReturnPlayerAlbumFocusRef = useRef(false);
   const discoverDetailFocusRequestedRef = useRef(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const genreRailRef = useRef<HTMLElement>(null);
   const libraryPaneRef = useRef<HTMLElement>(null);
   const discoverListScrollTopRef = useRef(0);
   const nowPlayingReturnScrollTopRef = useRef(0);
@@ -3746,20 +3763,73 @@ export default function App() {
   }, [next, previous, togglePlayback]);
 
   const genreSummary = useMemo(() => summarizeGenres(albums), [albums]);
-  const visibleGenreTabs = useMemo(
-    () =>
-      genre === "All" || genreSummary.featured.some((item) => genreKey(item) === genreKey(genre))
-        ? genreSummary.featured
-        : [...genreSummary.featured, genre],
-    [genre, genreSummary.featured],
-  );
-  const overflowGenres = useMemo(
-    () =>
-      genreSummary.all.filter(
-        (item) => !visibleGenreTabs.some((visible) => genreKey(visible) === genreKey(item)),
+  const orderedGenreTabs = useMemo(
+    () => [
+      ...genreSummary.featured,
+      ...genreSummary.all.filter(
+        (item) =>
+          !genreSummary.featured.some(
+            (featured) => genreKey(featured) === genreKey(item),
+          ),
       ),
-    [genreSummary.all, visibleGenreTabs],
+    ],
+    [genreSummary.all, genreSummary.featured],
   );
+  const updateGenreRailEdges = useCallback((rail: HTMLElement | null) => {
+    if (!rail) return;
+    const maxScrollLeft = Math.max(0, rail.scrollWidth - rail.clientWidth);
+    const nextEdges = {
+      start: rail.scrollLeft > 1,
+      end: rail.scrollLeft < maxScrollLeft - 1,
+    };
+    setGenreRailEdges((current) =>
+      current.start === nextEdges.start && current.end === nextEdges.end
+        ? current
+        : nextEdges,
+    );
+  }, []);
+  const scrollGenreRail = useCallback(
+    (direction: -1 | 1) => {
+      const rail = genreRailRef.current;
+      if (!rail) return;
+      const left =
+        rail.scrollLeft +
+        direction * Math.max(160, Math.round(rail.clientWidth * 0.7));
+      if (typeof rail.scrollTo === "function") {
+        rail.scrollTo({
+          behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+            ? "auto"
+            : "smooth",
+          left,
+        });
+      } else {
+        rail.scrollLeft = left;
+        updateGenreRailEdges(rail);
+      }
+    },
+    [updateGenreRailEdges],
+  );
+
+  useLayoutEffect(() => {
+    const rail = genreRailRef.current;
+    if (!rail) return;
+    const updateEdges = () => updateGenreRailEdges(rail);
+    updateEdges();
+    window.addEventListener("resize", updateEdges);
+    return () => window.removeEventListener("resize", updateEdges);
+  }, [orderedGenreTabs, updateGenreRailEdges]);
+
+  useEffect(() => {
+    if (genre !== "All") return;
+    const rail = genreRailRef.current;
+    if (!rail) return;
+    if (typeof rail.scrollTo === "function") {
+      rail.scrollTo({ behavior: "auto", left: 0 });
+    } else {
+      rail.scrollLeft = 0;
+    }
+    updateGenreRailEdges(rail);
+  }, [genre, updateGenreRailEdges]);
 
   useEffect(() => {
     if (
@@ -5450,13 +5520,18 @@ export default function App() {
           ) : null}
 
           {connected && albums.length && !selectedAlbum ? (
-            <section className={`flex items-center justify-between gap-2 border-b border-border pb-3 lg:gap-4 ${view === "library" ? "mt-3" : "mt-7"}`}>
-              <div className="flex min-w-0 items-center gap-1">
-                <div className="flex items-center gap-1 overflow-hidden">
-                  {["All", ...visibleGenreTabs].map((item) => (
+            <section className={`flex items-center gap-2 border-b border-border pb-3 lg:gap-4 ${view === "library" ? "mt-3" : "mt-7"}`}>
+              <div className="relative min-w-0 flex-1">
+                <nav
+                  ref={genreRailRef}
+                  aria-label="Filter collection by genre"
+                  className="flex items-center gap-1 overflow-x-auto overscroll-x-contain pr-10 scroll-px-10 scrollbar-none [&::-webkit-scrollbar]:hidden"
+                  onScroll={(event) => updateGenreRailEdges(event.currentTarget)}
+                >
+                  {["All", ...orderedGenreTabs].map((item) => (
                     <Button
                       key={item}
-                      className="h-8 px-3 text-xs font-semibold text-[#888b86] hover:bg-transparent hover:text-[#dddcd7] aria-pressed:bg-coda-active aria-pressed:text-[#f0eee8]"
+                      className="h-8 shrink-0 px-3 text-xs font-semibold text-[#888b86] hover:bg-transparent hover:text-[#dddcd7] aria-pressed:bg-coda-active aria-pressed:text-[#f0eee8]"
                       onClick={() => setGenre(item)}
                       aria-pressed={genreKey(genre) === genreKey(item)}
                       size="compact"
@@ -5465,45 +5540,79 @@ export default function App() {
                       {item}
                     </Button>
                   ))}
-                </div>
-                {overflowGenres.length ? (
-                  <div className="flex h-8 shrink-0 items-center gap-1 rounded-sm border border-border bg-muted px-2 text-[#858984]">
-                    <Music2 size={14} />
-                    <NativeSelect
-                      className="w-auto [&_[data-slot=native-select]]:h-auto [&_[data-slot=native-select]]:max-w-24 [&_[data-slot=native-select]]:border-0 [&_[data-slot=native-select]]:bg-transparent [&_[data-slot=native-select]]:p-0 [&_[data-slot=native-select]]:pr-0 [&_[data-slot=native-select]]:text-xs [&_[data-slot=native-select-icon]]:hidden"
-                      value=""
-                      aria-label="More collection genres"
-                      onChange={(event) => setGenre(event.target.value)}
-                      size="sm"
+                </nav>
+                {genreRailEdges.start ? (
+                  <>
+                    <span
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-y-0 left-0 w-10 bg-linear-to-r from-background to-transparent"
+                    />
+                    <Button
+                      type="button"
+                      aria-label="Show previous genres"
+                      className="absolute top-1/2 left-0 z-10 -translate-y-1/2 rounded-full border-border bg-[#1b1e20] text-[#9a9d98] shadow-md hover:bg-[#26292b] hover:text-[#efede7]"
+                      onClick={() => scrollGenreRail(-1)}
+                      size="icon-compact"
+                      variant="secondary"
                     >
-                      <NativeSelectOption value="" disabled>More genres</NativeSelectOption>
-                      {overflowGenres.map((item) => (
-                        <NativeSelectOption key={item} value={item}>{item}</NativeSelectOption>
-                      ))}
-                    </NativeSelect>
-                    <ChevronDown size={13} />
-                  </div>
+                      <ChevronLeft aria-hidden="true" className="size-3.5" />
+                    </Button>
+                  </>
+                ) : null}
+                {genreRailEdges.end ? (
+                  <>
+                    <span
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-y-0 right-0 w-12 bg-linear-to-l from-background to-transparent"
+                    />
+                    <Button
+                      type="button"
+                      aria-label="Show more genres"
+                      className="absolute top-1/2 right-0 z-10 -translate-y-1/2 rounded-full border-border bg-[#1b1e20] text-[#9a9d98] shadow-md hover:bg-[#26292b] hover:text-[#efede7]"
+                      onClick={() => scrollGenreRail(1)}
+                      size="icon-compact"
+                      variant="secondary"
+                    >
+                      <ChevronRight aria-hidden="true" className="size-3.5" />
+                    </Button>
+                  </>
                 ) : null}
               </div>
               {effectiveBrowseMode === "artists" && !selectedArtist ? (
                 <span className="flex shrink-0 items-center gap-1.5 text-xs font-semibold text-[#777b76] [&>svg]:max-lg:hidden"><ArrowDownUp size={14} /> Artist A–Z</span>
               ) : (
-                <div className="flex items-center gap-1.5 text-[#7f837d] [&>svg]:max-lg:hidden">
-                  <ArrowDownUp size={15} />
-                  <NativeSelect
+                <Select
+                  items={COLLECTION_SORT_OPTIONS}
+                  value={sort}
+                  onValueChange={(value) => {
+                    if (value) setSort(value);
+                  }}
+                >
+                  <SelectTrigger
                     aria-label="Sort collection"
-                    className="w-auto [&_[data-slot=native-select]]:h-auto [&_[data-slot=native-select]]:max-w-30 [&_[data-slot=native-select]]:border-0 [&_[data-slot=native-select]]:bg-transparent [&_[data-slot=native-select]]:p-0 [&_[data-slot=native-select]]:pr-0 [&_[data-slot=native-select]]:text-xs [&_[data-slot=native-select-icon]]:hidden"
-                    value={sort}
-                    onChange={(event) => setSort(event.target.value as SortMode)}
+                    className="h-8 max-w-40 shrink-0 gap-1.5 rounded-sm border-border bg-muted px-2 py-0 text-xs font-semibold text-[#858984] hover:bg-muted hover:text-[#d8d7d1] data-open:border-primary/40 data-open:bg-muted data-open:text-[#efede7]"
                     size="sm"
                   >
-                    <NativeSelectOption value="recent">Recently added</NativeSelectOption>
-                    <NativeSelectOption value="artist">Artist A–Z</NativeSelectOption>
-                    <NativeSelectOption value="title">Album A–Z</NativeSelectOption>
-                    <NativeSelectOption value="year">Release year</NativeSelectOption>
-                  </NativeSelect>
-                  <ChevronDown size={14} />
-                </div>
+                    <ArrowDownUp aria-hidden="true" className="size-3.5" />
+                    <SelectValue className="min-w-0" />
+                  </SelectTrigger>
+                  <SelectContent
+                    align="end"
+                    alignItemWithTrigger={false}
+                    className="min-w-40 rounded-lg border border-(--line-strong) bg-popover p-1 text-xs shadow-lg"
+                    sideOffset={6}
+                  >
+                    {COLLECTION_SORT_OPTIONS.map(({ value, label }) => (
+                      <SelectItem
+                        className="py-1.5 pr-8 pl-2 text-xs text-[#a8aaa5] focus:bg-white/5 focus:text-[#efede7]"
+                        key={value}
+                        value={value}
+                      >
+                        {label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               )}
             </section>
           ) : null}
