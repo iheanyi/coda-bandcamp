@@ -9,7 +9,7 @@ Coda adds the listening experience Bandcamp's website is missing: a persistent
 queue, session restore, library navigation, playlists, favorites, Radio,
 Discover, and Last.fm scrobbling in a focused native app.
 
-![Coda playing a Bandcamp release, opening Now Playing, adjusting volume, and showing and hiding the queue](docs/assets/coda-demo.gif)
+![Coda opening a Collection album, controlling playback and volume, showing and hiding the queue, opening Now Playing, browsing Favorites, and opening a Discover release](docs/assets/coda-demo.gif)
 
 > [!IMPORTANT]
 > Coda is pre-release software. There are no packaged releases yet, so it must
