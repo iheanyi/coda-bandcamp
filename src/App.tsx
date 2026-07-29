@@ -2259,6 +2259,7 @@ export default function App() {
   const queuePanelRef = useRef<HTMLDivElement>(null);
   const queueControlRef = useRef<HTMLButtonElement>(null);
   const queueFocusRequestedRef = useRef(false);
+  const nowPlayingFocusRequestedRef = useRef(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const libraryPaneRef = useRef<HTMLElement>(null);
   const libraryShuffleActiveRef = useRef(false);
@@ -2442,6 +2443,14 @@ export default function App() {
   useEffect(() => {
     if (nowPlayingOpen && !currentTrack) setNowPlayingOpen(false);
   }, [currentTrack, nowPlayingOpen]);
+
+  useEffect(() => {
+    if (nowPlayingOpen || !nowPlayingFocusRequestedRef.current) return;
+    nowPlayingFocusRequestedRef.current = false;
+    document.querySelector<HTMLButtonElement>(".player__art-link")?.focus({
+      preventScroll: true,
+    });
+  }, [nowPlayingOpen]);
 
   useEffect(() => {
     if (!isDesktop()) return;
@@ -4255,18 +4264,8 @@ export default function App() {
     }
   }, [currentTrack]);
   const backFromNowPlaying = useCallback(() => {
-    const restoreFocus = () => {
-      document.querySelector<HTMLButtonElement>(".player__art-link")?.focus({
-        preventScroll: true,
-      });
-    };
-    void transitionCodaView(() => setNowPlayingOpen(false), "now-playing").then(() => {
-      if (typeof requestAnimationFrame === "function") {
-        requestAnimationFrame(restoreFocus);
-      } else {
-        setTimeout(restoreFocus, 0);
-      }
-    });
+    nowPlayingFocusRequestedRef.current = true;
+    void transitionCodaView(() => setNowPlayingOpen(false), "now-playing");
   }, []);
   const playSelectedAlbum = useCallback(() => {
     if (selectedAlbum) void playAlbum(selectedAlbum);
