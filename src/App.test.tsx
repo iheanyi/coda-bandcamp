@@ -303,16 +303,31 @@ beforeEach(() => {
 });
 
 describe("Coda application flows", { timeout: 10_000 }, () => {
-  it("centers the connection copy without a decorative status dot", async () => {
+  it("centers the connection copy inside one balanced settings control", async () => {
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
     renderApp();
 
-    const connectionHeading = await screen.findByText("Bandcamp synced");
+    const connectionHeading = await screen.findByText("Bandcamp", {
+      selector: '[data-slot="connection-provider"]',
+    });
     const connectionCopy = connectionHeading.parentElement;
-    const connectionFooter = connectionCopy?.parentElement;
-    if (!connectionCopy || !connectionFooter) {
-      throw new Error("Expected the connection copy inside the sidebar footer");
+    const connectionControl = connectionHeading.closest<HTMLElement>(
+      "[data-sidebar-connection]",
+    );
+    const statusIcon = connectionControl?.querySelector<HTMLElement>(
+      '[data-slot="connection-status-icon"]',
+    );
+    const settingsIcon = connectionControl?.querySelector<HTMLElement>(
+      '[data-slot="connection-settings-icon"]',
+    );
+    if (
+      !connectionCopy ||
+      !connectionControl ||
+      !statusIcon ||
+      !settingsIcon
+    ) {
+      throw new Error("Expected a balanced connection settings control");
     }
 
     const stylesPath = resolve("src/styles.css");
@@ -328,12 +343,18 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       .flatMap((element) => Array.from(element.classList));
     applyCompiledStyles(compiler.build(candidates), [
       connectionCopy,
-      connectionFooter,
+      connectionControl,
+      statusIcon,
+      settingsIcon,
     ]);
 
-    expect(getComputedStyle(connectionFooter).justifyContent).toBe("center");
+    expect(getComputedStyle(connectionControl).width).toBe("100%");
     expect(getComputedStyle(connectionCopy).textAlign).toBe("center");
-    expect(connectionCopy.previousElementSibling).toBeNull();
+    expect(getComputedStyle(connectionCopy).flexGrow).toBe("1");
+    expect(getComputedStyle(statusIcon).width)
+      .toBe(getComputedStyle(settingsIcon).width);
+    expect(connectionControl.querySelector('[data-slot="status-dot"]'))
+      .not.toBeInTheDocument();
   });
 
   it("announces a spinner while the initial collection view is loading", async () => {
@@ -399,7 +420,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     mocks.fetchLibrary.mockResolvedValue([album]);
     renderApp();
 
-    await screen.findByText("Bandcamp synced");
+    await screen.findByText("Synced", {
+      selector: '[data-slot="connection-state"]',
+    });
     fireEvent.click(screen.getByRole("button", {
       name: "Connection settings",
     }));
@@ -697,7 +720,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
     renderApp();
 
-    await screen.findByText("Bandcamp synced");
+    await screen.findByText("Synced", {
+      selector: '[data-slot="connection-state"]',
+    });
     fireEvent.click(screen.getByRole("button", { name: "Connection settings" }));
     const dialog = await screen.findByRole("dialog", {
       name: "Bandcamp is connected",

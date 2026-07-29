@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
 
@@ -22,14 +22,37 @@ describe("Coda sidebar", () => {
     expect(
       screen.getByRole("button", { name: "Favorites" }),
     ).toHaveAttribute("aria-current", "page")
-    expect(screen.getByText("Bandcamp synced")).toBeInTheDocument()
+    const connectionSettings = screen.getByRole("button", {
+      name: "Connection settings",
+    })
+    expect(connectionSettings).toHaveAttribute(
+      "data-sidebar-connection",
+      "",
+    )
+    expect(connectionSettings).toHaveClass(
+      "h-auto",
+      "w-full",
+      "justify-start",
+      "gap-2",
+      "rounded-lg",
+    )
+    expect(
+      within(connectionSettings).getByText("Bandcamp"),
+    ).toBeInTheDocument()
+    expect(
+      within(connectionSettings).getByText("Synced"),
+    ).toBeInTheDocument()
+    expect(
+      connectionSettings.querySelector('[data-slot="connection-status-icon"]'),
+    ).toBeInTheDocument()
+    expect(
+      connectionSettings.querySelector('[data-slot="connection-settings-icon"]'),
+    ).toBeInTheDocument()
 
     await user.click(screen.getByRole("button", { name: "Bandcamp Radio" }))
     expect(onView).toHaveBeenCalledWith("radio")
 
-    await user.click(screen.getByRole("button", {
-      name: "Connection settings",
-    }))
+    await user.click(connectionSettings)
     expect(onConnect).toHaveBeenCalledOnce()
   })
 })

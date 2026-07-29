@@ -1,5 +1,7 @@
 import {
   Clock3,
+  Cloud,
+  CloudOff,
   Compass,
   Heart,
   Library,
@@ -26,6 +28,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { cn } from "@/lib/utils"
 
 export type AppSidebarView =
   | "library"
@@ -128,30 +131,51 @@ function AppSidebar({
         </nav>
       </SidebarContent>
 
-      <SidebarFooter className="relative flex min-w-0 items-center justify-center border-t border-border px-8 py-3">
-        <div className="flex min-w-0 flex-col items-center text-center">
-          <strong className="truncate text-xs font-semibold text-[#c9cbc5]">
-            {connected ? "Bandcamp synced" : "Not connected"}
-          </strong>
-          <span className="mt-0.5 hidden truncate text-xs text-[#727670] lg:block">
-            {connected
-              ? "Official Subsonic beta"
-              : "Connect to hear your music"}
-          </span>
-        </div>
+      <SidebarFooter className="min-w-0 pt-3">
         <Tooltip>
           <TooltipTrigger
             render={(
               <Button
                 aria-label="Connection settings"
-                className="absolute right-0"
+                className="group h-auto w-full min-w-0 justify-start gap-2 rounded-lg px-2 py-2"
+                data-sidebar-connection=""
                 onClick={onConnect}
-                size="icon"
-                variant="ghost"
+                size="compact"
+                variant="secondary"
               />
             )}
           >
-            <Settings2 size={17} />
+            <span
+              aria-hidden="true"
+              className={cn(
+                "grid size-8 shrink-0 place-items-center rounded-md bg-muted",
+                connected ? "text-primary" : "text-muted-foreground",
+              )}
+              data-slot="connection-status-icon"
+            >
+              {connected ? <Cloud size={16} /> : <CloudOff size={16} />}
+            </span>
+            <span className="flex min-w-0 flex-1 flex-col items-center text-center">
+              <strong
+                className="max-w-full truncate text-xs font-semibold text-[#c9cbc5]"
+                data-slot="connection-provider"
+              >
+                Bandcamp
+              </strong>
+              <span
+                className="mt-0.5 hidden max-w-full truncate text-coda-compact font-medium text-[#727670] lg:block"
+                data-slot="connection-state"
+              >
+                {connected ? "Synced" : "Not connected"}
+              </span>
+            </span>
+            <span
+              aria-hidden="true"
+              className="grid size-8 shrink-0 place-items-center text-muted-foreground group-hover:text-foreground"
+              data-slot="connection-settings-icon"
+            >
+              <Settings2 size={17} />
+            </span>
           </TooltipTrigger>
           <TooltipContent side="right">Connection settings</TooltipContent>
         </Tooltip>
