@@ -36,12 +36,15 @@ describe("Coda sidebar", () => {
       "gap-2",
       "rounded-lg",
     )
-    expect(
-      within(connectionSettings).getByText("Bandcamp"),
-    ).toBeInTheDocument()
-    expect(
-      within(connectionSettings).getByText("Synced"),
-    ).toBeInTheDocument()
+    const provider = within(connectionSettings).getByText("Bandcamp")
+    const connectionState = within(connectionSettings).getByText("Synced")
+    expect(provider.parentElement).toHaveClass(
+      "grid",
+      "justify-items-center",
+      "text-center",
+    )
+    expect(provider).toHaveClass("w-full", "text-center")
+    expect(connectionState).toHaveClass("w-full", "text-center")
     expect(
       connectionSettings.querySelector('[data-slot="connection-status-icon"]'),
     ).toBeInTheDocument()

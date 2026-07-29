@@ -155,15 +155,15 @@ function AppSidebar({
             >
               {connected ? <Cloud size={16} /> : <CloudOff size={16} />}
             </span>
-            <span className="flex min-w-0 flex-1 flex-col items-center text-center">
+            <span className="grid min-w-0 flex-1 justify-items-center text-center">
               <strong
-                className="max-w-full truncate text-xs font-semibold text-[#c9cbc5]"
+                className="w-full truncate text-center text-xs font-semibold text-[#c9cbc5]"
                 data-slot="connection-provider"
               >
                 Bandcamp
               </strong>
               <span
-                className="mt-0.5 hidden max-w-full truncate text-coda-compact font-medium text-[#727670] lg:block"
+                className="mt-0.5 hidden w-full truncate text-center text-coda-compact font-medium text-[#727670] lg:block"
                 data-slot="connection-state"
               >
                 {connected ? "Synced" : "Not connected"}
