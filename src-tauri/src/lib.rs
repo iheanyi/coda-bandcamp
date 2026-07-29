@@ -2736,11 +2736,13 @@ fn bounded_track_from_value(value: &Value, fallback_album_id: &str) -> Option<Tr
 fn playlist_detail_from_value(value: &Value) -> Result<PlaylistDetail, String> {
     let summary = playlist_summary_from_value(value)
         .ok_or_else(|| "Bandcamp returned invalid playlist metadata.".to_string())?;
-    let entries = value
-        .get("entry")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
+    let entries = match value.get("entry") {
+        None | Some(Value::Null) => &[][..],
+        Some(Value::Array(entries)) => entries.as_slice(),
+        Some(_) => {
+            return Err("Bandcamp returned invalid playlist track data.".to_string());
+        }
+    };
     if entries.len() > MAX_PLAYLIST_TRACKS {
         return Err(format!(
             "Bandcamp returned a playlist with more than {MAX_PLAYLIST_TRACKS} tracks."
@@ -2749,7 +2751,7 @@ fn playlist_detail_from_value(value: &Value) -> Result<PlaylistDetail, String> {
     let tracks = entries
         .iter()
         .map(|entry| {
-            let fallback_album_id = string_field(entry, &["albumId"]).unwrap_or_default();
+            let fallback_album_id = string_field(entry, &["albumId", "parent"]).unwrap_or_default();
             bounded_track_from_value(entry, &fallback_album_id).ok_or_else(|| {
                 "Bandcamp returned invalid track metadata in a playlist.".to_string()
             })
@@ -2771,11 +2773,17 @@ fn playlist_detail_from_value(value: &Value) -> Result<PlaylistDetail, String> {
 }
 
 fn playlists_from_response(body: &Value) -> Result<Vec<PlaylistSummary>, String> {
-    let values = body
-        .pointer("/subsonic-response/playlists/playlist")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
+    let playlists = body
+        .pointer("/subsonic-response/playlists")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "Bandcamp did not return a valid playlist list.".to_string())?;
+    let values = match playlists.get("playlist") {
+        None | Some(Value::Null) => &[][..],
+        Some(Value::Array(values)) => values.as_slice(),
+        Some(_) => {
+            return Err("Bandcamp returned an invalid playlist list.".to_string());
+        }
+    };
     if values.len() > MAX_PLAYLISTS {
         return Err(format!(
             "Bandcamp returned more than {MAX_PLAYLISTS} playlists."
@@ -2795,6 +2803,12 @@ fn playlist_from_response(body: &Value) -> Result<PlaylistDetail, String> {
         .pointer("/subsonic-response/playlist")
         .ok_or_else(|| "Bandcamp did not return the requested playlist.".to_string())?;
     playlist_detail_from_value(value)
+}
+
+fn playlist_from_optional_response(body: &Value) -> Result<Option<PlaylistDetail>, String> {
+    body.pointer("/subsonic-response/playlist")
+        .map(playlist_detail_from_value)
+        .transpose()
 }
 
 #[tauri::command]
@@ -3636,9 +3650,21 @@ async fn fetch_playlists() -> Result<Vec<PlaylistSummary>, String> {
 async fn fetch_playlist(playlist_id: String) -> Result<PlaylistDetail, String> {
     validate_subsonic_id(&playlist_id, "playlist")?;
     let credentials = load_credentials()?;
-    let body = request_json("getPlaylist", &credentials, &[("id", playlist_id.clone())])
+    fetch_playlist_from_bandcamp(&playlist_id, &credentials)
         .await
-        .map_err(|error| beta_feature_error("Playlist loading", error))?;
+        .map_err(|error| beta_feature_error("Playlist loading", error))
+}
+
+async fn fetch_playlist_from_bandcamp(
+    playlist_id: &str,
+    credentials: &ConnectionInput,
+) -> Result<PlaylistDetail, String> {
+    let body = request_json(
+        "getPlaylist",
+        credentials,
+        &[("id", playlist_id.to_string())],
+    )
+    .await?;
     let playlist = playlist_from_response(&body)?;
     if playlist.id != playlist_id {
         return Err("Bandcamp returned a different playlist than Coda requested.".into());
@@ -3694,7 +3720,12 @@ async fn update_playlist(input: PlaylistUpdateInput) -> Result<PlaylistDetail, S
     let body = request_mutation_json("updatePlaylist", &credentials, &parameters)
         .await
         .map_err(|error| beta_feature_error("Playlist update", error))?;
-    let playlist = playlist_from_response(&body)?;
+    let playlist = match playlist_from_optional_response(&body)? {
+        Some(playlist) => playlist,
+        None => fetch_playlist_from_bandcamp(&playlist_id, &credentials)
+            .await
+            .map_err(|error| beta_feature_error("Playlist update", error))?,
+    };
     if playlist.id != playlist_id {
         return Err("Bandcamp returned a different playlist than Coda updated.".into());
     }
@@ -5131,6 +5162,107 @@ mod tests {
         assert_eq!(detail.tracks.len(), 1);
         assert_eq!(detail.tracks[0].album_id, "album-1");
         assert_eq!(detail.tracks[0].duration, 245);
+    }
+
+    #[test]
+    fn accepts_an_empty_successful_playlist_update_response() {
+        let body = serde_json::json!({
+            "subsonic-response": {
+                "status": "ok",
+                "version": "1.16.1"
+            }
+        });
+
+        assert!(playlist_from_optional_response(&body).unwrap().is_none());
+    }
+
+    #[test]
+    fn loads_playlist_tracks_using_the_parent_when_album_id_is_absent() {
+        let detail = playlist_detail_from_value(&serde_json::json!({
+            "id": "playlist-1",
+            "name": "Night drives",
+            "songCount": 1,
+            "duration": 245,
+            "entry": [{
+                "id": "song-1",
+                "parent": "album-1",
+                "title": "Afterimage",
+                "artist": "Night Archive",
+                "album": "Soft Focus",
+                "duration": 245,
+                "track": 2
+            }]
+        }))
+        .unwrap();
+
+        assert_eq!(detail.tracks[0].album_id, "album-1");
+
+        let orphaned_track = serde_json::json!({
+            "id": "playlist-1",
+            "name": "Night drives",
+            "songCount": 1,
+            "duration": 245,
+            "entry": [{
+                "id": "song-1",
+                "title": "Afterimage",
+                "artist": "Night Archive",
+                "album": "Soft Focus",
+                "duration": 245
+            }]
+        });
+        assert!(playlist_detail_from_value(&orphaned_track).is_err());
+    }
+
+    #[test]
+    fn accepts_an_empty_playlist_list_but_rejects_a_non_array_list() {
+        let empty = serde_json::json!({
+            "subsonic-response": {
+                "playlists": {}
+            }
+        });
+        assert!(playlists_from_response(&empty).unwrap().is_empty());
+
+        let non_array = serde_json::json!({
+            "subsonic-response": {
+                "playlists": {
+                    "playlist": {
+                        "id": "playlist-1",
+                        "name": "Night drives",
+                        "songCount": 1,
+                        "duration": 245
+                    }
+                }
+            }
+        });
+        assert!(playlists_from_response(&non_array).is_err());
+    }
+
+    #[test]
+    fn accepts_an_empty_playlist_but_rejects_non_array_entries() {
+        let empty = playlist_detail_from_value(&serde_json::json!({
+            "id": "playlist-1",
+            "name": "Night drives",
+            "songCount": 0,
+            "duration": 0
+        }))
+        .unwrap();
+        assert!(empty.tracks.is_empty());
+
+        let non_array = serde_json::json!({
+            "id": "playlist-1",
+            "name": "Night drives",
+            "songCount": 1,
+            "duration": 245,
+            "entry": {
+                "id": "song-1",
+                "parent": "album-1",
+                "title": "Afterimage",
+                "artist": "Night Archive",
+                "album": "Soft Focus",
+                "duration": 245
+            }
+        });
+        assert!(playlist_detail_from_value(&non_array).is_err());
     }
 
     #[test]
