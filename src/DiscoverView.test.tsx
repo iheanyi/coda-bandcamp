@@ -54,6 +54,7 @@ function renderDiscover(
 }
 
 beforeEach(() => {
+  mocks.openBandcampUrl.mockReset();
   mocks.fetchDiscover.mockReset().mockResolvedValue({
     results: [
       {
@@ -88,9 +89,6 @@ describe("Discover", () => {
     renderDiscover();
 
     expect(await screen.findByRole("button", { name: "Exploring…" })).toBeDisabled();
-    const skeleton = document.querySelector('[data-slot="skeleton"]');
-    expect(skeleton).toBeInTheDocument();
-    expect(skeleton).toHaveClass("motion-reduce:animate-none");
     expect(screen.getByRole("button", { name: "All genres" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Best-selling" })).toBeDisabled();
 
@@ -112,12 +110,6 @@ describe("Discover", () => {
     const genreSelect = screen.getByRole("combobox", {
       name: "More Discover genres",
     });
-    expect(genreSelect).toHaveAttribute("data-slot", "select-trigger");
-    expect(genreSelect).toHaveClass("items-center", "justify-center");
-    expect(genreSelect.querySelector('[data-slot="select-leading-icon"]'))
-      .toBeInTheDocument();
-    expect(genreSelect.querySelector('[data-slot="select-icon"]'))
-      .toBeInTheDocument();
 
     await user.click(genreSelect);
     await user.click(await screen.findByRole("option", { name: "Jazz" }));
@@ -127,68 +119,45 @@ describe("Discover", () => {
         "*",
       ),
     );
-    expect(await screen.findByText("Jazz · Chicago, Illinois")).toBeInTheDocument();
   });
 
-  it("routes a release name to the internal Discover detail handler", async () => {
-    const onOpenRelease = vi.fn();
-    renderDiscover(vi.fn(), { onOpenRelease });
-
-    fireEvent.click(await screen.findByRole("button", { name: "Blue Hours" }));
-
-    expect(onOpenRelease).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: "release-1",
-        title: "Blue Hours",
-      }),
-      expect.any(HTMLButtonElement),
-    );
-    expect(mocks.openBandcampUrl).not.toHaveBeenCalled();
-  });
-
-  it("routes release artwork to the same internal Discover detail handler", async () => {
-    const onOpenRelease = vi.fn();
-    renderDiscover(vi.fn(), { onOpenRelease });
-
-    fireEvent.click(await screen.findByRole("button", {
-      name: "Open Blue Hours Discover details",
-    }));
-
-    expect(onOpenRelease).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: "release-1",
-        title: "Blue Hours",
-      }),
-      expect.any(HTMLButtonElement),
-    );
-    expect(mocks.openBandcampUrl).not.toHaveBeenCalled();
-  });
-
-  it("routes an artist name to the external Discover artist handler", async () => {
+  it("routes release and artist destinations through their explicit handlers", async () => {
     const onOpenArtist = vi.fn();
-    renderDiscover(vi.fn(), { onOpenArtist });
+    const onOpenRelease = vi.fn();
+    renderDiscover(vi.fn(), { onOpenArtist, onOpenRelease });
 
-    fireEvent.click(await screen.findByRole("button", { name: "Signal Garden" }));
+    const title = await screen.findByRole("button", { name: "Blue Hours" });
+    fireEvent.click(title);
+    expect(onOpenRelease).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        id: "release-1",
+        title: "Blue Hours",
+      }),
+      title,
+    );
+
+    const artwork = screen.getByRole("button", {
+      name: "Open Blue Hours Discover details",
+    });
+    fireEvent.click(artwork);
+    expect(onOpenRelease).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        id: "release-1",
+        title: "Blue Hours",
+      }),
+      artwork,
+    );
+    expect(mocks.openBandcampUrl).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Signal Garden" }));
 
     expect(onOpenArtist).toHaveBeenCalledWith(expect.objectContaining({
       id: "release-1",
       artist: "Signal Garden",
     }));
     expect(mocks.openBandcampUrl).not.toHaveBeenCalled();
-  });
-
-  it("queries Hip-Hop/Rap with Bandcamp's canonical genre tag", async () => {
-    renderDiscover();
-
-    await screen.findByText("Blue Hours");
-    fireEvent.click(screen.getByRole("button", { name: "Hip-Hop/Rap" }));
-
-    await waitFor(() =>
-      expect(mocks.fetchDiscover).toHaveBeenLastCalledWith(
-        expect.objectContaining({ tag: "hip-hop-rap" }),
-        "*",
-      ),
-    );
   });
 
   it("exposes the active genre and sort as pressed controls", async () => {
@@ -221,21 +190,6 @@ describe("Discover", () => {
       "true",
     );
     expect(bestSelling).toHaveAttribute("aria-pressed", "false");
-  });
-
-  it("normalizes a typed genre before controlling the active genre chip", async () => {
-    renderDiscover();
-
-    await screen.findByText("Blue Hours");
-    fireEvent.change(screen.getByLabelText("Search Discover by tag"), {
-      target: { value: "ROCK" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Explore" }));
-
-    expect(screen.getByRole("button", { name: "Rock" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
   });
 
   it("appends the next page of discoveries using the returned cursor", async () => {

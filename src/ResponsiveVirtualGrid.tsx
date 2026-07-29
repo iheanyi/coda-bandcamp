@@ -59,7 +59,7 @@ function finiteNonNegative(value: number, fallback = 0): number {
   return Number.isFinite(value) ? Math.max(0, value) : fallback;
 }
 
-export function resolveResponsiveGridLayout(
+function resolveResponsiveGridLayout(
   width: number,
   layouts: readonly ResponsiveGridLayout[],
 ): ResponsiveGridLayout {
@@ -75,7 +75,7 @@ export function resolveResponsiveGridLayout(
   );
 }
 
-export function responsiveGridMetrics(
+function responsiveGridMetrics(
   width: number,
   layout: ResponsiveGridLayout,
 ): ResponsiveGridMetrics {

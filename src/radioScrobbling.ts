@@ -1,4 +1,3 @@
-import { boundRadioChapters } from "./radioPlayback";
 import type {
   LastFmTrackInput,
   RadioChapter,
@@ -62,13 +61,6 @@ function meaningfulChapter(chapter: RadioChapter): boolean {
   );
 }
 
-export function radioChapterTimeline(track: Track): RadioChapterWindow[] {
-  return radioChapterTimelineFromBounded(
-    track,
-    boundRadioChapters(track.radioChapters ?? []),
-  );
-}
-
 export function radioChapterTimelineFromBounded(
   track: Track,
   timeline: readonly RadioChapter[],
@@ -101,14 +93,7 @@ export function radioChapterTimelineFromBounded(
   });
 }
 
-export function radioChapterAt(
-  track: Track,
-  position: number,
-): RadioChapterWindow | undefined {
-  return radioChapterAtTimeline(radioChapterTimeline(track), position);
-}
-
-export function radioChapterAtTimeline(
+function radioChapterAtTimeline(
   timeline: readonly RadioChapterWindow[],
   position: number,
 ): RadioChapterWindow | undefined {
@@ -232,25 +217,6 @@ function maybeScrobbleChapter(
     timestamp: progress.chapterStartedAt,
   });
   return { ...progress, chapterScrobbleState: "pending" };
-}
-
-export function advanceRadioScrobbling(
-  track: Track,
-  current: RadioScrobbleProgress,
-  position: number,
-  playing: boolean,
-  enabled: boolean,
-  nowSeconds = Math.floor(Date.now() / 1_000),
-): { progress: RadioScrobbleProgress; actions: RadioScrobbleAction[] } {
-  return advanceRadioScrobblingWithTimeline(
-    track,
-    radioChapterTimeline(track),
-    current,
-    position,
-    playing,
-    enabled,
-    nowSeconds,
-  );
 }
 
 export function advanceRadioScrobblingWithTimeline(

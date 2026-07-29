@@ -63,18 +63,7 @@ describe("library query helpers", () => {
     mocks.loadLibraryCache.mockReset();
   });
 
-  it("supports React-style value and functional library updates", () => {
-    const client = new QueryClient();
-    updateLibraryData(client, [album("one")]);
-    updateLibraryData(client, (current) => [...current, album("two")]);
-
-    expect(client.getQueryData(libraryQueryKey)).toEqual([
-      expect.objectContaining({ id: "one" }),
-      expect.objectContaining({ id: "two" }),
-    ]);
-  });
-
-  it("keeps the library query summary-only while album queries own tracks", () => {
+  it("keeps value and functional library updates summary-only while album queries own tracks", () => {
     const client = new QueryClient();
     const release = {
       ...album("one"),
@@ -82,10 +71,13 @@ describe("library query helpers", () => {
     };
 
     updateLibraryData(client, [release]);
+    updateLibraryData(client, (current) => [...current, album("two")]);
     client.setQueryData(albumQueryKey(release.id), release.tracks);
 
     expect(client.getQueryData<Album[]>(libraryQueryKey)?.[0].tracks)
       .toBeUndefined();
+    expect(client.getQueryData<Album[]>(libraryQueryKey)?.map(({ id }) => id))
+      .toEqual(["one", "two"]);
     expect(client.getQueryData(albumQueryKey(release.id))).toEqual(
       release.tracks,
     );

@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import { fileURLToPath, URL } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
@@ -26,6 +26,7 @@ export default defineConfig({
   envPrefix: ["VITE_", "TAURI_"],
   test: {
     environment: "jsdom",
+    exclude: [...configDefaults.exclude, "**/.worktrees/**"],
     // Node 25+ enables its own Web Storage globals by default. Disable them in
     // test workers so jsdom remains the single browser-storage implementation.
     execArgv: nodeMajorVersion >= 25 ? ["--no-experimental-webstorage"] : [],

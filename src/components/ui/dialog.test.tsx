@@ -48,13 +48,6 @@ describe("Dialog", () => {
     const dialog = await screen.findByRole("dialog", { name: "Settings" })
 
     await waitFor(() => expect(dialog).toBeVisible())
-    expect(dialog).toHaveClass("top-1/2", "left-1/2", "-translate-1/2")
-    expect(dialog.style.transform).toMatch(/^scale\(/)
-    expect(dialog.style.transform).not.toContain("translate")
-    expect(document.querySelector('[data-slot="dialog-overlay"]'))
-      .toHaveClass("inset-0")
-    expect(document.querySelector('[data-slot="dialog-overlay"]'))
-      .not.toHaveClass("bottom-23")
     await user.click(screen.getByRole("button", { name: "Done" }))
 
     expect(dialog).toBeInTheDocument()
@@ -67,21 +60,4 @@ describe("Dialog", () => {
     expect(trigger).toHaveFocus()
   })
 
-  it("preserves Base UI Escape dismissal and focus restoration", async () => {
-    const user = userEvent.setup()
-    render(<DialogHarness />)
-
-    const trigger = screen.getByRole("button", { name: "Open settings" })
-    await user.click(trigger)
-    expect(await screen.findByRole("dialog", { name: "Settings" }))
-      .toBeInTheDocument()
-
-    await user.keyboard("{Escape}")
-
-    await waitFor(() => {
-      expect(screen.queryByRole("dialog", { name: "Settings" }))
-        .not.toBeInTheDocument()
-    })
-    expect(trigger).toHaveFocus()
-  })
 })

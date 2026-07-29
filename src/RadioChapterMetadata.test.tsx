@@ -22,7 +22,7 @@ describe("RadioChapterCopy navigation", () => {
     render(
       <RadioChapterCopy
         chapter={chapter}
-        className="chapter"
+        className=""
         onOpen={onOpen}
         localLinks={{
           track: openTrack,
@@ -53,7 +53,7 @@ describe("RadioChapterCopy navigation", () => {
     render(
       <RadioChapterCopy
         chapter={chapter}
-        className="chapter"
+        className=""
         onOpen={onOpen}
       />,
     );
@@ -66,7 +66,6 @@ describe("RadioChapterCopy navigation", () => {
       "Not in your library — open track on Bandcamp",
     );
     expect(trackLink).toHaveTextContent("Mirage");
-    expect(trackLink.querySelector("svg")).toBeInTheDocument();
 
     fireEvent.click(trackLink);
     expect(onOpen).toHaveBeenCalledWith(

@@ -113,14 +113,11 @@ describe("VirtualizedQueueList", () => {
     globalThis.ResizeObserver = originalResizeObserver;
   });
 
-  it("renders small queues in normal document flow and keeps duplicate track IDs distinct", () => {
+  it("keeps duplicate queue entries distinct with absolute indexes", () => {
     render(<Queue items={[item(0, "duplicate"), item(1, "duplicate"), item(2)]} />);
 
     const region = screen.getByRole("region", { name: "Upcoming tracks" });
-    expect(region).toHaveAttribute("data-virtualized", "false");
     expect(within(region).getAllByRole("listitem")).toHaveLength(3);
-    expect(region.querySelector('[data-queue-item-key="queue-entry-0"]')).not.toBeNull();
-    expect(region.querySelector('[data-queue-item-key="queue-entry-1"]')).not.toBeNull();
     expect(screen.getByText("Queue track 0 at 0")).toBeInTheDocument();
     expect(screen.getByText("Queue track 1 at 1")).toBeInTheDocument();
   });
@@ -135,7 +132,6 @@ describe("VirtualizedQueueList", () => {
       expect(rendered.length).toBeGreaterThan(0);
       expect(rendered.length).toBeLessThan(30);
     });
-    expect(region).toHaveAttribute("data-virtualized", "true");
     expect(screen.queryByText("Queue track 999 at 999")).not.toBeInTheDocument();
 
     region.scrollTop = (items.length - 1) * ROW_HEIGHT;
@@ -172,8 +168,14 @@ describe("VirtualizedQueueList", () => {
       />,
     );
 
-    const from = document.querySelector<HTMLElement>('[data-queue-absolute-index="8"]')!;
-    const to = document.querySelector<HTMLElement>('[data-queue-absolute-index="9"]')!;
+    const region = screen.getByRole("region", { name: "Upcoming tracks" });
+    const from = within(region)
+      .getByRole("button", { name: "Queue track 1 at 8" })
+      .closest<HTMLElement>('[role="listitem"]');
+    const to = within(region)
+      .getByRole("button", { name: "Queue track 2 at 9" })
+      .closest<HTMLElement>('[role="listitem"]');
+    if (!from || !to) throw new Error("Expected draggable queue rows");
     fireEvent.dragStart(from, {
       dataTransfer: { effectAllowed: "none" },
     });

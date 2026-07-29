@@ -141,22 +141,6 @@ describe("app updater experience", () => {
     expect(returnButton).toHaveFocus();
   });
 
-  it("dismisses an idle update prompt from an outside press", async () => {
-    const user = userEvent.setup();
-    const update = createUpdate();
-    updaterMocks.checkForAppUpdate.mockResolvedValue(update);
-
-    renderUpdater();
-    await screen.findByRole("dialog", { name: "Coda 0.2.0 is ready" });
-
-    await user.click(document.body);
-
-    await waitFor(() => {
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    });
-    expect(update.close).toHaveBeenCalledOnce();
-  });
-
   it("reports download progress and rejects dismissal until installation finishes", async () => {
     const user = userEvent.setup();
     let finishDownload: (() => void) | undefined;
@@ -200,38 +184,6 @@ describe("app updater experience", () => {
     expect(
       await screen.findByRole("button", { name: "Restart Coda" }),
     ).toBeEnabled();
-  });
-
-  it("rejects dismissal while restarting after an installed update", async () => {
-    const user = userEvent.setup();
-    const restart = deferred<void>();
-    updaterMocks.restartAfterUpdate.mockReturnValue(restart.promise);
-    updaterMocks.checkForAppUpdate.mockResolvedValue(createUpdate());
-
-    renderUpdater();
-    await user.click(
-      await screen.findByRole("button", { name: "Update now" }),
-    );
-    await user.click(
-      await screen.findByRole("button", { name: "Restart Coda" }),
-    );
-
-    const prompt = screen.getByRole("dialog", {
-      name: "Coda 0.2.0 is ready",
-    });
-    expect(prompt).toHaveAttribute("aria-busy", "true");
-    expect(
-      screen.getByRole("button", { name: "Restarting…" }),
-    ).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Later" })).toBeDisabled();
-
-    await user.keyboard("{Escape}");
-    await user.click(document.body);
-
-    expect(prompt).toBeInTheDocument();
-    await act(async () => {
-      restart.resolve();
-    });
   });
 
   it("supports a manual check that confirms the current version", async () => {

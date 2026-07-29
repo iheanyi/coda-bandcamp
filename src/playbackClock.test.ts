@@ -7,8 +7,11 @@ import {
 describe("playback clock", () => {
   it("keeps the exact media position while publishing at most once per second", () => {
     const clock = createPlaybackClock();
+    const isolatedClock = createPlaybackClock(40);
     const listener = vi.fn();
+    const isolatedListener = vi.fn();
     clock.subscribe(listener);
+    isolatedClock.subscribe(isolatedListener);
 
     clock.updateFromMedia(0.25);
     clock.updateFromMedia(0.99);
@@ -31,6 +34,9 @@ describe("playback clock", () => {
     expect(clock.readExact()).toBe(3.4);
     expect(clock.getSnapshot()).toBe(3);
     expect(listener).toHaveBeenCalledTimes(2);
+    expect(isolatedClock.readExact()).toBe(40);
+    expect(isolatedClock.getSnapshot()).toBe(40);
+    expect(isolatedListener).not.toHaveBeenCalled();
   });
 
   it("publishes seeks immediately without snapping backward in the same second", () => {
@@ -108,21 +114,4 @@ describe("playback clock", () => {
     expect(listener).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps clock instances isolated", () => {
-    const first = createPlaybackClock(4);
-    const second = createPlaybackClock(40);
-    const firstListener = vi.fn();
-    const secondListener = vi.fn();
-    first.subscribe(firstListener);
-    second.subscribe(secondListener);
-
-    first.seek(8.5);
-
-    expect(first.readExact()).toBe(8.5);
-    expect(first.getSnapshot()).toBe(8.5);
-    expect(second.readExact()).toBe(40);
-    expect(second.getSnapshot()).toBe(40);
-    expect(firstListener).toHaveBeenCalledOnce();
-    expect(secondListener).not.toHaveBeenCalled();
-  });
 });

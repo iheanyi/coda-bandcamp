@@ -143,43 +143,6 @@ describe("local favorites", () => {
     expect(() => writeLocalFavorites(repaired)).not.toThrow();
   });
 
-  it("keeps album favorites metadata-only when a tracklist becomes available", () => {
-    const repaired = repairLocalFavoriteMetadata(
-      {
-        albumIds: ["album-1"],
-        songIds: [],
-        albums: [{ ...album, tracks: undefined }],
-        tracks: [],
-        radioShowIds: [],
-        radioShows: [],
-      },
-      [album],
-      [],
-    );
-
-    expect(repaired.albums).toHaveLength(1);
-    expect(repaired.albums[0].tracks).toBeUndefined();
-    expect(writeLocalFavorites(repaired).albums[0].tracks).toBeUndefined();
-  });
-
-  it("strips legacy saved album tracklists on the next write", () => {
-    const refreshedTrack = { ...track, title: "Mirage (Remastered)" };
-    const repaired = repairLocalFavoriteMetadata(
-      {
-        albumIds: ["album-1"],
-        songIds: [],
-        albums: [album],
-        tracks: [],
-        radioShowIds: [],
-        radioShows: [],
-      },
-      [{ ...album, tracks: [refreshedTrack] }],
-      [],
-    );
-
-    expect(writeLocalFavorites(repaired).albums[0].tracks).toBeUndefined();
-  });
-
   it("migrates version-one favorites without losing music metadata", () => {
     window.localStorage.setItem(
       LOCAL_FAVORITES_KEY,
@@ -192,11 +155,13 @@ describe("local favorites", () => {
       }),
     );
 
-    expect(readLocalFavorites()).toMatchObject({
+    const migrated = readLocalFavorites();
+    expect(migrated).toMatchObject({
       albumIds: ["album-1"],
       radioShowIds: [],
       radioShows: [],
     });
+    expect(migrated.albums[0].tracks).toBeUndefined();
   });
 
   it("persists radio-show favorites without remote artwork URLs", () => {

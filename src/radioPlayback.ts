@@ -2,11 +2,6 @@ import type { RadioChapter } from "./types";
 
 export const MAX_RADIO_CHAPTERS = 256;
 
-export type RadioAiringState = {
-  current?: RadioChapter;
-  next?: RadioChapter;
-};
-
 export type RadioAiringIndexes = {
   currentIndex: number;
   nextIndex: number;
@@ -35,16 +30,6 @@ export function boundRadioChapters(chapters: readonly RadioChapter[]): RadioChap
     )
     .slice(0, MAX_RADIO_CHAPTERS)
     .map(({ chapter }) => chapter);
-}
-
-export function radioAiringAt(
-  chapters: readonly RadioChapter[] | undefined,
-  playbackSeconds: number,
-): RadioAiringState {
-  if (!chapters?.length) return {};
-
-  const timeline = boundRadioChapters(chapters);
-  return radioAiringAtTimeline(timeline, playbackSeconds);
 }
 
 /**
@@ -78,50 +63,12 @@ export function radioAiringIndexesAt(
   return { currentIndex, nextIndex };
 }
 
-export function radioAiringAtTimeline(
-  timeline: readonly RadioChapter[],
-  playbackSeconds: number,
-): RadioAiringState {
-  const { currentIndex, nextIndex } = radioAiringIndexesAt(
-    timeline,
-    playbackSeconds,
-  );
-  return {
-    ...(currentIndex >= 0 ? { current: timeline[currentIndex] } : {}),
-    ...(nextIndex >= 0 ? { next: timeline[nextIndex] } : {}),
-  };
-}
-
-export function nextRadioChapterTime(
-  chapters: readonly RadioChapter[] | undefined,
-  playbackSeconds: number,
-): number | undefined {
-  if (!chapters?.length) return undefined;
-  return nextRadioChapterTimeInTimeline(
-    boundRadioChapters(chapters),
-    playbackSeconds,
-  );
-}
-
 export function nextRadioChapterTimeInTimeline(
   timeline: readonly RadioChapter[],
   playbackSeconds: number,
 ): number | undefined {
   const { nextIndex } = radioAiringIndexesAt(timeline, playbackSeconds);
   return nextIndex >= 0 ? timeline[nextIndex].timecode : undefined;
-}
-
-export function previousRadioChapterTime(
-  chapters: readonly RadioChapter[] | undefined,
-  playbackSeconds: number,
-  restartThresholdSeconds = 4,
-): number | undefined {
-  if (!chapters?.length) return undefined;
-  return previousRadioChapterTimeInTimeline(
-    boundRadioChapters(chapters),
-    playbackSeconds,
-    restartThresholdSeconds,
-  );
 }
 
 export function previousRadioChapterTimeInTimeline(

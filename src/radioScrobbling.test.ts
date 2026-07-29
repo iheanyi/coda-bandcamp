@@ -1,13 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { boundRadioChapters } from "./radioPlayback";
 import {
-  advanceRadioScrobbling,
   advanceRadioScrobblingWithTimeline,
   completeRadioShowScrobble,
   createRadioScrobbleProgress,
   markRadioChapterScrobble,
   markRadioShowScrobble,
-  radioChapterTimeline,
-  radioChapterAtTimeline,
+  radioChapterTimelineFromBounded,
 } from "./radioScrobbling";
 import type { Track } from "./types";
 
@@ -36,6 +35,10 @@ const radioTrack: Track = {
     },
   ],
 };
+const radioTimeline = radioChapterTimelineFromBounded(
+  radioTrack,
+  boundRadioChapters(radioTrack.radioChapters ?? []),
+);
 
 describe("Radio scrobbling", () => {
   it("builds deterministic chapter windows and lets the last duplicate go on air", () => {
@@ -47,7 +50,10 @@ describe("Radio scrobbling", () => {
       ],
     };
 
-    expect(radioChapterTimeline(track).map(({ chapter, start, end }) => ({
+    expect(radioChapterTimelineFromBounded(
+      track,
+      boundRadioChapters(track.radioChapters ?? []),
+    ).map(({ chapter, start, end }) => ({
       title: chapter.title,
       start,
       end,
@@ -58,37 +64,11 @@ describe("Radio scrobbling", () => {
     ]);
   });
 
-  it("reuses a precomputed timeline without changing scrobble accounting", () => {
-    const timeline = radioChapterTimeline(radioTrack);
-    const progress = createRadioScrobbleProgress(radioTrack.id, 60);
-    const direct = advanceRadioScrobbling(
-      radioTrack,
-      progress,
-      70,
-      true,
-      true,
-      1_000,
-    );
-    const precomputed = advanceRadioScrobblingWithTimeline(
-      radioTrack,
-      timeline,
-      progress,
-      70,
-      true,
-      true,
-      1_000,
-    );
-
-    expect(precomputed).toEqual(direct);
-    expect(radioChapterAtTimeline(timeline, 70)?.chapter.title).toBe(
-      "First light",
-    );
-  });
-
   it("sends chapter Now Playing with radio semantics and scrobbles actual listening", () => {
     let progress = createRadioScrobbleProgress(radioTrack.id, 60);
-    const started = advanceRadioScrobbling(
+    const started = advanceRadioScrobblingWithTimeline(
       radioTrack,
+      radioTimeline,
       progress,
       60,
       true,
@@ -110,8 +90,9 @@ describe("Radio scrobbling", () => {
     ]);
 
     for (let position = 65; position <= 120; position += 5) {
-      const advanced = advanceRadioScrobbling(
+      const advanced = advanceRadioScrobblingWithTimeline(
         radioTrack,
+        radioTimeline,
         progress,
         position,
         true,
@@ -145,16 +126,18 @@ describe("Radio scrobbling", () => {
 
   it("does not count seeks or scrobble station-ident metadata", () => {
     let progress = createRadioScrobbleProgress(radioTrack.id);
-    progress = advanceRadioScrobbling(
+    progress = advanceRadioScrobblingWithTimeline(
       radioTrack,
+      radioTimeline,
       progress,
       0,
       true,
       true,
       1_000,
     ).progress;
-    const seeked = advanceRadioScrobbling(
+    const seeked = advanceRadioScrobblingWithTimeline(
       radioTrack,
+      radioTimeline,
       progress,
       170,
       true,
@@ -203,8 +186,9 @@ describe("Radio scrobbling", () => {
 
   it("tracks listening while Last.fm is disconnected without retroactive fake actions", () => {
     const progress = createRadioScrobbleProgress(radioTrack.id, 60);
-    const advanced = advanceRadioScrobbling(
+    const advanced = advanceRadioScrobblingWithTimeline(
       radioTrack,
+      radioTimeline,
       progress,
       65,
       true,

@@ -16,7 +16,7 @@ import {
   type ReactNode,
 } from "react";
 
-export const SAVED_TRACK_ROW_HEIGHT = 56;
+const SAVED_TRACK_ROW_HEIGHT = 56;
 export const SAVED_TRACK_VIRTUALIZATION_THRESHOLD = 100;
 export const SAVED_TRACK_OVERSCAN = 6;
 

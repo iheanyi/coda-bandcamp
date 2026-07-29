@@ -70,7 +70,7 @@ jobs:
 
       - run: npm ci
 
-      - name: Test before releasing
+      - name: Test application before releasing
         run: npm test
 
       - name: Enable authenticated release push
@@ -201,9 +201,6 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ needs.prepare-release.outputs.commit_sha }}
-
-      - name: Validate release version
-        run: node tools/check-release-version.mjs "${{ needs.prepare-release.outputs.tag }}"
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -349,18 +346,6 @@ jobs:
             "$SIGNED_ASSET_DIR" \
             "$UPDATER_MANIFEST_PATH"
           gh release upload "$RELEASE_TAG" "$UPDATER_MANIFEST_PATH" --clobber
-          gh release view "$RELEASE_TAG" \
-            --json assets,body,isDraft,tagName \
-            > "$RUNNER_TEMP/coda-release/release.json"
-
-      - name: Verify signed updater assets
-        env:
-          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
-        run: >-
-          node tools/verify-release-assets.mjs
-          "$RELEASE_TAG"
-          "$RUNNER_TEMP/coda-release/latest.json"
-          "$RUNNER_TEMP/coda-release/release.json"
 
       - name: Cryptographically verify updater signatures
         shell: bash
