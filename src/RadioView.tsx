@@ -11,8 +11,6 @@ import {
   Heart,
   ListMusic,
   ListPlus,
-  Pause,
-  Play,
   Radio,
   RefreshCw,
 } from "lucide-react";
@@ -28,6 +26,7 @@ import {
 } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { PlaybackIcon } from "@/components/ui/playback-icon";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Tooltip,
@@ -278,10 +277,11 @@ const RadioCard = memo(function RadioCard({
           >
             {busyAction === "play" ? (
               <Spinner aria-hidden="true" className="size-4 text-current motion-reduce:animate-none" />
-            ) : active && playing ? (
-              <Pause size={15} fill="currentColor" />
             ) : (
-              <Play size={15} fill="currentColor" />
+              <PlaybackIcon
+                className="size-4"
+                playing={active && playing}
+              />
             )}
             {active ? (playing ? "Pause" : "Resume") : "Play"}
           </Button>
@@ -471,9 +471,10 @@ const RadioDetail = memo(function RadioDetail({
               aria-label={activeShow ? `${playing ? "Pause" : "Resume"} show` : "Play show"}
               aria-pressed={activeShow && playing}
             >
-              {activeShow && playing
-                ? <Pause size={17} fill="currentColor" />
-                : <Play size={17} fill="currentColor" />}
+              <PlaybackIcon
+                className="size-4"
+                playing={activeShow && playing}
+              />
               {activeShow ? (playing ? "Pause show" : "Resume show") : "Play show"}
             </Button>
             <Button onClick={() => onQueue(track)}>
@@ -578,9 +579,10 @@ const RadioDetail = memo(function RadioDetail({
                   aria-pressed={activeChapter && playing}
                   title={activeChapter ? (playing ? "Pause" : "Resume") : "Play from here"}
                 >
-                  {activeChapter && playing
-                    ? <Pause size={14} fill="currentColor" />
-                    : <Play size={14} fill="currentColor" />}
+                  <PlaybackIcon
+                    className="size-3.5"
+                    playing={activeChapter && playing}
+                  />
                   {activeChapter ? (playing ? "Pause" : "Resume") : "Play"}
                 </Button>
               ) : null}
@@ -978,10 +980,13 @@ export default function RadioView({
             >
               {actionFor(featured) === "play" ? (
                 <Spinner aria-hidden="true" className="size-4 text-current motion-reduce:animate-none" />
-              ) : currentTrackId === `radio:${featured.id}` && playing ? (
-                <Pause size={17} fill="currentColor" />
               ) : (
-                <Play size={17} fill="currentColor" />
+                <PlaybackIcon
+                  className="size-4"
+                  playing={
+                    currentTrackId === `radio:${featured.id}` && playing
+                  }
+                />
               )}
               {actionFor(featured) === "play"
                 ? "Loading show…"

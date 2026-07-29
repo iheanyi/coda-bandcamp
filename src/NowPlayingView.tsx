@@ -7,7 +7,6 @@ import {
   Heart,
   ListMusic,
   ListPlus,
-  Pause,
   Play,
   Repeat,
   Repeat1,
@@ -30,6 +29,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DrawerTrigger } from "@/components/ui/drawer";
+import { PlaybackIcon } from "@/components/ui/playback-icon";
 import { Slider } from "@/components/ui/slider";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -80,7 +80,7 @@ type NowPlayingViewProps = {
   onVolume: (value: number) => void;
   onRepeat: () => void;
   onAirPlay: () => void;
-  onArtist: (artist: string) => void;
+  onArtist: (artist: string, albumId?: string, sourceTrack?: Track) => void;
   onAlbum: (track: Track) => void;
   albumLoading?: boolean;
   onPlayQueueIndex: (index: number) => void;
@@ -286,9 +286,7 @@ const NowPlayingPlaybackControls = memo(function NowPlayingPlaybackControls({
           onClick={onToggle}
           aria-label={playing ? "Pause" : "Play"}
         >
-          {playing
-            ? <Pause className="size-7" size={29} fill="currentColor" />
-            : <Play className="size-7" size={29} fill="currentColor" />}
+          <PlaybackIcon className="size-7" playing={playing} />
         </Button>
         <Tooltip>
           <TooltipTrigger
@@ -565,7 +563,7 @@ function NowPlayingViewComponent({
             id="now-playing-heading"
             ref={headingRef}
             className={cn(
-              "m-0 max-w-3xl font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-6xl/tight font-bold tracking-tighter text-balance text-[#f5f2eb] outline-none max-xl:text-5xl max-lg:text-3xl",
+              "m-0 max-w-3xl wrap-anywhere font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-6xl/tight font-bold tracking-tighter text-balance text-[#f5f2eb] outline-none max-xl:text-5xl max-lg:text-3xl",
               track.title.length > 32 && "text-5xl leading-none max-xl:text-4xl max-lg:text-3xl",
             )}
             title={track.title}
@@ -614,7 +612,7 @@ function NowPlayingViewComponent({
                   variant="text"
                   size="compact"
                   className="h-auto max-w-[46%] truncate p-0 text-sm font-medium text-[#c1c2bc] hover:bg-transparent hover:text-primary hover:underline"
-                  onClick={() => onArtist(track.artist)}
+                  onClick={() => onArtist(track.artist, track.albumId, track)}
                 >
                   {track.artist}
                 </Button>

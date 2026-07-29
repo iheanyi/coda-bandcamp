@@ -10,6 +10,7 @@ export type ArtistGroup = {
   trackCount: number;
   duration: number;
   representative: Album;
+  trackFilterArtistKey?: string;
 };
 
 export function artistKey(value: string): string {

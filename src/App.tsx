@@ -18,7 +18,6 @@ import {
   ListMusic,
   ListPlus,
   Music2,
-  Pause,
   Play,
   Plus,
   Radio,
@@ -81,6 +80,7 @@ import {
   NativeSelect,
   NativeSelectOption,
 } from "./components/ui/native-select";
+import { PlaybackIcon } from "./components/ui/playback-icon";
 import { Separator } from "./components/ui/separator";
 import { Skeleton } from "./components/ui/skeleton";
 import { Slider } from "./components/ui/slider";
@@ -563,7 +563,7 @@ const AlbumCard = memo(function AlbumCard({
   onPrefetch: (album: Album) => void;
   onPlay: (album: Album) => void;
   onQueue: (album: Album) => void;
-  onArtist: (artist: string) => void;
+  onArtist: (artist: string, albumId?: string, sourceTrack?: Track) => void;
   active: boolean;
   loading: boolean;
   playing: boolean;
@@ -635,9 +635,7 @@ const AlbumCard = memo(function AlbumCard({
             title={active ? (playing ? "Pause album" : "Resume album") : "Play album"}
             variant="primary"
           >
-            {active && playing
-              ? <Pause size={19} fill="currentColor" />
-              : <Play size={19} fill="currentColor" />}
+            <PlaybackIcon playing={active && playing} />
           </Button>
         </span>
       </div>
@@ -654,7 +652,7 @@ const AlbumCard = memo(function AlbumCard({
         </Button>
         <Button
           className="mt-1 h-auto w-full min-w-0 justify-start truncate p-0 text-left text-xs font-medium text-[#868984] hover:bg-transparent hover:text-[#dc8973] hover:underline hover:underline-offset-2"
-          onClick={() => onArtist(album.artist)}
+          onClick={() => onArtist(album.artist, album.id)}
           size="compact"
           title={`Browse ${album.artist}`}
           variant="text"
@@ -757,9 +755,10 @@ const ArtistHero = memo(function ArtistHero({
           >
             {loading === "play"
               ? <Spinner aria-hidden="true" className="size-4 text-current" />
-              : active && playing
-                ? <Pause size={16} fill="currentColor" />
-                : <Play size={16} fill="currentColor" />}
+              : <PlaybackIcon
+                  className="size-4"
+                  playing={active && playing}
+                />}
             {loading === "play"
               ? "Loading…"
               : active
@@ -899,7 +898,7 @@ const QueuePanel = memo(function QueuePanel({
   onClear: () => void;
   onShuffle: () => void;
   onMove: (from: number, to: number) => void;
-  onArtist: (artist: string) => void;
+  onArtist: (artist: string, albumId?: string, sourceTrack?: Track) => void;
   onAlbum: (track: Track) => void;
   onNowPlaying: () => void;
   onOpenRadioItem: (url: string) => void;
@@ -1094,7 +1093,12 @@ const QueuePanel = memo(function QueuePanel({
                   </Button>
                   <Button
                     className="h-auto justify-start truncate p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
-                    onClick={() => onArtist(currentTrack.artist)}
+                    onClick={() =>
+                      onArtist(
+                        currentTrack.artist,
+                        currentTrack.albumId,
+                        currentTrack,
+                      )}
                     size="compact"
                     variant="text"
                   >
@@ -1194,7 +1198,7 @@ const QueuePanel = memo(function QueuePanel({
                 </Button>
                 <Button
                   className="h-auto justify-start truncate p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
-                  onClick={() => onArtist(track.artist)}
+                  onClick={() => onArtist(track.artist, track.albumId, track)}
                   size="compact"
                   variant="text"
                 >
@@ -1254,7 +1258,7 @@ const PlayerTrack = memo(function PlayerTrack({
   playbackClock: PlaybackClock;
   favorite: boolean;
   onToggleFavorite: () => void;
-  onArtist: (artist: string) => void;
+  onArtist: (artist: string, albumId?: string, sourceTrack?: Track) => void;
   onAlbum: (track: Track) => void;
   albumLoading: boolean;
   onNowPlaying: () => void;
@@ -1332,27 +1336,30 @@ const PlayerTrack = memo(function PlayerTrack({
                 <strong className="truncate text-xs font-bold text-[#e6e4de]" title={track.title}>{track.title}</strong>
                 {favoriteControl}
               </div>
-              <span className="truncate text-xs text-[#7f827e]">
+              <span className="flex min-w-0 items-center gap-1 text-xs text-[#7f827e]">
                 <Button
-                  className="h-auto p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
-                  onClick={() => onArtist(track.artist)}
+                  className="h-auto min-w-0 max-w-[46%] truncate p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
+                  onClick={() => onArtist(track.artist, track.albumId, track)}
                   size="compact"
+                  title={track.artist}
                   variant="text"
                 >
                   {track.artist}
                 </Button>
-                {" · "}
+                <span aria-hidden="true" className="shrink-0">·</span>
                 <Button
-                  className="h-auto p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
+                  className="h-auto min-w-0 max-w-[46%] truncate p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
                   onClick={() => onAlbum(track)}
                   aria-busy={albumLoading || undefined}
+                  aria-label={albumLoading ? `Loading album ${track.album}` : undefined}
                   disabled={albumLoading}
                   size="compact"
+                  title={track.album}
                   variant="text"
                 >
                   {albumLoading ? (
                     <Spinner
-                      aria-label={`Loading ${track.album}`}
+                      aria-label={`Loading album ${track.album}`}
                       className="size-3.5"
                     />
                   ) : null}
@@ -1430,7 +1437,7 @@ const PlayerTransport = memo(function PlayerTransport({
           aria-label={playing ? "Pause" : "Play"}
           size="icon"
         >
-          {playing ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
+          <PlaybackIcon playing={playing} />
         </Button>
         <Tooltip>
           <TooltipTrigger render={<Button onClick={onNext} disabled={!canNext && !positionCanNext} aria-label="Next" size="icon" variant="ghost" />}>
@@ -1509,7 +1516,7 @@ function Player({
   onRepeat: () => void;
   airPlayAvailable: boolean;
   onAirPlay: () => void;
-  onArtist: (artist: string) => void;
+  onArtist: (artist: string, albumId?: string, sourceTrack?: Track) => void;
   onAlbum: (track: Track) => void;
   albumLoading: boolean;
   onNowPlaying: () => void;
@@ -1635,7 +1642,7 @@ function AlbumDetailPage({
   onQueueAlbum: () => void;
   onPlayTrack: (track: Track) => void;
   onQueueTrack: (track: Track) => void;
-  onArtist: (artist: string) => void;
+  onArtist: (artist: string, albumId?: string, sourceTrack?: Track) => void;
   favoriteAlbum: boolean;
   favoriteTrackIds: ReadonlySet<string>;
   onToggleFavoriteAlbum: () => void;
@@ -1659,11 +1666,17 @@ function AlbumDetailPage({
         </div>
         <div className="min-w-0 pb-1">
             <span className="mb-2.5 text-xs font-bold tracking-widest text-[#777b76] uppercase">{album.songCount === 1 ? "Single" : "Album"}</span>
-            <h2 className="m-0 max-w-lg font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-3xl leading-none font-semibold tracking-tighter text-[#f1efe9] xl:text-4xl">{album.title}</h2>
+            <h2
+              className="m-0 max-w-lg wrap-anywhere font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-3xl leading-none font-semibold tracking-tighter text-[#f1efe9] xl:text-4xl"
+              title={album.title}
+            >
+              {album.title}
+            </h2>
             <Button
-              className="mx-0 my-2 block h-auto justify-start p-0 text-sm font-semibold text-[#d98771] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
-              onClick={() => onArtist(album.artist)}
+              className="mx-0 my-2 block h-auto max-w-full justify-start truncate p-0 text-sm font-semibold text-[#d98771] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
+              onClick={() => onArtist(album.artist, album.id)}
               size="compact"
+              title={album.artist}
               variant="text"
             >
               {album.artist}
@@ -1684,9 +1697,10 @@ function AlbumDetailPage({
                 aria-pressed={activeAlbum && playing}
                 variant="primary"
               >
-                {activeAlbum && playing
-                  ? <Pause size={17} fill="currentColor" />
-                  : <Play size={17} fill="currentColor" />}
+                <PlaybackIcon
+                  className="size-4"
+                  playing={activeAlbum && playing}
+                />
                 {activeAlbum
                   ? (playing ? "Pause" : "Resume")
                   : `Play ${album.songCount === 1 ? "single" : "album"}`}
@@ -1749,7 +1763,7 @@ function AlbumDetailPage({
               return (
               <div className={`group grid h-14 grid-cols-[2.5rem_minmax(0,1fr)_3.5rem_7rem] items-center rounded-sm border-b border-white/4.5 hover:bg-white/[0.035] ${activeTrack ? "bg-primary/[0.075]" : ""}`} key={track.id}>
                 <Button
-                  className={`h-full rounded-none p-0 text-xs text-[#777a76] hover:bg-transparent group-hover:[&>span]:hidden group-hover:[&>svg]:block [&>svg]:hidden ${activeTrack ? "text-[#e88c75] [&>span]:hidden [&>svg]:block" : ""}`}
+                  className={`h-full rounded-none p-0 text-xs text-[#777a76] hover:bg-transparent ${activeTrack ? "text-[#e88c75]" : ""}`}
                   onClick={activeTrack ? onTogglePlayback : () => onPlayTrack(track)}
                   aria-label={
                     activeTrack
@@ -1759,10 +1773,13 @@ function AlbumDetailPage({
                   aria-pressed={activeTrack && playing}
                   variant="ghost"
                 >
-                  <span>{track.track}</span>
-                  {activeTrack && playing
-                    ? <Pause size={13} fill="currentColor" />
-                    : <Play size={13} fill="currentColor" />}
+                  <span className={activeTrack ? "hidden" : "group-hover:hidden"}>
+                    {track.track}
+                  </span>
+                  <PlaybackIcon
+                    className={`size-3.5 ${activeTrack ? "" : "hidden group-hover:inline-grid"}`}
+                    playing={activeTrack && playing}
+                  />
                 </Button>
                 <div className="flex min-w-0 flex-col gap-0.5 overflow-hidden">
                   <Button
@@ -1775,7 +1792,7 @@ function AlbumDetailPage({
                   </Button>
                   <Button
                     className="h-auto w-fit max-w-full justify-start truncate p-0 text-xs text-[#777b76] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2 focus-visible:-outline-offset-2"
-                    onClick={() => onArtist(track.artist)}
+                    onClick={() => onArtist(track.artist, track.albumId, track)}
                     size="compact"
                     variant="text"
                   >
@@ -2205,6 +2222,15 @@ export default function App() {
   const [genre, setGenre] = useState("All");
   const [browseMode, setBrowseMode] = useState<LibraryBrowseMode>("releases");
   const [selectedArtist, setSelectedArtist] = useState<string>();
+  const [selectedArtistFallback, setSelectedArtistFallback] = useState<{
+    albumId: string;
+    key: string;
+    name: string;
+    knownTrack?: {
+      duration: number;
+      id: string;
+    };
+  }>();
   const [queue, setQueue] = useState<Track[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -2228,6 +2254,8 @@ export default function App() {
   const [streamUrl, setStreamUrl] = useState<string>();
   const [airPlayAvailable, setAirPlayAvailable] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const playbackIndexRef = useRef(currentIndex);
+  playbackIndexRef.current = currentIndex;
   const queuePanelRef = useRef<HTMLDivElement>(null);
   const queueControlRef = useRef<HTMLButtonElement>(null);
   const queueFocusRequestedRef = useRef(false);
@@ -3169,11 +3197,17 @@ export default function App() {
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !streamUrl) return;
+    let active = true;
     if (playing) {
-      audio.play().catch(() => setPlaying(false));
+      audio.play().catch(() => {
+        if (active) setPlaying(false);
+      });
     } else {
       audio.pause();
     }
+    return () => {
+      active = false;
+    };
   }, [playing, streamUrl]);
 
   const togglePlayback = useCallback(() => {
@@ -3210,16 +3244,17 @@ export default function App() {
       if (audioRef.current) audioRef.current.currentTime = chapterTime;
       return;
     }
-    const canAdvance =
-      currentIndex + 1 < queue.length ||
-      (repeat === "all" && queue.length > 1);
-    if (!canAdvance) return;
+    const activeIndex = playbackIndexRef.current;
+    const nextIndex = activeIndex + 1 < queue.length
+      ? activeIndex + 1
+      : repeat === "all" && queue.length > 1
+        ? 0
+        : activeIndex;
+    if (nextIndex === activeIndex) return;
+    playbackIndexRef.current = nextIndex;
     playbackClock.reset();
-    setCurrentIndex((index) =>
-      index + 1 < queue.length ? index + 1 : 0,
-    );
+    setCurrentIndex(nextIndex);
   }, [
-    currentIndex,
     currentRadioTimeline,
     currentTrack,
     playbackClock,
@@ -3304,16 +3339,17 @@ export default function App() {
       if (audioRef.current) audioRef.current.currentTime = 0;
       return;
     }
-    const canMoveBack =
-      currentIndex > 0 ||
-      (repeat === "all" && queue.length > 1);
-    if (!canMoveBack) return;
+    const activeIndex = playbackIndexRef.current;
+    const previousIndex = activeIndex > 0
+      ? activeIndex - 1
+      : repeat === "all" && queue.length > 1
+        ? queue.length - 1
+        : activeIndex;
+    if (previousIndex === activeIndex) return;
+    playbackIndexRef.current = previousIndex;
     playbackClock.reset();
-    setCurrentIndex((index) =>
-      index > 0 ? index - 1 : queue.length - 1,
-    );
+    setCurrentIndex(previousIndex);
   }, [
-    currentIndex,
     currentRadioTimeline,
     currentTrack,
     playbackClock,
@@ -3426,6 +3462,7 @@ export default function App() {
       if (genre !== "All" && genreKey(album.genre) !== genreKey(genre)) return false;
       if (
         deferredQuery &&
+        !(selectedArtist && query === "") &&
         !albumSearchIndex.get(album.id)?.includes(deferredQuery)
       ) return false;
       if (!matchesBrowseMode(album, effectiveBrowseMode)) return false;
@@ -3444,20 +3481,93 @@ export default function App() {
     deferredQuery,
     effectiveBrowseMode,
     genre,
+    query,
+    selectedArtist,
     sort,
     view,
   ]);
   const artistGroups = useMemo(() => groupAlbumsByArtist(matchingAlbums), [matchingAlbums]);
+  const fallbackArtistAlbum = useMemo(
+    () =>
+      selectedArtist &&
+      selectedArtistFallback?.key === selectedArtist
+        ? albums.find(
+            (album) => album.id === selectedArtistFallback.albumId,
+          )
+        : undefined,
+    [albums, selectedArtist, selectedArtistFallback],
+  );
+  const fallbackArtistTracks = useMemo(() => {
+    if (!fallbackArtistAlbum || !selectedArtistFallback) return [];
+    const cachedTracks =
+      cachedAlbumTracks(queryClient, fallbackArtistAlbum) ??
+      fallbackArtistAlbum.tracks;
+    const candidateTracks = cachedTracks ??
+      queue.filter((track) => track.albumId === fallbackArtistAlbum.id);
+    return candidateTracks.filter(
+      (track) => artistKey(track.artist) === selectedArtistFallback.key,
+    );
+  }, [
+    artistAction,
+    fallbackArtistAlbum,
+    queryClient,
+    queue,
+    selectedArtistFallback,
+  ]);
   const visibleAlbums = useMemo(
     () =>
       effectiveBrowseMode === "artists" && selectedArtist
-        ? matchingAlbums.filter((album) => artistKey(album.artist) === selectedArtist)
+        ? matchingAlbums.filter(
+            (album) =>
+              artistKey(album.artist) === selectedArtist ||
+              album.id === fallbackArtistAlbum?.id,
+          )
         : matchingAlbums,
-    [effectiveBrowseMode, matchingAlbums, selectedArtist],
+    [
+      effectiveBrowseMode,
+      fallbackArtistAlbum?.id,
+      matchingAlbums,
+      selectedArtist,
+    ],
   );
   const activeArtist = useMemo(
-    () => artistGroups.find((group) => group.key === selectedArtist),
-    [artistGroups, selectedArtist],
+    () => {
+      const exactGroup = artistGroups.find(
+        (group) => group.key === selectedArtist,
+      );
+      if (exactGroup) return exactGroup;
+      if (
+        !selectedArtist ||
+        !fallbackArtistAlbum ||
+        selectedArtistFallback?.key !== selectedArtist
+      ) {
+        return undefined;
+      }
+      return {
+        key: selectedArtist,
+        name: selectedArtistFallback.name,
+        albums: [fallbackArtistAlbum],
+        releaseCount: 1,
+        trackCount:
+          fallbackArtistTracks.length ||
+          (selectedArtistFallback.knownTrack ? 1 : 0),
+        duration: fallbackArtistTracks.length
+          ? fallbackArtistTracks.reduce(
+              (total, track) => total + track.duration,
+              0,
+            )
+          : selectedArtistFallback.knownTrack?.duration ?? 0,
+        representative: fallbackArtistAlbum,
+        trackFilterArtistKey: selectedArtistFallback.key,
+      };
+    },
+    [
+      artistGroups,
+      fallbackArtistAlbum,
+      fallbackArtistTracks,
+      selectedArtist,
+      selectedArtistFallback,
+    ],
   );
   const canPrevious = Boolean(currentTrack) && (
     currentIndex > 0 ||
@@ -3490,11 +3600,22 @@ export default function App() {
     if (
       effectiveBrowseMode === "artists" &&
       selectedArtist &&
-      !artistGroups.some((group) => group.key === selectedArtist)
+      !artistGroups.some((group) => group.key === selectedArtist) &&
+      !fallbackArtistAlbum
     ) {
       setSelectedArtist(undefined);
     }
-  }, [artistGroups, effectiveBrowseMode, selectedArtist]);
+  }, [
+    artistGroups,
+    effectiveBrowseMode,
+    fallbackArtistAlbum,
+    selectedArtist,
+  ]);
+  useEffect(() => {
+    if (!selectedArtist && selectedArtistFallback) {
+      setSelectedArtistFallback(undefined);
+    }
+  }, [selectedArtist, selectedArtistFallback]);
 
   const ensureTracks = useCallback(async (
     album: Album,
@@ -3662,7 +3783,12 @@ export default function App() {
           if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
           const tracks = await ensureAlbumQueryData(queryClient, album);
           if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
-          tracksByAlbum[index] = tracks;
+          tracksByAlbum[index] = group.trackFilterArtistKey
+            ? tracks.filter(
+                (track) =>
+                  artistKey(track.artist) === group.trackFilterArtistKey,
+              )
+            : tracks;
           recoveredCovers.set(album.id, albumWithRecoveredCover(album, tracks));
         } catch {
           if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
@@ -4086,7 +4212,18 @@ export default function App() {
   }, [enqueuePlayerStateWrite, notify, playbackClock, queryClient]);
 
   const changeQueueOpen = useCallback((nextOpen: boolean) => {
-    if (nextOpen) queueFocusRequestedRef.current = true;
+    if (nextOpen) {
+      queueFocusRequestedRef.current = true;
+    } else {
+      const restoreFocus = () => {
+        queueControlRef.current?.focus({ preventScroll: true });
+      };
+      if (typeof window.requestAnimationFrame === "function") {
+        window.requestAnimationFrame(restoreFocus);
+      } else {
+        window.setTimeout(restoreFocus, 0);
+      }
+    }
     setQueueOpen(nextOpen);
   }, []);
   const playQueueIndex = useCallback((index: number) => {
@@ -4184,9 +4321,14 @@ export default function App() {
     void transitionCodaView(() => setSelectedArtist(group.key), "page-forward");
   }, []);
   const backToArtists = useCallback(() => {
+    setSelectedArtistFallback(undefined);
     void transitionCodaView(() => setSelectedArtist(undefined), "page-back");
   }, []);
-  const browseArtist = useCallback((artist: string) => {
+  const browseArtist = useCallback((
+    artist: string,
+    albumId?: string,
+    sourceTrack?: Track,
+  ) => {
     void transitionCodaView(() => {
       setNowPlayingOpen(false);
       if (artist === "Bandcamp Radio") {
@@ -4195,16 +4337,40 @@ export default function App() {
         setRadioRequestedShowId(undefined);
         setSelectedAlbum(undefined);
         setSelectedArtist(undefined);
+        setSelectedArtistFallback(undefined);
+        return;
+      }
+      const key = artistKey(artist);
+      const hasReleaseArtist = albums.some(
+        (album) => artistKey(album.artist) === key,
+      );
+      const fallbackAlbum = hasReleaseArtist || !albumId
+        ? undefined
+        : albums.find((album) => album.id === albumId);
+      if (!hasReleaseArtist && !fallbackAlbum) {
+        notify(`Could not find a saved release for ${artist}.`, "bad");
         return;
       }
       setView("library");
       setBrowseMode("artists");
-      setSelectedArtist(artistKey(artist));
+      setSelectedArtist(key);
+      setSelectedArtistFallback(
+        fallbackAlbum
+          ? {
+              albumId: fallbackAlbum.id,
+              key,
+              name: artist,
+              knownTrack: sourceTrack
+                ? { duration: sourceTrack.duration, id: sourceTrack.id }
+                : undefined,
+            }
+          : undefined,
+      );
       setQuery("");
       setGenre("All");
       setSelectedAlbum(undefined);
     }, "page-forward");
-  }, []);
+  }, [albums, notify]);
   const browseRadioSeries = useCallback((seriesId?: number) => {
     void transitionCodaView(() => {
       setRadioSeriesId(seriesId);
@@ -4860,7 +5026,13 @@ export default function App() {
                     onPlay={playArtist}
                     onShuffle={shuffleArtist}
                     onQueue={queueArtist}
-                    active={activeArtist.albums.some((album) => album.id === currentTrack?.albumId)}
+                    active={activeArtist.albums.some(
+                      (album) => album.id === currentTrack?.albumId,
+                    ) && (
+                      !activeArtist.trackFilterArtistKey ||
+                      artistKey(currentTrack?.artist ?? "") ===
+                        activeArtist.trackFilterArtistKey
+                    )}
                     playing={playing}
                     onTogglePlayback={togglePlayback}
                   />

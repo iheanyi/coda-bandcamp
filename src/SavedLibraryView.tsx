@@ -7,9 +7,7 @@ import {
   ListMusic,
   ListPlus,
   Music2,
-  Pause,
   Pencil,
-  Play,
   Plus,
   Radio,
   RefreshCw,
@@ -54,6 +52,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PlaybackIcon } from "@/components/ui/playback-icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -108,7 +107,11 @@ type SavedLibraryViewProps = {
   onQueueTrack: (track: Track) => void;
   onOpenAlbum: (album: Album) => void;
   onOpenTrackAlbum: (track: Track) => void;
-  onOpenArtist: (artist: string) => void;
+  onOpenArtist: (
+    artist: string,
+    albumId?: string,
+    sourceTrack?: Track,
+  ) => void;
   onOpenRadioShow: (show: RadioShowSummary) => void;
   onOpenRadioSeries: (seriesId?: number) => void;
   onAddToPlaylist: (tracks: Track[]) => void;
@@ -496,7 +499,11 @@ function PlaylistDetailView({
   onTogglePlayback: () => void;
   onAddToPlaylist: (tracks: Track[]) => void;
   onOpenTrackAlbum: (track: Track) => void;
-  onOpenArtist: (artist: string) => void;
+  onOpenArtist: (
+    artist: string,
+    albumId?: string,
+    sourceTrack?: Track,
+  ) => void;
   onRename: (name: string) => void;
   onRemove: (index: number) => void;
   onDelete: () => void;
@@ -643,9 +650,10 @@ function PlaylistDetailView({
               aria-pressed={activePlaylist && playing}
               variant="primary"
             >
-              {activePlaylist && playing
-                ? <Pause size={16} fill="currentColor" />
-                : <Play size={16} fill="currentColor" />}
+              <PlaybackIcon
+                className="size-4"
+                playing={activePlaylist && playing}
+              />
               {activePlaylist ? (playing ? "Pause" : "Resume") : "Play"}
             </Button>
             <Button
@@ -683,9 +691,8 @@ function PlaylistDetailView({
             >
               <Button
                 className={cn(
-                  "group/number size-full rounded-none p-0 text-xs font-normal text-[#777a76] hover:bg-transparent group-hover:[&_span]:hidden [&_svg]:hidden group-hover:[&_svg]:block",
-                  activeTrack &&
-                    "text-[#e88c75] [&_span]:hidden [&_svg]:block",
+                  "group/number size-full rounded-none p-0 text-xs font-normal text-[#777a76] hover:bg-transparent",
+                  activeTrack && "text-[#e88c75]",
                 )}
                 onClick={activeTrack ? onTogglePlayback : () => onPlay([track])}
                 aria-label={
@@ -696,10 +703,16 @@ function PlaylistDetailView({
                 aria-pressed={activeTrack && playing}
                 variant="ghost"
               >
-                <span>{index + 1}</span>
-                {activeTrack && playing
-                  ? <Pause size={13} fill="currentColor" />
-                  : <Play size={13} fill="currentColor" />}
+                <span className={activeTrack ? "hidden" : "group-hover:hidden"}>
+                  {index + 1}
+                </span>
+                <PlaybackIcon
+                  className={cn(
+                    "size-3.5",
+                    !activeTrack && "hidden group-hover:inline-grid",
+                  )}
+                  playing={activeTrack && playing}
+                />
               </Button>
               <div className="flex min-w-0 flex-col gap-1">
                 <Button
@@ -715,7 +728,8 @@ function PlaylistDetailView({
                 <span className="flex min-w-0 items-center gap-1">
                   <Button
                     className={metadataLinkClassName}
-                    onClick={() => onOpenArtist(track.artist)}
+                    onClick={() =>
+                      onOpenArtist(track.artist, track.albumId, track)}
                     variant="ghost"
                   >
                     {track.artist}
@@ -1555,9 +1569,10 @@ export default function SavedLibraryView({
                     aria-pressed={activeFavoriteTrack && playing}
                     size="compact"
                   >
-                    {activeFavoriteTrack && playing
-                      ? <Pause size={14} fill="currentColor" />
-                      : <Play size={14} fill="currentColor" />}
+                    <PlaybackIcon
+                      className="size-3.5"
+                      playing={activeFavoriteTrack && playing}
+                    />
                     {activeFavoriteTrack ? (playing ? "Pause" : "Resume") : "Play all"}
                   </Button>
                   <Button
@@ -1586,9 +1601,8 @@ export default function SavedLibraryView({
                   >
                     <Button
                       className={cn(
-                        "group/number size-full rounded-none p-0 text-xs font-normal text-[#777a76] hover:bg-transparent group-hover:[&_span]:hidden [&_svg]:hidden group-hover:[&_svg]:block",
-                        activeTrack &&
-                          "text-[#e88c75] [&_span]:hidden [&_svg]:block",
+                        "group/number size-full rounded-none p-0 text-xs font-normal text-[#777a76] hover:bg-transparent",
+                        activeTrack && "text-[#e88c75]",
                       )}
                       onClick={activeTrack ? onTogglePlayback : () => onPlayTrack(track)}
                       aria-label={
@@ -1599,10 +1613,16 @@ export default function SavedLibraryView({
                       aria-pressed={activeTrack && playing}
                       variant="ghost"
                     >
-                      <span>{index + 1}</span>
-                      {activeTrack && playing
-                        ? <Pause size={13} fill="currentColor" />
-                        : <Play size={13} fill="currentColor" />}
+                      <span className={activeTrack ? "hidden" : "group-hover:hidden"}>
+                        {index + 1}
+                      </span>
+                      <PlaybackIcon
+                        className={cn(
+                          "size-3.5",
+                          !activeTrack && "hidden group-hover:inline-grid",
+                        )}
+                        playing={activeTrack && playing}
+                      />
                     </Button>
                     <FavoriteArtwork item={track} />
                     <div className="flex min-w-0 flex-col gap-1">
@@ -1619,7 +1639,8 @@ export default function SavedLibraryView({
                       <span className="flex min-w-0 items-center gap-1">
                         <Button
                           className={metadataLinkClassName}
-                          onClick={() => onOpenArtist(track.artist)}
+                          onClick={() =>
+                            onOpenArtist(track.artist, track.albumId, track)}
                           variant="ghost"
                         >
                           {track.artist}
@@ -1775,9 +1796,10 @@ export default function SavedLibraryView({
                         >
                           {busyAction === "play"
                             ? <Spinner aria-hidden="true" className="size-4 text-current" />
-                            : activeShow && playing
-                              ? <Pause size={15} fill="currentColor" />
-                              : <Play size={15} fill="currentColor" />}
+                            : <PlaybackIcon
+                                className="size-4"
+                                playing={activeShow && playing}
+                              />}
                         </Button>
                         <Button
                           onClick={() => void actOnFavoriteRadioShow(show, "queue")}
@@ -1868,7 +1890,8 @@ export default function SavedLibraryView({
                           </Button>
                           <Button
                             className={cn(metadataLinkClassName, "mt-1 max-w-full")}
-                            onClick={() => onOpenArtist(album.artist)}
+                            onClick={() =>
+                              onOpenArtist(album.artist, album.id)}
                             variant="ghost"
                           >
                             {album.artist}

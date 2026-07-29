@@ -9,8 +9,6 @@ import {
 import {
   Maximize2,
   Music2,
-  Pause,
-  Play,
   SkipBack,
   SkipForward,
   Volume2,
@@ -18,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "./components/ui/button";
+import { PlaybackIcon } from "./components/ui/playback-icon";
 import { Slider } from "./components/ui/slider";
 import {
   Tooltip,
@@ -243,11 +242,7 @@ export function MiniPlayerView({
                 />
               )}
             >
-              {snapshot.playing ? (
-                <Pause size={19} fill="currentColor" aria-hidden="true" />
-              ) : (
-                <Play size={19} fill="currentColor" aria-hidden="true" />
-              )}
+              <PlaybackIcon playing={snapshot.playing} />
             </TooltipTrigger>
             <TooltipContent>{snapshot.playing ? "Pause" : "Play"}</TooltipContent>
           </Tooltip>

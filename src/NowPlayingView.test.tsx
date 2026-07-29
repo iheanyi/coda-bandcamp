@@ -212,7 +212,17 @@ describe("NowPlayingView Radio metadata", () => {
     };
     expect(transportIcon("Repeat off")).toHaveClass("size-5");
     expect(transportIcon("Previous")).toHaveClass("size-6");
-    expect(transportIcon("Pause")).toHaveClass("size-7");
+    const playbackIcon = screen.getByRole("button", { name: "Pause" })
+      .querySelector<HTMLElement>('[data-slot="playback-icon"]');
+    expect(playbackIcon).toHaveClass("size-7");
+    expect(playbackIcon).toHaveAttribute("data-playing", "true");
+    expect(playbackIcon?.querySelectorAll("svg")).toHaveLength(2);
+    for (const icon of playbackIcon?.querySelectorAll("svg") ?? []) {
+      expect(icon).toHaveClass(
+        "transition-[opacity,transform]",
+        "motion-reduce:transition-none",
+      );
+    }
     expect(transportIcon("Next")).toHaveClass("size-6");
     expect(transportIcon("Show queue")).toHaveClass("size-5");
     expect(transportIcon("Mute")).toHaveClass("size-5");

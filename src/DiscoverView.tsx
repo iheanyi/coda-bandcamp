@@ -2,8 +2,6 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import {
   ArrowUpRight,
   Disc3,
-  Pause,
-  Play,
   Plus,
   RefreshCw,
   Search,
@@ -14,6 +12,7 @@ import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/u
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PlaybackIcon } from "@/components/ui/playback-icon";
 import {
   NativeSelect,
   NativeSelectOption,
@@ -113,9 +112,7 @@ const DiscoverCard = memo(function DiscoverCard({
             }
             aria-pressed={active && playing}
           >
-            {active && playing
-              ? <Pause size={20} fill="currentColor" />
-              : <Play size={20} fill="currentColor" />}
+            <PlaybackIcon playing={active && playing} />
           </Button>
         ) : null}
       </div>

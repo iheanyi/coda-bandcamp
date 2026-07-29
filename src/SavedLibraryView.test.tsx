@@ -258,7 +258,11 @@ describe("saved Bandcamp library views", () => {
       "min-h-14",
     );
     fireEvent.click(within(playlistTracks).getByRole("button", { name: "Sweeps" }));
-    expect(commonProps.onOpenArtist).toHaveBeenCalledWith("Sweeps");
+    expect(commonProps.onOpenArtist).toHaveBeenCalledWith(
+      "Sweeps",
+      "album-1",
+      track,
+    );
     fireEvent.click(within(playlistTracks).getByRole("button", {
       name: "Open Mirage album",
     }));
@@ -554,7 +558,11 @@ describe("saved Bandcamp library views", () => {
     fireEvent.click(within(favoriteTracks).getByRole("button", { name: "Remove Mirage from favorites" }));
     expect(commonProps.onToggleFavorite).toHaveBeenCalledWith("song-1", "song", false);
     fireEvent.click(within(favoriteTracks).getByRole("button", { name: "Sweeps" }));
-    expect(commonProps.onOpenArtist).toHaveBeenCalledWith("Sweeps");
+    expect(commonProps.onOpenArtist).toHaveBeenCalledWith(
+      "Sweeps",
+      "album-1",
+      track,
+    );
     fireEvent.click(within(favoriteTracks).getByRole("button", {
       name: "Open Mirage album",
     }));
