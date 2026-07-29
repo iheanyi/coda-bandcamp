@@ -1653,7 +1653,10 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     const emptyCopy = within(queueRegion).getByText(
       /Not sure what comes next|Add another album or track/,
     );
-    const emptyState = emptyCopy.parentElement;
+    const emptyCopyGroup = emptyCopy.parentElement;
+    expect(emptyCopyGroup).toBeInstanceOf(HTMLElement);
+    const emptyState = emptyCopy.closest<HTMLElement>("[data-empty-queue]");
+    expect(emptyState).toBeInstanceOf(HTMLElement);
     const footer = panel.querySelector<HTMLElement>(
       '[data-slot="drawer-footer"]',
     );
@@ -1663,6 +1666,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       currentMetadata!,
       currentTitle,
       emptyCopy,
+      emptyCopyGroup!,
       nowPlayingCard!,
       queueRegion,
       emptyState!,
@@ -1690,11 +1694,14 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(getComputedStyle(currentTitle).whiteSpace).toBe("nowrap");
     expect(getComputedStyle(eyebrow).fontSize).toBe("10px");
     expect(getComputedStyle(emptyCopy).fontSize).toBe("10px");
+    expect(getComputedStyle(emptyState!).justifyContent).toBe("flex-start");
+    expect(getComputedStyle(emptyState!).paddingTop).toBe("32px");
+    expect(getComputedStyle(emptyState!).gap).toBe("20px");
     expect(footer).toHaveClass(
       "text-(length:--text-coda-micro)",
       "tabular-nums",
     );
-    expect(getComputedStyle(emptyCopy).maxWidth).toBe("256px");
+    expect(getComputedStyle(emptyCopyGroup!).maxWidth).toBe("256px");
 
     const gutter = Number.parseFloat(getComputedStyle(nowPlayingCard!).marginLeft);
     const recommendationGutter =

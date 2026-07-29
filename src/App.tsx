@@ -928,18 +928,27 @@ const QueuePanel = memo(function QueuePanel({
     ? radioTimeline.indexOf(nextRadioChapter)
     : -1;
   const emptyQueue = (
-    <div className="flex min-h-full flex-col items-center justify-center px-1 pt-6 pb-7 text-center text-[#666a66]">
-      <Music2 className="box-content rounded-full border border-white/[0.07] bg-coda-radio p-2 text-[#777b76]" size={25} />
-      <strong className="mt-3 text-coda-compact text-[#b9bbb5]">{currentTrack ? "End of the queue" : "Your queue is empty"}</strong>
-      <span className="mt-1 max-w-64 text-balance text-coda-meta text-[#777b76]">
-        {recommendation
-          ? "Not sure what comes next? Let Coda pick from your collection."
-          : currentTrack
-            ? "Add another album or track to keep listening."
-            : "Use the + button on any release to line up music."}
-      </span>
+    <div
+      className="flex min-h-full flex-col items-center justify-start gap-5 px-1 pt-8 pb-7 text-center text-[#666a66]"
+      data-empty-queue=""
+    >
+      <div className="flex flex-col items-center gap-3">
+        <Music2 className="box-content shrink-0 rounded-full border border-white/[0.07] bg-coda-radio p-2 text-[#777b76]" size={25} />
+        <div className="flex max-w-64 flex-col items-center gap-1 text-balance">
+          <p className="text-coda-compact font-semibold text-[#b9bbb5]">
+            {currentTrack ? "End of the queue" : "Your queue is empty"}
+          </p>
+          <p className="text-coda-meta text-[#777b76]">
+            {recommendation
+              ? "Not sure what comes next? Let Coda pick from your collection."
+              : currentTrack
+                ? "Add another album or track to keep listening."
+                : "Use the + button on any release to line up music."}
+          </p>
+        </div>
+      </div>
       {recommendation ? (
-        <div className="mt-6 grid w-full min-w-0 grid-cols-[3rem_minmax(0,1fr)] gap-x-3 gap-y-2.5 overflow-hidden rounded-lg border border-white/9 bg-[radial-gradient(circle_at_0_0,rgba(221,101,73,0.09),transparent_58%),#1a1d1f] p-3 text-left shadow-[inset_0_1px_rgba(255,255,255,0.025)] *:data-[slot=cover]:self-center">
+        <div className="grid w-full min-w-0 grid-cols-[3rem_minmax(0,1fr)] gap-x-3 gap-y-2.5 overflow-hidden rounded-lg border border-white/9 bg-[radial-gradient(circle_at_0_0,rgba(221,101,73,0.09),transparent_58%),#1a1d1f] p-3 text-left shadow-[inset_0_1px_rgba(255,255,255,0.025)] *:data-[slot=cover]:self-center">
           <CoverArt size="small" album={recommendation.album} />
           <div className="flex min-w-0 flex-col justify-center">
             <span className="text-coda-micro font-bold tracking-widest text-[#d07c67] uppercase">Try this next</span>
