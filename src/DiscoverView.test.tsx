@@ -212,6 +212,21 @@ describe("Discover", () => {
     expect(bestSelling).toHaveAttribute("aria-pressed", "false");
   });
 
+  it("normalizes a typed genre before controlling the active genre chip", async () => {
+    renderDiscover();
+
+    await screen.findByText("Blue Hours");
+    fireEvent.change(screen.getByLabelText("Search Discover by tag"), {
+      target: { value: "ROCK" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Explore" }));
+
+    expect(screen.getByRole("button", { name: "Rock" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
   it("appends the next page of discoveries using the returned cursor", async () => {
     mocks.fetchDiscover
       .mockResolvedValueOnce({

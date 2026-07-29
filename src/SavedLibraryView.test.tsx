@@ -455,7 +455,36 @@ describe("saved Bandcamp library views", () => {
     expect(commonProps.onNotify).toHaveBeenCalledWith("Remove failed", "bad");
   });
 
-  it("cancels deletion, then confirms exactly once and rolls back with focus restored", async () => {
+  it("keeps a committed optimistic removal when playlist revalidation fails", async () => {
+    const twoTrackDetail: PlaylistDetail = {
+      ...detail,
+      duration: track.duration + secondTrack.duration,
+      songCount: 2,
+      tracks: [track, secondTrack],
+    };
+    mocks.fetchPlaylist
+      .mockResolvedValueOnce(twoTrackDetail)
+      .mockRejectedValueOnce(new Error("Refresh failed"));
+    mocks.updatePlaylist.mockResolvedValueOnce(undefined);
+    withQueryClient(<SavedLibraryView mode="playlists" {...commonProps} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Night drive/ }));
+    fireEvent.click(await screen.findByRole("button", {
+      name: "Remove Lanterns from Night drive",
+    }));
+
+    await waitFor(() =>
+      expect(screen.queryByText("Lanterns")).not.toBeInTheDocument()
+    );
+    await waitFor(() => expect(mocks.fetchPlaylist).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("Lanterns")).not.toBeInTheDocument();
+    expect(commonProps.onNotify).not.toHaveBeenCalledWith(
+      "Refresh failed",
+      "bad",
+    );
+  });
+
+  it("keeps deletion confirmation open while pending and retryable after failure", async () => {
     const user = userEvent.setup();
     const pendingDelete = deferred<void>();
     mocks.deletePlaylist.mockReturnValue(pendingDelete.promise);
@@ -500,14 +529,25 @@ describe("saved Bandcamp library views", () => {
       expect(queryClient.getQueryData<PlaylistSummary[]>(["bandcamp", "playlists"]))
         .toEqual([]),
     );
-    await waitFor(() => expect(deleteTrigger).toHaveFocus());
+    expect(screen.getByRole("alertdialog", {
+      name: "Delete Night drive?",
+    })).toBeVisible();
+    expect(screen.getByRole("button", {
+      name: "Delete playlist from Bandcamp",
+    })).toBeDisabled();
+    expect(screen.getByText("Deleting…")).toBeInTheDocument();
     pendingDelete.reject(new Error("Delete failed"));
 
     await waitFor(() =>
       expect(queryClient.getQueryData<PlaylistSummary[]>(["bandcamp", "playlists"]))
         .toEqual([summary]),
     );
-    expect(screen.getByRole("heading", { name: "Night drive" })).toBeInTheDocument();
+    expect(screen.getByRole("alertdialog", {
+      name: "Delete Night drive?",
+    })).toBeVisible();
+    expect(screen.getByRole("button", {
+      name: "Delete playlist from Bandcamp",
+    })).toBeEnabled();
     expect(commonProps.onNotify).toHaveBeenCalledWith("Delete failed", "bad");
   });
 
@@ -533,6 +573,34 @@ describe("saved Bandcamp library views", () => {
     expect(await within(target).findByText("1 track")).toBeInTheDocument();
     expect(onNotify).toHaveBeenCalledWith("Add failed", "bad");
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("closes Add to playlist with optimistic counts after a committed empty response", async () => {
+    mocks.updatePlaylist.mockResolvedValueOnce(undefined);
+    const onClose = vi.fn();
+    const onNotify = vi.fn();
+    const { queryClient } = withQueryClient(
+      <AddToPlaylistDialog
+        tracks={[secondTrack]}
+        onClose={onClose}
+        onNotify={onNotify}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /Night drive/ }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(
+      queryClient.getQueryData<PlaylistSummary[]>(["bandcamp", "playlists"]),
+    ).toEqual([{
+      ...summary,
+      duration: summary.duration + secondTrack.duration,
+      songCount: 2,
+    }]);
+    expect(onNotify).toHaveBeenCalledWith(
+      "1 track added to Night drive",
+      "good",
+    );
   });
 
   it("renders favorites and removes a starred track through the supplied action", () => {
@@ -567,6 +635,9 @@ describe("saved Bandcamp library views", () => {
     expect(within(favoriteTracks).getByRole("listitem")).not.toHaveClass(
       "min-h-14",
     );
+    expect(within(favoriteTracks).getByRole("button", {
+      name: "Add Mirage to queue",
+    })).toHaveClass("size-8", "p-0");
     fireEvent.click(within(favoriteTracks).getByRole("button", { name: "Remove Mirage from favorites" }));
     expect(commonProps.onToggleFavorite).toHaveBeenCalledWith("song-1", "song", false);
     fireEvent.click(within(favoriteTracks).getByRole("button", { name: "Sweeps" }));
@@ -596,6 +667,9 @@ describe("saved Bandcamp library views", () => {
     expect(radioArtwork.closest("article")).toHaveClass(
       "lg:grid-cols-[3rem_minmax(0,1fr)_auto]",
     );
+    expect(screen.getByRole("button", {
+      name: "Add The Hip Hop Show to queue",
+    })).toHaveClass("size-8", "p-0");
     const albumArtwork = screen.getByRole("button", { name: "Open Mirage" });
     expect(albumArtwork).toHaveClass("size-12");
     expect(albumArtwork.parentElement).toHaveClass(

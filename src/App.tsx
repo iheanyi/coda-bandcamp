@@ -79,6 +79,7 @@ import {
 } from "./components/ui/drawer";
 import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
+import { OverflowMarquee } from "./components/ui/overflow-marquee";
 import {
   NativeSelect,
   NativeSelectOption,
@@ -129,6 +130,7 @@ import {
   artistKey,
   groupAlbumsByArtist,
   matchesBrowseMode,
+  tracksForArtistGroupAlbum,
   type ArtistGroup,
   type LibraryBrowseMode,
 } from "./libraryBrowse";
@@ -655,17 +657,17 @@ const AlbumCard = memo(function AlbumCard({
       </div>
       <div className="flex min-w-0 flex-col pt-2.5 pr-6">
         <Button
-          className="h-auto w-full min-w-0 justify-start truncate p-0 text-left text-xs font-bold text-[#e5e3dd] hover:bg-transparent hover:text-[#e5e3dd]"
+          className="h-auto w-full min-w-0 justify-start overflow-hidden p-0 text-left text-xs font-bold text-[#e5e3dd] hover:bg-transparent hover:text-[#e5e3dd]"
           onClick={() => onOpen(album)}
           aria-busy={loading || undefined}
           disabled={loading}
           size="compact"
           variant="text"
         >
-          {album.title}
+          <OverflowMarquee className="w-full" text={album.title} />
         </Button>
         <Button
-          className="mt-1 h-auto w-full min-w-0 justify-start truncate p-0 text-left text-xs font-medium text-[#868984] hover:bg-transparent hover:text-[#dc8973] hover:underline hover:underline-offset-2"
+          className="mt-1 h-auto w-full min-w-0 justify-start truncate p-0 text-left text-xs font-medium text-[#868984] hover:bg-transparent hover:text-[#dc8973]"
           onClick={() => onArtist(album.artist, album.id)}
           size="compact"
           title={`Browse ${album.artist}`}
@@ -675,7 +677,7 @@ const AlbumCard = memo(function AlbumCard({
         </Button>
       </div>
       <Button
-        className="absolute -right-1 -bottom-1 size-7 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
+        className="absolute right-0 bottom-0 border border-transparent bg-[#171a1c]/92 text-[#777b76] opacity-0 shadow-[0_2px_8px_rgba(0,0,0,0.2)] group-focus-within:opacity-100 group-hover:opacity-100 hover:border-(--line-strong) hover:bg-coda-button-hover hover:text-[#dddcd7]"
         onClick={() => onQueue(album)}
         size="icon-compact"
         title="Add album to queue"
@@ -1108,15 +1110,15 @@ const QueuePanel = memo(function QueuePanel({
               ) : (
                 <>
                   <Button
-                    className="h-auto w-full justify-start truncate p-0 text-left text-(length:--text-coda-compact) font-semibold text-[#d9d8d2] hover:bg-transparent hover:text-[#d9d8d2]"
+                    className="h-auto w-full justify-start overflow-hidden p-0 text-left text-(length:--text-coda-compact) font-semibold text-[#d9d8d2] hover:bg-transparent hover:text-[#d9d8d2]"
                     onClick={onNowPlaying}
                     size="compact"
                     variant="text"
                   >
-                    {currentTrack.title}
+                    <OverflowMarquee className="w-full" text={currentTrack.title} />
                   </Button>
                   <Button
-                    className="h-auto justify-start truncate p-0 text-(length:--text-coda-meta) font-normal text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
+                    className="h-auto justify-start truncate p-0 text-(length:--text-coda-meta) font-normal text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73]"
                     onClick={() =>
                       onArtist(
                         currentTrack.artist,
@@ -1213,15 +1215,15 @@ const QueuePanel = memo(function QueuePanel({
               </Button>
               <span className="flex min-w-0 flex-col gap-1">
                 <Button
-                  className="h-auto min-w-0 justify-start truncate p-0 text-left text-(length:--text-coda-compact) font-semibold text-[#d9d8d2] hover:bg-transparent hover:text-[#d9d8d2]"
+                  className="h-auto min-w-0 justify-start overflow-hidden p-0 text-left text-(length:--text-coda-compact) font-semibold text-[#d9d8d2] hover:bg-transparent hover:text-[#d9d8d2]"
                   onClick={() => onPlay(absoluteIndex)}
                   size="compact"
                   variant="text"
                 >
-                  {track.title}
+                  <OverflowMarquee className="w-full" text={track.title} />
                 </Button>
                 <Button
-                  className="h-auto justify-start truncate p-0 text-(length:--text-coda-meta) font-normal text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
+                  className="h-auto justify-start truncate p-0 text-(length:--text-coda-meta) font-normal text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73]"
                   onClick={() => onArtist(track.artist, track.albumId, track)}
                   size="compact"
                   variant="text"
@@ -1357,12 +1359,15 @@ const PlayerTrack = memo(function PlayerTrack({
           ) : (
             <div className="flex min-w-0 flex-[0_1_auto] flex-col gap-1">
               <div className="flex min-w-0 items-center gap-1">
-                <strong className="truncate text-xs font-bold text-[#e6e4de]" title={track.title}>{track.title}</strong>
+                <OverflowMarquee
+                  className="max-w-full text-xs font-bold text-[#e6e4de]"
+                  text={track.title}
+                />
                 {favoriteControl}
               </div>
               <span className="flex min-w-0 items-center gap-1 text-xs text-[#7f827e]">
                 <Button
-                  className="h-auto min-w-0 max-w-[46%] truncate p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
+                  className="h-auto min-w-0 max-w-[46%] truncate p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73]"
                   onClick={() => onArtist(track.artist, track.albumId, track)}
                   size="compact"
                   title={track.artist}
@@ -1372,7 +1377,7 @@ const PlayerTrack = memo(function PlayerTrack({
                 </Button>
                 <span aria-hidden="true" className="shrink-0">·</span>
                 <Button
-                  className="h-auto min-w-0 max-w-[46%] truncate p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
+                  className="h-auto min-w-0 max-w-[46%] truncate p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73]"
                   data-player-album-link
                   onClick={(event) => onAlbum(track, event.currentTarget)}
                   aria-busy={albumLoading || undefined}
@@ -1848,10 +1853,13 @@ function AlbumDetailPage({
                     size="compact"
                     variant="text"
                   >
-                    <strong className={`block truncate text-xs ${activeTrack ? "text-[#f0d7cf]" : "text-[#d9d8d2]"}`}>{track.title}</strong>
+                    <OverflowMarquee
+                      className={`max-w-full text-xs ${activeTrack ? "text-[#f0d7cf]" : "text-[#d9d8d2]"}`}
+                      text={track.title}
+                    />
                   </Button>
                   <Button
-                    className="h-auto w-fit max-w-full justify-start truncate p-0 text-xs text-[#777b76] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2 focus-visible:-outline-offset-2"
+                    className="h-auto w-fit max-w-full justify-start truncate p-0 text-xs text-[#777b76] hover:bg-transparent hover:text-[#e28a73] focus-visible:-outline-offset-2"
                     onClick={() => onArtist(track.artist, track.albumId, track)}
                     size="compact"
                     variant="text"
@@ -2019,6 +2027,8 @@ function ConnectionDialog({
 
   return (
     <Dialog
+      disablePointerDismissal
+      modal={false}
       open
       onOpenChange={(open, details) => {
         if (open) return;
@@ -3632,30 +3642,36 @@ export default function App() {
       const exactGroup = artistGroups.find(
         (group) => group.key === selectedArtist,
       );
-      if (exactGroup) return exactGroup;
       if (
         !selectedArtist ||
         !fallbackArtistAlbum ||
         selectedArtistFallback?.key !== selectedArtist
       ) {
-        return undefined;
+        return exactGroup;
       }
+      const fallbackAlreadyIncluded = exactGroup?.albums.some(
+        (album) => album.id === fallbackArtistAlbum.id,
+      );
+      if (fallbackAlreadyIncluded) return exactGroup;
+      const fallbackTrackCount =
+        fallbackArtistTracks.length ||
+        (selectedArtistFallback.knownTrack ? 1 : 0);
+      const fallbackDuration = fallbackArtistTracks.length
+        ? fallbackArtistTracks.reduce(
+            (total, track) => total + track.duration,
+            0,
+          )
+        : selectedArtistFallback.knownTrack?.duration ?? 0;
       return {
         key: selectedArtist,
         name: selectedArtistFallback.name,
-        albums: [fallbackArtistAlbum],
-        releaseCount: 1,
-        trackCount:
-          fallbackArtistTracks.length ||
-          (selectedArtistFallback.knownTrack ? 1 : 0),
-        duration: fallbackArtistTracks.length
-          ? fallbackArtistTracks.reduce(
-              (total, track) => total + track.duration,
-              0,
-            )
-          : selectedArtistFallback.knownTrack?.duration ?? 0,
-        representative: fallbackArtistAlbum,
+        albums: [...(exactGroup?.albums ?? []), fallbackArtistAlbum],
+        releaseCount: (exactGroup?.releaseCount ?? 0) + 1,
+        trackCount: (exactGroup?.trackCount ?? 0) + fallbackTrackCount,
+        duration: (exactGroup?.duration ?? 0) + fallbackDuration,
+        representative: exactGroup?.representative ?? fallbackArtistAlbum,
         trackFilterArtistKey: selectedArtistFallback.key,
+        trackFilterAlbumId: fallbackArtistAlbum.id,
       };
     },
     [
@@ -3754,7 +3770,6 @@ export default function App() {
     void transitionCodaView(
       () => setSelectedAlbum(albumForDetail),
       "page-forward",
-      { skipSnapshot: coldLoad },
     );
     try {
       const ready = await ensureTracks(album, sessionGeneration);
@@ -3916,12 +3931,11 @@ export default function App() {
           if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
           const tracks = await ensureAlbumQueryData(queryClient, album);
           if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
-          tracksByAlbum[index] = group.trackFilterArtistKey
-            ? tracks.filter(
-                (track) =>
-                  artistKey(track.artist) === group.trackFilterArtistKey,
-              )
-            : tracks;
+          tracksByAlbum[index] = tracksForArtistGroupAlbum(
+            group,
+            album.id,
+            tracks,
+          );
           recoveredCovers.set(album.id, albumWithRecoveredCover(album, tracks));
         } catch {
           if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
@@ -4037,6 +4051,7 @@ export default function App() {
   const shuffleLibrary = useCallback(async (
     scopeAlbums: readonly Album[] = albums,
     scopeName = "entire library",
+    artistScope?: ArtistGroup,
   ) => {
     if (libraryShuffleActiveRef.current || !connected || !scopeAlbums.length) return;
     const sessionGeneration = bandcampSessionGenerationRef.current;
@@ -4061,7 +4076,9 @@ export default function App() {
           const tracks = await ensureAlbumQueryData(queryClient, album);
           if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
           recoveredCovers.set(album.id, albumWithRecoveredCover(album, tracks));
-          loadedTracks[index] = tracks;
+          loadedTracks[index] = artistScope
+            ? tracksForArtistGroupAlbum(artistScope, album.id, tracks)
+            : tracks;
         } catch {
           if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
           // A removed or unavailable release should not block the rest of the shuffle.
@@ -4157,6 +4174,7 @@ export default function App() {
   const playRandomTrack = useCallback(async (
     scopeAlbums: readonly Album[],
     scopeName: string,
+    artistScope?: ArtistGroup,
   ) => {
     if (randomPickActiveRef.current || !connected || !scopeAlbums.length) return;
     const sessionGeneration = bandcampSessionGenerationRef.current;
@@ -4183,7 +4201,14 @@ export default function App() {
             !ready ||
             bandcampSessionGenerationRef.current !== sessionGeneration
           ) return;
-          const track = pickRandomItem(ready.tracks ?? []);
+          const scopedTracks = artistScope
+            ? tracksForArtistGroupAlbum(
+                artistScope,
+                album.id,
+                ready.tracks ?? [],
+              )
+            : ready.tracks ?? [];
+          const track = pickRandomItem(scopedTracks);
           if (!track) continue;
           playTrack(track);
           notify(`Playing ${track.title} by ${track.artist}.`, "good");
@@ -4548,9 +4573,13 @@ export default function App() {
       const hasReleaseArtist = albums.some(
         (album) => artistKey(album.artist) === key,
       );
-      const fallbackAlbum = hasReleaseArtist || !albumId
-        ? undefined
-        : albums.find((album) => album.id === albumId);
+      const sourceAlbum = albumId
+        ? albums.find((album) => album.id === albumId)
+        : undefined;
+      const fallbackAlbum =
+        sourceAlbum && artistKey(sourceAlbum.artist) !== key
+          ? sourceAlbum
+          : undefined;
       if (!hasReleaseArtist && !fallbackAlbum) {
         notify(`Could not find a saved release for ${artist}.`, "bad");
         return;
@@ -4743,6 +4772,7 @@ export default function App() {
       ? browseTitle
       : `${browseTitle} · ${genre}`;
   const shuffleScopeAlbums = selectedAlbum ? [selectedAlbum] : visibleAlbums;
+  const shuffleArtistScope = selectedAlbum ? undefined : activeArtist;
   const shuffleActionLabel = selectedAlbum
     ? "Shuffle album"
     : activeArtist
@@ -4778,11 +4808,29 @@ export default function App() {
                   ? "the visible artists"
                   : "the collection";
   const shuffleVisible = useCallback(() => {
-    void shuffleLibrary(shuffleScopeAlbums, shuffleScopeName);
-  }, [shuffleLibrary, shuffleScopeAlbums, shuffleScopeName]);
+    void shuffleLibrary(
+      shuffleScopeAlbums,
+      shuffleScopeName,
+      shuffleArtistScope,
+    );
+  }, [
+    shuffleArtistScope,
+    shuffleLibrary,
+    shuffleScopeAlbums,
+    shuffleScopeName,
+  ]);
   const playRandomVisible = useCallback(() => {
-    void playRandomTrack(shuffleScopeAlbums, shuffleScopeName);
-  }, [playRandomTrack, shuffleScopeAlbums, shuffleScopeName]);
+    void playRandomTrack(
+      shuffleScopeAlbums,
+      shuffleScopeName,
+      shuffleArtistScope,
+    );
+  }, [
+    playRandomTrack,
+    shuffleArtistScope,
+    shuffleScopeAlbums,
+    shuffleScopeName,
+  ]);
   const playQueueRecommendation = useCallback(() => {
     if (!queueRecommendation) return;
     void playRandomTrack(
@@ -5283,6 +5331,8 @@ export default function App() {
                       (album) => album.id === currentTrack?.albumId,
                     ) && (
                       !activeArtist.trackFilterArtistKey ||
+                      activeArtist.trackFilterAlbumId !==
+                        currentTrack?.albumId ||
                       artistKey(currentTrack?.artist ?? "") ===
                         activeArtist.trackFilterArtistKey
                     )}

@@ -31,7 +31,7 @@ Discover, and Last.fm scrobbling in a focused native app.
 
 ### Prerequisites
 
-- [Node.js 22 or later](https://nodejs.org/)
+- [Node.js `^20.19.0` or `>=22.12.0`](https://nodejs.org/)
 - [Rust stable](https://rustup.rs/)
 - The [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for
   your operating system

@@ -12,6 +12,7 @@ import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/u
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { OverflowMarquee } from "@/components/ui/overflow-marquee";
 import { PlaybackIcon } from "@/components/ui/playback-icon";
 import {
   NativeSelect,
@@ -121,16 +122,16 @@ const DiscoverCard = memo(function DiscoverCard({
           <Button
             variant="text"
             size="compact"
-            className="h-auto min-w-0 justify-start truncate p-0 text-xs font-bold text-[#e8e5de] hover:bg-transparent hover:text-primary hover:underline"
+            className="h-auto min-w-0 justify-start overflow-hidden p-0 text-xs font-bold text-[#e8e5de] hover:bg-transparent hover:text-primary"
             onClick={(event) => onOpenRelease(release, event.currentTarget)}
             title={release.title}
           >
-            {release.title}
+            <OverflowMarquee className="w-full text-left" text={release.title} />
           </Button>
           <Button
             variant="text"
             size="compact"
-            className="h-auto min-w-0 justify-start truncate p-0 text-xs font-medium text-[#9b9e99] hover:bg-transparent hover:text-primary hover:underline"
+            className="h-auto min-w-0 justify-start truncate p-0 text-xs font-medium text-[#9b9e99] hover:bg-transparent hover:text-primary"
             onClick={() => onOpenArtist(release)}
             title={release.artist}
           >
@@ -237,7 +238,7 @@ export default function DiscoverView({
       aria-live="polite"
       aria-busy={query.isFetching}
     >
-      <div className="relative -mx-8 -mt-8 mb-6 flex items-end justify-between gap-9 overflow-hidden border-b border-(--line) bg-[radial-gradient(circle_at_92%_0%,rgba(221,101,73,0.17),transparent_39%),linear-gradient(135deg,#181b1d_0%,#141719_70%)] px-8 pt-12 pb-8 after:pointer-events-none after:absolute after:-top-28 after:right-[18%] after:size-56 after:rounded-full after:border after:border-white/[0.035] after:shadow-[0_0_0_42px_rgba(255,255,255,0.012),0_0_0_84px_rgba(255,255,255,0.008)] after:content-[''] max-xl:-mx-6 max-xl:flex-col max-xl:items-stretch max-xl:px-6">
+      <div className="relative -mx-4 -mt-6 mb-6 flex items-end justify-between gap-9 overflow-hidden border-b border-(--line) bg-[radial-gradient(circle_at_92%_0%,rgba(221,101,73,0.17),transparent_39%),linear-gradient(135deg,#181b1d_0%,#141719_70%)] px-4 pt-12 pb-8 after:pointer-events-none after:absolute after:-top-28 after:right-[18%] after:size-56 after:rounded-full after:border after:border-white/[0.035] after:shadow-[0_0_0_42px_rgba(255,255,255,0.012),0_0_0_84px_rgba(255,255,255,0.008)] after:content-[''] lg:-mx-6 lg:-mt-8 lg:px-6 xl:-mx-8 xl:flex-row xl:items-end xl:px-8 max-xl:flex-col max-xl:items-stretch">
         <div className="relative z-1">
           <Badge variant="artwork" className="mb-2.5 h-auto gap-1.5 border-0 bg-transparent p-0 text-xs tracking-widest text-[#c67966] uppercase"><Sparkles size={13} /> Find something new</Badge>
           <h1 className="m-0 font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-4xl leading-none font-semibold tracking-tighter xl:text-5xl">Discover</h1>
@@ -265,7 +266,7 @@ export default function DiscoverView({
         <ToggleGroup
           className="w-auto flex-wrap gap-1 rounded-none"
           aria-label="Discover genres"
-          value={[filters.tag || "all"]}
+          value={[selectedGenre || "all"]}
           spacing={4}
           disabled={query.isPending}
           onValueChange={(values) => {

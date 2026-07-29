@@ -372,6 +372,28 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(trigger).toHaveFocus();
   });
 
+  it("keeps the exposed compact player interactive while settings are open", async () => {
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    fireEvent.click(screen.getByRole("button", { name: "Play Soft Focus" }));
+    const pause = await screen.findByRole("button", { name: "Pause" });
+    fireEvent.click(screen.getByRole("button", { name: "Connection settings" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Bandcamp is connected",
+    });
+
+    expect(pause.closest("[inert]")).toBeNull();
+    expect(pause.closest('[aria-hidden="true"]')).toBeNull();
+    fireEvent.click(pause);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument()
+    );
+    expect(dialog).toBeVisible();
+  });
+
   it("shows dismissible app feedback through the shared Coda toast", async () => {
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
@@ -1689,11 +1711,14 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       '[data-slot="drawer-header"]',
     );
     const eyebrow = within(panel).getByText("Playing next");
-    const currentTitle = within(panel).getByRole("button", { name: longTitle });
+    const currentTitleControl = within(panel).getByRole("button", {
+      name: longTitle,
+    });
+    const currentTitle = within(currentTitleControl).getByText(longTitle);
     const currentArtist = within(panel).getByRole("button", {
       name: "Night Archive",
     });
-    const currentMetadata = currentTitle.parentElement;
+    const currentMetadata = currentTitleControl.parentElement;
     const nowPlayingCard = currentMetadata?.parentElement?.parentElement;
     const queueRegion = within(panel).getByRole("region", {
       name: "Upcoming tracks",
@@ -1712,6 +1737,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     applyCompiledStyles(compiler.build(candidates), [
       panel,
       currentMetadata!,
+      currentTitleControl,
       currentTitle,
       emptyCopy,
       emptyCopyGroup!,
@@ -1729,7 +1755,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(getComputedStyle(currentMetadata!).flexBasis).toBe("0px");
     expect(getComputedStyle(currentMetadata!).flexGrow).toBe("1");
     expect(getComputedStyle(currentMetadata!).overflow).toBe("hidden");
-    expect(currentTitle).toHaveClass(
+    expect(currentTitleControl).toHaveClass(
       "text-(length:--text-coda-compact)",
     );
     expect(currentArtist).toHaveClass(
@@ -2339,6 +2365,28 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(screen.getAllByText("Streetlight").length).toBeGreaterThan(0);
   });
 
+  it("uses a polished square queue action inside each Collection card", async () => {
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    const queueAlbum = screen.getByRole("button", {
+      name: "Add Soft Focus to queue",
+    });
+    expect(queueAlbum).toHaveClass(
+      "size-7",
+      "p-0",
+      "right-0",
+      "bottom-0",
+      "rounded-sm",
+    );
+    expect(queueAlbum).not.toHaveClass("-right-1", "-bottom-1");
+
+    fireEvent.click(queueAlbum);
+    expect(await screen.findByRole("contentinfo")).toBeInTheDocument();
+  });
+
   it.each([
     ["Play all"],
     ["Shuffle"],
@@ -2414,6 +2462,145 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         .toBeDisabled();
     },
   );
+
+  it.each([
+    ["Shuffle artist"],
+    ["Play a random track from Guest Artist"],
+  ] as const)(
+    "scopes the collection header action %s to the selected compilation artist",
+    async (actionName) => {
+      const compilationTracks = [
+        {
+          ...tracks[0],
+          id: "track-compilation-guest",
+          title: "Guest Selection",
+          artist: "Guest Artist",
+          albumArtist: "Various Artists",
+          album: "Night Compendium",
+          albumId: "album-compilation",
+        },
+        {
+          ...tracks[1],
+          id: "track-compilation-other",
+          title: "Other Selection",
+          artist: "Other Artist",
+          albumArtist: "Various Artists",
+          album: "Night Compendium",
+          albumId: "album-compilation",
+        },
+      ];
+      const compilation = {
+        ...album,
+        id: "album-compilation",
+        title: "Night Compendium",
+        artist: "Various Artists",
+        tracks: compilationTracks,
+        songCount: compilationTracks.length,
+      };
+      mocks.hasConnection.mockResolvedValue(true);
+      mocks.fetchLibrary.mockResolvedValue([compilation]);
+      mocks.fetchAlbum.mockResolvedValue(compilationTracks);
+      renderApp();
+
+      await screen.findByText("Night Compendium");
+      fireEvent.click(screen.getByRole("button", {
+        name: "Open Night Compendium",
+      }));
+      const albumPage = await screen.findByRole("article", {
+        name: "Night Compendium release details",
+      });
+      fireEvent.click(within(albumPage).getByRole("button", {
+        name: "Guest Artist",
+      }));
+
+      fireEvent.click(await screen.findByRole("button", { name: actionName }));
+      const player = await screen.findByRole("contentinfo");
+      await within(player).findByText("Guest Selection");
+      expect(within(player).queryByText("Other Selection"))
+        .not.toBeInTheDocument();
+      expect(within(player).getByRole("button", { name: "Next" }))
+        .toBeDisabled();
+    },
+  );
+
+  it("keeps an established artist's own releases and selected compilation appearance together", async () => {
+    const compilationTracks = [
+      {
+        ...tracks[0],
+        id: "track-compilation-night-archive",
+        title: "Compilation Appearance",
+        album: "Night Compendium",
+        albumArtist: "Various Artists",
+        albumId: "album-compilation",
+      },
+      {
+        ...tracks[1],
+        id: "track-compilation-other",
+        title: "Other Selection",
+        artist: "Other Artist",
+        album: "Night Compendium",
+        albumArtist: "Various Artists",
+        albumId: "album-compilation",
+      },
+    ];
+    const compilation = {
+      ...album,
+      id: "album-compilation",
+      title: "Night Compendium",
+      artist: "Various Artists",
+      tracks: compilationTracks,
+      songCount: compilationTracks.length,
+      duration: compilationTracks.reduce(
+        (total, compilationTrack) => total + compilationTrack.duration,
+        0,
+      ),
+    };
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album, compilation]);
+    mocks.fetchAlbum.mockImplementation((requestedAlbum: Album) =>
+      Promise.resolve(
+        requestedAlbum.id === compilation.id
+          ? compilationTracks
+          : tracks,
+      ),
+    );
+    renderApp();
+
+    await screen.findByText("Night Compendium");
+    fireEvent.click(screen.getByRole("button", {
+      name: "Open Night Compendium",
+    }));
+    const albumPage = await screen.findByRole("article", {
+      name: "Night Compendium release details",
+    });
+    fireEvent.click(within(albumPage).getByRole("button", {
+      name: "Night Archive",
+    }));
+
+    const heading = await screen.findByRole("heading", {
+      name: "Night Archive",
+    });
+    const artistHero = heading.closest("section");
+    if (!artistHero) throw new Error("Expected an artist hero");
+    expect(artistHero).toHaveTextContent("2 releases · 3 tracks");
+    expect(screen.getByRole("button", { name: "Open Soft Focus" }))
+      .toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Night Compendium" }))
+      .toBeInTheDocument();
+
+    fireEvent.click(within(artistHero).getByRole("button", {
+      name: "Add all",
+    }));
+    const player = await screen.findByRole("contentinfo");
+    fireEvent.click(within(player).getByRole("button", {
+      name: "Show queue",
+    }));
+    const queue = await screen.findByRole("dialog", { name: "Queue" });
+    expect(await within(queue).findByText("Compilation Appearance"))
+      .toBeInTheDocument();
+    expect(within(queue).queryByText("Other Selection"))
+      .not.toBeInTheDocument();
+  });
 
   it("keeps artist navigation selected while a deferred search clears", async () => {
     const unrelatedAlbum = {
@@ -2724,7 +2911,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     await act(async () => request.resolve(tracks));
   });
 
-  it("opens a cold album into one visible detail loader without snapshotting a blank handoff", async () => {
+  it("transitions a cold album into one visible detail loader without a blank handoff", async () => {
     const request = deferred<Track[]>();
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
@@ -2733,9 +2920,10 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       document,
       "startViewTransition",
     );
-    const startViewTransition = vi.fn((_update: () => void) => ({
-      finished: Promise.resolve(),
-    }));
+    const startViewTransition = vi.fn((update: () => void) => {
+      update();
+      return { finished: Promise.resolve() };
+    });
     Object.defineProperty(document, "startViewTransition", {
       configurable: true,
       value: startViewTransition,
@@ -2750,7 +2938,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       const albumPage = screen.getByRole("article", {
         name: "Soft Focus release details",
       });
-      expect(startViewTransition).not.toHaveBeenCalled();
+      expect(startViewTransition).toHaveBeenCalledTimes(1);
       expect(screen.getAllByRole("status")).toHaveLength(1);
       expect(within(albumPage).getByRole("status", {
         name: "Loading album tracks",

@@ -2811,6 +2811,20 @@ fn playlist_from_optional_response(body: &Value) -> Result<Option<PlaylistDetail
         .transpose()
 }
 
+fn playlist_update_from_response(
+    body: &Value,
+    playlist_id: &str,
+) -> Result<Option<PlaylistDetail>, String> {
+    let playlist = playlist_from_optional_response(body)?;
+    if playlist
+        .as_ref()
+        .is_some_and(|playlist| playlist.id != playlist_id)
+    {
+        return Err("Bandcamp returned a different playlist than Coda updated.".into());
+    }
+    Ok(playlist)
+}
+
 #[tauri::command]
 fn has_connection() -> bool {
     credential_entry()
@@ -3691,7 +3705,7 @@ async fn create_playlist(name: String, song_ids: Vec<String>) -> Result<Playlist
 }
 
 #[tauri::command]
-async fn update_playlist(input: PlaylistUpdateInput) -> Result<PlaylistDetail, String> {
+async fn update_playlist(input: PlaylistUpdateInput) -> Result<Option<PlaylistDetail>, String> {
     validate_playlist_update(&input)?;
     let credentials = load_credentials()?;
     let playlist_id = input.playlist_id.clone();
@@ -3720,16 +3734,7 @@ async fn update_playlist(input: PlaylistUpdateInput) -> Result<PlaylistDetail, S
     let body = request_mutation_json("updatePlaylist", &credentials, &parameters)
         .await
         .map_err(|error| beta_feature_error("Playlist update", error))?;
-    let playlist = match playlist_from_optional_response(&body)? {
-        Some(playlist) => playlist,
-        None => fetch_playlist_from_bandcamp(&playlist_id, &credentials)
-            .await
-            .map_err(|error| beta_feature_error("Playlist update", error))?,
-    };
-    if playlist.id != playlist_id {
-        return Err("Bandcamp returned a different playlist than Coda updated.".into());
-    }
-    Ok(playlist)
+    playlist_update_from_response(&body, &playlist_id)
 }
 
 #[tauri::command]
@@ -5168,7 +5173,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_an_empty_successful_playlist_update_response() {
+    fn reports_an_empty_successful_playlist_update_as_committed_without_detail() {
         let body = serde_json::json!({
             "subsonic-response": {
                 "status": "ok",
@@ -5176,7 +5181,30 @@ mod tests {
             }
         });
 
-        assert!(playlist_from_optional_response(&body).unwrap().is_none());
+        assert!(playlist_update_from_response(&body, "playlist-1")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn rejects_playlist_detail_for_a_different_committed_update() {
+        let body = serde_json::json!({
+            "subsonic-response": {
+                "status": "ok",
+                "version": "1.16.1",
+                "playlist": {
+                    "id": "playlist-2",
+                    "name": "Different playlist",
+                    "songCount": 0,
+                    "duration": 0
+                }
+            }
+        });
+
+        assert_eq!(
+            playlist_update_from_response(&body, "playlist-1").unwrap_err(),
+            "Bandcamp returned a different playlist than Coda updated."
+        );
     }
 
     #[test]

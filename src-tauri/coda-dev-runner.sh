@@ -21,6 +21,17 @@ write_native_fingerprint() {
   mv -f "$fingerprint_temp" "$fingerprint_file"
 }
 
+cleanup_signing_replacement() {
+  unlink "${signing_executable:-}" 2>/dev/null || true
+  unlink "${fingerprint_temp:-}" 2>/dev/null || true
+}
+
+exit_after_signal() {
+  signal_status="$1"
+  trap - HUP INT TERM
+  exit "$signal_status"
+}
+
 find_signing_identity_hash() {
   security find-identity -v -p codesigning |
     grep -F "\"$identity\"" |
@@ -67,41 +78,6 @@ same_native_executable() {
   "$matches"
 }
 
-migrate_native_fingerprint_if_safe() {
-  raw_executable="$1"
-  cached_executable="$2"
-  fingerprint_file="$3"
-  native_fingerprint="$4"
-  cached_schema=""
-  cached_fingerprint=""
-  if [ -f "$fingerprint_file" ]; then
-    cached_schema="$(sed -n '1p' "$fingerprint_file")"
-    cached_fingerprint="$(sed -n '2p' "$fingerprint_file")"
-  fi
-  if [ -e "$fingerprint_file" ] &&
-    {
-      ! printf '%s\n' "$cached_schema" | grep -Eq '^[0-9a-f]{64}$' ||
-        [ -n "$cached_fingerprint" ]
-    }; then
-    return 1
-  fi
-  if [ ! -x "$raw_executable" ] || [ ! -x "$cached_executable" ]; then
-    return 1
-  fi
-
-  identity_hash="$(find_signing_identity_hash)"
-  if ! printf '%s\n' "$identity_hash" | grep -Eq '^[0-9A-F]{40}$'; then
-    return 1
-  fi
-  code_requirement="=identifier \"$signing_identifier\" and certificate leaf = H\"$identity_hash\""
-  if codesign --verify --strict -R "$code_requirement" "$cached_executable" &&
-    same_native_executable "$raw_executable" "$cached_executable"; then
-    write_native_fingerprint "$fingerprint_file" "$native_fingerprint"
-    return 0
-  fi
-  return 1
-}
-
 if [ "${1:-}" = "run" ]; then
   if [ -n "${CODA_DEV_EXECUTABLE_SLUG:-}" ]; then
     CODA_DEV_NATIVE_FINGERPRINT="$(compute_native_fingerprint)"
@@ -115,19 +91,6 @@ if [ "${1:-}" = "run" ]; then
       printf 'Coda received an invalid development executable slug "%s".\n' "$executable_slug" >&2
       exit 1
     fi
-    cargo_target_directory="${CARGO_TARGET_DIR:-$script_directory/target}"
-    case "$cargo_target_directory" in
-      /*) ;;
-      *) cargo_target_directory="$(pwd)/$cargo_target_directory" ;;
-    esac
-    raw_executable="$cargo_target_directory/debug/coda"
-    cached_executable="$cargo_target_directory/debug/coda-$executable_slug"
-    fingerprint_file="$cached_executable.native-fingerprint"
-    migrate_native_fingerprint_if_safe \
-      "$raw_executable" \
-      "$cached_executable" \
-      "$fingerprint_file" \
-      "$CODA_DEV_NATIVE_FINGERPRINT" || true
   fi
   runner_json="$(node -e 'process.stdout.write(JSON.stringify([process.argv[1]]))' "$script_path")"
 
@@ -196,7 +159,10 @@ case "${1:-}" in
 
       signing_executable="$instance_executable.signing.$$"
       fingerprint_temp="$fingerprint_file.tmp.$$"
-      trap 'unlink "$signing_executable" 2>/dev/null || true; unlink "$fingerprint_temp" 2>/dev/null || true' EXIT HUP INT TERM
+      trap cleanup_signing_replacement EXIT
+      trap 'exit_after_signal 129' HUP
+      trap 'exit_after_signal 130' INT
+      trap 'exit_after_signal 143' TERM
       cp "$executable" "$signing_executable"
       codesign \
         --force \
@@ -205,12 +171,14 @@ case "${1:-}" in
         --identifier "$signing_identifier" \
         "$signing_executable"
       codesign --verify --strict -R "$code_requirement" "$signing_executable"
-      mv -f "$signing_executable" "$instance_executable"
       printf '%s\n%s\n' \
         "$fingerprint_schema" \
         "$native_fingerprint" >"$fingerprint_temp"
+      unlink "$fingerprint_file" 2>/dev/null || true
+      mv -f "$signing_executable" "$instance_executable"
       mv -f "$fingerprint_temp" "$fingerprint_file"
-      trap - EXIT HUP INT TERM
+      trap - HUP INT TERM
+      trap - EXIT
       executable="$instance_executable"
     else
       codesign \

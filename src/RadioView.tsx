@@ -26,6 +26,7 @@ import {
 } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { OverflowMarquee } from "@/components/ui/overflow-marquee";
 import { PlaybackIcon } from "@/components/ui/playback-icon";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -247,10 +248,9 @@ const RadioCard = memo(function RadioCard({
           />
         </div>
         <h3
-          className="mt-1.5 mb-1 truncate font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-base/tight font-semibold text-[#ebe9e3]"
-          title={show.subtitle}
+          className="mt-1.5 mb-1 min-w-0 font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-base/tight font-semibold text-[#ebe9e3]"
         >
-          {show.subtitle}
+          <OverflowMarquee text={show.subtitle} />
         </h3>
         <time className="text-xs text-[#737772]" dateTime={show.publishedAt}>
           {showDate(show.publishedAt)}
@@ -312,8 +312,7 @@ const RadioCard = memo(function RadioCard({
               render={
                 <Button
                   variant="ghost"
-                  size="icon-compact"
-                  className="size-8"
+                  size="icon"
                   onClick={() => onDetails(show)}
                   disabled={Boolean(busyAction)}
                   aria-label={`View tracklist for ${show.subtitle}`}

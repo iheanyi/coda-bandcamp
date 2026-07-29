@@ -29,6 +29,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DrawerTrigger } from "@/components/ui/drawer";
+import { OverflowMarquee } from "@/components/ui/overflow-marquee";
 import { PlaybackIcon } from "@/components/ui/playback-icon";
 import { Slider } from "@/components/ui/slider";
 import { Spinner } from "@/components/ui/spinner";
@@ -591,7 +592,7 @@ function NowPlayingViewComponent({
                 <Button
                   variant="text"
                   size="compact"
-                  className="h-auto max-w-[46%] truncate p-0 text-sm font-medium text-[#c1c2bc] hover:bg-transparent hover:text-primary hover:underline"
+                  className="h-auto max-w-[46%] truncate p-0 text-sm font-medium text-[#c1c2bc] hover:bg-transparent hover:text-primary"
                   onClick={() => onRadioSeries()}
                 >
                   Bandcamp Radio
@@ -600,7 +601,7 @@ function NowPlayingViewComponent({
                 <Button
                   variant="text"
                   size="compact"
-                  className="h-auto max-w-[46%] truncate p-0 text-sm font-medium text-[#c1c2bc] hover:bg-transparent hover:text-primary hover:underline"
+                  className="h-auto max-w-[46%] truncate p-0 text-sm font-medium text-[#c1c2bc] hover:bg-transparent hover:text-primary"
                   onClick={() => onRadioSeries(radioSeries?.id)}
                 >
                   {track.album}
@@ -611,7 +612,7 @@ function NowPlayingViewComponent({
                 <Button
                   variant="text"
                   size="compact"
-                  className="h-auto max-w-[46%] truncate p-0 text-sm font-medium text-[#c1c2bc] hover:bg-transparent hover:text-primary hover:underline"
+                  className="h-auto max-w-[46%] truncate p-0 text-sm font-medium text-[#c1c2bc] hover:bg-transparent hover:text-primary"
                   onClick={() => onArtist(track.artist, track.albumId, track)}
                 >
                   {track.artist}
@@ -620,7 +621,7 @@ function NowPlayingViewComponent({
                 <Button
                   variant="text"
                   size="compact"
-                  className="h-auto max-w-[46%] truncate p-0 text-sm font-medium text-[#c1c2bc] hover:bg-transparent hover:text-primary hover:underline"
+                  className="h-auto max-w-[46%] truncate p-0 text-sm font-medium text-[#c1c2bc] hover:bg-transparent hover:text-primary"
                   onClick={(event) => onAlbum(track, event.currentTarget)}
                   aria-busy={albumLoading}
                   aria-label={albumLoading ? `Loading album ${track.album}` : undefined}
@@ -784,7 +785,10 @@ function NowPlayingViewComponent({
                     {String(queueIndex + 1).padStart(2, "0")}
                   </span>
                   <span className="flex min-w-0 flex-col gap-0.5 overflow-hidden">
-                    <strong className="truncate text-xs/snug text-[#d4d3cd]">{item.title}</strong>
+                    <OverflowMarquee
+                      className="text-xs/snug text-[#d4d3cd]"
+                      text={item.title}
+                    />
                     <small className="truncate text-xs font-normal text-[#737772]">{item.artist} · {item.album}</small>
                   </span>
                   <span className="text-xs font-normal text-[#686c67] tabular-nums">{formatTime(item.duration)}</span>
@@ -801,7 +805,10 @@ function NowPlayingViewComponent({
               <span className="text-xs font-bold tracking-widest text-[#d37e68] uppercase">
                 Picked from your collection
               </span>
-              <strong className="mt-1 truncate text-sm text-[#e2e0da]">{recommendation.album.title}</strong>
+              <OverflowMarquee
+                className="mt-1 text-sm text-[#e2e0da]"
+                text={recommendation.album.title}
+              />
               <small className="mt-1 truncate text-xs text-[#777b76]">
                 {recommendation.album.artist} · {recommendation.reason}
               </small>

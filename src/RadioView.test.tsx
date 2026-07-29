@@ -244,9 +244,11 @@ describe("Bandcamp Radio", () => {
     const { onQueue } = renderRadio();
 
     await screen.findByRole("heading", { name: "The Best of 2026" });
-    fireEvent.click(screen.getByRole("button", {
+    const queueShow = screen.getByRole("button", {
       name: "Add The Best of 2026 to queue",
-    }));
+    });
+    expect(queueShow).toHaveClass("size-8", "p-0");
+    fireEvent.click(queueShow);
     await waitFor(() => expect(onQueue).toHaveBeenCalledWith(
       expect.objectContaining({ id: "radio:978" }),
     ));

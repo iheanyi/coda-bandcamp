@@ -10,7 +10,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const toolsDirectory = path.dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = path.resolve(toolsDirectory, "..");
 const nativeBuildEnvironmentPattern =
-  /^(AR|CC|CFLAGS|CXX|CXXFLAGS|MACOSX_DEPLOYMENT_TARGET|RUSTC|RUSTC_WRAPPER|RUSTFLAGS|CARGO_BUILD_TARGET|CARGO_ENCODED_RUSTFLAGS|CODA_LASTFM_API_KEY|CODA_LASTFM_SHARED_SECRET|SDKROOT)(_|$)/;
+  /^(AR|CC|CFLAGS|CXX|CXXFLAGS|MACOSX_DEPLOYMENT_TARGET|RUSTC|RUSTC_WRAPPER|RUSTFLAGS|CARGO_BUILD_TARGET|CARGO_ENCODED_RUSTFLAGS|CARGO_PROFILE|CODA_LASTFM_API_KEY|CODA_LASTFM_SHARED_SECRET|SDKROOT)(_|$)/;
 const generatedNativeDirectoryNames = new Set(["dist", "gen", "target"]);
 const isCredentialEnvironmentFile = (filename) =>
   filename === ".env" || filename.startsWith(".env.");
@@ -36,19 +36,30 @@ function readPosixProcessGroupId(pid) {
   return Number(value);
 }
 
-function listProcessParents() {
-  const output = execFileSync("ps", ["-axo", "pid=,ppid="], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
-  });
-  return output
-    .split("\n")
-    .map((line) => line.trim().match(/^(\d+)\s+(\d+)$/))
-    .filter(Boolean)
-    .map((match) => ({
-      pid: Number(match[1]),
-      parentPid: Number(match[2]),
-    }));
+function listProcessExecutables() {
+  let output;
+  try {
+    output = execFileSync("lsof", ["-d", "txt", "-Fn"], {
+      encoding: "utf8",
+      maxBuffer: 32 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return [];
+  }
+
+  const processes = [];
+  let current;
+  for (const line of output.split("\n")) {
+    if (line.startsWith("p") && /^\d+$/.test(line.slice(1))) {
+      if (current?.executablePath) processes.push(current);
+      current = { pid: Number(line.slice(1)), executablePath: undefined };
+    } else if (current && !current.executablePath && line.startsWith("n")) {
+      current.executablePath = line.slice(1);
+    }
+  }
+  if (current?.executablePath) processes.push(current);
+  return processes;
 }
 
 function readProcessExecutablePath(pid) {
@@ -82,37 +93,71 @@ function isProcessRunning(pid) {
   }
 }
 
+export function resolveCargoTargetDirectory(repository, cargoTargetDirectory) {
+  if (!cargoTargetDirectory) {
+    return path.join(repository, "src-tauri", "target");
+  }
+  return path.resolve(repository, "src-tauri", cargoTargetDirectory);
+}
+
 export async function stopStaleNativeDevelopmentProcesses(
   executableSlug,
   {
+    cargoTargetDirectory,
     isProcessRunning: processIsRunning = isProcessRunning,
-    listProcesses = listProcessParents,
+    listProcesses = listProcessExecutables,
     platform = process.platform,
     pollIntervalMs = 20,
     readExecutablePath = readProcessExecutablePath,
+    readProcessGroupId = readPosixProcessGroupId,
     repository = repositoryRoot,
     signalProcess = (pid, signal) => process.kill(pid, signal),
+    signalProcessGroup = (processGroupId, signal) =>
+      process.kill(-processGroupId, signal),
     timeoutMs = 1_000,
   } = {},
 ) {
   if (platform !== "darwin") return [];
   const expectedExecutable = path.resolve(
-    repository,
-    "src-tauri",
-    "target",
+    resolveCargoTargetDirectory(repository, cargoTargetDirectory),
     "debug",
     `coda-${normalizeInstanceSlug(executableSlug)}`,
   );
   const staleProcesses = listProcesses().filter(
-    ({ parentPid, pid }) =>
-      parentPid === 1 &&
+    ({ executablePath, pid }) =>
       pid !== process.pid &&
-      path.resolve(readExecutablePath(pid) ?? "") === expectedExecutable,
+      path.resolve(executablePath ?? readExecutablePath(pid) ?? "") ===
+        expectedExecutable,
   );
+  let currentProcessGroupId;
+  try {
+    currentProcessGroupId = readProcessGroupId(process.pid);
+  } catch {
+    currentProcessGroupId = undefined;
+  }
+  const signaledProcessGroups = new Set();
   const stopped = [];
   for (const { pid } of staleProcesses) {
     try {
-      signalProcess(pid, "SIGTERM");
+      let processGroupId;
+      try {
+        processGroupId = readProcessGroupId(pid);
+      } catch {
+        processGroupId = undefined;
+      }
+      if (
+        currentProcessGroupId !== undefined &&
+        processGroupId !== undefined &&
+        processGroupId > 1 &&
+        processGroupId !== currentProcessGroupId
+      ) {
+        if (!signaledProcessGroups.has(processGroupId)) {
+          signalProcessGroup(processGroupId, "SIGTERM");
+          signaledProcessGroups.add(processGroupId);
+        }
+      } else {
+        signalProcess(pid, "SIGTERM");
+      }
       stopped.push(pid);
     } catch (cause) {
       if (!cause || typeof cause !== "object" || cause.code !== "ESRCH") {
@@ -489,8 +534,8 @@ export async function runManagedCommand(
   const forwardTermination = () => {
     forwardSignal("SIGTERM");
   };
-  signalSource.once("SIGINT", forwardInterrupt);
-  signalSource.once("SIGTERM", forwardTermination);
+  signalSource.on("SIGINT", forwardInterrupt);
+  signalSource.on("SIGTERM", forwardTermination);
   parentWatcher = setInterval(() => {
     let currentParentPid;
     try {
@@ -543,7 +588,6 @@ function gitOutput(args) {
 export async function runDevInstance(environment = process.env) {
   const configPath = path.join(repositoryRoot, "src-tauri", "tauri.conf.json");
   const baseConfig = JSON.parse(await readFile(configPath, "utf8"));
-  await stopStaleNativeDevelopmentProcesses(path.basename(repositoryRoot));
   const groveServer =
     environment.PORT === undefined
       ? readRegisteredGroveServer(repositoryRoot)
@@ -553,6 +597,9 @@ export async function runDevInstance(environment = process.env) {
       "Grove is already running Coda for this worktree. Run `grove stop` before `npm run dev`.",
     );
   }
+  await stopStaleNativeDevelopmentProcesses(path.basename(repositoryRoot), {
+    cargoTargetDirectory: environment.CARGO_TARGET_DIR,
+  });
   const port = resolveDevPort({
     baseDevUrl: baseConfig.build?.devUrl,
     grovePort: groveServer?.port,

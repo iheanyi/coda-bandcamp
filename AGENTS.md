@@ -107,8 +107,8 @@ unrelated architectural rewrite when making a scoped change.
 
 ## Development workflow
 
-Prerequisites are Node.js 20+, stable Rust, and the platform prerequisites for
-Tauri.
+Prerequisites are Node.js `^20.19.0` or `>=22.12.0`, stable Rust, and the
+platform prerequisites for Tauri.
 
 ```sh
 npm install

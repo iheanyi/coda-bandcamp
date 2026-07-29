@@ -177,6 +177,22 @@
   }
 }
 
+@keyframes coda-title-marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="overflow-marquee-text"] {
+    opacity: 1 !important;
+  }
+
+  [data-slot="overflow-marquee-track"] {
+    display: none;
+  }
+}
+
 @keyframes queue-track-in {
   from {
     opacity: 0;

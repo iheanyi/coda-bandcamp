@@ -1,4 +1,4 @@
-import type { Album } from "./types";
+import type { Album, Track } from "./types";
 
 export type LibraryBrowseMode = "releases" | "artists" | "albums" | "singles";
 
@@ -11,6 +11,7 @@ export type ArtistGroup = {
   duration: number;
   representative: Album;
   trackFilterArtistKey?: string;
+  trackFilterAlbumId?: string;
 };
 
 export function artistKey(value: string): string {
@@ -52,4 +53,20 @@ export function groupAlbumsByArtist(albums: readonly Album[]): ArtistGroup[] {
       representative: sorted[0],
     };
   }).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function tracksForArtistGroupAlbum(
+  group: Pick<ArtistGroup, "trackFilterAlbumId" | "trackFilterArtistKey">,
+  albumId: string,
+  tracks: Track[],
+): Track[] {
+  if (
+    !group.trackFilterArtistKey ||
+    (group.trackFilterAlbumId && group.trackFilterAlbumId !== albumId)
+  ) {
+    return tracks;
+  }
+  return tracks.filter(
+    (track) => artistKey(track.artist) === group.trackFilterArtistKey,
+  );
 }

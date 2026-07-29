@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import {
   chmod,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   rm,
   rmdir,
@@ -23,6 +24,7 @@ import {
   computeNativeBuildFingerprint,
   parsePort,
   readRegisteredGroveServer,
+  resolveCargoTargetDirectory,
   resolveDevIdentity,
   resolveDevPort,
   runManagedCommand,
@@ -66,46 +68,69 @@ test("routes standard desktop development through the stable native launcher", a
   );
 });
 
-test("stops only this worktree's orphaned native development executable", async () => {
+test("stops this worktree's stale native process group from a custom Cargo target", async () => {
   const repository = "/workspace/shadcn-tailwind";
   const expectedExecutable = path.join(
     repository,
     "src-tauri",
-    "target",
+    "custom-target",
     "debug",
     "coda-shadcn-tailwind",
   );
   const running = new Set([41, 42, 43]);
-  const signaled = [];
+  const signaledGroups = [];
 
-  const stopped = await stopStaleNativeDevelopmentProcesses(
-    "shadcn-tailwind",
-    {
-      isProcessRunning: (pid) => running.has(pid),
-      listProcesses: () => [
-        { parentPid: 1, pid: 41 },
-        { parentPid: 900, pid: 42 },
-        { parentPid: 1, pid: 43 },
-      ],
-      platform: "darwin",
-      pollIntervalMs: 0,
-      readExecutablePath: (pid) =>
-        pid === 43
-          ? "/workspace/other/src-tauri/target/debug/coda-shadcn-tailwind"
-          : expectedExecutable,
-      repository,
-      signalProcess: (pid, signal) => {
-        signaled.push([pid, signal]);
-        running.delete(pid);
+  const stopped = await stopStaleNativeDevelopmentProcesses("shadcn-tailwind", {
+    cargoTargetDirectory: "custom-target",
+    isProcessRunning: (pid) => running.has(pid),
+    listProcesses: () => [
+      { executablePath: expectedExecutable, parentPid: 900, pid: 41 },
+      {
+        executablePath:
+          "/workspace/other/src-tauri/target/debug/coda-shadcn-tailwind",
+        parentPid: 900,
+        pid: 42,
       },
-      timeoutMs: 20,
+      {
+        executablePath:
+          "/workspace/other/src-tauri/target/debug/coda-shadcn-tailwind",
+        parentPid: 1,
+        pid: 43,
+      },
+    ],
+    platform: "darwin",
+    pollIntervalMs: 0,
+    readExecutablePath: () => assert.fail("bulk process data should be reused"),
+    readProcessGroupId: (pid) => (pid === process.pid ? 700 : 401),
+    repository,
+    signalProcessGroup: (processGroupId, signal) => {
+      signaledGroups.push([processGroupId, signal]);
+      running.delete(41);
     },
-  );
+    timeoutMs: 20,
+  });
 
   assert.deepEqual(stopped, [41]);
-  assert.deepEqual(signaled, [[41, "SIGTERM"]]);
+  assert.deepEqual(signaledGroups, [[401, "SIGTERM"]]);
   assert.equal(running.has(42), true);
   assert.equal(running.has(43), true);
+});
+
+test("resolves Cargo target directories from the native project", () => {
+  const repository = "/workspace/shadcn-tailwind";
+
+  assert.equal(
+    resolveCargoTargetDirectory(repository),
+    path.join(repository, "src-tauri", "target"),
+  );
+  assert.equal(
+    resolveCargoTargetDirectory(repository, "custom-target"),
+    path.join(repository, "src-tauri", "custom-target"),
+  );
+  assert.equal(
+    resolveCargoTargetDirectory(repository, "/tmp/coda-target"),
+    "/tmp/coda-target",
+  );
 });
 
 async function waitFor(check, timeoutMs = 3_000) {
@@ -152,6 +177,13 @@ printf '  1) %s "Coda Local Development"\\n' "$CODA_TEST_IDENTITY_HASH"
     path.join(fakeBinDirectory, "codesign"),
     `#!/bin/sh
 printf '%s\\n' "$*" >> "$CODA_TEST_CODESIGN_LOG"
+if [ "\${1:-}" = "--force" ] &&
+  [ -n "\${CODA_TEST_CODESIGN_BLOCK_MARKER:-}" ]; then
+  : >"$CODA_TEST_CODESIGN_BLOCK_MARKER"
+  while [ ! -e "$CODA_TEST_CODESIGN_RELEASE" ]; do
+    sleep 0.02
+  done
+fi
 if [ "\${1:-}" = "--verify" ] &&
   [ -n "\${CODA_TEST_FAIL_VERIFY_ONCE:-}" ] &&
   [ ! -e "$CODA_TEST_FAIL_VERIFY_ONCE" ]; then
@@ -350,7 +382,7 @@ test("builds the environment consumed by Vite and the macOS runner", () => {
 });
 
 test(
-  "snapshots native inputs and migrates an approved executable before Cargo builds",
+  "rebuilds native code before adopting or replacing an approved executable",
   { skip: process.platform !== "darwin" },
   async () => {
     const fixture = await createRunnerFixture();
@@ -362,53 +394,51 @@ test(
       "coda-fixture",
     );
     const fingerprintFile = `${cachedExecutable}.native-fingerprint`;
+    const observedFingerprint = path.join(
+      fixture.fixtureDirectory,
+      "observed-fingerprint",
+    );
 
     try {
       await writeFile(cachedExecutable, await readFile(fixture.executable));
       await chmod(cachedExecutable, 0o755);
       await writeFile(fingerprintFile, `${"a".repeat(64)}\n`);
-      const cachedBefore = await stat(cachedExecutable);
       await writeFile(
         cargoExecutable,
-        "#!/bin/sh\nprintf '%s\\n' \"$CODA_DEV_NATIVE_FINGERPRINT\"\n",
+        `#!/bin/sh
+if [ "\${1:-}" = "-V" ]; then
+  printf 'cargo 1.97.1\\n'
+  exit 0
+fi
+printf '%s\\n' "$CODA_DEV_NATIVE_FINGERPRINT" >"$CODA_TEST_OBSERVED_FINGERPRINT"
+printf '%s\\n' '#!/bin/sh' "printf 'rebuilt fixture launched\\\\n'" >"$CARGO_TARGET_DIR/debug/coda"
+chmod +x "$CARGO_TARGET_DIR/debug/coda"
+exec "$CODA_TEST_RUNNER" "$CARGO_TARGET_DIR/debug/coda"
+`,
       );
       await chmod(cargoExecutable, 0o755);
       const output = execFileSync(runner, ["run", "--version"], {
         encoding: "utf8",
         env: {
           ...fixture.environment,
-          CODA_DEV_NATIVE_FINGERPRINT: "stale",
+          CODA_TEST_OBSERVED_FINGERPRINT: observedFingerprint,
+          CODA_TEST_RUNNER: runner,
         },
       });
-
-      assert.match(output, /^[0-9a-f]{64}\n$/);
-      assert.notEqual(output.trim(), "b".repeat(64));
-      assert.equal(output.includes("fixture-api-secret"), false);
-      assert.equal(output.includes("fixture-shared-secret"), false);
-      assert.equal(
-        await readFile(fingerprintFile, "utf8"),
-        `coda-dev-native-fingerprint-v2\n${output}`,
-      );
-      const cachedAfterMigration = await stat(cachedExecutable);
-      assert.equal(cachedAfterMigration.ino, cachedBefore.ino);
-
-      await writeFile(
-        fixture.executable,
-        "#!/bin/sh\nprintf 'incidental relink\\n'\n",
-      );
-      const launchOutput = execFileSync(runner, [fixture.executable], {
-        encoding: "utf8",
-        env: {
-          ...fixture.environment,
-          CODA_DEV_NATIVE_FINGERPRINT: output.trim(),
-        },
-      });
+      const fingerprint = await readFile(observedFingerprint, "utf8");
       const codesignCalls = (await readFile(fixture.codesignLog, "utf8"))
         .split("\n")
         .filter((line) => line.includes(`--sign ${"A".repeat(40)}`));
 
-      assert.equal(launchOutput, "fixture launched\n");
-      assert.equal(codesignCalls.length, 0);
+      assert.equal(output, "rebuilt fixture launched\n");
+      assert.match(fingerprint, /^[0-9a-f]{64}\n$/);
+      assert.equal(output.includes("fixture-api-secret"), false);
+      assert.equal(output.includes("fixture-shared-secret"), false);
+      assert.equal(
+        await readFile(fingerprintFile, "utf8"),
+        `coda-dev-native-fingerprint-v2\n${fingerprint}`,
+      );
+      assert.equal(codesignCalls.length, 1, codesignCalls.join("\n"));
     } finally {
       await rm(fixture.fixtureDirectory, { recursive: true, force: true });
     }
@@ -701,6 +731,15 @@ test("fingerprints native inputs while ignoring renderer and generated output", 
     );
     assert.notEqual(
       await fingerprint({
+        environment: {
+          ...buildEnvironment,
+          CARGO_PROFILE_DEV_OPT_LEVEL: "1",
+        },
+      }),
+      initial,
+    );
+    assert.notEqual(
+      await fingerprint({
         override: {
           ...nativeOverride,
           build: { devUrl: "http://127.0.0.1:3382" },
@@ -744,6 +783,140 @@ test(
         .filter((line) => line.includes(`--sign ${"A".repeat(40)}`));
 
       assert.equal(codesignCalls.length, 2);
+    } finally {
+      await rm(fixture.fixtureDirectory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "invalidates the published fingerprint before replacing the signed executable",
+  { skip: process.platform !== "darwin" },
+  async () => {
+    const fixture = await createRunnerFixture();
+    const runner = new URL("../src-tauri/coda-dev-runner.sh", import.meta.url)
+      .pathname;
+    const cachedExecutable = path.join(
+      path.dirname(fixture.executable),
+      "coda-fixture",
+    );
+    const fingerprintFile = `${cachedExecutable}.native-fingerprint`;
+    const fakeMove = path.join(fixture.fixtureDirectory, "bin", "mv");
+
+    try {
+      execFileSync(runner, [fixture.executable], {
+        env: fixture.environment,
+      });
+      await writeFile(
+        fixture.executable,
+        "#!/bin/sh\nprintf 'replacement fixture launched\\n'\n",
+      );
+      await chmod(fixture.executable, 0o755);
+      await writeFile(
+        fakeMove,
+        `#!/bin/sh
+destination=""
+for argument in "$@"; do
+  destination="$argument"
+done
+if [ "$destination" = "$CODA_TEST_FAIL_MOVE_DESTINATION" ]; then
+  exit 79
+fi
+exec /bin/mv "$@"
+`,
+      );
+      await chmod(fakeMove, 0o755);
+
+      assert.throws(() =>
+        execFileSync(runner, [fixture.executable], {
+          env: {
+            ...fixture.environment,
+            CODA_DEV_NATIVE_FINGERPRINT: "c".repeat(64),
+            CODA_TEST_FAIL_MOVE_DESTINATION: fingerprintFile,
+          },
+        }),
+      );
+      await assert.rejects(readFile(fingerprintFile, "utf8"), {
+        code: "ENOENT",
+      });
+
+      await unlink(fakeMove);
+      const retryOutput = execFileSync(runner, [fixture.executable], {
+        encoding: "utf8",
+        env: {
+          ...fixture.environment,
+          CODA_DEV_NATIVE_FINGERPRINT: "c".repeat(64),
+        },
+      });
+      const codesignCalls = (await readFile(fixture.codesignLog, "utf8"))
+        .split("\n")
+        .filter((line) => line.includes(`--sign ${"A".repeat(40)}`));
+
+      assert.equal(retryOutput, "replacement fixture launched\n");
+      assert.equal(codesignCalls.length, 2);
+      assert.equal(
+        await readFile(fingerprintFile, "utf8"),
+        `coda-dev-native-fingerprint-v2\n${"c".repeat(64)}\n`,
+      );
+    } finally {
+      await rm(fixture.fixtureDirectory, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "terminates the signing runner after cleaning up an interrupted replacement",
+  { skip: process.platform !== "darwin" },
+  async () => {
+    const fixture = await createRunnerFixture();
+    const runner = new URL("../src-tauri/coda-dev-runner.sh", import.meta.url)
+      .pathname;
+    const cachedExecutable = path.join(
+      path.dirname(fixture.executable),
+      "coda-fixture",
+    );
+    const fingerprintFile = `${cachedExecutable}.native-fingerprint`;
+    const blockMarker = path.join(fixture.fixtureDirectory, "codesign-blocked");
+    const releaseMarker = path.join(
+      fixture.fixtureDirectory,
+      "release-codesign",
+    );
+
+    try {
+      const child = spawn(runner, [fixture.executable], {
+        env: {
+          ...fixture.environment,
+          CODA_TEST_CODESIGN_BLOCK_MARKER: blockMarker,
+          CODA_TEST_CODESIGN_RELEASE: releaseMarker,
+        },
+        stdio: "ignore",
+      });
+      const completion = new Promise((resolve) => {
+        child.once("close", (code, signal) => resolve({ code, signal }));
+      });
+
+      await waitFor(async () => {
+        try {
+          return (await stat(blockMarker)).isFile();
+        } catch {
+          return false;
+        }
+      });
+      child.kill("SIGTERM");
+      await writeFile(releaseMarker, "");
+
+      assert.deepEqual(await completion, { code: 143, signal: null });
+      await assert.rejects(stat(cachedExecutable), { code: "ENOENT" });
+      await assert.rejects(stat(fingerprintFile), { code: "ENOENT" });
+      const targetEntries = await readdir(path.dirname(fixture.executable));
+      assert.equal(
+        targetEntries.some(
+          (entry) =>
+            entry.startsWith("coda-fixture.signing.") ||
+            entry.startsWith("coda-fixture.native-fingerprint.tmp."),
+        ),
+        false,
+      );
     } finally {
       await rm(fixture.fixtureDirectory, { recursive: true, force: true });
     }
@@ -877,6 +1050,75 @@ test(
       }
       await unlink(pidPath).catch(() => {});
       await rmdir(fixtureDirectory).catch(() => {});
+    }
+  },
+);
+
+test(
+  "forwards repeated termination signals until the managed child exits",
+  { skip: process.platform === "win32" },
+  async () => {
+    const fixtureDirectory = await mkdtemp(
+      path.join(tmpdir(), "coda-repeated-signals-"),
+    );
+    const pidPath = path.join(fixtureDirectory, "pid");
+    const signalCountPath = path.join(fixtureDirectory, "signal-count");
+    const signalSource = new EventEmitter();
+    const childSource = `
+      const { writeFileSync } = require("node:fs");
+      let count = 0;
+      process.on("SIGTERM", () => {
+        count += 1;
+        writeFileSync(process.env.CODA_TEST_SIGNAL_COUNT_PATH, String(count));
+      });
+      writeFileSync(process.env.CODA_TEST_PID_PATH, String(process.pid));
+      setInterval(() => {}, 1_000);
+    `;
+    let childPid;
+
+    try {
+      const completion = runManagedCommand(
+        process.execPath,
+        ["-e", childSource],
+        {
+          env: {
+            ...process.env,
+            CODA_TEST_PID_PATH: pidPath,
+            CODA_TEST_SIGNAL_COUNT_PATH: signalCountPath,
+          },
+          stdio: "ignore",
+        },
+        signalSource,
+      );
+      childPid = await waitFor(async () => {
+        try {
+          return Number(await readFile(pidPath, "utf8")) || undefined;
+        } catch {
+          return undefined;
+        }
+      });
+
+      signalSource.emit("SIGTERM");
+      await waitFor(async () => {
+        try {
+          return (await readFile(signalCountPath, "utf8")) === "1";
+        } catch {
+          return false;
+        }
+      });
+      assert.equal(signalSource.listenerCount("SIGTERM"), 1);
+
+      signalSource.emit("SIGTERM");
+      await waitFor(
+        async () => (await readFile(signalCountPath, "utf8")) === "2",
+      );
+      signalSource.emit("SIGINT");
+      await assert.rejects(completion, /SIGINT/);
+    } finally {
+      if (childPid && isRunning(childPid)) {
+        process.kill(-childPid, "SIGKILL");
+      }
+      await rm(fixtureDirectory, { recursive: true, force: true });
     }
   },
 );

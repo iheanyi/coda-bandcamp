@@ -30,7 +30,6 @@ import {
 } from "react";
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -52,6 +51,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { OverflowMarquee } from "@/components/ui/overflow-marquee";
 import { PlaybackIcon } from "@/components/ui/playback-icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
@@ -130,7 +130,7 @@ const radioDateFormatter = new Intl.DateTimeFormat(undefined, {
 const eyebrowClassName =
   "mb-2.5 text-xs font-bold tracking-widest text-[#777b76] uppercase";
 const metadataLinkClassName =
-  "max-w-[48%] cursor-pointer truncate border-0 bg-transparent p-0 text-left text-xs font-normal text-[#777b76] hover:text-accent-foreground hover:underline hover:underline-offset-2";
+  "max-w-[48%] cursor-pointer truncate border-0 bg-transparent p-0 text-left text-xs font-normal text-[#777b76] hover:text-accent-foreground";
 const savedPageClassName =
   "mx-auto min-h-full w-full max-w-5xl animate-[saved-page-in_180ms_ease-out] pt-2 pb-12 motion-reduce:animate-none";
 
@@ -205,6 +205,21 @@ function restorePlaylistMutation(
     return;
   }
   queryClient.setQueryData(detailKey, context.previousPlaylist);
+}
+
+function revalidateCommittedPlaylist(
+  queryClient: QueryClient,
+  playlistId: string,
+): void {
+  void queryClient.invalidateQueries({
+    queryKey: playlistQueryKey(playlistId),
+    exact: true,
+  });
+  void queryClient.invalidateQueries({
+    queryKey: PLAYLISTS_QUERY_KEY,
+    exact: true,
+    refetchType: "none",
+  });
 }
 
 function removedPlaylistTracks(
@@ -431,9 +446,10 @@ function PlaylistList({
                   <ListMusic size={25} />
                 </span>
                 <span className="flex min-w-0 flex-col">
-                  <strong className="truncate text-xs text-[#dcdbd5]">
-                    {playlist.name}
-                  </strong>
+                  <OverflowMarquee
+                    className="text-xs text-[#dcdbd5]"
+                    text={playlist.name}
+                  />
                   <span className="mt-1 truncate text-xs text-[#777b76]">
                     {countLabel(playlist.songCount, "track")}
                     {playlist.duration ? ` · ${formatTime(playlist.duration)}` : ""}
@@ -718,13 +734,13 @@ function PlaylistDetailView({
               <div className="flex min-w-0 flex-col gap-1">
                 <Button
                   className={cn(
-                    "h-auto w-fit max-w-full justify-start truncate rounded-none p-0 text-xs text-[#d9d8d2] hover:bg-transparent hover:text-accent-foreground",
+                    "h-auto w-fit max-w-full justify-start overflow-hidden rounded-none p-0 text-xs text-[#d9d8d2] hover:bg-transparent hover:text-accent-foreground",
                     activeTrack && "text-[#f0d7cf]",
                   )}
                   onClick={activeTrack ? onTogglePlayback : () => onPlay([track])}
                   variant="ghost"
                 >
-                  {track.title}
+                  <OverflowMarquee className="max-w-full" text={track.title} />
                 </Button>
                 <span className="flex min-w-0 items-center gap-1">
                   <Button
@@ -826,17 +842,17 @@ function PlaylistDetailView({
               <AlertDialogCancel disabled={actionPending}>
                 Keep playlist
               </AlertDialogCancel>
-              <AlertDialogAction
+              <Button
                 aria-label="Delete playlist from Bandcamp"
-                className="border-primary/35 bg-primary/10 text-coda-danger-foreground hover:bg-primary/18"
                 disabled={actionPending}
                 onClick={onDelete}
+                variant="danger"
               >
                 {deleting
                   ? <Spinner aria-hidden="true" className="size-4 text-current" />
                   : <Trash2 size={14} />}
                 {deleting ? "Deleting…" : "Delete playlist"}
-              </AlertDialogAction>
+              </Button>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
@@ -908,13 +924,20 @@ export function AddToPlaylistDialog({
       }
       return { previousPlaylist, previousPlaylists };
     },
-    onSuccess: (updated) => {
-      queryClient.setQueryData(playlistQueryKey(updated.id), updated);
-      queryClient.setQueryData<PlaylistSummary[]>(
-        PLAYLISTS_QUERY_KEY,
-        (current) => upsertPlaylistSummary(current, playlistSummary(updated)),
+    onSuccess: (updated, target) => {
+      if (updated) {
+        queryClient.setQueryData(playlistQueryKey(updated.id), updated);
+        queryClient.setQueryData<PlaylistSummary[]>(
+          PLAYLISTS_QUERY_KEY,
+          (current) => upsertPlaylistSummary(current, playlistSummary(updated)),
+        );
+      } else {
+        revalidateCommittedPlaylist(queryClient, target.id);
+      }
+      onNotify(
+        `${countLabel(tracks.length, "track")} added to ${updated?.name ?? target.name}`,
+        "good",
       );
-      onNotify(`${countLabel(tracks.length, "track")} added to ${updated.name}`, "good");
       closeDialog();
     },
     onError: (cause, target, context) => {
@@ -1219,12 +1242,16 @@ export default function SavedLibraryView({
       }
       return { previousPlaylist, previousPlaylists };
     },
-    onSuccess: (updated) => {
-      queryClient.setQueryData(playlistQueryKey(updated.id), updated);
-      queryClient.setQueryData<PlaylistSummary[]>(
-        PLAYLISTS_QUERY_KEY,
-        (current) => upsertPlaylistSummary(current, playlistSummary(updated)),
-      );
+    onSuccess: (updated, input) => {
+      if (updated) {
+        queryClient.setQueryData(playlistQueryKey(updated.id), updated);
+        queryClient.setQueryData<PlaylistSummary[]>(
+          PLAYLISTS_QUERY_KEY,
+          (current) => upsertPlaylistSummary(current, playlistSummary(updated)),
+        );
+      } else {
+        revalidateCommittedPlaylist(queryClient, input.playlistId);
+      }
     },
     onError: (cause, input, context) => {
       if (context) {
@@ -1630,13 +1657,13 @@ export default function SavedLibraryView({
                     <div className="flex min-w-0 flex-col gap-0.5">
                       <Button
                         className={cn(
-                          "h-auto w-fit max-w-full justify-start truncate rounded-none p-0 text-xs/4 text-[#d9d8d2] hover:bg-transparent hover:text-accent-foreground",
+                          "h-auto w-fit max-w-full justify-start overflow-hidden rounded-none p-0 text-xs/4 text-[#d9d8d2] hover:bg-transparent hover:text-accent-foreground",
                           activeTrack && "text-[#f0d7cf]",
                         )}
                         onClick={activeTrack ? onTogglePlayback : () => onPlayTrack(track)}
                         variant="ghost"
                       >
-                        {track.title}
+                        <OverflowMarquee className="max-w-full" text={track.title} />
                       </Button>
                       <div className="flex min-w-0 items-center gap-1">
                         <Button
@@ -1758,12 +1785,12 @@ export default function SavedLibraryView({
                           {show.series?.title ?? "Bandcamp Radio"}
                         </Button>
                         <Button
-                          className="h-auto w-fit max-w-full justify-start truncate rounded-none p-0 text-xs text-[#deddd7] hover:bg-transparent hover:text-accent-foreground"
+                          className="h-auto w-fit max-w-full justify-start overflow-hidden rounded-none p-0 text-xs text-[#deddd7] hover:bg-transparent hover:text-accent-foreground"
                           onClick={() => onOpenRadioShow(show)}
                           aria-label={`Open ${show.subtitle} details`}
                           variant="ghost"
                         >
-                          {show.subtitle}
+                          <OverflowMarquee className="max-w-full" text={show.subtitle} />
                         </Button>
                         <time
                           className="truncate text-xs text-[#777b76]"
@@ -1877,7 +1904,7 @@ export default function SavedLibraryView({
                           <Button
                             aria-busy={albumLoading || undefined}
                             aria-label={albumLoading ? album.title : undefined}
-                            className="h-auto w-fit max-w-full justify-start gap-1 truncate rounded-none p-0 text-xs text-[#d8d7d1] hover:bg-transparent hover:text-accent-foreground disabled:opacity-100"
+                            className="h-auto w-fit max-w-full justify-start gap-1 overflow-hidden rounded-none p-0 text-xs text-[#d8d7d1] hover:bg-transparent hover:text-accent-foreground disabled:opacity-100"
                             disabled={albumLoading}
                             onClick={() => onOpenAlbum(album)}
                             variant="ghost"
@@ -1888,7 +1915,7 @@ export default function SavedLibraryView({
                                 className="size-3 text-current"
                               />
                             ) : null}
-                            {album.title}
+                            <OverflowMarquee className="max-w-full" text={album.title} />
                           </Button>
                           <Button
                             className={cn(metadataLinkClassName, "mt-1 max-w-full")}
