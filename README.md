@@ -46,49 +46,6 @@ npm run dev
 `npm run dev` opens the desktop app with frontend hot reload and automatic Rust
 rebuilds.
 
-When developing in multiple worktrees, install
-[Grove](https://github.com/iheanyi/grove) and run this from each worktree:
-
-```sh
-grove start
-```
-
-Grove assigns each worktree a stable port and executable, while Coda keeps the
-production `com.coda.bandcamp` native identifier in development. App data,
-saved window state, and Bandcamp and Last.fm credentials therefore remain
-shared through the same native identity. Default window titles still identify
-the worktree. Use `grove ls`, `grove logs`, `grove restart`, and `grove stop` to
-manage the instances.
-
-To override the derived native name for a one-off launch:
-
-```sh
-CODA_DEV_INSTANCE=chrome-review grove start
-```
-
-One-off names change only the visible runtime window title. The native bundle
-and app-data identities stay `com.coda.bandcamp`, while the cached development
-executable remains stable for the worktree. Changing a branch or smoke-test
-label does not trigger a native relink. The executable name is derived only
-from the worktree directory name.
-
-On macOS, Grove also reuses the exact signed worktree executable when only
-renderer files change. Immediately before each Cargo build, the launcher
-recomputes a versioned native-input fingerprint and verifies the cached
-executable's signing certificate and `com.coda.bandcamp` code identifier.
-An incidental Cargo relink with unchanged native inputs therefore keeps the
-exact approved executable. After choosing **Always Allow** once, UI-only
-restarts should reuse that approval. Rust, Cargo, Tauri config or capability,
-build-environment, toolchain, port, worktree, or signing-identity changes
-intentionally rebuild and re-sign the executable and may require a new
-approval. The local development certificate has no Apple Development Team
-identifier, so macOS cannot safely extend approval to future changed binaries.
-The Keychain item and development executable both use the stable
-`com.coda.bandcamp` identifier.
-
-The normal `npm run dev` command remains available for a single development
-instance.
-
 To create a native installer for the current platform:
 
 ```sh

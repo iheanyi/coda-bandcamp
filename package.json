@@ -8,12 +8,10 @@
   },
   "scripts": {
     "dev": "tauri dev",
-    "dev:grove": "node tools/dev-instance.mjs",
     "web:dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:dev-instance": "node --test tools/dev-instance.node-tests.mjs",
     "test:coverage": "vitest run --coverage",
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
