@@ -2337,6 +2337,7 @@ export default function App() {
   const libraryPaneRef = useRef<HTMLElement>(null);
   const discoverListScrollTopRef = useRef(0);
   const nowPlayingReturnScrollTopRef = useRef(0);
+  const albumDetailReturnScrollTopRef = useRef(0);
   const pendingLibraryScrollTopRef = useRef<number | undefined>(undefined);
   const libraryShuffleActiveRef = useRef(false);
   const randomPickActiveRef = useRef(false);
@@ -2552,7 +2553,7 @@ export default function App() {
     if (pendingScrollTop === undefined || !libraryPane) return;
     libraryPane.scrollTop = pendingScrollTop;
     pendingLibraryScrollTopRef.current = undefined;
-  }, [discoverDetail, nowPlayingOpen, view]);
+  }, [discoverDetail, nowPlayingOpen, selectedAlbum?.id, view]);
 
   useEffect(() => {
     if (!isDesktop()) return;
@@ -3756,6 +3757,9 @@ export default function App() {
 
   const openAlbum = useCallback(async (album: Album) => {
     const sessionGeneration = bandcampSessionGenerationRef.current;
+    albumDetailReturnScrollTopRef.current =
+      libraryPaneRef.current?.scrollTop ?? 0;
+    pendingLibraryScrollTopRef.current = 0;
     const hasLocalTracklist = Boolean(album.tracks?.length);
     const cachedTracks = cachedAlbumTracks(queryClient, album);
     const coldLoad = cachedTracks === undefined;
@@ -3772,6 +3776,7 @@ export default function App() {
     void transitionCodaView(
       () => setSelectedAlbum(albumForDetail),
       "page-forward",
+      { skipSnapshot: coldLoad },
     );
     try {
       const ready = await ensureTracks(album, sessionGeneration);
@@ -4407,6 +4412,8 @@ export default function App() {
   const openConnection = useCallback(() => setConnectionOpen(true), []);
   const closeConnection = useCallback(() => setConnectionOpen(false), []);
   const closeAlbum = useCallback(() => {
+    pendingLibraryScrollTopRef.current =
+      albumDetailReturnScrollTopRef.current;
     void transitionCodaView(() => setSelectedAlbum(undefined), "page-back");
   }, []);
   const openNowPlaying = useCallback(() => {

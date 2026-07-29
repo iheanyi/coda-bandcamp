@@ -2993,7 +2993,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     await act(async () => request.resolve(tracks));
   });
 
-  it("transitions a cold album into one visible detail loader without a blank handoff", async () => {
+  it("opens a cold album directly into one visible detail loader without a snapshot handoff", async () => {
     const request = deferred<Track[]>();
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
@@ -3002,10 +3002,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       document,
       "startViewTransition",
     );
-    const startViewTransition = vi.fn((update: () => void) => {
-      update();
-      return { finished: Promise.resolve() };
-    });
+    const startViewTransition = vi.fn(() => ({
+      finished: Promise.resolve(),
+    }));
     Object.defineProperty(document, "startViewTransition", {
       configurable: true,
       value: startViewTransition,
@@ -3020,7 +3019,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       const albumPage = screen.getByRole("article", {
         name: "Soft Focus release details",
       });
-      expect(startViewTransition).toHaveBeenCalledTimes(1);
+      expect(startViewTransition).not.toHaveBeenCalled();
       expect(screen.getAllByRole("status")).toHaveLength(1);
       expect(within(albumPage).getByRole("status", {
         name: "Loading album tracks",
@@ -3030,6 +3029,97 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       })).not.toBeInTheDocument();
     } finally {
       await act(async () => request.resolve(tracks));
+      if (originalDescriptor) {
+        Object.defineProperty(document, "startViewTransition", originalDescriptor);
+      } else {
+        Reflect.deleteProperty(document, "startViewTransition");
+      }
+    }
+  });
+
+  it("opens a cold album at the top and restores the Collection scroll position on Back", async () => {
+    const request = deferred<Track[]>();
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    mocks.fetchAlbum.mockReturnValueOnce(request.promise);
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    const libraryPane = screen.getByRole("main");
+    libraryPane.scrollTop = 312;
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Soft Focus" }));
+
+    const albumPage = screen.getByRole("article", {
+      name: "Soft Focus release details",
+    });
+    expect(within(albumPage).getByRole("status", {
+      name: "Loading album tracks",
+    })).toBeVisible();
+    expect(libraryPane.scrollTop).toBe(0);
+
+    await act(async () => request.resolve(tracks));
+    fireEvent.click(within(albumPage).getByRole("button", {
+      name: "Back to releases",
+    }));
+
+    expect(await screen.findByRole("list", {
+      name: "All releases",
+    })).toBeInTheDocument();
+    expect(libraryPane.scrollTop).toBe(312);
+  });
+
+  it("keeps Back scroll restoration pending while cold album hydration settles", async () => {
+    const request = deferred<Track[]>();
+    const transitionFinished = deferred<void>();
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    mocks.fetchAlbum.mockReturnValueOnce(request.promise);
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    const libraryPane = screen.getByRole("main");
+    libraryPane.scrollTop = 312;
+    fireEvent.click(screen.getByRole("button", { name: "Open Soft Focus" }));
+
+    const albumPage = screen.getByRole("article", {
+      name: "Soft Focus release details",
+    });
+    expect(libraryPane.scrollTop).toBe(0);
+
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      document,
+      "startViewTransition",
+    );
+    let commitBack: (() => void) | undefined;
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: vi.fn((update: () => void) => {
+        commitBack = update;
+        return { finished: transitionFinished.promise };
+      }),
+    });
+
+    try {
+      fireEvent.click(within(albumPage).getByRole("button", {
+        name: "Back to releases",
+      }));
+      expect(commitBack).toBeDefined();
+
+      await act(async () => request.resolve(tracks));
+      expect(screen.getByRole("article", {
+        name: "Soft Focus release details",
+      })).toBeInTheDocument();
+      expect(libraryPane.scrollTop).toBe(0);
+
+      act(() => commitBack!());
+      await act(async () => transitionFinished.resolve());
+
+      expect(await screen.findByRole("list", {
+        name: "All releases",
+      })).toBeInTheDocument();
+      expect(libraryPane.scrollTop).toBe(312);
+    } finally {
       if (originalDescriptor) {
         Object.defineProperty(document, "startViewTransition", originalDescriptor);
       } else {
