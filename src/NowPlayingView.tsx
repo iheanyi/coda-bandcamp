@@ -675,63 +675,70 @@ function NowPlayingViewComponent({
             </div>
           ) : null}
 
-          <NowPlayingPlaybackControls
-            playbackClock={playbackClock}
-            timeline={radioTimeline}
-            duration={safeDuration}
-            playing={playing}
-            repeat={repeat}
-            queueOpen={queueOpen}
-            queueControlRef={queueControlRef}
-            canPrevious={canPrevious}
-            canNext={canNext}
-            onSeek={onSeek}
-            onRepeat={onRepeat}
-            onPrevious={onPrevious}
-            onToggle={onToggle}
-            onNext={onNext}
-          />
-
-          <div className="mt-4 flex items-center justify-center gap-1">
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => onVolume(volume ? 0 : 0.72)}
-                    aria-label={volume ? "Mute" : "Unmute"}
-                  />
-                }
-              >
-                {volume
-                  ? <Volume2 className="size-5" size={19} />
-                  : <VolumeX className="size-5" size={19} />}
-              </TooltipTrigger>
-              <TooltipContent>{volume ? "Mute" : "Unmute"}</TooltipContent>
-            </Tooltip>
-            <Slider
-              className="mr-3 data-horizontal:w-28 max-lg:data-horizontal:w-20"
-              aria-label="Volume"
-              min={0}
-              max={1}
-              step={0.01}
-              value={[volume]}
-              onValueChange={(values) => onVolume(values[0] ?? 0)}
+          <div
+            data-now-playing-controls=""
+            className={cn(queueOpen && "pointer-events-none invisible")}
+            aria-hidden={queueOpen || undefined}
+            inert={queueOpen || undefined}
+          >
+            <NowPlayingPlaybackControls
+              playbackClock={playbackClock}
+              timeline={radioTimeline}
+              duration={safeDuration}
+              playing={playing}
+              repeat={repeat}
+              queueOpen={queueOpen}
+              queueControlRef={queueOpen ? undefined : queueControlRef}
+              canPrevious={canPrevious}
+              canNext={canNext}
+              onSeek={onSeek}
+              onRepeat={onRepeat}
+              onPrevious={onPrevious}
+              onToggle={onToggle}
+              onNext={onNext}
             />
-            {airPlayAvailable ? (
-              <Button
-                variant="secondary"
-                size="compact"
-                className="h-auto px-2 py-1.5 text-xs text-muted-foreground"
-                onClick={onAirPlay}
-                title="Choose AirPlay device"
-                aria-label="Choose AirPlay device"
-              >
-                <Airplay size={17} />
-                AirPlay
-              </Button>
-            ) : null}
+
+            <div className="mt-4 flex items-center justify-center gap-1">
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => onVolume(volume ? 0 : 0.72)}
+                      aria-label={volume ? "Mute" : "Unmute"}
+                    />
+                  }
+                >
+                  {volume
+                    ? <Volume2 className="size-5" size={19} />
+                    : <VolumeX className="size-5" size={19} />}
+                </TooltipTrigger>
+                <TooltipContent>{volume ? "Mute" : "Unmute"}</TooltipContent>
+              </Tooltip>
+              <Slider
+                className="mr-3 data-horizontal:w-28 max-lg:data-horizontal:w-20"
+                aria-label="Volume"
+                min={0}
+                max={1}
+                step={0.01}
+                value={[volume]}
+                onValueChange={(values) => onVolume(values[0] ?? 0)}
+              />
+              {airPlayAvailable ? (
+                <Button
+                  variant="secondary"
+                  size="compact"
+                  className="h-auto px-2 py-1.5 text-xs text-muted-foreground"
+                  onClick={onAirPlay}
+                  title="Choose AirPlay device"
+                  aria-label="Choose AirPlay device"
+                >
+                  <Airplay size={17} />
+                  AirPlay
+                </Button>
+              ) : null}
+            </div>
           </div>
         </section>
       </div>

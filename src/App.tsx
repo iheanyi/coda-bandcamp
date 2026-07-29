@@ -67,6 +67,7 @@ import {
 } from "./components/ui/dialog";
 import {
   Drawer,
+  DrawerClose,
   DrawerContent,
   DrawerDescription,
   DrawerFooter,
@@ -810,7 +811,7 @@ const QueueRadioChapters = memo(function QueueRadioChapters({
 
   return (
     <section className="mt-3 border-t border-white/[0.07] pt-2.5" aria-label="Show chapters">
-      <header className="flex items-center justify-between px-1 pb-2 text-xs font-bold tracking-widest text-[#8d918b] uppercase">
+      <header className="flex items-center justify-between px-1 pb-2 text-coda-micro font-bold tracking-widest text-[#8d918b] uppercase">
         <span>Show chapters</span>
         <span className="text-[#686d68] tabular-nums">{chapters.length}</span>
       </header>
@@ -834,18 +835,18 @@ const QueueRadioChapters = memo(function QueueRadioChapters({
                 size="compact"
                 variant="text"
               >
-                <time className="text-xs text-[#777b76] tabular-nums">{formatTime(chapter.timecode)}</time>
+                <time className="text-coda-micro text-[#777b76] tabular-nums">{formatTime(chapter.timecode)}</time>
                 <span className="flex min-w-0 flex-col gap-1">
-                  <strong className={`truncate text-xs font-semibold ${isCurrent ? "text-[#f0e8e2]" : isNext ? "text-[#c5c5bf]" : "text-[#d5d4ce]"}`}>{chapter.title}</strong>
-                  <small className="truncate text-xs text-[#747873]">
+                  <strong className={`truncate text-coda-meta font-semibold ${isCurrent ? "text-[#f0e8e2]" : isNext ? "text-[#c5c5bf]" : "text-[#d5d4ce]"}`}>{chapter.title}</strong>
+                  <small className="truncate text-coda-micro font-normal text-[#747873]">
                     {chapter.artist}
                     {chapter.album ? ` · ${chapter.album}` : ""}
                   </small>
                 </span>
                 {isCurrent ? (
-                  <Badge className="rounded-full bg-primary/15 p-1 text-xs font-bold tracking-widest text-[#e39582] uppercase">On air</Badge>
+                  <Badge className="rounded-full bg-primary/15 text-(length:--text-coda-micro) font-bold tracking-widest text-[#e39582] uppercase" size="compact">On air</Badge>
                 ) : isNext ? (
-                  <Badge className="rounded-full bg-white/4.5 p-1 text-xs font-bold tracking-widest text-[#858984] uppercase">Next</Badge>
+                  <Badge className="rounded-full bg-white/4.5 text-(length:--text-coda-micro) font-bold tracking-widest text-[#858984] uppercase" size="compact">Next</Badge>
                 ) : null}
               </Button>
             </li>
@@ -929,8 +930,8 @@ const QueuePanel = memo(function QueuePanel({
   const emptyQueue = (
     <div className="flex min-h-full flex-col items-center justify-center px-1 pt-6 pb-7 text-center text-[#666a66]">
       <Music2 className="box-content rounded-full border border-white/[0.07] bg-coda-radio p-2 text-[#777b76]" size={25} />
-      <strong className="mt-3 text-xs text-[#b9bbb5]">{currentTrack ? "End of the queue" : "Your queue is empty"}</strong>
-      <span className="mt-1 max-w-64 text-balance text-xs/normal text-[#777b76]">
+      <strong className="mt-3 text-coda-compact text-[#b9bbb5]">{currentTrack ? "End of the queue" : "Your queue is empty"}</strong>
+      <span className="mt-1 max-w-64 text-balance text-coda-meta text-[#777b76]">
         {recommendation
           ? "Not sure what comes next? Let Coda pick from your collection."
           : currentTrack
@@ -941,16 +942,16 @@ const QueuePanel = memo(function QueuePanel({
         <div className="mt-6 grid w-full min-w-0 grid-cols-[3rem_minmax(0,1fr)] gap-x-3 gap-y-2.5 overflow-hidden rounded-lg border border-white/9 bg-[radial-gradient(circle_at_0_0,rgba(221,101,73,0.09),transparent_58%),#1a1d1f] p-3 text-left shadow-[inset_0_1px_rgba(255,255,255,0.025)] *:data-[slot=cover]:self-center">
           <CoverArt size="small" album={recommendation.album} />
           <div className="flex min-w-0 flex-col justify-center">
-            <span className="text-xs font-bold tracking-widest text-[#d07c67] uppercase">Try this next</span>
-            <strong className="mt-1 truncate text-xs/tight text-[#deddd7]">{recommendation.album.title}</strong>
-            <small className="mt-1 truncate text-xs/tight text-[#797d78]">
+            <span className="text-coda-micro font-bold tracking-widest text-[#d07c67] uppercase">Try this next</span>
+            <strong className="mt-1 truncate text-coda-compact text-[#deddd7]">{recommendation.album.title}</strong>
+            <small className="mt-1 truncate text-coda-micro font-normal text-[#797d78]">
               {recommendation.album.artist} · {recommendation.reason}
             </small>
           </div>
           <div className="col-span-full flex gap-1.5">
             <Button
               type="button"
-              className="min-h-8 flex-1 gap-1.5 border-0 bg-[#34211e] px-2.5 text-xs font-bold text-[#e9947e] hover:bg-primary/20 hover:text-[#ffc0b0]"
+              className="min-h-8 flex-1 gap-1.5 border-0 bg-[#34211e] px-2.5 text-(length:--text-coda-meta) font-bold text-[#e9947e] hover:bg-primary/20 hover:text-[#ffc0b0]"
               onClick={onPlayRecommendation}
               disabled={recommendationLoading}
               aria-label={`Play something from ${recommendation.album.title}`}
@@ -988,9 +989,10 @@ const QueuePanel = memo(function QueuePanel({
 
   return (
     <DrawerContent
+      id="queue-drawer"
       ref={panelRef}
       finalFocus={finalFocus}
-      className={`top-3! right-3! isolate w-80! max-h-none min-h-0 min-w-0 overflow-hidden rounded-lg border border-white/12 bg-coda-queue shadow-coda-queue [contain:paint] data-[swipe-direction=right]:rounded-lg xl:w-88! max-lg:top-2! max-lg:right-2! focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary/70 ${
+      className={`top-3! right-3! isolate max-h-none min-h-0 w-88 min-w-0 overflow-hidden rounded-lg border border-white/12 bg-coda-queue shadow-coda-queue contain-[paint] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary/70 data-[swipe-direction=right]:rounded-lg max-lg:top-2! max-lg:right-2! ${
         playerVisible
           ? "bottom-26! max-lg:bottom-25!"
           : "bottom-3! max-lg:bottom-2!"
@@ -1000,7 +1002,7 @@ const QueuePanel = memo(function QueuePanel({
     >
       <DrawerHeader className="flex-row items-center justify-between gap-4 bg-coda-queue px-3 pt-6 pb-4 text-left">
         <div>
-          <span className="mb-2 text-xs font-bold tracking-widest text-[#777b76] uppercase">Playing next</span>
+          <span className="mb-2 text-coda-meta font-bold tracking-widest text-[#777b76] uppercase">Playing next</span>
           <DrawerTitle className="m-0 font-display text-xl leading-none font-semibold">Queue</DrawerTitle>
           <DrawerDescription className="sr-only">
             Review and manage the tracks playing next.
@@ -1025,7 +1027,7 @@ const QueuePanel = memo(function QueuePanel({
             <TooltipContent>Shuffle queue</TooltipContent>
           </Tooltip>
           <Button
-            className="h-8 px-2 text-xs font-semibold text-[#858984] hover:bg-transparent hover:text-[#e1dfd9]"
+            className="h-8 px-2 text-(length:--text-coda-meta) font-semibold text-[#858984] hover:bg-transparent hover:text-[#e1dfd9]"
             onClick={onClear}
             disabled={queue.length <= currentIndex + 1}
             title="Clear upcoming tracks"
@@ -1042,7 +1044,7 @@ const QueuePanel = memo(function QueuePanel({
           className="mx-3 mb-2 overflow-hidden rounded-md border border-primary/25 bg-[linear-gradient(135deg,rgba(221,101,73,0.14),transparent_62%),#1c1a1b] p-2.5 animate-[queue-now-in_320ms_cubic-bezier(0.22,1,0.36,1)_both]"
           key={currentTrack.id}
         >
-          <Badge className="mb-2 gap-1.5 bg-transparent p-0 text-xs tracking-widest text-[#d07b65] uppercase">
+          <Badge className="mb-2 h-auto gap-1.5 bg-transparent p-0 text-(length:--text-coda-micro) tracking-widest text-[#d07b65] uppercase" size="compact">
             <span className="size-1.5 rounded-full bg-primary" />Now playing
           </Badge>
           <div className="flex w-full min-w-0 items-center gap-2.5 text-left">
@@ -1076,7 +1078,7 @@ const QueuePanel = memo(function QueuePanel({
                     localLinks={getRadioChapterLocalLinks(currentRadioChapter)}
                   />
                   {nextRadioChapter ? (
-                    <span className="mt-0.5 truncate text-xs text-[#6f746f]">
+                    <span className="mt-0.5 truncate text-coda-micro text-[#6f746f]">
                       Next: {nextRadioChapter.title}
                     </span>
                   ) : null}
@@ -1084,7 +1086,7 @@ const QueuePanel = memo(function QueuePanel({
               ) : (
                 <>
                   <Button
-                    className="h-auto w-full justify-start truncate p-0 text-left text-xs font-semibold text-[#d9d8d2] hover:bg-transparent hover:text-[#d9d8d2]"
+                    className="h-auto w-full justify-start truncate p-0 text-left text-(length:--text-coda-compact) font-semibold text-[#d9d8d2] hover:bg-transparent hover:text-[#d9d8d2]"
                     onClick={onNowPlaying}
                     size="compact"
                     variant="text"
@@ -1092,7 +1094,7 @@ const QueuePanel = memo(function QueuePanel({
                     {currentTrack.title}
                   </Button>
                   <Button
-                    className="h-auto justify-start truncate p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
+                    className="h-auto justify-start truncate p-0 text-(length:--text-coda-meta) font-normal text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
                     onClick={() =>
                       onArtist(
                         currentTrack.artist,
@@ -1189,7 +1191,7 @@ const QueuePanel = memo(function QueuePanel({
               </Button>
               <span className="flex min-w-0 flex-col gap-1">
                 <Button
-                  className="h-auto min-w-0 justify-start truncate p-0 text-left text-xs font-semibold text-[#d9d8d2] hover:bg-transparent hover:text-[#d9d8d2]"
+                  className="h-auto min-w-0 justify-start truncate p-0 text-left text-(length:--text-coda-compact) font-semibold text-[#d9d8d2] hover:bg-transparent hover:text-[#d9d8d2]"
                   onClick={() => onPlay(absoluteIndex)}
                   size="compact"
                   variant="text"
@@ -1197,7 +1199,7 @@ const QueuePanel = memo(function QueuePanel({
                   {track.title}
                 </Button>
                 <Button
-                  className="h-auto justify-start truncate p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
+                  className="h-auto justify-start truncate p-0 text-(length:--text-coda-meta) font-normal text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
                   onClick={() => onArtist(track.artist, track.albumId, track)}
                   size="compact"
                   variant="text"
@@ -1206,7 +1208,7 @@ const QueuePanel = memo(function QueuePanel({
                 </Button>
               </span>
             </div>
-            <span className="text-xs text-[#666a66]">{formatTime(track.duration)}</span>
+            <span className="text-coda-micro text-[#666a66] tabular-nums">{formatTime(track.duration)}</span>
             <Tooltip>
               <TooltipTrigger
                 render={(
@@ -1230,7 +1232,7 @@ const QueuePanel = memo(function QueuePanel({
       />
       </Suspense>
 
-      <DrawerFooter className="mt-0 flex-row justify-between gap-0 border-t border-border bg-coda-queue p-3 text-xs text-[#696d68]">
+      <DrawerFooter className="mt-0 flex-row justify-between gap-0 border-t border-border bg-coda-queue p-3 text-(length:--text-coda-micro) text-[#696d68] tabular-nums">
         <span className="animate-[queue-count-in_220ms_cubic-bezier(0.22,1,0.36,1)_both]" key={upcoming.length}>
           {countLabel(upcoming.length, "track")} next
         </span>
@@ -1470,6 +1472,7 @@ const PlayerTransport = memo(function PlayerTransport({
 });
 
 function Player({
+  mode = "full",
   track,
   radioTimeline,
   playing,
@@ -1499,6 +1502,7 @@ function Player({
   queueOpen,
   queueControlRef,
 }: {
+  mode?: "full" | "now-playing-queue";
   track?: Track;
   radioTimeline: readonly RadioChapter[];
   playing: boolean;
@@ -1529,20 +1533,29 @@ function Player({
   queueControlRef: RefObject<HTMLButtonElement | null>;
 }) {
   return (
-    <footer className="relative z-3 grid grid-cols-[minmax(0,1fr)_minmax(18rem,1.4fr)_minmax(0,1fr)] items-center gap-3 border-t border-(--line-strong) bg-coda-player px-3 shadow-coda-player lg:grid-cols-[minmax(0,1fr)_minmax(22rem,1.5fr)_minmax(0,1fr)] lg:gap-6 lg:px-4">
-      <PlayerTrack
-        track={track}
-        radioTimeline={radioTimeline}
-        playbackClock={playbackClock}
-        favorite={favorite}
-        onToggleFavorite={onToggleFavorite}
-        onArtist={onArtist}
-        onAlbum={onAlbum}
-        albumLoading={albumLoading}
-        onNowPlaying={onNowPlaying}
-        onOpenRadioItem={onOpenRadioItem}
-        getRadioChapterLocalLinks={getRadioChapterLocalLinks}
-      />
+    <footer
+      className={`relative z-3 grid grid-cols-[minmax(0,1fr)_minmax(18rem,1.4fr)_minmax(0,1fr)] items-center gap-3 border-t border-(--line-strong) bg-coda-player px-3 shadow-coda-player lg:grid-cols-[minmax(0,1fr)_minmax(22rem,1.5fr)_minmax(0,1fr)] lg:gap-6 lg:px-4 ${
+        mode === "now-playing-queue" ? "fixed inset-x-0 bottom-0 h-23" : ""
+      }`}
+      data-player-mode={mode}
+    >
+      {mode === "full" ? (
+        <PlayerTrack
+          track={track}
+          radioTimeline={radioTimeline}
+          playbackClock={playbackClock}
+          favorite={favorite}
+          onToggleFavorite={onToggleFavorite}
+          onArtist={onArtist}
+          onAlbum={onAlbum}
+          albumLoading={albumLoading}
+          onNowPlaying={onNowPlaying}
+          onOpenRadioItem={onOpenRadioItem}
+          getRadioChapterLocalLinks={getRadioChapterLocalLinks}
+        />
+      ) : (
+        <span aria-hidden="true" />
+      )}
       <PlayerTransport
         track={track}
         radioTimeline={radioTimeline}
@@ -1567,7 +1580,7 @@ function Player({
         </Tooltip>
         <Slider
           aria-label="Volume"
-          className="hidden w-20 lg:block"
+          className={mode === "now-playing-queue" ? "w-16 lg:w-20" : "hidden w-20 lg:block"}
           min={0}
           max={1}
           step={0.01}
@@ -1582,7 +1595,7 @@ function Player({
             <TooltipContent>Choose AirPlay device</TooltipContent>
           </Tooltip>
         ) : null}
-        {track && !track.id.startsWith("radio:") ? (
+        {mode === "full" && track && !track.id.startsWith("radio:") ? (
           <Tooltip>
             <TooltipTrigger render={<Button onClick={onAddToPlaylist} aria-label={`Add ${track.title} to playlist`} size="icon" variant="ghost" />}>
               <ListPlus size={17} />
@@ -1591,24 +1604,48 @@ function Player({
           </Tooltip>
         ) : null}
         <Tooltip>
-          <DrawerTrigger
-            render={(
-              <TooltipTrigger
-                render={(
-                  <Button
-                    className={queueOpen ? "text-primary" : ""}
-                    ref={queueControlRef}
-                    aria-label={queueOpen ? "Hide queue" : "Show queue"}
-                    aria-pressed={queueOpen}
-                    size="icon"
-                    variant="ghost"
-                  />
-                )}
-              >
-                <ListMusic size={18} />
-              </TooltipTrigger>
-            )}
-          />
+          {queueOpen ? (
+            <DrawerClose
+              render={(
+                <TooltipTrigger
+                  render={(
+                    <Button
+                      className="text-primary"
+                      ref={queueControlRef}
+                      aria-controls="queue-drawer"
+                      aria-expanded="true"
+                      aria-haspopup="dialog"
+                      aria-label="Hide queue"
+                      aria-pressed="true"
+                      size="icon"
+                      variant="ghost"
+                    />
+                  )}
+                >
+                  <ListMusic size={18} />
+                </TooltipTrigger>
+              )}
+            />
+          ) : (
+            <DrawerTrigger
+              render={(
+                <TooltipTrigger
+                  render={(
+                    <Button
+                      className={queueOpen ? "text-primary" : ""}
+                      ref={queueControlRef}
+                      aria-label={queueOpen ? "Hide queue" : "Show queue"}
+                      aria-pressed={queueOpen}
+                      size="icon"
+                      variant="ghost"
+                    />
+                  )}
+                >
+                  <ListMusic size={18} />
+                </TooltipTrigger>
+              )}
+            />
+          )}
           <TooltipContent>{queueOpen ? "Hide queue" : "Show queue"}</TooltipContent>
         </Tooltip>
       </div>
@@ -4563,6 +4600,7 @@ export default function App() {
   const showAnotherQueueRecommendation = useCallback(() => {
     setQueueRecommendationNonce((nonce) => nonce + 1);
   }, []);
+  const playerVisible = !nowPlayingOpen || queueOpen;
 
   return (
     <Drawer
@@ -5126,11 +5164,12 @@ export default function App() {
             onPlayRecommendation={playQueueRecommendation}
             onAnotherRecommendation={showAnotherQueueRecommendation}
             loadingAlbumId={loadingAlbumId}
-            playerVisible={!nowPlayingOpen}
+            playerVisible={playerVisible}
           />
       </div>
-      {nowPlayingOpen && currentTrack ? null : (
+      {playerVisible ? (
         <Player
+          mode={nowPlayingOpen ? "now-playing-queue" : "full"}
           track={currentTrack}
           radioTimeline={currentRadioTimeline}
           playing={playing}
@@ -5168,7 +5207,7 @@ export default function App() {
           queueOpen={queueOpen}
           queueControlRef={queueControlRef}
         />
-      )}
+      ) : null}
       <MiniPlayerBridge
         track={currentTrack}
         artwork={currentAlbum}

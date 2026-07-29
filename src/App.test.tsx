@@ -1435,6 +1435,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       return popup!;
     });
     expect(queueDrawer).toHaveAttribute("role", "dialog");
+    expect(queueDrawer).toHaveAttribute("id", "queue-drawer");
     expect(queueDrawer).toHaveAccessibleName("Queue");
     expect(showQueue).toHaveAttribute("aria-haspopup", "dialog");
     expect(queueDrawer).toHaveAttribute("data-swipe-direction", "right");
@@ -1456,6 +1457,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       "aria-pressed",
       "true",
     );
+    expect(hideQueue).toHaveAttribute("aria-controls", "queue-drawer");
     expect(screen.getByRole("main")).toBe(libraryPane);
 
     await user.keyboard("{Escape}");
@@ -1484,50 +1486,118 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     );
   });
 
-  it("restores queue focus to the active Now Playing control", async () => {
+  it("keeps a bottom player escape hatch while the queue covers Now Playing", async () => {
     const user = userEvent.setup();
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
-    renderApp();
+    const { container } = renderApp();
 
     await screen.findByText("Soft Focus");
     await user.click(screen.getByRole("button", { name: "Play Soft Focus" }));
-
-    const compactQueueControl = await screen.findByRole("button", {
-      name: "Show queue",
-    });
-    compactQueueControl.focus();
-    await user.click(compactQueueControl);
-    expect(await screen.findByRole("dialog", { name: "Queue" }))
-      .toBeInTheDocument();
-
     await user.click(screen.getByRole("button", { name: "Open Now Playing" }));
     const nowPlaying = await screen.findByRole("article", {
       name: "First Light",
     });
-    expect(within(nowPlaying).getAllByRole("button", {
-      name: "Hide queue",
-    })).toHaveLength(1);
-    expect(within(nowPlaying).queryByRole("button", {
-      name: "Hide full queue",
-    })).not.toBeInTheDocument();
+    const appGrid = container.firstElementChild;
+    expect(appGrid).toHaveClass("grid-rows-[minmax(0,1fr)]");
+    expect(appGrid).not.toHaveClass(
+      "grid-rows-[minmax(0,1fr)_--spacing(23)]",
+    );
+    const nowPlayingLayout = appGrid?.className;
+    const inlineControls = within(nowPlaying)
+      .getByRole("group", { name: "Playback controls" })
+      .closest<HTMLElement>("[data-now-playing-controls]");
+    expect(inlineControls).not.toBeNull();
+    expect(inlineControls).not.toHaveClass("invisible");
+    expect(screen.queryByRole("contentinfo")).not.toBeInTheDocument();
 
-    await user.keyboard("{Escape}");
     const nowPlayingQueueControl = within(nowPlaying).getByRole("button", {
       name: "Show queue",
     });
-    await waitFor(() => expect(nowPlayingQueueControl).toHaveFocus());
-
+    nowPlayingQueueControl.focus();
     await user.click(nowPlayingQueueControl);
+    expect(await screen.findByRole("dialog", { name: "Queue" }))
+      .toBeInTheDocument();
+    expect(appGrid?.className).toBe(nowPlayingLayout);
+    expect(inlineControls).toHaveClass("invisible", "pointer-events-none");
+    expect(inlineControls).toHaveAttribute("aria-hidden", "true");
+    expect(inlineControls).toHaveAttribute("inert");
+
+    const queuePlayer = screen.getByRole("contentinfo");
+    expect(queuePlayer).toHaveClass("fixed", "inset-x-0", "bottom-0", "h-23");
+    expect(within(queuePlayer).getAllByRole("button", {
+      name: "Hide queue",
+    })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Hide queue" })).toHaveLength(1);
+    const queueClose = within(queuePlayer).getByRole("button", {
+      name: "Hide queue",
+    });
+    expect(queueClose).toHaveAttribute("aria-controls", "queue-drawer");
+    expect(queueClose).toHaveAttribute("data-slot", "drawer-close");
+    expect(within(queuePlayer).getByRole("button", { name: "Mute" }))
+      .toBeEnabled();
+    expect(within(queuePlayer).getByRole("slider", { name: "Volume" }))
+      .toBeEnabled();
+    expect(within(nowPlaying).queryByRole("group", {
+      name: "Playback controls",
+    })).not.toBeInTheDocument();
+    expect(within(nowPlaying).queryByRole("slider", { name: "Volume" }))
+      .not.toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    const restoredQueueControl = within(nowPlaying).getByRole("button", {
+      name: "Show queue",
+    });
+    await waitFor(() => expect(restoredQueueControl).toHaveFocus());
+    expect(appGrid?.className).toBe(nowPlayingLayout);
+    expect(inlineControls).not.toHaveClass("invisible");
+    expect(inlineControls).not.toHaveAttribute("aria-hidden");
+    expect(screen.queryByRole("contentinfo")).not.toBeInTheDocument();
+
+    await user.click(restoredQueueControl);
     const reopenedQueue = await screen.findByRole("dialog", { name: "Queue" });
     await waitFor(() => expect(reopenedQueue).toHaveFocus());
-    const hideQueueControl = within(nowPlaying).getByRole("button", {
+    const reopenedPlayer = screen.getByRole("contentinfo");
+    const hideQueueControl = within(reopenedPlayer).getByRole("button", {
       name: "Hide queue",
     });
     hideQueueControl.focus();
     expect(hideQueueControl).toHaveFocus();
     await user.keyboard(" ");
-    await waitFor(() => expect(nowPlayingQueueControl).toHaveFocus());
+    await waitFor(() =>
+      expect(within(nowPlaying).getByRole("button", {
+        name: "Show queue",
+      })).toHaveFocus(),
+    );
+
+    await user.click(within(nowPlaying).getByRole("button", {
+      name: "Show queue",
+    }));
+    await screen.findByRole("dialog", { name: "Queue" });
+    await user.click(within(screen.getByRole("contentinfo")).getByRole(
+      "button",
+      { name: "Hide queue" },
+    ));
+    await waitFor(() =>
+      expect(within(nowPlaying).getByRole("button", {
+        name: "Show queue",
+      })).toHaveFocus(),
+    );
+
+    await user.click(within(nowPlaying).getByRole("button", {
+      name: "Show queue",
+    }));
+    await screen.findByRole("dialog", { name: "Queue" });
+    await user.click(within(nowPlaying).getByRole("button", { name: "Back" }));
+    const restoredPlayer = screen.getByRole("contentinfo");
+    expect(restoredPlayer).toHaveAttribute("data-player-mode", "full");
+    const restoredHideQueue = within(restoredPlayer).getByRole("button", {
+      name: "Hide queue",
+    });
+    expect(restoredHideQueue).toHaveAttribute("data-slot", "drawer-close");
+    await user.click(restoredHideQueue);
+    expect(screen.queryByRole("dialog", { name: "Queue" }))
+      .not.toBeInTheDocument();
   });
 
   it("keeps the rendered queue opaque and contains long metadata within one gutter", async () => {
@@ -1556,8 +1626,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       name: "Queue",
     });
     const stylesPath = resolve("src/styles.css");
+    const sourceStyles = await readFile(stylesPath, "utf8");
     const compiler = await compileTailwind(
-      await readFile(stylesPath, "utf8"),
+      sourceStyles,
       {
         base: resolve("src"),
         from: stylesPath,
@@ -1569,7 +1640,11 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     const header = panel.querySelector<HTMLElement>(
       '[data-slot="drawer-header"]',
     );
+    const eyebrow = within(panel).getByText("Playing next");
     const currentTitle = within(panel).getByRole("button", { name: longTitle });
+    const currentArtist = within(panel).getByRole("button", {
+      name: "Night Archive",
+    });
     const currentMetadata = currentTitle.parentElement;
     const nowPlayingCard = currentMetadata?.parentElement?.parentElement;
     const queueRegion = within(panel).getByRole("region", {
@@ -1593,14 +1668,32 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       emptyState!,
       header!,
       footer as HTMLElement,
+      eyebrow,
+      currentArtist,
     ]);
 
     expect(getComputedStyle(panel).backgroundColor).toBe("rgb(21, 23, 25)");
+    expect(getComputedStyle(panel).width).toBe("352px");
     expect(getComputedStyle(currentMetadata!).flexBasis).toBe("0px");
     expect(getComputedStyle(currentMetadata!).flexGrow).toBe("1");
     expect(getComputedStyle(currentMetadata!).overflow).toBe("hidden");
+    expect(currentTitle).toHaveClass(
+      "text-(length:--text-coda-compact)",
+    );
+    expect(currentArtist).toHaveClass(
+      "text-(length:--text-coda-meta)",
+      "font-normal",
+    );
+    expect(sourceStyles).toContain("--text-coda-compact: 0.6875rem");
+    expect(sourceStyles).toContain("--text-coda-meta: 0.625rem");
     expect(getComputedStyle(currentTitle).textOverflow).toBe("ellipsis");
     expect(getComputedStyle(currentTitle).whiteSpace).toBe("nowrap");
+    expect(getComputedStyle(eyebrow).fontSize).toBe("10px");
+    expect(getComputedStyle(emptyCopy).fontSize).toBe("10px");
+    expect(footer).toHaveClass(
+      "text-(length:--text-coda-micro)",
+      "tabular-nums",
+    );
     expect(getComputedStyle(emptyCopy).maxWidth).toBe("256px");
 
     const gutter = Number.parseFloat(getComputedStyle(nowPlayingCard!).marginLeft);

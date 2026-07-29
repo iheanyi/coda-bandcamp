@@ -169,20 +169,21 @@ describe("NowPlayingView Radio metadata", () => {
     const onVolume = vi.fn();
     const onRepeat = vi.fn();
     const noOp = vi.fn();
-    renderNowPlaying(
+    const playbackClock = createPlaybackClock(45);
+    const view = (queueOpen: boolean) => (
       <NowPlayingView
         track={radioTrack}
         radioTimeline={radioTimeline}
         queue={[radioTrack]}
         currentIndex={0}
         playing
-        playbackClock={createPlaybackClock(45)}
+        playbackClock={playbackClock}
         duration={radioTrack.duration}
         volume={0.7}
         repeat="off"
         artwork={<span>Artwork</span>}
         airPlayAvailable={false}
-        queueOpen={false}
+        queueOpen={queueOpen}
         onBack={onBack}
         onToggle={onToggle}
         onPrevious={onPrevious}
@@ -200,8 +201,9 @@ describe("NowPlayingView Radio metadata", () => {
         recommendationLoading={false}
         onPlayRecommendation={noOp}
         onAnotherRecommendation={noOp}
-      />,
+      />
     );
+    const { rerender } = renderNowPlaying(view(false));
 
     expect(screen.getByRole("heading", { name: "Kinrose" })).toHaveFocus();
 
@@ -350,6 +352,20 @@ describe("NowPlayingView Radio metadata", () => {
     expect(onVolume).toHaveBeenCalledWith(1);
     fireEvent.keyDown(volume, { key: "Home" });
     expect(onVolume).toHaveBeenCalledWith(0);
+
+    rerender(view(true));
+    const reservedControls = document.querySelector<HTMLElement>(
+      "[data-now-playing-controls]",
+    );
+    expect(reservedControls).toHaveClass("invisible", "pointer-events-none");
+    expect(reservedControls).toHaveAttribute("aria-hidden", "true");
+    expect(reservedControls).toHaveAttribute("inert");
+    expect(screen.queryByRole("group", { name: "Playback controls" }))
+      .not.toBeInTheDocument();
+    expect(screen.queryByRole("slider", { name: "Volume" }))
+      .not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Hide queue" }))
+      .not.toBeInTheDocument();
   });
 
   it("reports continuous bounded seek changes while pointer-dragging the position slider", () => {
