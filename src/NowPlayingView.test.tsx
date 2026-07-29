@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -14,6 +15,7 @@ vi.mock("./lib", async (importOriginal) => {
 });
 
 import { NowPlayingView } from "./NowPlayingView";
+import { Drawer } from "./components/ui/drawer";
 import { createPlaybackClock } from "./playbackClock";
 import { boundRadioChapters } from "./radioPlayback";
 import type { Album, Track } from "./types";
@@ -51,8 +53,113 @@ const continuationAlbum: Album = {
   genre: "Ambient",
   palette: ["#6f6d86", "#1a1b25"],
 };
+const libraryTrack: Track = {
+  ...radioTrack,
+  id: "track-22",
+  title: "Static Bloom",
+  artist: "Night Archive",
+  album: "Soft Focus",
+  albumId: "album-22",
+  radioChapters: undefined,
+};
+
+function renderNowPlaying(ui: ReactNode) {
+  return render(ui, {
+    wrapper: ({ children }) => <Drawer>{children}</Drawer>,
+  });
+}
 
 describe("NowPlayingView Radio metadata", () => {
+  it("announces a pending album transition and prevents repeated navigation", () => {
+    const noOp = vi.fn();
+    const onAlbum = vi.fn();
+    const { rerender } = renderNowPlaying(
+      <NowPlayingView
+        track={libraryTrack}
+        radioTimeline={[]}
+        queue={[libraryTrack]}
+        currentIndex={0}
+        playing
+        playbackClock={createPlaybackClock(45)}
+        duration={libraryTrack.duration}
+        volume={0.7}
+        repeat="off"
+        artwork={<span>Artwork</span>}
+        airPlayAvailable={false}
+        queueOpen={false}
+        onBack={noOp}
+        onToggle={noOp}
+        onPrevious={noOp}
+        onNext={noOp}
+        canPrevious
+        canNext
+        onSeek={noOp}
+        onVolume={noOp}
+        onRepeat={noOp}
+        onAirPlay={noOp}
+        onArtist={noOp}
+        onAlbum={onAlbum}
+        albumLoading={false}
+        onPlayQueueIndex={noOp}
+        onRadioSeries={noOp}
+        recommendationLoading={false}
+        onPlayRecommendation={noOp}
+        onAnotherRecommendation={noOp}
+      />,
+    );
+
+    const albumLink = screen.getByRole("button", { name: "Soft Focus" });
+    fireEvent.click(albumLink);
+    expect(onAlbum).toHaveBeenCalledOnce();
+
+    rerender(
+      <NowPlayingView
+        track={libraryTrack}
+        radioTimeline={[]}
+        queue={[libraryTrack]}
+        currentIndex={0}
+        playing
+        playbackClock={createPlaybackClock(45)}
+        duration={libraryTrack.duration}
+        volume={0.7}
+        repeat="off"
+        artwork={<span>Artwork</span>}
+        airPlayAvailable={false}
+        queueOpen={false}
+        onBack={noOp}
+        onToggle={noOp}
+        onPrevious={noOp}
+        onNext={noOp}
+        canPrevious
+        canNext
+        onSeek={noOp}
+        onVolume={noOp}
+        onRepeat={noOp}
+        onAirPlay={noOp}
+        onArtist={noOp}
+        onAlbum={onAlbum}
+        albumLoading
+        onPlayQueueIndex={noOp}
+        onRadioSeries={noOp}
+        recommendationLoading={false}
+        onPlayRecommendation={noOp}
+        onAnotherRecommendation={noOp}
+      />,
+    );
+
+    const pendingAlbumLink = screen.getByRole("button", {
+      name: "Loading album Soft Focus",
+    });
+    expect(pendingAlbumLink).toBeDisabled();
+    expect(pendingAlbumLink).toHaveAttribute("aria-busy", "true");
+    expect(within(pendingAlbumLink).getByRole("status", {
+      name: "Loading album Soft Focus",
+    })).toBeInTheDocument();
+
+    fireEvent.click(pendingAlbumLink);
+    expect(onAlbum).toHaveBeenCalledOnce();
+  });
+
   it("focuses the track heading and drives playback, queue, and bounded sliders", () => {
     const onBack = vi.fn();
     const onToggle = vi.fn();
@@ -61,9 +168,8 @@ describe("NowPlayingView Radio metadata", () => {
     const onSeek = vi.fn();
     const onVolume = vi.fn();
     const onRepeat = vi.fn();
-    const onToggleQueue = vi.fn();
     const noOp = vi.fn();
-    render(
+    renderNowPlaying(
       <NowPlayingView
         track={radioTrack}
         radioTimeline={radioTimeline}
@@ -87,7 +193,6 @@ describe("NowPlayingView Radio metadata", () => {
         onVolume={onVolume}
         onRepeat={onRepeat}
         onAirPlay={noOp}
-        onToggleQueue={onToggleQueue}
         onArtist={noOp}
         onAlbum={noOp}
         onPlayQueueIndex={noOp}
@@ -124,7 +229,8 @@ describe("NowPlayingView Radio metadata", () => {
     expect(onPrevious).toHaveBeenCalledOnce();
     expect(onToggle).toHaveBeenCalledOnce();
     expect(onNext).toHaveBeenCalledOnce();
-    expect(onToggleQueue).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Show queue" }))
+      .toHaveAttribute("aria-expanded", "true");
 
     const [position, volume] = screen.getAllByRole("slider", { hidden: true });
     expect(position).toHaveAttribute("aria-label", "Now playing position");
@@ -136,6 +242,39 @@ describe("NowPlayingView Radio metadata", () => {
     expect(onSeek).toHaveBeenCalledWith(radioTrack.duration);
     fireEvent.keyDown(position, { key: "Home" });
     expect(onSeek).toHaveBeenCalledWith(0);
+
+    const positionGroup = screen.getByRole("group", {
+      name: "Now playing position",
+    });
+    const positionControl = positionGroup.querySelector<HTMLElement>(
+      "[data-base-ui-slider-control]",
+    );
+    if (!positionControl) throw new Error("Missing position slider control");
+    const positionThumb = positionGroup.querySelector<HTMLElement>(
+      "[data-slot=slider-thumb]",
+    );
+    if (!positionThumb) throw new Error("Missing position slider thumb");
+    vi.spyOn(positionControl, "getBoundingClientRect")
+      .mockReturnValue(new DOMRect(0, 0, 100, 20));
+    vi.spyOn(positionThumb, "getBoundingClientRect")
+      .mockReturnValue(new DOMRect(0.82, 5, 10, 10));
+    fireEvent.pointerDown(positionControl, {
+      button: 0,
+      buttons: 1,
+      clientX: 50,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
+    expect(onSeek).toHaveBeenCalledWith(2469);
+    fireEvent.pointerUp(document, {
+      button: 0,
+      buttons: 0,
+      clientX: 50,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
 
     const volumeGroup = screen.getByRole("group", { name: "Volume" });
     const volumeControl = volumeGroup.querySelector<HTMLElement>(
@@ -149,7 +288,26 @@ describe("NowPlayingView Radio metadata", () => {
     vi.spyOn(volumeControl, "getBoundingClientRect")
       .mockReturnValue(new DOMRect(0, 0, 100, 20));
     vi.spyOn(volumeThumb, "getBoundingClientRect")
-      .mockReturnValue(new DOMRect(0, 0, 10, 10));
+      .mockReturnValue(new DOMRect(63, 5, 10, 10));
+    fireEvent.pointerDown(volumeControl, {
+      button: 0,
+      buttons: 1,
+      clientX: 36.5,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
+    expect(onVolume).toHaveBeenCalledWith(0.35);
+    fireEvent.pointerUp(document, {
+      button: 0,
+      buttons: 0,
+      clientX: 36.5,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
+
+    onVolume.mockClear();
     fireEvent.pointerDown(volumeControl, {
       button: 0,
       buttons: 1,
@@ -184,11 +342,101 @@ describe("NowPlayingView Radio metadata", () => {
     expect(onVolume).toHaveBeenCalledWith(0);
   });
 
+  it("reports continuous bounded seek changes while pointer-dragging the position slider", () => {
+    const onSeek = vi.fn();
+    const noOp = vi.fn();
+    renderNowPlaying(
+      <NowPlayingView
+        track={radioTrack}
+        radioTimeline={radioTimeline}
+        queue={[radioTrack]}
+        currentIndex={0}
+        playing
+        playbackClock={createPlaybackClock(42)}
+        duration={180}
+        volume={0.7}
+        repeat="off"
+        artwork={<span>Artwork</span>}
+        airPlayAvailable={false}
+        queueOpen={false}
+        onBack={noOp}
+        onToggle={noOp}
+        onPrevious={noOp}
+        onNext={noOp}
+        canPrevious
+        canNext
+        onSeek={onSeek}
+        onVolume={noOp}
+        onRepeat={noOp}
+        onAirPlay={noOp}
+        onArtist={noOp}
+        onAlbum={noOp}
+        onPlayQueueIndex={noOp}
+        onRadioSeries={noOp}
+        recommendationLoading={false}
+        onPlayRecommendation={noOp}
+        onAnotherRecommendation={noOp}
+      />,
+    );
+
+    const position = screen.getByRole("group", {
+      name: "Now playing position",
+    });
+    const control = position.querySelector<HTMLElement>(
+      "[data-base-ui-slider-control]",
+    );
+    if (!control) throw new Error("Missing position slider control");
+    const thumb = position.querySelector<HTMLElement>(
+      "[data-slot=slider-thumb]",
+    );
+    if (!thumb) throw new Error("Missing position slider thumb");
+    vi.spyOn(control, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 100, 20),
+    );
+    vi.spyOn(thumb, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(21, 5, 10, 10),
+    );
+
+    fireEvent.pointerDown(control, {
+      button: 0,
+      buttons: 1,
+      clientX: 35,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
+    fireEvent.pointerMove(document, {
+      buttons: 1,
+      clientX: 72.5,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
+    fireEvent.pointerMove(document, {
+      buttons: 1,
+      clientX: 120,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
+    fireEvent.pointerUp(document, {
+      button: 0,
+      buttons: 0,
+      clientX: 120,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
+
+    expect(onSeek.mock.calls.map(([positionSeconds]) => positionSeconds))
+      .toEqual([60, 135, 180]);
+  });
+
   it("announces the currently airing chapter and its successor", () => {
     const noOp = vi.fn();
     const onSeek = vi.fn();
     const onRadioSeries = vi.fn();
-    render(
+    renderNowPlaying(
       <NowPlayingView
         track={radioTrack}
         radioTimeline={radioTimeline}
@@ -212,7 +460,6 @@ describe("NowPlayingView Radio metadata", () => {
         onVolume={noOp}
         onRepeat={noOp}
         onAirPlay={noOp}
-        onToggleQueue={noOp}
         onArtist={noOp}
         onAlbum={noOp}
         onPlayQueueIndex={noOp}
@@ -291,7 +538,7 @@ describe("NowPlayingView Radio metadata", () => {
     const noOp = vi.fn();
     const playbackClock = createPlaybackClock(45);
     const getRadioChapterLocalLinks = vi.fn(() => ({}));
-    render(
+    renderNowPlaying(
       <NowPlayingView
         track={radioTrack}
         radioTimeline={radioTimeline}
@@ -315,7 +562,6 @@ describe("NowPlayingView Radio metadata", () => {
         onVolume={noOp}
         onRepeat={noOp}
         onAirPlay={noOp}
-        onToggleQueue={noOp}
         onArtist={noOp}
         onAlbum={noOp}
         onPlayQueueIndex={noOp}
@@ -347,7 +593,7 @@ describe("NowPlayingView Radio metadata", () => {
     const noOp = vi.fn();
     const onPlayRecommendation = vi.fn();
     const onAnotherRecommendation = vi.fn();
-    render(
+    renderNowPlaying(
       <NowPlayingView
         track={radioTrack}
         radioTimeline={radioTimeline}
@@ -371,7 +617,6 @@ describe("NowPlayingView Radio metadata", () => {
         onVolume={noOp}
         onRepeat={noOp}
         onAirPlay={noOp}
-        onToggleQueue={noOp}
         onArtist={noOp}
         onAlbum={noOp}
         onPlayQueueIndex={noOp}

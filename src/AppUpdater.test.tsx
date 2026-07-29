@@ -185,7 +185,7 @@ describe("app updater experience", () => {
       screen.getByRole("progressbar", {
         name: "Downloading update… 42%",
       }),
-    ).toHaveAttribute("value", "42");
+    ).toHaveAttribute("aria-valuenow", "42");
     expect(prompt).toHaveAttribute("aria-busy", "true");
     expect(screen.getByRole("button", { name: "Later" })).toBeDisabled();
     expect(updaterMocks.restartAfterUpdate).not.toHaveBeenCalled();

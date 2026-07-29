@@ -204,6 +204,7 @@ export function VirtualizedSavedTrackList<Item>({
               virtualItem.key,
               {
                 borderBottom: virtualItem.index === items.length - 1 ? 0 : undefined,
+                height: virtualItem.size,
                 left: 0,
                 position: "absolute",
                 top: 0,

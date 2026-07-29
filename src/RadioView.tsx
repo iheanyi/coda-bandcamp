@@ -100,7 +100,7 @@ const RadioArtwork = memo(function RadioArtwork({
   return (
     <div
       className={cn(
-        "grid aspect-square place-items-center overflow-hidden rounded-lg border border-white/7 bg-[#242729] text-6xl font-bold text-[#a2a49f]",
+        "grid aspect-square place-items-center overflow-hidden rounded-lg border border-white/7 bg-coda-hover text-6xl font-bold text-[#a2a49f]",
         className,
       )}
     >
@@ -847,6 +847,35 @@ export default function RadioView({
     );
   }
 
+  if (
+    requestedShowId &&
+    !selectedShow &&
+    busy?.id === requestedShowId &&
+    busy.action === "detail"
+  ) {
+    return (
+      <section
+        className="min-h-full animate-[radio-view-in_320ms_var(--ease-coda-enter)] pb-2.5 motion-reduce:animate-none"
+        aria-busy="true"
+        aria-live="polite"
+      >
+        {seriesNavigation}
+        <div className="flex min-h-108 flex-col items-center justify-center text-center text-[#6e726d]">
+          <Spinner
+            className="size-7 motion-reduce:animate-none"
+            aria-label="Loading Radio show details"
+          />
+          <strong className="mt-3 text-base text-[#cac9c3]">
+            Loading show details…
+          </strong>
+          <span className="mt-1.5 max-w-md text-xs/normal text-[#777b76]">
+            Fetching the episode audio and tracklist from Bandcamp.
+          </span>
+        </div>
+      </section>
+    );
+  }
+
   if (!featured) {
     return (
       <section className="min-h-full animate-[radio-view-in_320ms_var(--ease-coda-enter)] pb-2.5 motion-reduce:animate-none">
@@ -1030,7 +1059,7 @@ export default function RadioView({
         </div>
         <span className="text-xs text-[#6f736e]">{countLabel(shows.length, "broadcast")} loaded</span>
       </div>
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3.5 max-lg:grid-cols-[repeat(auto-fill,minmax(180px,1fr))]">
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] gap-3.5 max-lg:grid-cols-[repeat(auto-fill,minmax(11rem,1fr))]">
         {visibleShows.map((show) => (
           <RadioCard
             key={show.id}

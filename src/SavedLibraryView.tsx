@@ -95,6 +95,7 @@ type SavedLibraryViewProps = {
   favoritesLoading: boolean;
   favoritesError?: string;
   favoritesLocal?: boolean;
+  loadingAlbumId?: string;
   onRefreshFavorites: () => void;
   onToggleFavorite: (id: string, kind: "song" | "album", favorite: boolean) => void;
   onToggleRadioFavorite: (show: RadioShowSummary, favorite: boolean) => void;
@@ -358,11 +359,13 @@ function PlaylistList({
   onOpen,
   onCreate,
   creating,
+  openingPlaylistId,
 }: {
   playlists: PlaylistSummary[];
   onOpen: (playlist: PlaylistSummary) => void;
   onCreate: (name: string) => void;
   creating: boolean;
+  openingPlaylistId?: string;
 }) {
   const [name, setName] = useState("");
   const submit = (event: FormEvent) => {
@@ -409,36 +412,46 @@ function PlaylistList({
 
       {playlists.length ? (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-3">
-          {playlists.map((playlist) => (
-            <Button
-              aria-busy={isOptimisticPlaylist(playlist)}
-              className="grid h-auto min-h-20 grid-cols-[3.25rem_minmax(0,1fr)_auto] items-center gap-3 rounded-lg border-border bg-white/2 p-3.5 text-left font-normal transition-[border-color,background-color,transform] duration-150 hover:-translate-y-px hover:border-input hover:bg-white/3.5"
-              disabled={isOptimisticPlaylist(playlist)}
-              key={playlist.id}
-              onClick={() => onOpen(playlist)}
-            >
-              <span className="grid size-13 place-items-center rounded-lg border border-white/7 bg-coda-hover text-[#e1846d]">
-                <ListMusic size={25} />
-              </span>
-              <span className="flex min-w-0 flex-col">
-                <strong className="truncate text-xs text-[#dcdbd5]">
-                  {playlist.name}
-                </strong>
-                <span className="mt-1 truncate text-xs text-[#777b76]">
-                  {countLabel(playlist.songCount, "track")}
-                  {playlist.duration ? ` · ${formatTime(playlist.duration)}` : ""}
+          {playlists.map((playlist) => {
+            const optimistic = isOptimisticPlaylist(playlist);
+            const opening = openingPlaylistId === playlist.id;
+            return (
+              <Button
+                aria-busy={optimistic || opening || undefined}
+                className="grid h-auto min-h-20 grid-cols-[3.25rem_minmax(0,1fr)_auto] items-center gap-3 rounded-lg border-border bg-white/2 p-3.5 text-left font-normal transition-[border-color,background-color,transform] duration-150 hover:-translate-y-px hover:border-input hover:bg-white/3.5"
+                disabled={optimistic || opening}
+                key={playlist.id}
+                onClick={() => onOpen(playlist)}
+              >
+                <span className="grid size-13 place-items-center rounded-lg border border-white/7 bg-coda-hover text-[#e1846d]">
+                  <ListMusic size={25} />
                 </span>
-                {playlist.comment ? (
-                  <small className="mt-1 truncate text-xs text-[#777b76]">
-                    {playlist.comment}
-                  </small>
-                ) : null}
-              </span>
-              <span className="text-xs font-bold text-[#787c77] uppercase">
-                {isOptimisticPlaylist(playlist) ? "Creating…" : "Open"}
-              </span>
-            </Button>
-          ))}
+                <span className="flex min-w-0 flex-col">
+                  <strong className="truncate text-xs text-[#dcdbd5]">
+                    {playlist.name}
+                  </strong>
+                  <span className="mt-1 truncate text-xs text-[#777b76]">
+                    {countLabel(playlist.songCount, "track")}
+                    {playlist.duration ? ` · ${formatTime(playlist.duration)}` : ""}
+                  </span>
+                  {playlist.comment ? (
+                    <small className="mt-1 truncate text-xs text-[#777b76]">
+                      {playlist.comment}
+                    </small>
+                  ) : null}
+                </span>
+                <span className="flex items-center gap-1 text-xs font-bold text-[#787c77] uppercase">
+                  {opening ? (
+                    <Spinner
+                      aria-label={`Opening ${playlist.name}`}
+                      className="size-3 text-current"
+                    />
+                  ) : null}
+                  {optimistic ? "Creating…" : opening ? "Opening…" : "Open"}
+                </span>
+              </Button>
+            );
+          })}
         </div>
       ) : (
         <SavedEmpty
@@ -459,6 +472,7 @@ function PlaylistDetailView({
   onQueue,
   currentTrackId,
   playing,
+  loadingAlbumId,
   onTogglePlayback,
   onAddToPlaylist,
   onOpenTrackAlbum,
@@ -478,6 +492,7 @@ function PlaylistDetailView({
   onQueue: (tracks: Track[]) => void;
   currentTrackId?: string;
   playing: boolean;
+  loadingAlbumId?: string;
   onTogglePlayback: () => void;
   onAddToPlaylist: (tracks: Track[]) => void;
   onOpenTrackAlbum: (track: Track) => void;
@@ -657,11 +672,12 @@ function PlaylistDetailView({
           items={playlist.tracks}
           renderItem={(track, { index }, rowProps) => {
             const activeTrack = currentTrackId === track.id;
+            const albumLoading = loadingAlbumId === track.albumId;
             return (
             <div
               {...rowProps}
               className={cn(
-                "group grid min-h-14 grid-cols-[2rem_minmax(0,1fr)_3rem_repeat(2,2rem)] items-center gap-x-1.5 border-b border-white/5 pr-2 pl-1 last:border-b-0 hover:bg-white/3 lg:grid-cols-[2rem_minmax(0,1fr)_4rem_repeat(2,2rem)] lg:gap-x-2 lg:pr-3",
+                "group grid h-14 grid-cols-[2rem_minmax(0,1fr)_3rem_repeat(2,2rem)] items-center gap-x-1.5 border-b border-white/5 pr-2 pl-1 last:border-b-0 hover:bg-white/3 lg:grid-cols-[2rem_minmax(0,1fr)_4rem_repeat(2,2rem)] lg:gap-x-2 lg:pr-3",
                 activeTrack && "bg-primary/7.5",
               )}
             >
@@ -706,11 +722,22 @@ function PlaylistDetailView({
                   </Button>
                   <span aria-hidden="true">·</span>
                   <Button
+                    aria-busy={albumLoading || undefined}
                     aria-label={`Open ${track.album} album`}
-                    className={metadataLinkClassName}
+                    className={cn(
+                      metadataLinkClassName,
+                      "gap-1 disabled:opacity-100",
+                    )}
+                    disabled={albumLoading}
                     onClick={() => onOpenTrackAlbum(track)}
                     variant="ghost"
                   >
+                    {albumLoading ? (
+                      <Spinner
+                        aria-label={`Loading ${track.album} album`}
+                        className="size-3 text-current"
+                      />
+                    ) : null}
                     {track.album}
                   </Button>
                 </span>
@@ -940,7 +967,7 @@ export function AddToPlaylistDialog({
       }}
     >
       <DialogContent
-        className="max-h-[min(620px,calc(100vh-150px))] w-[min(480px,92vw)] gap-0 overflow-hidden p-0"
+        className="max-h-[min(--spacing(155),calc(100vh-(--spacing(38))))] max-w-120 gap-0 overflow-hidden p-0"
         aria-busy={pending || playlists.isFetching}
         finalFocus={restoreFocusRef}
         initialFocus={nameInputRef}
@@ -1053,6 +1080,7 @@ export default function SavedLibraryView({
   favoritesLoading,
   favoritesError,
   favoritesLocal = false,
+  loadingAlbumId,
   onRefreshFavorites,
   onToggleFavorite,
   onToggleRadioFavorite,
@@ -1073,6 +1101,7 @@ export default function SavedLibraryView({
 }: SavedLibraryViewProps) {
   const queryClient = useQueryClient();
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string>();
+  const [openingPlaylistId, setOpeningPlaylistId] = useState<string>();
   const [radioAction, setRadioAction] = useState<{
     id: number;
     action: "play" | "queue";
@@ -1292,6 +1321,7 @@ export default function SavedLibraryView({
             onQueue={onQueueTracks}
             currentTrackId={currentTrackId}
             playing={playing}
+            loadingAlbumId={loadingAlbumId}
             onTogglePlayback={onTogglePlayback}
             onAddToPlaylist={onAddToPlaylist}
             onOpenTrackAlbum={onOpenTrackAlbum}
@@ -1373,13 +1403,18 @@ export default function SavedLibraryView({
           <PlaylistList
             playlists={playlists.data ?? []}
             onOpen={(item) => {
+              setOpeningPlaylistId(item.id);
               void transitionCodaView(
-                () => setSelectedPlaylistId(item.id),
+                () => {
+                  setSelectedPlaylistId(item.id);
+                  setOpeningPlaylistId(undefined);
+                },
                 "page-forward",
               );
             }}
             onCreate={(name) => createMutation.mutate(name)}
             creating={createMutation.isPending}
+            openingPlaylistId={openingPlaylistId}
           />
         )}
       </section>
@@ -1540,11 +1575,12 @@ export default function SavedLibraryView({
                 items={favoriteTracks}
                 renderItem={(track, { index }, rowProps) => {
                   const activeTrack = currentTrackId === track.id;
+                  const albumLoading = loadingAlbumId === track.albumId;
                   return (
                   <div
                     {...rowProps}
                     className={cn(
-                      "group grid min-h-14 grid-cols-[2rem_2.5rem_minmax(0,1fr)_3rem_repeat(3,2rem)] items-center gap-x-1.5 border-b border-white/5 pr-2 pl-1 last:border-b-0 hover:bg-white/3 lg:grid-cols-[2rem_2.5rem_minmax(0,1fr)_4rem_repeat(3,2rem)] lg:gap-x-2 lg:pr-3",
+                      "group grid h-14 grid-cols-[2rem_2.5rem_minmax(0,1fr)_3rem_repeat(3,2rem)] items-center gap-x-1.5 border-b border-white/5 pr-2 pl-1 last:border-b-0 hover:bg-white/3 lg:grid-cols-[2rem_2.5rem_minmax(0,1fr)_4rem_repeat(3,2rem)] lg:gap-x-2 lg:pr-3",
                       activeTrack && "bg-primary/7.5",
                     )}
                   >
@@ -1590,11 +1626,22 @@ export default function SavedLibraryView({
                         </Button>
                         <span aria-hidden="true">·</span>
                         <Button
+                          aria-busy={albumLoading || undefined}
                           aria-label={`Open ${track.album} album`}
-                          className={metadataLinkClassName}
+                          className={cn(
+                            metadataLinkClassName,
+                            "gap-1 disabled:opacity-100",
+                          )}
+                          disabled={albumLoading}
                           onClick={() => onOpenTrackAlbum(track)}
                           variant="ghost"
                         >
+                          {albumLoading ? (
+                            <Spinner
+                              aria-label={`Loading ${track.album} album`}
+                              className="size-3 text-current"
+                            />
+                          ) : null}
                           {track.album}
                         </Button>
                       </span>
@@ -1772,48 +1819,74 @@ export default function SavedLibraryView({
                 </span>
               </div>
               <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-2.5">
-                {favoriteAlbums.map((album) => (
-                  <article
-                    className="grid grid-cols-[minmax(0,1fr)_2rem] items-center gap-1 rounded-lg border border-border bg-white/2 p-2"
-                    key={album.id}
-                  >
-                    <div className="grid min-w-0 grid-cols-[3rem_minmax(0,1fr)] items-center gap-3">
-                      <Button
-                        className="size-12 overflow-hidden rounded-md p-0"
-                        onClick={() => onOpenAlbum(album)}
-                        aria-label={`Open ${album.title}`}
-                        variant="ghost"
-                      >
-                        <FavoriteArtwork className="size-full" item={album} />
-                      </Button>
-                      <span className="flex min-w-0 flex-col">
+                {favoriteAlbums.map((album) => {
+                  const albumLoading = loadingAlbumId === album.id;
+                  return (
+                    <article
+                      className="grid grid-cols-[minmax(0,1fr)_2rem] items-center gap-1 rounded-lg border border-border bg-white/2 p-2"
+                      key={album.id}
+                    >
+                      <div className="grid min-w-0 grid-cols-[3rem_minmax(0,1fr)] items-center gap-3">
                         <Button
-                          className="h-auto w-fit max-w-full justify-start truncate rounded-none p-0 text-xs text-[#d8d7d1] hover:bg-transparent hover:text-accent-foreground"
+                          aria-busy={albumLoading || undefined}
+                          aria-label={`Open ${album.title}`}
+                          className="relative size-12 overflow-hidden rounded-md p-0 disabled:opacity-100"
+                          disabled={albumLoading}
                           onClick={() => onOpenAlbum(album)}
                           variant="ghost"
                         >
-                          {album.title}
+                          <FavoriteArtwork
+                            className={cn(
+                              "size-full",
+                              albumLoading && "opacity-40",
+                            )}
+                            item={album}
+                          />
+                          {albumLoading ? (
+                            <Spinner
+                              aria-label={`Loading ${album.title} artwork`}
+                              className="absolute size-4 text-current"
+                            />
+                          ) : null}
                         </Button>
-                        <Button
-                          className={cn(metadataLinkClassName, "mt-1 max-w-full")}
-                          onClick={() => onOpenArtist(album.artist)}
-                          variant="ghost"
-                        >
-                          {album.artist}
-                        </Button>
-                      </span>
-                    </div>
-                    <Button
-                      className="text-[#ef8066]"
-                      onClick={() => onToggleFavorite(album.id, "album", false)}
-                      aria-label={`Remove ${album.title} from favorites`}
-                      size="icon"
-                      variant="ghost"
-                    >
-                      <Heart size={15} fill="currentColor" />
-                    </Button>
-                  </article>
-                ))}
+                        <span className="flex min-w-0 flex-col">
+                          <Button
+                            aria-busy={albumLoading || undefined}
+                            aria-label={albumLoading ? album.title : undefined}
+                            className="h-auto w-fit max-w-full justify-start gap-1 truncate rounded-none p-0 text-xs text-[#d8d7d1] hover:bg-transparent hover:text-accent-foreground disabled:opacity-100"
+                            disabled={albumLoading}
+                            onClick={() => onOpenAlbum(album)}
+                            variant="ghost"
+                          >
+                            {albumLoading ? (
+                              <Spinner
+                                aria-label={`Loading ${album.title} release`}
+                                className="size-3 text-current"
+                              />
+                            ) : null}
+                            {album.title}
+                          </Button>
+                          <Button
+                            className={cn(metadataLinkClassName, "mt-1 max-w-full")}
+                            onClick={() => onOpenArtist(album.artist)}
+                            variant="ghost"
+                          >
+                            {album.artist}
+                          </Button>
+                        </span>
+                      </div>
+                      <Button
+                        className="text-[#ef8066]"
+                        onClick={() => onToggleFavorite(album.id, "album", false)}
+                        aria-label={`Remove ${album.title} from favorites`}
+                        size="icon"
+                        variant="ghost"
+                      >
+                        <Heart size={15} fill="currentColor" />
+                      </Button>
+                    </article>
+                  );
+                })}
               </div>
             </section>
           ) : null}

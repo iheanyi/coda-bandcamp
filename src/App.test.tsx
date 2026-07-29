@@ -52,7 +52,14 @@ function applyCompiledStyles(
           element.style.setProperty(`${prefix}-left`, value);
           element.style.setProperty(`${prefix}-right`, value);
         } else {
-          element.style.setProperty(property, value);
+          try {
+            element.style.setProperty(property, value);
+          } catch (cause) {
+            // jsdom's cssstyle parser lags valid modern CSS emitted by
+            // Tailwind/Base UI. This helper only needs the Coda properties
+            // asserted below.
+            if (!(cause instanceof SyntaxError)) throw cause;
+          }
         }
       }
     }
@@ -276,6 +283,53 @@ beforeEach(() => {
 });
 
 describe("Coda application flows", { timeout: 10_000 }, () => {
+  it("centers the connection copy without a decorative status dot", async () => {
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    renderApp();
+
+    const connectionHeading = await screen.findByText("Bandcamp synced");
+    const connectionCopy = connectionHeading.parentElement;
+    const connectionFooter = connectionCopy?.parentElement;
+    if (!connectionCopy || !connectionFooter) {
+      throw new Error("Expected the connection copy inside the sidebar footer");
+    }
+
+    const stylesPath = resolve("src/styles.css");
+    const compiler = await compileTailwind(
+      await readFile(stylesPath, "utf8"),
+      {
+        base: resolve("src"),
+        from: stylesPath,
+        onDependency: () => undefined,
+      },
+    );
+    const candidates = Array.from(document.querySelectorAll("*"))
+      .flatMap((element) => Array.from(element.classList));
+    applyCompiledStyles(compiler.build(candidates), [
+      connectionCopy,
+      connectionFooter,
+    ]);
+
+    expect(getComputedStyle(connectionFooter).justifyContent).toBe("center");
+    expect(getComputedStyle(connectionCopy).textAlign).toBe("center");
+    expect(connectionCopy.previousElementSibling).toBeNull();
+  });
+
+  it("announces a spinner while the initial collection view is loading", async () => {
+    const request = deferred<Album[]>();
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockReturnValue(request.promise);
+    renderApp();
+
+    const loadingStatus = await screen.findByRole("status", {
+      name: "Loading your collection",
+    });
+    expect(loadingStatus).toHaveAttribute("data-slot", "spinner");
+
+    await act(async () => request.resolve([album]));
+  });
+
   it("dismisses connection settings with Escape and restores trigger focus", async () => {
     renderApp();
 
@@ -444,6 +498,53 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(
       document.querySelector("[data-coda-library-scroll]"),
     ).toBeInstanceOf(HTMLElement);
+  });
+
+  it("wires collection sort and overflow-genre native selections to rendered results", async () => {
+    const collection = [
+      { artist: "Zulu", genre: "Ambient", title: "Zulu Ambient" },
+      { artist: "Cobalt", genre: "Electronic", title: "Cobalt Electronic" },
+      { artist: "Delta", genre: "Folk", title: "Delta Folk" },
+      { artist: "Echo", genre: "Jazz", title: "Echo Jazz" },
+      { artist: "Foxtrot", genre: "Metal", title: "Foxtrot Metal" },
+      { artist: "Aardvark", genre: "Rock", title: "Aardvark Rock" },
+    ].map((metadata, index): Album => ({
+      ...album,
+      ...metadata,
+      id: `album-filter-${index}`,
+    }));
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue(collection);
+    renderApp();
+
+    await screen.findByText("Zulu Ambient");
+    const sort = screen.getByRole("combobox", {
+      name: "Sort collection",
+    });
+    fireEvent.change(sort, { target: { value: "artist" } });
+    expect(sort).toHaveValue("artist");
+    await waitFor(() =>
+      expect(screen.getAllByRole("button", {
+        name: /^Open /,
+      })[0]).toHaveAccessibleName("Open Aardvark Rock"),
+    );
+
+    const moreGenres = screen.getByRole("combobox", {
+      name: "More collection genres",
+    });
+    expect(within(moreGenres).getByRole("option", {
+      name: "Rock",
+    })).toBeInTheDocument();
+    fireEvent.change(moreGenres, { target: { value: "Rock" } });
+
+    expect(await screen.findByRole("button", { name: "Rock" }))
+      .toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", {
+      name: "Open Aardvark Rock",
+    })).toBeInTheDocument();
+    expect(screen.queryByRole("button", {
+      name: "Open Zulu Ambient",
+    })).not.toBeInTheDocument();
   });
 
   it("uses a fresh native library cache without revalidating", async () => {
@@ -692,7 +793,8 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     fireEvent.click(within(dialog).getByRole("button", {
       name: "Disconnect and remove Bandcamp credentials",
     }));
-    expect(await within(dialog).findByText("Vault unavailable")).toBeInTheDocument();
+    expect(await within(dialog).findByRole("alert"))
+      .toHaveTextContent("Vault unavailable");
 
     resolveRefresh([{ ...album, title: "Sync still active" }]);
     expect(await screen.findByText("Sync still active")).toBeInTheDocument();
@@ -801,6 +903,84 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     fireEvent.keyDown(position, { key: "ArrowRight" });
     await waitFor(() => expect(audio!.currentTime).toBe(43));
 
+    const positionRoot = screen.getByRole("group", {
+      name: "Track position",
+    });
+    const positionControl = positionRoot.querySelector<HTMLElement>(
+      "[data-base-ui-slider-control]",
+    );
+    const positionThumb = positionRoot.querySelector<HTMLElement>(
+      "[data-slot=slider-thumb]",
+    );
+    const positionTrack = positionRoot.querySelector<HTMLElement>(
+      "[data-slot=slider-track]",
+    );
+    expect(positionControl).not.toBeNull();
+    expect(positionThumb).not.toBeNull();
+    expect(positionTrack).not.toBeNull();
+    const stylesPath = resolve("src/styles.css");
+    const compiler = await compileTailwind(
+      await readFile(stylesPath, "utf8"),
+      {
+        base: resolve("src"),
+        from: stylesPath,
+        onDependency: () => undefined,
+      },
+    );
+    const candidates = Array.from(document.querySelectorAll("*"))
+      .flatMap((element) => Array.from(element.classList));
+    applyCompiledStyles(compiler.build(candidates), [
+      positionControl!,
+      positionTrack!,
+    ]);
+    expect(getComputedStyle(positionControl!).height).toBe("20px");
+    expect(getComputedStyle(positionTrack!).height).toBe("4px");
+    vi.spyOn(positionControl!, "getBoundingClientRect")
+      .mockReturnValue(new DOMRect(0, 0, 100, 20));
+    vi.spyOn(positionThumb!, "getBoundingClientRect")
+      .mockReturnValue(new DOMRect(18.43, 5, 10, 10));
+    fireEvent.pointerDown(positionControl!, {
+      button: 0,
+      buttons: 1,
+      clientX: 35,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
+    await waitFor(() => expect(audio!.currentTime).toBe(60));
+    fireEvent.pointerUp(document, {
+      button: 0,
+      buttons: 0,
+      clientX: 35,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
+    fireEvent.pointerDown(positionControl!, {
+      button: 0,
+      buttons: 1,
+      clientX: 35,
+      clientY: 10,
+      pointerId: 2,
+      pointerType: "mouse",
+    });
+    fireEvent.pointerMove(document, {
+      buttons: 1,
+      clientX: 50,
+      clientY: 10,
+      pointerId: 2,
+      pointerType: "mouse",
+    });
+    await waitFor(() => expect(audio!.currentTime).toBe(90));
+    fireEvent.pointerUp(document, {
+      button: 0,
+      buttons: 0,
+      clientX: 50,
+      clientY: 10,
+      pointerId: 2,
+      pointerType: "mouse",
+    });
+
     const volume = screen.getByRole("slider", { name: "Volume" });
     const volumeRoot = screen.getByRole("group", { name: "Volume" });
     const compactWidthStyles = document.createElement("style");
@@ -832,7 +1012,25 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     vi.spyOn(volumeControl!, "getBoundingClientRect")
       .mockReturnValue(new DOMRect(0, 0, 100, 20));
     vi.spyOn(volumeThumb!, "getBoundingClientRect")
-      .mockReturnValue(new DOMRect(0, 5, 10, 10));
+      .mockReturnValue(new DOMRect(40.5, 5, 10, 10));
+    fireEvent.pointerDown(volumeControl!, {
+      button: 0,
+      buttons: 1,
+      clientX: 36.5,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
+    await waitFor(() => expect(audio!.volume).toBeCloseTo(0.35));
+    fireEvent.pointerUp(document, {
+      button: 0,
+      buttons: 0,
+      clientX: 36.5,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
+
     fireEvent.pointerDown(volumeControl!, {
       button: 0,
       buttons: 1,
@@ -1047,7 +1245,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     await screen.findByText("Soft Focus");
     const libraryPane = screen.getByRole("main");
     const player = screen.getByRole("contentinfo");
-    expect(screen.queryByRole("complementary", { name: "Playback queue" }))
+    expect(screen.queryByRole("dialog", { name: "Queue" }))
       .not.toBeInTheDocument();
     const showQueue = screen.getByRole("button", { name: "Show queue" });
     expect(showQueue)
@@ -1056,16 +1254,30 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(showQueue).toHaveFocus();
 
     await user.keyboard("{Enter}");
-    await waitFor(() =>
-      expect(screen.getByRole("complementary", { name: "Playback queue" })).toHaveFocus(),
-    );
-    expect(within(player).getByRole("button", { name: "Play" }))
+    const queueDrawer = await waitFor(() => {
+      const popup = document.querySelector<HTMLElement>(
+        '[data-slot="drawer-popup"]',
+      );
+      expect(popup).toBeInstanceOf(HTMLElement);
+      return popup!;
+    });
+    expect(queueDrawer).toHaveAttribute("role", "dialog");
+    expect(queueDrawer).toHaveAccessibleName("Queue");
+    expect(showQueue).toHaveAttribute("aria-haspopup", "dialog");
+    expect(queueDrawer).toHaveAttribute("data-swipe-direction", "right");
+    await waitFor(() => expect(queueDrawer).toHaveFocus());
+    expect(queueDrawer).toHaveAttribute("data-slot", "drawer-popup");
+    expect(document.querySelector(
+      '[data-slot="drawer-viewport"][data-modal="false"]',
+    )).toBeInTheDocument();
+    await user.click(within(player).getByRole("button", { name: "Mute" }));
+    expect(within(player).getByRole("button", { name: "Unmute" }))
       .toBeInTheDocument();
+    expect(queueDrawer).toBeVisible();
+    await user.click(within(player).getByRole("button", { name: "Unmute" }));
     expect(within(player).getByRole("slider", { name: "Volume" })).toBeEnabled();
-    expect(screen.getByRole("region", { name: "Upcoming tracks" })).toHaveAttribute(
-      "tabindex",
-      "0",
-    );
+    expect(screen.getByRole("region", { name: "Upcoming tracks" }))
+      .toBeInTheDocument();
     const hideQueue = screen.getByRole("button", { name: "Hide queue" });
     expect(hideQueue).toHaveAttribute(
       "aria-pressed",
@@ -1074,22 +1286,19 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(screen.getByRole("main")).toBe(libraryPane);
 
     await user.keyboard("{Escape}");
-    expect(screen.queryByRole("complementary", { name: "Playback queue" }))
+    expect(screen.queryByRole("dialog", { name: "Queue" }))
       .not.toBeInTheDocument();
-    expect(document.querySelector(
-      'aside[aria-label="Playback queue"][aria-hidden="true"]',
-    ))
-      .toHaveAttribute("aria-hidden", "true");
+    expect(document.querySelector('[data-slot="drawer-popup"]'))
+      .not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Show queue" }))
       .toHaveAttribute("aria-pressed", "false");
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Show queue" })).toHaveFocus(),
     );
     expect(screen.getByRole("main")).toBe(libraryPane);
-
-    await user.keyboard("{Enter}");
+    await user.click(screen.getByRole("button", { name: "Show queue" }));
     await waitFor(() =>
-      expect(screen.getByRole("complementary", { name: "Playback queue" }))
+      expect(screen.getByRole("dialog", { name: "Queue" }))
         .toHaveFocus(),
     );
     const keyboardHideQueue = screen.getByRole("button", {
@@ -1100,6 +1309,48 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Show queue" })).toHaveFocus(),
     );
+  });
+
+  it("restores queue focus to the active Now Playing control", async () => {
+    const user = userEvent.setup();
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    await user.click(screen.getByRole("button", { name: "Play Soft Focus" }));
+
+    const compactQueueControl = await screen.findByRole("button", {
+      name: "Show queue",
+    });
+    compactQueueControl.focus();
+    await user.click(compactQueueControl);
+    expect(await screen.findByRole("dialog", { name: "Queue" }))
+      .toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Open Now Playing" }));
+    const nowPlaying = await screen.findByRole("article", {
+      name: "First Light",
+    });
+    expect(within(nowPlaying).getAllByRole("button", {
+      name: "Hide queue",
+    })).toHaveLength(1);
+    expect(within(nowPlaying).queryByRole("button", {
+      name: "Hide full queue",
+    })).not.toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    const nowPlayingQueueControl = within(nowPlaying).getByRole("button", {
+      name: "Show queue",
+    });
+    await waitFor(() => expect(nowPlayingQueueControl).toHaveFocus());
+
+    await user.click(nowPlayingQueueControl);
+    expect(await screen.findByRole("dialog", { name: "Queue" }))
+      .toBeInTheDocument();
+    within(nowPlaying).getByRole("button", { name: "Hide queue" }).focus();
+    await user.keyboard(" ");
+    await waitFor(() => expect(nowPlayingQueueControl).toHaveFocus());
   });
 
   it("keeps the rendered queue opaque and contains long metadata within one gutter", async () => {
@@ -1124,8 +1375,8 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
     renderApp();
 
-    const panel = await screen.findByRole("complementary", {
-      name: "Playback queue",
+    const panel = await screen.findByRole("dialog", {
+      name: "Queue",
     });
     const stylesPath = resolve("src/styles.css");
     const compiler = await compileTailwind(
@@ -1138,8 +1389,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     );
     const candidates = Array.from(document.querySelectorAll("*"))
       .flatMap((element) => Array.from(element.classList));
-    const queueHeading = within(panel).getByRole("heading", { name: "Queue" });
-    const header = queueHeading.parentElement?.parentElement;
+    const header = panel.querySelector<HTMLElement>(
+      '[data-slot="drawer-header"]',
+    );
     const currentTitle = within(panel).getByRole("button", { name: longTitle });
     const currentMetadata = currentTitle.parentElement;
     const nowPlayingCard = currentMetadata?.parentElement?.parentElement;
@@ -1150,7 +1402,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       /Not sure what comes next|Add another album or track/,
     );
     const emptyState = emptyCopy.parentElement;
-    const footer = panel.lastElementChild;
+    const footer = panel.querySelector<HTMLElement>(
+      '[data-slot="drawer-footer"]',
+    );
 
     applyCompiledStyles(compiler.build(candidates), [
       panel,
@@ -1221,6 +1475,16 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(remove).toHaveFocus();
     applyCompiledStyles(compiler.build(candidates), [remove]);
     expect(["1", "100%"]).toContain(getComputedStyle(remove).opacity);
+
+    fireEvent.click(remove);
+    await waitFor(() =>
+      expect(screen.queryByRole("button", {
+        name: "Remove Afterimage",
+      })).not.toBeInTheDocument(),
+    );
+    expect(within(screen.getByRole("region", {
+      name: "Upcoming tracks",
+    })).queryByText("Afterimage")).not.toBeInTheDocument();
   });
 
   it("does not reopen a saved queue drawer without a restorable current track", async () => {
@@ -1237,7 +1501,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     renderApp();
 
     await waitFor(() => expect(mocks.loadPlayerState).toHaveBeenCalledOnce());
-    expect(screen.queryByRole("complementary", { name: "Playback queue" }))
+    expect(screen.queryByRole("dialog", { name: "Queue" }))
       .not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Show queue" }))
       .toHaveAttribute("aria-pressed", "false");
@@ -1328,6 +1592,37 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       musicBrainzId: "189002e7-3285-4e2e-92a3-7f6c30d407a2",
       chosenByUser: true,
     });
+  });
+
+  it("keeps collection category counts visually subordinate to their labels", async () => {
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album, single]);
+    renderApp();
+
+    const releasesCategory = await screen.findByTitle("Browse every purchase");
+    const countBadge = releasesCategory.querySelector<HTMLElement>(
+      "[data-slot=badge]",
+    );
+    if (!countBadge) {
+      throw new Error("Expected the releases category to include its count badge");
+    }
+
+    const stylesPath = resolve("src/styles.css");
+    const compiler = await compileTailwind(
+      await readFile(stylesPath, "utf8"),
+      {
+        base: resolve("src"),
+        from: stylesPath,
+        onDependency: () => undefined,
+      },
+    );
+    const candidates = Array.from(document.querySelectorAll("*"))
+      .flatMap((element) => Array.from(element.classList));
+    applyCompiledStyles(compiler.build(candidates), [countBadge]);
+
+    expect(countBadge).toHaveAttribute("data-size", "compact");
+    expect(getComputedStyle(countBadge).height).toBe("16px");
+    expect(getComputedStyle(countBadge).fontSize).toBe("10px");
   });
 
   it("plays one random track from the current browsing context", async () => {
@@ -1489,7 +1784,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
-    const queuePanel = screen.getByRole("complementary", { name: "Playback queue" });
+    const queuePanel = screen.getByRole("dialog", { name: "Queue" });
     fireEvent.click(within(queuePanel).getByRole("button", {
       name: "Open artist Night Archive on Bandcamp",
     }));
@@ -1756,6 +2051,90 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(mocks.fetchAlbum).not.toHaveBeenCalled();
   });
 
+  it("keeps album track rows on the exact 56px rhythm without content overflow", async () => {
+    const longTitle = "First Light Across the Entire Midnight Horizon";
+    const longArtist = "Sweeps and the Extended Ensemble of Endless Echoes";
+    const longTrack = {
+      ...tracks[0],
+      id: "track-long-metadata",
+      albumId: "album-long-metadata",
+      title: longTitle,
+      artist: longArtist,
+    };
+    const longMetadataAlbum = {
+      ...album,
+      id: "album-long-metadata",
+      tracks: [longTrack],
+      songCount: 1,
+      duration: longTrack.duration,
+    };
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([longMetadataAlbum]);
+    mocks.fetchAlbum.mockResolvedValue([longTrack]);
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    fireEvent.click(screen.getByRole("button", { name: "Open Soft Focus" }));
+    const albumPage = await screen.findByRole("article", {
+      name: "Soft Focus release details",
+    });
+    const playTrack = within(albumPage).getByRole("button", {
+      name: `Play ${longTitle}`,
+    });
+    const trackRow = playTrack.parentElement;
+    if (!trackRow) throw new Error("Expected the play control inside a track row");
+
+    expect(trackRow).toHaveClass(
+      "h-14",
+      "grid-cols-[2.5rem_minmax(0,1fr)_3.5rem_7rem]",
+    );
+    expect(trackRow).not.toHaveClass("min-h-14");
+    const stylesPath = resolve("src/styles.css");
+    const compiler = await compileTailwind(
+      await readFile(stylesPath, "utf8"),
+      {
+        base: resolve("src"),
+        from: stylesPath,
+        onDependency: () => undefined,
+      },
+    );
+    const candidates = Array.from(document.querySelectorAll("*"))
+      .flatMap((element) => Array.from(element.classList));
+    applyCompiledStyles(compiler.build(candidates), [trackRow]);
+    expect(getComputedStyle(trackRow).height).toBe("56px");
+
+    const titleControl = within(trackRow).getByRole("button", {
+      name: longTitle,
+    });
+    expect(titleControl.parentElement).toHaveClass("min-w-0", "overflow-hidden");
+    expect(titleControl).toHaveClass(
+      "min-w-0",
+      "max-w-full",
+      "overflow-hidden",
+      "focus-visible:-outline-offset-2",
+    );
+    titleControl.focus();
+    expect(titleControl).toHaveFocus();
+    const artistControl = within(trackRow).getByRole("button", {
+      name: longArtist,
+    });
+    expect(artistControl).toHaveClass(
+      "truncate",
+      "focus-visible:-outline-offset-2",
+    );
+    artistControl.focus();
+    expect(artistControl).toHaveFocus();
+    expect(within(trackRow).getByRole("button", {
+      name: `Add ${longTitle} to queue`,
+    }).parentElement).toHaveClass(
+      "grid-cols-[repeat(3,2rem)]",
+      "justify-end",
+    );
+
+    fireEvent.click(playTrack);
+    expect(trackRow).toHaveClass("h-14", "bg-primary/[0.075]");
+  });
+
   it("keeps a cold album busy when an older album request settles", async () => {
     const secondTracks: Track[] = [{
       ...tracks[0],
@@ -1822,6 +2201,102 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(loadingStatus.parentElement).toHaveClass("min-h-44");
 
     await act(async () => request.resolve(tracks));
+  });
+
+  it("opens a cold album into one visible detail loader without snapshotting a blank handoff", async () => {
+    const request = deferred<Track[]>();
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    mocks.fetchAlbum.mockReturnValueOnce(request.promise);
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      document,
+      "startViewTransition",
+    );
+    const startViewTransition = vi.fn((_update: () => void) => ({
+      finished: Promise.resolve(),
+    }));
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: startViewTransition,
+    });
+
+    try {
+      renderApp();
+
+      await screen.findByText("Soft Focus");
+      fireEvent.click(screen.getByRole("button", { name: "Open Soft Focus" }));
+
+      const albumPage = screen.getByRole("article", {
+        name: "Soft Focus release details",
+      });
+      expect(startViewTransition).not.toHaveBeenCalled();
+      expect(screen.getAllByRole("status")).toHaveLength(1);
+      expect(within(albumPage).getByRole("status", {
+        name: "Loading album tracks",
+      })).toBeVisible();
+      expect(screen.queryByRole("status", {
+        name: "Loading Soft Focus",
+      })).not.toBeInTheDocument();
+    } finally {
+      await act(async () => request.resolve(tracks));
+      if (originalDescriptor) {
+        Object.defineProperty(document, "startViewTransition", originalDescriptor);
+      } else {
+        Reflect.deleteProperty(document, "startViewTransition");
+      }
+    }
+  });
+
+  it("keeps the page transition for a prefetched album without adding a loader", async () => {
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      document,
+      "startViewTransition",
+    );
+    let applyTransitionUpdate: (() => void) | undefined;
+    const startViewTransition = vi.fn((update: () => void) => {
+      applyTransitionUpdate = update;
+      return { finished: Promise.resolve() };
+    });
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: startViewTransition,
+    });
+
+    try {
+      const { queryClient } = renderApp();
+
+      await screen.findByText("Soft Focus");
+      queryClient.setQueryData(albumQueryKey(album.id), tracks);
+      const openButton = screen.getByRole("button", {
+        name: "Open Soft Focus",
+      });
+
+      fireEvent.click(openButton);
+
+      expect(startViewTransition).toHaveBeenCalledOnce();
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      expect(screen.queryByRole("article", {
+        name: "Soft Focus release details",
+      })).not.toBeInTheDocument();
+
+      await act(async () => {
+        applyTransitionUpdate?.();
+        await Promise.resolve();
+      });
+      const albumPage = screen.getByRole("article", {
+        name: "Soft Focus release details",
+      });
+      expect(within(albumPage).getByText("First Light")).toBeVisible();
+      expect(within(albumPage).queryByRole("status")).not.toBeInTheDocument();
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(document, "startViewTransition", originalDescriptor);
+      } else {
+        Reflect.deleteProperty(document, "startViewTransition");
+      }
+    }
   });
 
   it("announces cold album track hydration until the fetched tracks arrive", async () => {

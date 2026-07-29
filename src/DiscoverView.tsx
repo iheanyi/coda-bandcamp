@@ -13,6 +13,7 @@ import { type FormEvent, memo, useMemo, useState } from "react";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   NativeSelect,
   NativeSelectOption,
@@ -77,9 +78,9 @@ const DiscoverCard = memo(function DiscoverCard({
   const active = Boolean(track && currentTrackId === track.id);
 
   return (
-    <article className="group/card grid min-w-0 grid-cols-[112px_minmax(0,1fr)] overflow-hidden rounded-lg border border-(--line) bg-white/[0.018] [contain-intrinsic-size:112px_300px] [content-visibility:auto] hover:border-(--line-strong) hover:bg-white/3">
+    <article className="group/card grid min-w-0 grid-cols-[--spacing(28)_minmax(0,1fr)] overflow-hidden rounded-lg border border-(--line) bg-white/[0.018] [contain-intrinsic-size:--spacing(28)_--spacing(75)] [content-visibility:auto] hover:border-(--line-strong) hover:bg-white/3">
       <div
-        className="relative grid size-[112px] place-items-center overflow-hidden bg-[linear-gradient(145deg,var(--cover-accent),transparent_72%),var(--cover-base)] text-2xl font-bold text-white/78"
+        className="relative grid size-28 place-items-center overflow-hidden bg-[linear-gradient(145deg,var(--cover-accent),transparent_72%),var(--cover-base)] text-2xl font-bold text-white/78"
         style={
           {
             "--cover-accent": palette[0],
@@ -216,7 +217,7 @@ export default function DiscoverView({
       aria-live="polite"
       aria-busy={query.isFetching}
     >
-      <div className="relative -mx-8 -mt-8 mb-6 flex items-end justify-between gap-9 overflow-hidden border-b border-(--line) bg-[radial-gradient(circle_at_92%_0%,rgba(221,101,73,0.17),transparent_39%),linear-gradient(135deg,#181b1d_0%,#141719_70%)] px-8 pt-12 pb-8 after:pointer-events-none after:absolute after:top-[-115px] after:right-[18%] after:size-[230px] after:rounded-full after:border after:border-white/[0.035] after:shadow-[0_0_0_42px_rgba(255,255,255,0.012),0_0_0_84px_rgba(255,255,255,0.008)] after:content-[''] max-xl:-mx-6 max-xl:flex-col max-xl:items-stretch max-xl:px-6">
+      <div className="relative -mx-8 -mt-8 mb-6 flex items-end justify-between gap-9 overflow-hidden border-b border-(--line) bg-[radial-gradient(circle_at_92%_0%,rgba(221,101,73,0.17),transparent_39%),linear-gradient(135deg,#181b1d_0%,#141719_70%)] px-8 pt-12 pb-8 after:pointer-events-none after:absolute after:-top-28 after:right-[18%] after:size-56 after:rounded-full after:border after:border-white/[0.035] after:shadow-[0_0_0_42px_rgba(255,255,255,0.012),0_0_0_84px_rgba(255,255,255,0.008)] after:content-[''] max-xl:-mx-6 max-xl:flex-col max-xl:items-stretch max-xl:px-6">
         <div className="relative z-1">
           <Badge variant="artwork" className="mb-2.5 h-auto gap-1.5 border-0 bg-transparent p-0 text-xs tracking-widest text-[#c67966] uppercase"><Sparkles size={13} /> Find something new</Badge>
           <h1 className="m-0 font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-4xl leading-none font-semibold tracking-tighter xl:text-5xl">Discover</h1>
@@ -225,9 +226,9 @@ export default function DiscoverView({
         <form className="relative z-1 flex h-10 min-w-70 basis-90 items-center rounded-lg border border-(--line-strong) bg-[rgba(9,10,11,0.52)] pl-3 text-[#777b76] shadow-[0_12px_30px_rgba(0,0,0,0.16)] focus-within:border-[rgba(221,101,73,0.5)] max-xl:w-full max-xl:max-w-md max-xl:basis-auto" onSubmit={submit}>
           <Search size={17} />
           <label className="sr-only" htmlFor="discover-tag">Search Discover by tag</label>
-          <input
+          <Input
             id="discover-tag"
-            className="h-full min-w-0 flex-1 border-0 bg-transparent px-2.5 text-xs text-[#ebe8e1] outline-none"
+            className="h-full min-w-0 flex-1 rounded-none border-0 bg-transparent px-2.5 text-xs text-[#ebe8e1] shadow-none focus-visible:border-0 focus-visible:ring-0"
             value={draftTag}
             maxLength={64}
             onChange={(event) => setDraftTag(event.target.value)}
@@ -345,7 +346,7 @@ export default function DiscoverView({
             <h2 className="m-0 font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-base leading-none font-semibold tracking-tight">{filters.tag ? `Sounds tagged “${filters.tag}”` : "Across Bandcamp"}</h2>
             <span className="text-xs text-[#6f736e]">{countLabel(total, "result")}</span>
           </div>
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(285px,1fr))] gap-2.5">
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(18rem,1fr))] gap-2.5">
             {releases.map((release) => (
               <DiscoverCard
                 key={release.id}

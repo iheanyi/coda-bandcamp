@@ -8,7 +8,6 @@ import {
   ChevronRight,
   CircleAlert,
   Clock3,
-  Compass,
   Disc3,
   Dices,
   ExternalLink,
@@ -27,7 +26,6 @@ import {
   Repeat,
   Repeat1,
   Search,
-  Settings2,
   Shuffle,
   SkipBack,
   SkipForward,
@@ -58,6 +56,7 @@ import {
   type AppUpdaterController,
   useAppUpdater,
 } from "./AppUpdater";
+import { AppSidebar, type AppSidebarView } from "./AppSidebar";
 import { Alert } from "./components/ui/alert";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
@@ -67,12 +66,22 @@ import {
   DialogDescription,
   DialogTitle,
 } from "./components/ui/dialog";
+import {
+  Drawer,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+  DrawerTrigger,
+} from "./components/ui/drawer";
 import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
 import {
   NativeSelect,
   NativeSelectOption,
 } from "./components/ui/native-select";
+import { Separator } from "./components/ui/separator";
 import { Skeleton } from "./components/ui/skeleton";
 import { Slider } from "./components/ui/slider";
 import { Spinner } from "./components/ui/spinner";
@@ -204,7 +213,7 @@ import type {
 import { transitionCodaView } from "./viewTransitions";
 
 type Toast = { id: number; message: string; tone?: "good" | "bad" };
-type LibraryView = "library" | "favorites" | "playlists" | "recent" | "discover" | "radio";
+type LibraryView = AppSidebarView;
 type SyncState = "checking" | "idle" | "syncing" | "error";
 type PlaybackSession = {
   trackId: string;
@@ -249,7 +258,6 @@ function useCurrentRadioChapter(
 const ARTWORK_REFRESH_CONCURRENCY = 4;
 const MAX_ARTWORK_DETAILS_PER_REFRESH = 200;
 const SEARCH_QUEUE_CONCURRENCY = 6;
-const QUEUE_PANEL_EXIT_MS = 240;
 const PLAYER_STATE_SAVE_DEBOUNCE_MS = 450;
 const PLAYER_STATE_CHECKPOINT_MS = 5_000;
 const PREVIOUS_RESTART_THRESHOLD_SECONDS = 4;
@@ -407,14 +415,16 @@ function CoverArt({
   };
 
   const sizeClassName = size === "card"
-    ? "cover--card aspect-square w-full rounded-md shadow-[0_10px_24px_rgba(0,0,0,0.24)]"
+    ? "aspect-square w-full rounded-md shadow-[0_10px_24px_rgba(0,0,0,0.24)]"
     : size === "small"
-      ? "cover--small size-10 rounded-sm"
-      : "cover--large size-52 rounded-md shadow-[0_20px_42px_rgba(0,0,0,0.35)]";
+      ? "size-10 rounded-sm"
+      : "size-52 rounded-md shadow-[0_20px_42px_rgba(0,0,0,0.35)]";
 
   return (
     <div
-      className={`cover relative isolate shrink-0 overflow-hidden bg-(--cover-base) text-[#f7f3e8] ${sizeClassName} ${
+      data-slot="cover"
+      data-cover-size={size}
+      className={`relative isolate shrink-0 overflow-hidden bg-(--cover-base) text-[#f7f3e8] ${sizeClassName} ${
         animateChanges ? "[&>img]:animate-[cover-artwork-in_180ms_ease-out]" : ""
       }`}
       style={
@@ -544,6 +554,7 @@ const AlbumCard = memo(function AlbumCard({
   onQueue,
   onArtist,
   active,
+  loading,
   playing,
   onTogglePlayback,
 }: {
@@ -554,6 +565,7 @@ const AlbumCard = memo(function AlbumCard({
   onQueue: (album: Album) => void;
   onArtist: (artist: string) => void;
   active: boolean;
+  loading: boolean;
   playing: boolean;
   onTogglePlayback: () => void;
 }) {
@@ -585,11 +597,23 @@ const AlbumCard = memo(function AlbumCard({
     >
       <div className="relative block w-full">
         <CoverArt album={album} />
-        <button
-          className="absolute inset-0 z-1 w-full cursor-pointer rounded-md border-0 bg-transparent p-0 after:absolute after:inset-0 after:rounded-md after:bg-[rgba(8,9,10,0.2)] after:opacity-0 after:transition-opacity after:duration-(--duration-coda-fast) hover:after:opacity-100"
+        <Button
+          className="absolute inset-0 z-1 h-auto w-full cursor-pointer rounded-md border-0 bg-transparent p-0 after:absolute after:inset-0 after:rounded-md after:bg-[rgba(8,9,10,0.2)] after:opacity-0 after:transition-opacity after:duration-(--duration-coda-fast) hover:bg-transparent hover:after:opacity-100"
           onClick={() => onOpen(album)}
           aria-label={`Open ${album.title}`}
+          aria-busy={loading || undefined}
+          disabled={loading}
+          size="compact"
+          variant="text"
         />
+        {loading ? (
+          <span className="pointer-events-none absolute inset-0 z-3 grid place-items-center rounded-md bg-black/40">
+            <Spinner
+              aria-label={`Loading ${album.title}`}
+              className="size-6 text-white"
+            />
+          </span>
+        ) : null}
         <span
           className="absolute right-2 bottom-2 z-2 translate-y-1 opacity-0 transition-[opacity,transform] duration-(--duration-coda-fast) group-focus-within:translate-y-0 group-focus-within:opacity-100 group-hover:translate-y-0 group-hover:opacity-100 data-current:translate-y-0 data-current:opacity-100"
           data-current={active || undefined}
@@ -618,16 +642,25 @@ const AlbumCard = memo(function AlbumCard({
         </span>
       </div>
       <div className="flex min-w-0 flex-col pt-2.5 pr-6">
-        <button className="truncate cursor-pointer border-0 bg-transparent p-0 text-left text-xs font-bold text-[#e5e3dd]" onClick={() => onOpen(album)}>
+        <Button
+          className="h-auto w-full min-w-0 justify-start truncate p-0 text-left text-xs font-bold text-[#e5e3dd] hover:bg-transparent hover:text-[#e5e3dd]"
+          onClick={() => onOpen(album)}
+          aria-busy={loading || undefined}
+          disabled={loading}
+          size="compact"
+          variant="text"
+        >
           {album.title}
-        </button>
-        <button
-          className="mt-1 truncate cursor-pointer border-0 bg-transparent p-0 text-left text-xs font-medium text-[#868984] hover:text-[#dc8973] hover:underline hover:underline-offset-2"
+        </Button>
+        <Button
+          className="mt-1 h-auto w-full min-w-0 justify-start truncate p-0 text-left text-xs font-medium text-[#868984] hover:bg-transparent hover:text-[#dc8973] hover:underline hover:underline-offset-2"
           onClick={() => onArtist(album.artist)}
+          size="compact"
           title={`Browse ${album.artist}`}
+          variant="text"
         >
           {album.artist}
-        </button>
+        </Button>
       </div>
       <Button
         className="absolute -right-1 -bottom-1 size-7 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
@@ -652,7 +685,7 @@ const ArtistCard = memo(function ArtistCard({
 }) {
   return (
     <Button
-      className="group grid h-auto w-full min-w-0 grid-cols-[2.5rem_minmax(0,1fr)_auto] items-center gap-3 rounded-lg border border-border bg-[#171a1c] p-2 text-left text-inherit [contain-intrinsic-size:62px] [content-visibility:auto] hover:border-(--line-strong) hover:bg-[#1d2022]"
+      className="group grid h-auto w-full min-w-0 grid-cols-[2.5rem_minmax(0,1fr)_auto] items-center gap-3 rounded-lg border border-border bg-[#171a1c] p-2 text-left text-inherit [contain-intrinsic-size:62px] [content-visibility:auto] hover:border-(--line-strong) hover:bg-popover"
       onClick={() => onOpen(group)}
       aria-label={`Browse ${group.name}`}
       variant="secondary"
@@ -693,7 +726,7 @@ const ArtistHero = memo(function ArtistHero({
   onTogglePlayback: () => void;
 }) {
   return (
-    <section className="relative -mt-2 mb-6 grid grid-cols-[7.5rem_minmax(0,1fr)] items-end gap-4 overflow-hidden rounded-lg border border-border bg-[radial-gradient(circle_at_88%_20%,rgba(221,101,73,0.13),transparent_38%),linear-gradient(135deg,#202426,#171a1c_72%)] p-4 xl:grid-cols-[9.5rem_minmax(0,1fr)] xl:gap-6 xl:p-5 [&>.cover]:size-30 [&>.cover]:rounded-lg xl:[&>.cover]:size-38">
+    <section className="relative -mt-2 mb-6 grid grid-cols-[7.5rem_minmax(0,1fr)] items-end gap-4 overflow-hidden rounded-lg border border-border bg-[radial-gradient(circle_at_88%_20%,rgba(221,101,73,0.13),transparent_38%),linear-gradient(135deg,#202426,#171a1c_72%)] p-4 *:data-[slot=cover]:size-30 *:data-[slot=cover]:rounded-lg xl:grid-cols-[9.5rem_minmax(0,1fr)] xl:gap-6 xl:p-5 xl:*:data-[slot=cover]:size-38">
       <CoverArt album={group.representative} size="large" />
       <div className="relative z-1 min-w-0">
         <Button className="mb-3 -ml-1 h-auto gap-1 p-1 text-xs text-[#8b8f89] hover:bg-transparent hover:text-[#f0eee8] xl:mb-4" onClick={onBack} size="compact" variant="text">
@@ -753,65 +786,6 @@ const ArtistHero = memo(function ArtistHero({
   );
 });
 
-const Sidebar = memo(function Sidebar({
-  view,
-  onView,
-  connected,
-  onConnect,
-}: {
-  view: LibraryView;
-  onView: (view: LibraryView) => void;
-  connected: boolean;
-  onConnect: () => void;
-}) {
-  const navigationButtonClass =
-    "relative h-10 w-full justify-start gap-2 rounded-md px-2 text-left text-xs font-medium text-[#a8aaa5] hover:bg-white/[0.04] hover:text-[#e3e1db] lg:gap-3 lg:px-3 lg:text-sm aria-[current=page]:bg-accent aria-[current=page]:text-[#f0b09f] aria-[current=page]:before:absolute aria-[current=page]:before:-left-3.5 aria-[current=page]:before:h-5 aria-[current=page]:before:w-1 aria-[current=page]:before:bg-primary aria-[current=page]:before:content-['']";
-
-  return (
-    <aside className="flex min-h-0 flex-col border-r border-sidebar-border bg-sidebar px-2 pt-6 pb-3.5 lg:px-3.5">
-      <nav className="flex flex-col gap-1" aria-label="Primary navigation">
-        <p className="mb-2.5 text-xs font-bold tracking-widest text-[#777b76] uppercase">Your music</p>
-        <Button className={navigationButtonClass} aria-current={view === "library" ? "page" : undefined} onClick={() => onView("library")} variant="ghost">
-          <Library size={18} /><span>Collection</span>
-        </Button>
-        <Button className={navigationButtonClass} aria-current={view === "favorites" ? "page" : undefined} onClick={() => onView("favorites")} variant="ghost">
-          <Heart size={18} /><span>Favorites</span>
-        </Button>
-        <Button className={navigationButtonClass} aria-current={view === "playlists" ? "page" : undefined} onClick={() => onView("playlists")} variant="ghost">
-          <ListMusic size={18} /><span>Playlists</span>
-        </Button>
-        <Button className={navigationButtonClass} aria-current={view === "recent" ? "page" : undefined} onClick={() => onView("recent")} variant="ghost">
-          <Clock3 size={18} /><span>Recently added</span>
-        </Button>
-        <Button className={navigationButtonClass} aria-current={view === "discover" ? "page" : undefined} onClick={() => onView("discover")} variant="ghost">
-          <Compass size={18} /><span>Discover</span>
-        </Button>
-        <p className="mt-6 mb-2.5 text-xs font-bold tracking-widest text-[#777b76] uppercase">Listen</p>
-        <Button className={navigationButtonClass} aria-current={view === "radio" ? "page" : undefined} onClick={() => onView("radio")} variant="ghost">
-          <Radio size={18} /><span>Bandcamp Radio</span>
-        </Button>
-      </nav>
-
-      <div className="mt-auto grid grid-cols-[auto_1fr_auto] items-center gap-2 border-t border-border px-2 py-3 lg:px-2 lg:py-3">
-        <span
-          className={`size-2 rounded-full ${
-            connected
-              ? "bg-coda-success shadow-[0_0_0_4px_rgba(127,167,139,0.1)]"
-              : "bg-[#777a76]"
-          }`}
-        />
-        <div className="flex min-w-0 flex-col">
-          <strong className="truncate text-xs font-semibold text-[#c9cbc5]">{connected ? "Bandcamp synced" : "Not connected"}</strong>
-          <span className="mt-0.5 hidden truncate text-xs text-[#727670] lg:block">{connected ? "Official Subsonic beta" : "Connect to hear your music"}</span>
-        </div>
-        <Button onClick={onConnect} aria-label="Connection settings" title="Connection settings" size="icon" variant="ghost">
-          <Settings2 size={17} />
-        </Button>
-      </div>
-    </aside>
-  );
-});
-
 const QueueRadioChapters = memo(function QueueRadioChapters({
   chapters,
   currentChapterIndex,
@@ -850,14 +824,16 @@ const QueueRadioChapters = memo(function QueueRadioChapters({
               className="[contain-intrinsic-size:48px] [content-visibility:auto]"
               key={`${chapter.timecode}-${chapter.artist}-${chapter.title}-${chapterIndex}`}
             >
-              <button
-                className={`grid min-h-12 w-full cursor-pointer grid-cols-[2.5rem_minmax(0,1fr)_auto] items-center gap-2 rounded-md border-0 px-2 py-1.5 text-left text-inherit transition-colors duration-150 hover:bg-white/4.5 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary/60 ${
+              <Button
+                className={`grid h-auto min-h-12 w-full grid-cols-[2.5rem_minmax(0,1fr)_auto] items-center gap-2 rounded-md px-2 py-1.5 text-left text-inherit transition-colors duration-150 hover:bg-white/4.5 focus-visible:-outline-offset-2 focus-visible:outline-primary/60 ${
                   isCurrent ? "bg-primary/10" : ""
                 }`}
                 ref={isCurrent ? currentChapterRef : undefined}
                 onClick={() => onSeek(chapter.timecode)}
                 aria-current={isCurrent ? "true" : undefined}
                 aria-label={`Seek to ${chapter.title} at ${formatTime(chapter.timecode)}`}
+                size="compact"
+                variant="text"
               >
                 <time className="text-xs text-[#777b76] tabular-nums">{formatTime(chapter.timecode)}</time>
                 <span className="flex min-w-0 flex-col gap-1">
@@ -872,7 +848,7 @@ const QueueRadioChapters = memo(function QueueRadioChapters({
                 ) : isNext ? (
                   <Badge className="rounded-full bg-white/4.5 p-1 text-xs font-bold tracking-widest text-[#858984] uppercase">Next</Badge>
                 ) : null}
-              </button>
+              </Button>
             </li>
           );
         })}
@@ -884,6 +860,7 @@ const QueueRadioChapters = memo(function QueueRadioChapters({
 const QueuePanel = memo(function QueuePanel({
   open,
   panelRef,
+  finalFocus,
   queue,
   currentIndex,
   currentTrack,
@@ -905,10 +882,12 @@ const QueuePanel = memo(function QueuePanel({
   recommendationLoading,
   onPlayRecommendation,
   onAnotherRecommendation,
-  onClose,
+  loadingAlbumId,
+  playerVisible,
 }: {
   open: boolean;
-  panelRef: RefObject<HTMLElement | null>;
+  panelRef: RefObject<HTMLDivElement | null>;
+  finalFocus: RefObject<HTMLButtonElement | null>;
   queue: Track[];
   currentIndex: number;
   currentTrack?: Track;
@@ -930,7 +909,8 @@ const QueuePanel = memo(function QueuePanel({
   recommendationLoading: boolean;
   onPlayRecommendation: () => void;
   onAnotherRecommendation: () => void;
-  onClose: () => void;
+  loadingAlbumId?: string;
+  playerVisible: boolean;
 }) {
   const upcoming = queue.slice(currentIndex + 1);
   const remaining = upcoming.reduce((total, item) => total + item.duration, 0);
@@ -959,7 +939,7 @@ const QueuePanel = memo(function QueuePanel({
             : "Use the + button on any release to line up music."}
       </span>
       {recommendation ? (
-        <div className="mt-6 grid w-full min-w-0 grid-cols-[3rem_minmax(0,1fr)] gap-x-3 gap-y-2.5 overflow-hidden rounded-lg border border-white/[0.09] bg-[radial-gradient(circle_at_0_0,rgba(221,101,73,0.09),transparent_58%),#1a1d1f] p-3 text-left shadow-[inset_0_1px_rgba(255,255,255,0.025)] [&>.cover]:self-center">
+        <div className="mt-6 grid w-full min-w-0 grid-cols-[3rem_minmax(0,1fr)] gap-x-3 gap-y-2.5 overflow-hidden rounded-lg border border-white/9 bg-[radial-gradient(circle_at_0_0,rgba(221,101,73,0.09),transparent_58%),#1a1d1f] p-3 text-left shadow-[inset_0_1px_rgba(255,255,255,0.025)] *:data-[slot=cover]:self-center">
           <CoverArt size="small" album={recommendation.album} />
           <div className="flex min-w-0 flex-col justify-center">
             <span className="text-xs font-bold tracking-widest text-[#d07c67] uppercase">Try this next</span>
@@ -1008,35 +988,31 @@ const QueuePanel = memo(function QueuePanel({
   );
 
   return (
-    <aside
+    <DrawerContent
       ref={panelRef}
-      className={`absolute top-3 right-3 bottom-3 z-4 isolate grid max-h-full min-h-0 w-[min(22rem,calc(100%_-_15rem))] min-w-0 grid-rows-[auto_auto_minmax(0,1fr)_auto] overflow-hidden rounded-lg border border-white/12 bg-coda-queue shadow-coda-queue [contain:paint] [transform-origin:right_center] max-xl:w-[min(21rem,calc(100%_-_13rem))] max-xl:text-[90%] max-lg:inset-y-2 max-lg:right-2 max-lg:w-[min(20rem,calc(100%_-_10.5rem))] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary/70 ${
-        open
-          ? "animate-[queue-panel-in_220ms_cubic-bezier(0.22,1,0.36,1)_both]"
-          : "pointer-events-none animate-[queue-panel-out_180ms_cubic-bezier(0.4,0,1,1)_both]"
+      finalFocus={finalFocus}
+      className={`top-3! right-3! isolate w-80! max-h-none min-h-0 min-w-0 overflow-hidden rounded-lg border border-white/12 bg-coda-queue shadow-coda-queue [contain:paint] data-[swipe-direction=right]:rounded-lg xl:w-88! max-lg:top-2! max-lg:right-2! focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary/70 ${
+        playerVisible
+          ? "bottom-26! max-lg:bottom-25!"
+          : "bottom-3! max-lg:bottom-2!"
       }`}
-      aria-label="Playback queue"
       aria-hidden={!open}
-      inert={!open}
-      onKeyDown={(event) => {
-        if (event.key !== "Escape") return;
-        event.preventDefault();
-        event.stopPropagation();
-        onClose();
-      }}
-      tabIndex={open ? -1 : undefined}
+      tabIndex={-1}
     >
-      <div className="flex items-center justify-between bg-coda-queue px-3 pt-6 pb-4">
+      <DrawerHeader className="flex-row items-center justify-between gap-4 bg-coda-queue px-3 pt-6 pb-4 text-left">
         <div>
           <span className="mb-2 text-xs font-bold tracking-widest text-[#777b76] uppercase">Playing next</span>
-          <h2 className="m-0 font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-xl leading-none font-semibold">Queue</h2>
+          <DrawerTitle className="m-0 font-display text-xl leading-none font-semibold">Queue</DrawerTitle>
+          <DrawerDescription className="sr-only">
+            Review and manage the tracks playing next.
+          </DrawerDescription>
         </div>
         <div className="flex items-center">
           <Tooltip>
             <TooltipTrigger
               render={(
                 <Button
-                  className="transition-[color,background-color,transform] duration-160 hover:scale-105 hover:rotate-12"
+                  className="transition-[color,background-color,transform] duration-150 hover:scale-105 hover:rotate-12"
                   onClick={onShuffle}
                   disabled={queue.length < 2}
                   aria-label="Shuffle queue"
@@ -1060,7 +1036,7 @@ const QueuePanel = memo(function QueuePanel({
             Clear next
           </Button>
         </div>
-      </div>
+      </DrawerHeader>
 
       {currentTrack ? (
         <div
@@ -1071,11 +1047,13 @@ const QueuePanel = memo(function QueuePanel({
             <span className="size-1.5 rounded-full bg-primary" />Now playing
           </Badge>
           <div className="flex w-full min-w-0 items-center gap-2.5 text-left">
-            <button
-              className="block shrink-0 cursor-pointer overflow-hidden border-0 bg-transparent p-0 text-left"
+            <Button
+              className="h-auto shrink-0 overflow-hidden p-0 text-left hover:bg-transparent"
               onClick={onNowPlaying}
               aria-label={`Open Now Playing for ${currentRadioChapter?.title ?? currentTrack.title}`}
+              size="compact"
               title="Open Now Playing"
+              variant="text"
             >
             <CoverArt
               size="small"
@@ -1088,7 +1066,7 @@ const QueuePanel = memo(function QueuePanel({
                 palette: currentTrack.palette,
               }}
             />
-            </button>
+            </Button>
             <div className="flex min-w-0 shrink grow basis-0 flex-col gap-1 overflow-hidden">
               {currentRadioChapter ? (
                 <>
@@ -1106,12 +1084,14 @@ const QueuePanel = memo(function QueuePanel({
                 </>
               ) : (
                 <>
-                  <button
-                    className="w-full truncate cursor-pointer border-0 bg-transparent p-0 text-left text-xs font-semibold text-[#d9d8d2]"
+                  <Button
+                    className="h-auto w-full justify-start truncate p-0 text-left text-xs font-semibold text-[#d9d8d2] hover:bg-transparent hover:text-[#d9d8d2]"
                     onClick={onNowPlaying}
+                    size="compact"
+                    variant="text"
                   >
                     {currentTrack.title}
-                  </button>
+                  </Button>
                   <Button
                     className="h-auto justify-start truncate p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
                     onClick={() => onArtist(currentTrack.artist)}
@@ -1143,7 +1123,7 @@ const QueuePanel = memo(function QueuePanel({
         fallback={(
           <div
             aria-label="Upcoming tracks"
-            className="min-h-0 [touch-action:pan-y] [scrollbar-color:#343738_transparent] scrollbar-thin overflow-x-hidden overflow-y-auto overscroll-y-contain bg-coda-queue px-2 pt-0.5 pb-2.5 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary/60"
+            className="min-h-0 flex-1 [touch-action:pan-y] [scrollbar-color:#343738_transparent] scrollbar-thin overflow-x-hidden overflow-y-auto overscroll-y-contain bg-coda-queue px-2 pt-0.5 pb-2.5 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary/60"
             role="region"
             tabIndex={0}
           >
@@ -1153,7 +1133,7 @@ const QueuePanel = memo(function QueuePanel({
       >
       <TrackQueueList
         aria-label="Upcoming tracks"
-        className="min-h-0 [touch-action:pan-y] [scrollbar-color:#343738_transparent] scrollbar-thin overflow-x-hidden overflow-y-auto overscroll-y-contain bg-coda-queue px-2 pt-0.5 pb-2.5 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary/60"
+        className="min-h-0 flex-1 [touch-action:pan-y] [scrollbar-color:#343738_transparent] scrollbar-thin overflow-x-hidden overflow-y-auto overscroll-y-contain bg-coda-queue px-2 pt-0.5 pb-2.5 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary/60"
         empty={emptyQueue}
         getItemKey={(track, absoluteIndex) => `${track.id}-${absoluteIndex}`}
         items={upcoming}
@@ -1173,11 +1153,15 @@ const QueuePanel = memo(function QueuePanel({
           >
             <GripVertical className="cursor-grab text-[#4e5250] opacity-0 transition-[color,opacity,transform] duration-180 group-hover:translate-x-px group-hover:opacity-100" size={15} />
             <div className="flex min-w-0 items-center gap-2 text-left">
-              <button
-                className="block shrink-0 cursor-pointer overflow-hidden border-0 bg-transparent p-0 text-left"
+              <Button
+                className="relative h-auto shrink-0 overflow-hidden p-0 text-left hover:bg-transparent"
                 onClick={() => onAlbum(track)}
                 aria-label={`Open ${track.album}`}
+                aria-busy={loadingAlbumId === track.albumId || undefined}
+                disabled={loadingAlbumId === track.albumId}
+                size="compact"
                 title={`Open ${track.album}`}
+                variant="text"
               >
                 <CoverArt
                   size="small"
@@ -1190,14 +1174,24 @@ const QueuePanel = memo(function QueuePanel({
                     palette: track.palette,
                   }}
                 />
-              </button>
+                {loadingAlbumId === track.albumId ? (
+                  <span className="pointer-events-none absolute inset-0 grid place-items-center bg-black/40">
+                    <Spinner
+                      aria-label={`Loading ${track.album}`}
+                      className="size-5 text-white"
+                    />
+                  </span>
+                ) : null}
+              </Button>
               <span className="flex min-w-0 flex-col gap-1">
-                <button
-                  className="truncate cursor-pointer border-0 bg-transparent p-0 text-left text-xs font-semibold text-[#d9d8d2]"
+                <Button
+                  className="h-auto min-w-0 justify-start truncate p-0 text-left text-xs font-semibold text-[#d9d8d2] hover:bg-transparent hover:text-[#d9d8d2]"
                   onClick={() => onPlay(absoluteIndex)}
+                  size="compact"
+                  variant="text"
                 >
                   {track.title}
-                </button>
+                </Button>
                 <Button
                   className="h-auto justify-start truncate p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
                   onClick={() => onArtist(track.artist)}
@@ -1232,13 +1226,13 @@ const QueuePanel = memo(function QueuePanel({
       />
       </Suspense>
 
-      <div className="flex justify-between border-t border-border bg-coda-queue p-3 text-xs text-[#696d68]">
+      <DrawerFooter className="mt-0 flex-row justify-between gap-0 border-t border-border bg-coda-queue p-3 text-xs text-[#696d68]">
         <span className="animate-[queue-count-in_220ms_cubic-bezier(0.22,1,0.36,1)_both]" key={upcoming.length}>
           {countLabel(upcoming.length, "track")} next
         </span>
         <span>{upcoming.length ? `${formatTime(remaining)} remaining` : "Queue ready"}</span>
-      </div>
-    </aside>
+      </DrawerFooter>
+    </DrawerContent>
   );
 });
 
@@ -1250,6 +1244,7 @@ const PlayerTrack = memo(function PlayerTrack({
   onToggleFavorite,
   onArtist,
   onAlbum,
+  albumLoading,
   onNowPlaying,
   onOpenRadioItem,
   getRadioChapterLocalLinks,
@@ -1261,6 +1256,7 @@ const PlayerTrack = memo(function PlayerTrack({
   onToggleFavorite: () => void;
   onArtist: (artist: string) => void;
   onAlbum: (track: Track) => void;
+  albumLoading: boolean;
   onNowPlaying: () => void;
   onOpenRadioItem: (url: string) => void;
   getRadioChapterLocalLinks: (chapter: RadioChapter) => RadioChapterLocalLinks;
@@ -1292,11 +1288,13 @@ const PlayerTrack = memo(function PlayerTrack({
     <div className="flex w-full min-w-0 items-center justify-self-start gap-3">
       {track ? (
         <>
-          <button
-            className="player__art-link block shrink-0 cursor-pointer overflow-hidden rounded-sm border-0 bg-transparent p-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          <Button
+            className="player__art-link h-auto shrink-0 overflow-hidden rounded-sm p-0 hover:bg-transparent focus-visible:outline-primary"
             onClick={onNowPlaying}
             aria-label="Open Now Playing"
+            size="compact"
             title={`Open Now Playing for ${track.title}`}
+            variant="text"
           >
             <CoverArt
               size="small"
@@ -1313,7 +1311,7 @@ const PlayerTrack = memo(function PlayerTrack({
               }
               animateChanges={Boolean(track.radioChapters?.length)}
             />
-          </button>
+          </Button>
           {activeChapter ? (
             <div className="flex min-w-0 flex-[0_1_auto] items-center gap-1">
               <div className="flex min-w-0 flex-[0_1_auto] flex-col gap-1">
@@ -1347,9 +1345,17 @@ const PlayerTrack = memo(function PlayerTrack({
                 <Button
                   className="h-auto p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
                   onClick={() => onAlbum(track)}
+                  aria-busy={albumLoading || undefined}
+                  disabled={albumLoading}
                   size="compact"
                   variant="text"
                 >
+                  {albumLoading ? (
+                    <Spinner
+                      aria-label={`Loading ${track.album}`}
+                      className="size-3.5"
+                    />
+                  ) : null}
                   {track.album}
                 </Button>
               </span>
@@ -1476,6 +1482,7 @@ function Player({
   onAirPlay,
   onArtist,
   onAlbum,
+  albumLoading,
   onNowPlaying,
   onOpenRadioItem,
   getRadioChapterLocalLinks,
@@ -1483,7 +1490,6 @@ function Player({
   onToggleFavorite,
   onAddToPlaylist,
   queueOpen,
-  onToggleQueue,
   queueControlRef,
 }: {
   track?: Track;
@@ -1505,6 +1511,7 @@ function Player({
   onAirPlay: () => void;
   onArtist: (artist: string) => void;
   onAlbum: (track: Track) => void;
+  albumLoading: boolean;
   onNowPlaying: () => void;
   onOpenRadioItem: (url: string) => void;
   getRadioChapterLocalLinks: (chapter: RadioChapter) => RadioChapterLocalLinks;
@@ -1512,7 +1519,6 @@ function Player({
   onToggleFavorite: () => void;
   onAddToPlaylist: () => void;
   queueOpen: boolean;
-  onToggleQueue: () => void;
   queueControlRef: RefObject<HTMLButtonElement | null>;
 }) {
   return (
@@ -1525,6 +1531,7 @@ function Player({
         onToggleFavorite={onToggleFavorite}
         onArtist={onArtist}
         onAlbum={onAlbum}
+        albumLoading={albumLoading}
         onNowPlaying={onNowPlaying}
         onOpenRadioItem={onOpenRadioItem}
         getRadioChapterLocalLinks={getRadioChapterLocalLinks}
@@ -1577,21 +1584,24 @@ function Player({
           </Tooltip>
         ) : null}
         <Tooltip>
-          <TooltipTrigger
+          <DrawerTrigger
             render={(
-              <Button
-                className={queueOpen ? "text-primary" : ""}
-                onClick={onToggleQueue}
-                ref={queueControlRef}
-                aria-label={queueOpen ? "Hide queue" : "Show queue"}
-                aria-pressed={queueOpen}
-                size="icon"
-                variant="ghost"
-              />
+              <TooltipTrigger
+                render={(
+                  <Button
+                    className={queueOpen ? "text-primary" : ""}
+                    ref={queueControlRef}
+                    aria-label={queueOpen ? "Hide queue" : "Show queue"}
+                    aria-pressed={queueOpen}
+                    size="icon"
+                    variant="ghost"
+                  />
+                )}
+              >
+                <ListMusic size={18} />
+              </TooltipTrigger>
             )}
-          >
-            <ListMusic size={18} />
-          </TooltipTrigger>
+          />
           <TooltipContent>{queueOpen ? "Hide queue" : "Show queue"}</TooltipContent>
         </Tooltip>
       </div>
@@ -1644,7 +1654,7 @@ function AlbumDetailPage({
         Back to releases
       </Button>
       <header className="relative grid grid-cols-[10rem_minmax(0,1fr)] items-end gap-6 overflow-hidden rounded-t-xl border border-border bg-[radial-gradient(circle_at_82%_20%,rgba(221,101,73,0.13),transparent_37%),linear-gradient(135deg,#24282a,#191c1e_70%)] p-6 xl:grid-cols-[14rem_minmax(0,1fr)] xl:gap-8 xl:p-8">
-        <div className="size-40 drop-shadow-[0_16px_25px_rgba(0,0,0,0.25)] xl:size-56 [&>.cover]:size-full [&>.cover]:rounded-lg">
+        <div className="size-40 drop-shadow-[0_16px_25px_rgba(0,0,0,0.25)] *:data-[slot=cover]:size-full *:data-[slot=cover]:rounded-lg xl:size-56">
           <CoverArt album={album} size="large" />
         </div>
         <div className="min-w-0 pb-1">
@@ -1737,7 +1747,7 @@ function AlbumDetailPage({
             album.tracks.map((track) => {
               const activeTrack = currentTrackId === track.id;
               return (
-              <div className={`group grid min-h-14 grid-cols-[2.5rem_minmax(0,1fr)_3.5rem_7rem] items-center rounded-sm border-b border-white/[0.045] hover:bg-white/[0.035] ${activeTrack ? "bg-primary/[0.075]" : ""}`} key={track.id}>
+              <div className={`group grid h-14 grid-cols-[2.5rem_minmax(0,1fr)_3.5rem_7rem] items-center rounded-sm border-b border-white/4.5 hover:bg-white/[0.035] ${activeTrack ? "bg-primary/[0.075]" : ""}`} key={track.id}>
                 <Button
                   className={`h-full rounded-none p-0 text-xs text-[#777a76] hover:bg-transparent group-hover:[&>span]:hidden group-hover:[&>svg]:block [&>svg]:hidden ${activeTrack ? "text-[#e88c75] [&>span]:hidden [&>svg]:block" : ""}`}
                   onClick={activeTrack ? onTogglePlayback : () => onPlayTrack(track)}
@@ -1755,14 +1765,16 @@ function AlbumDetailPage({
                     : <Play size={13} fill="currentColor" />}
                 </Button>
                 <div className="flex min-w-0 flex-col gap-0.5 overflow-hidden">
-                  <button
-                    className="w-fit max-w-full min-w-0 cursor-pointer border-0 bg-transparent p-0 text-left"
+                  <Button
+                    className="h-auto w-fit max-w-full min-w-0 justify-start overflow-hidden p-0 text-left focus-visible:-outline-offset-2 focus-visible:outline-primary"
                     onClick={activeTrack ? onTogglePlayback : () => onPlayTrack(track)}
+                    size="compact"
+                    variant="text"
                   >
                     <strong className={`block truncate text-xs ${activeTrack ? "text-[#f0d7cf]" : "text-[#d9d8d2]"}`}>{track.title}</strong>
-                  </button>
+                  </Button>
                   <Button
-                    className="h-auto w-fit max-w-full justify-start truncate p-0 text-xs text-[#777b76] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
+                    className="h-auto w-fit max-w-full justify-start truncate p-0 text-xs text-[#777b76] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2 focus-visible:-outline-offset-2"
                     onClick={() => onArtist(track.artist)}
                     size="compact"
                     variant="text"
@@ -1942,7 +1954,7 @@ function ConnectionDialog({
     >
       <DialogContent
         aria-busy={dialogBusy}
-        className="top-[calc(50%-46px)] max-h-[calc(100%-152px)] w-[min(32rem,92vw)] [scrollbar-color:#3e4142_transparent] scrollbar-thin gap-0 overflow-auto p-8"
+        className="top-[calc(50%-(--spacing(12)))] max-h-[calc(100%-(--spacing(38)))] [scrollbar-color:#3e4142_transparent] scrollbar-thin gap-0 overflow-auto p-8"
         showCloseButton={false}
       >
         <Button
@@ -2029,7 +2041,7 @@ function ConnectionDialog({
             </Button>
           </>
         ) : null}
-        <div className="my-5 h-px bg-border" />
+        <Separator className="my-5" />
         <section className="grid gap-3" aria-labelledby="lastfm-settings-title">
           <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2.5">
             <AudioLines className="mt-px text-[#d4d2cc]" size={17} />
@@ -2094,7 +2106,7 @@ function ConnectionDialog({
         </section>
         {appUpdater.supported ? (
           <>
-            <div className="my-5 h-px bg-border" />
+            <Separator className="my-5" />
             <AppUpdateSettings updater={appUpdater} />
           </>
         ) : null}
@@ -2104,19 +2116,43 @@ function ConnectionDialog({
   );
 }
 
-function LibrarySkeleton() {
+function LibrarySkeleton({
+  label = "Loading your collection",
+}: {
+  label?: string;
+}) {
   const shimmerClassName =
     "relative overflow-hidden rounded-sm bg-[#202325] animate-none after:block after:h-full after:w-[45%] after:translate-x-[-120%] after:bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.045),transparent)] after:animate-[skeleton-shimmer_1.4s_ease-in-out_infinite] after:content-[''] motion-reduce:after:animate-none";
 
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-x-3 gap-y-5 pt-10 lg:grid-cols-[repeat(auto-fill,minmax(8rem,1fr))] lg:gap-x-4 lg:gap-y-6 xl:grid-cols-[repeat(auto-fill,minmax(9rem,1fr))]" aria-label="Loading your collection">
-      {Array.from({ length: 10 }, (_, index) => (
-        <div className="flex flex-col gap-2" key={index}>
-          <Skeleton className={`${shimmerClassName} aspect-square w-full`} />
-          <Skeleton className={`${shimmerClassName} h-2.5 w-[72%]`} />
-          <Skeleton className={`${shimmerClassName} h-2 w-[48%]`} />
-        </div>
-      ))}
+    <section aria-label={label} aria-live="polite">
+      <div className="flex items-center justify-center gap-2 pt-7 text-xs text-muted-foreground">
+        <Spinner aria-label={label} className="size-5" />
+        <span aria-hidden="true">{label}…</span>
+      </div>
+      <div
+        className="grid grid-cols-[repeat(auto-fill,minmax(7rem,1fr))] gap-x-3 gap-y-5 pt-6 lg:grid-cols-[repeat(auto-fill,minmax(8rem,1fr))] lg:gap-x-4 lg:gap-y-6 xl:grid-cols-[repeat(auto-fill,minmax(9rem,1fr))]"
+        aria-hidden="true"
+      >
+        {Array.from({ length: 10 }, (_, index) => (
+          <div className="flex flex-col gap-2" key={index}>
+            <Skeleton className={`${shimmerClassName} aspect-square w-full`} />
+            <Skeleton className={`${shimmerClassName} h-2.5 w-[72%]`} />
+            <Skeleton className={`${shimmerClassName} h-2 w-[48%]`} />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function PlaylistDialogFallback() {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40">
+      <div className="flex items-center gap-2 rounded-lg border border-border bg-popover px-4 py-3 text-xs text-popover-foreground shadow-xl">
+        <Spinner aria-label="Loading playlists" className="size-5" />
+        <span aria-hidden="true">Loading playlists…</span>
+      </div>
     </div>
   );
 }
@@ -2176,7 +2212,6 @@ export default function App() {
   const [volume, setVolume] = useState(0.72);
   const [repeat, setRepeat] = useState<RepeatMode>("off");
   const [queueOpen, setQueueOpen] = useState(false);
-  const [queuePresent, setQueuePresent] = useState(false);
   const [nowPlayingOpen, setNowPlayingOpen] = useState(false);
   const [playerStateReady, setPlayerStateReady] = useState(false);
   const [selectedAlbum, setSelectedAlbum] = useState<Album>();
@@ -2193,7 +2228,7 @@ export default function App() {
   const [streamUrl, setStreamUrl] = useState<string>();
   const [airPlayAvailable, setAirPlayAvailable] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
-  const queuePanelRef = useRef<HTMLElement>(null);
+  const queuePanelRef = useRef<HTMLDivElement>(null);
   const queueControlRef = useRef<HTMLButtonElement>(null);
   const queueFocusRequestedRef = useRef(false);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -2213,16 +2248,7 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (queueOpen) {
-      setQueuePresent(true);
-      return;
-    }
-    const timer = window.setTimeout(() => setQueuePresent(false), QUEUE_PANEL_EXIT_MS);
-    return () => window.clearTimeout(timer);
-  }, [queueOpen]);
-
-  useEffect(() => {
-    if (!queueOpen || !queuePresent || !queueFocusRequestedRef.current) return;
+    if (!queueOpen || !queueFocusRequestedRef.current) return;
     queueFocusRequestedRef.current = false;
     const focusPanel = () => {
       queuePanelRef.current?.focus({ preventScroll: true });
@@ -2233,7 +2259,7 @@ export default function App() {
     }
     const frame = window.requestAnimationFrame(focusPanel);
     return () => window.cancelAnimationFrame(frame);
-  }, [queueOpen, queuePresent]);
+  }, [queueOpen]);
   const playerStateErrorNotifiedRef = useRef(false);
   const playerStateWriteRef = useRef<Promise<void>>(Promise.resolve());
   const playbackSessionRef = useRef<PlaybackSession>({
@@ -3507,7 +3533,11 @@ export default function App() {
         current === album.id ? undefined : current
       );
     }
-    void transitionCodaView(() => setSelectedAlbum(albumForDetail), "page-forward");
+    void transitionCodaView(
+      () => setSelectedAlbum(albumForDetail),
+      "page-forward",
+      { skipSnapshot: coldLoad },
+    );
     try {
       const ready = await ensureTracks(album, sessionGeneration);
       if (
@@ -4055,29 +4085,10 @@ export default function App() {
     setConnectionOpen(false);
   }, [enqueuePlayerStateWrite, notify, playbackClock, queryClient]);
 
-  const toggleQueue = useCallback(() => {
-    setQueueOpen((open) => {
-      const next = !open;
-      if (next) queueFocusRequestedRef.current = true;
-      return next;
-    });
+  const changeQueueOpen = useCallback((nextOpen: boolean) => {
+    if (nextOpen) queueFocusRequestedRef.current = true;
+    setQueueOpen(nextOpen);
   }, []);
-  const closeQueueFromKeyboard = useCallback(() => {
-    const queueControl = queueControlRef.current ??
-      document.querySelector<HTMLButtonElement>(
-        'button[aria-label="Hide queue"]',
-      );
-    setQueueOpen(false);
-    const restoreFocus = () => {
-      queueControl?.focus({ preventScroll: true });
-    };
-    if (typeof window.requestAnimationFrame === "function") {
-      window.requestAnimationFrame(restoreFocus);
-    } else {
-      window.setTimeout(restoreFocus, 0);
-    }
-  }, []);
-
   const playQueueIndex = useCallback((index: number) => {
     setCurrentIndex(index);
     playbackClock.reset();
@@ -4389,18 +4400,25 @@ export default function App() {
   }, []);
 
   return (
+    <Drawer
+      disablePointerDismissal
+      modal={false}
+      onOpenChange={changeQueueOpen}
+      open={queueOpen}
+      swipeDirection="right"
+    >
     <div
       className={`grid h-full w-full min-w-[760px] bg-background ${
         nowPlayingOpen
           ? "grid-rows-[minmax(0,1fr)]"
-          : "grid-rows-[minmax(0,1fr)_92px]"
+          : "grid-rows-[minmax(0,1fr)_--spacing(23)]"
       }`}
     >
       <div
         className="relative isolate grid min-h-0 grid-cols-[9rem_minmax(22rem,1fr)] overflow-hidden lg:grid-cols-[12rem_minmax(32rem,1fr)] xl:grid-cols-[14rem_minmax(32rem,1fr)]"
         data-queue-open={queueOpen}
       >
-        <Sidebar
+        <AppSidebar
           view={view}
           onView={chooseView}
           connected={connected}
@@ -4435,6 +4453,7 @@ export default function App() {
               )}
               airPlayAvailable={airPlayAvailable}
               queueOpen={queueOpen}
+              queueControlRef={queueControlRef}
               onBack={backFromNowPlaying}
               onToggle={togglePlayback}
               onPrevious={previous}
@@ -4445,9 +4464,9 @@ export default function App() {
               onVolume={setVolume}
               onRepeat={cycleRepeat}
               onAirPlay={openAirPlay}
-              onToggleQueue={toggleQueue}
               onArtist={browseArtist}
               onAlbum={openTrackAlbum}
+              albumLoading={loadingAlbumId === currentTrack.albumId}
               onPlayQueueIndex={playQueueIndex}
               onRadioSeries={browseRadioSeries}
               recommendation={queueRecommendation}
@@ -4476,7 +4495,15 @@ export default function App() {
               }
             />
           ) : view === "favorites" || view === "playlists" ? (
-            <Suspense fallback={<LibrarySkeleton />}>
+            <Suspense
+              fallback={(
+                <LibrarySkeleton
+                  label={view === "favorites"
+                    ? "Loading Favorites"
+                    : "Loading Playlists"}
+                />
+              )}
+            >
               <SavedLibraryView
                 mode={view}
                 connected={connected}
@@ -4488,6 +4515,7 @@ export default function App() {
                 onToggleRadioFavorite={(show, favorite) =>
                   toggleRadioFavorite(show, favorite)}
                 currentTrackId={currentTrack?.id}
+                loadingAlbumId={loadingAlbumId}
                 playing={playing}
                 onTogglePlayback={togglePlayback}
                 onPlayTracks={playTracks}
@@ -4507,7 +4535,7 @@ export default function App() {
               />
             </Suspense>
           ) : view === "discover" ? (
-            <Suspense fallback={<LibrarySkeleton />}>
+            <Suspense fallback={<LibrarySkeleton label="Opening Discover" />}>
               <DiscoverView
                 onPlay={playTrack}
                 onQueue={queueTrack}
@@ -4517,7 +4545,7 @@ export default function App() {
               />
             </Suspense>
           ) : view === "radio" ? (
-            <Suspense fallback={<LibrarySkeleton />}>
+            <Suspense fallback={<LibrarySkeleton label="Tuning Bandcamp Radio" />}>
               <RadioView
                 onPlay={playTrack}
                 onPlayAt={playTrackAt}
@@ -4618,7 +4646,7 @@ export default function App() {
               <div className="grid size-9 place-items-center rounded-full bg-accent text-[#e68268]"><CircleAlert size={18} /></div>
               <div className="flex flex-col gap-0.5">
                 <strong className="text-xs text-[#e8e5df]">Showing your saved collection</strong>
-                <span className="text-xs text-[#969992]">{libraryError || "Bandcamp could not be reached. Your cached library is still available."}</span>
+                <span className="text-xs text-muted-foreground">{libraryError || "Bandcamp could not be reached. Your cached library is still available."}</span>
               </div>
               <Button
                 className="gap-1 px-2 text-xs text-[#ed8a71]"
@@ -4655,7 +4683,7 @@ export default function App() {
                     variant="ghost"
                   >
                     {label}
-                    <Badge className="min-w-5 rounded-full bg-white/5.5 px-1 py-0.5 text-xs text-[#737771] group-aria-pressed:bg-accent group-aria-pressed:text-[#e78d76]" variant="secondary">{count}</Badge>
+                    <Badge className="border-0 bg-white/5.5 text-[#737771] group-aria-pressed:bg-accent group-aria-pressed:text-[#e78d76]" size="compact" variant="secondary">{count}</Badge>
                   </Button>
                 );
               })}
@@ -4802,7 +4830,7 @@ export default function App() {
                   </span>
                 </div>
                 {artistGroups.length ? (
-                  <Suspense fallback={<LibrarySkeleton />}>
+                  <Suspense fallback={<LibrarySkeleton label="Loading artists" />}>
                     <ArtistVirtualGrid
                       items={artistGroups}
                       renderItem={(group) => (
@@ -4858,7 +4886,7 @@ export default function App() {
                   </div>
                 </div>
                 {visibleAlbums.length ? (
-                  <Suspense fallback={<LibrarySkeleton />}>
+                  <Suspense fallback={<LibrarySkeleton label="Loading releases" />}>
                     <AlbumVirtualGrid
                       ariaLabel={releaseSectionTitle}
                       items={visibleAlbums}
@@ -4871,6 +4899,7 @@ export default function App() {
                           onQueue={queueAlbum}
                           onArtist={browseArtist}
                           active={currentTrack?.albumId === album.id}
+                          loading={loadingAlbumId === album.id}
                           playing={playing}
                           onTogglePlayback={togglePlayback}
                         />
@@ -4900,10 +4929,10 @@ export default function App() {
             </>
           )}
         </main>
-        {queuePresent ? (
-          <QueuePanel
+        <QueuePanel
             open={queueOpen}
             panelRef={queuePanelRef}
+            finalFocus={queueControlRef}
             queue={queue}
             currentIndex={currentIndex}
             currentTrack={currentTrack}
@@ -4925,9 +4954,9 @@ export default function App() {
             recommendationLoading={randomPickLoading}
             onPlayRecommendation={playQueueRecommendation}
             onAnotherRecommendation={showAnotherQueueRecommendation}
-            onClose={closeQueueFromKeyboard}
+            loadingAlbumId={loadingAlbumId}
+            playerVisible={!nowPlayingOpen}
           />
-        ) : null}
       </div>
       {nowPlayingOpen && currentTrack ? null : (
         <Player
@@ -4950,6 +4979,9 @@ export default function App() {
           onAirPlay={openAirPlay}
           onArtist={browseArtist}
           onAlbum={openTrackAlbum}
+          albumLoading={Boolean(
+            currentTrack && loadingAlbumId === currentTrack.albumId
+          )}
           onNowPlaying={openNowPlaying}
           onOpenRadioItem={openRadioItem}
           getRadioChapterLocalLinks={getRadioChapterLocalLinks}
@@ -4963,7 +4995,6 @@ export default function App() {
             if (currentTrack) setPlaylistTarget([currentTrack]);
           }}
           queueOpen={queueOpen}
-          onToggleQueue={toggleQueue}
           queueControlRef={queueControlRef}
         />
       )}
@@ -5021,7 +5052,7 @@ export default function App() {
       ) : null}
       {connectionOpen ? null : <AppUpdatePrompt updater={appUpdater} />}
       {playlistTarget?.length ? (
-        <Suspense fallback={null}>
+        <Suspense fallback={<PlaylistDialogFallback />}>
           <AddToPlaylistDialog
             tracks={playlistTarget}
             onClose={() => setPlaylistTarget(undefined)}
@@ -5047,5 +5078,6 @@ export default function App() {
         ))}
       </div>
     </div>
+    </Drawer>
   );
 }

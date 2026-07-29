@@ -4,7 +4,7 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
 const buttonVariants = cva(
-  "inline-flex shrink-0 cursor-pointer items-center justify-center border font-bold whitespace-nowrap outline-none transition-colors duration-(--duration-coda-fast) focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2 disabled:cursor-default disabled:opacity-[0.38] [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "inline-flex shrink-0 cursor-pointer items-center justify-center border font-bold whitespace-nowrap transition-colors duration-(--duration-coda-fast) outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-default disabled:opacity-[0.38] [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
@@ -16,14 +16,14 @@ const buttonVariants = cva(
         artwork:
           "border-input bg-coda-artwork-action text-coda-artwork-foreground hover:bg-coda-artwork-hover hover:text-coda-artwork-hover-foreground",
         danger:
-          "border-primary/35 bg-primary/10 text-coda-danger-foreground hover:bg-primary/[0.18]",
+          "border-primary/35 bg-primary/10 text-coda-danger-foreground hover:bg-primary/18",
         text: "border-0 bg-transparent text-muted-foreground hover:text-foreground",
         ghost:
           "border-0 bg-transparent text-muted-foreground hover:bg-coda-button-hover hover:text-foreground",
       },
       size: {
-        compact: "h-8 gap-1.5 rounded-sm px-2.5 text-[11px]",
-        default: "h-[39px] gap-2 rounded-md px-[15px] text-xs",
+        compact: "h-8 gap-1.5 rounded-sm px-2.5 text-xs",
+        default: "h-10 gap-2 rounded-md px-4 text-xs",
         icon: "size-8 rounded-md p-0",
         "icon-compact": "size-7 rounded-sm p-0",
         "icon-sm": "size-7 rounded-sm p-0",

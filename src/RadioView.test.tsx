@@ -78,11 +78,18 @@ function renderRadio(
     playing?: boolean;
     onTogglePlayback?: () => void;
     requestedShowId?: number;
+    warmArchive?: boolean;
   } = {},
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  if (playback.warmArchive) {
+    client.setQueryData(["bandcamp-radio", "all"], {
+      pages: [{ results: shows, hasMore: false }],
+      pageParams: [null],
+    });
+  }
   const onTogglePlayback = playback.onTogglePlayback ?? vi.fn();
   const onToggleFavorite = vi.fn();
   function ControlledRadioView() {
@@ -408,5 +415,37 @@ describe("Bandcamp Radio", () => {
       name: "Songs in this show",
     })).toBeInTheDocument();
     expect(mocks.fetchRadioShow).toHaveBeenCalledWith(979);
+  });
+
+  it("keeps requested show loading visible over a warm archive until details arrive", async () => {
+    const requestedShow = {
+      ...show,
+      id: 977,
+      subtitle: "Deep Focus",
+    };
+    let resolveShow!: (value: RadioShow) => void;
+    mocks.fetchRadioShow.mockReturnValue(new Promise((resolve) => {
+      resolveShow = resolve;
+    }));
+
+    renderRadio(vi.fn(), vi.fn(), vi.fn(), {
+      requestedShowId: requestedShow.id,
+      warmArchive: true,
+    });
+
+    expect(await screen.findByRole("status", {
+      name: "Loading Radio show details",
+    })).toBeVisible();
+
+    resolveShow(requestedShow);
+
+    expect(await screen.findByRole("heading", {
+      name: "Deep Focus",
+    })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByRole("status", {
+        name: "Loading Radio show details",
+      })).not.toBeInTheDocument()
+    );
   });
 });

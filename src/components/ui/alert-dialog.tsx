@@ -6,8 +6,23 @@ import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 
-function AlertDialog({ ...props }: AlertDialogPrimitive.Root.Props) {
-  return <AlertDialogPrimitive.Root data-slot="alert-dialog" {...props} />
+function AlertDialog({
+  onOpenChange,
+  ...props
+}: AlertDialogPrimitive.Root.Props) {
+  return (
+    <AlertDialogPrimitive.Root
+      data-slot="alert-dialog"
+      onOpenChange={(open, details) => {
+        if (!open && details.reason === "escape-key") {
+          details.cancel()
+          return
+        }
+        onOpenChange?.(open, details)
+      }}
+      {...props}
+    />
+  )
 }
 
 function AlertDialogTrigger({ ...props }: AlertDialogPrimitive.Trigger.Props) {
@@ -30,7 +45,7 @@ function AlertDialogOverlay({
     <AlertDialogPrimitive.Backdrop
       data-slot="alert-dialog-overlay"
       className={cn(
-        "fixed inset-x-0 top-0 bottom-[92px] isolate z-50 bg-[rgba(5,6,7,0.72)] backdrop-blur-[6px] transition-opacity duration-[130ms] ease-(--ease-coda-enter) data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 data-closed:ease-(--ease-coda-exit) motion-reduce:animate-none motion-reduce:transition-none",
+        "fixed inset-x-0 top-0 bottom-23 isolate z-50 bg-[rgba(5,6,7,0.72)] backdrop-blur-sm transition-opacity duration-150 ease-coda-enter motion-reduce:animate-none motion-reduce:transition-none data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:ease-(--ease-coda-exit) data-closed:fade-out-0",
         className
       )}
       {...props}
@@ -52,7 +67,7 @@ function AlertDialogContent({
         data-slot="alert-dialog-content"
         data-size={size}
         className={cn(
-          "group/alert-dialog-content fixed top-1/2 left-1/2 z-50 grid w-[min(480px,calc(100%-2rem))] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-[11px] border border-[var(--line-strong)] bg-coda-radio p-6 text-popover-foreground shadow-[0_26px_70px_rgba(0,0,0,0.45)] outline-none transition-[transform,opacity] duration-[160ms] ease-(--ease-coda-enter) data-open:animate-in data-open:fade-in-0 data-open:slide-in-from-bottom-2 data-closed:animate-out data-closed:fade-out-0 data-closed:slide-out-to-bottom-2 data-closed:ease-(--ease-coda-exit) motion-reduce:animate-none motion-reduce:transition-none",
+          "group/alert-dialog-content fixed top-1/2 left-1/2 z-50 grid w-[calc(100%-2rem)] max-w-md -translate-1/2 gap-4 rounded-lg border border-(--line-strong) bg-coda-radio p-6 text-popover-foreground shadow-[0_26px_70px_rgba(0,0,0,0.45)] transition-[transform,opacity] duration-150 ease-coda-enter outline-none motion-reduce:animate-none motion-reduce:transition-none data-open:animate-in data-open:fade-in-0 data-open:slide-in-from-bottom-2 data-closed:animate-out data-closed:ease-(--ease-coda-exit) data-closed:fade-out-0 data-closed:slide-out-to-bottom-2",
           className
         )}
         {...props}
@@ -85,7 +100,7 @@ function AlertDialogFooter({
     <div
       data-slot="alert-dialog-footer"
       className={cn(
-        "-mx-6 -mb-6 flex flex-col-reverse gap-2 rounded-b-[11px] border-t bg-muted/50 p-6 group-data-[size=sm]/alert-dialog-content:grid group-data-[size=sm]/alert-dialog-content:grid-cols-2 sm:flex-row sm:justify-end",
+        "-mx-6 -mb-6 flex flex-col-reverse gap-2 rounded-b-lg border-t bg-muted/50 p-6 group-data-[size=sm]/alert-dialog-content:grid group-data-[size=sm]/alert-dialog-content:grid-cols-2 sm:flex-row sm:justify-end",
         className
       )}
       {...props}

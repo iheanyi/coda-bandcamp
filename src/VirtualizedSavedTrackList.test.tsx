@@ -153,6 +153,8 @@ describe("VirtualizedSavedTrackList", () => {
       return Number(match?.[1]);
     };
     expect(adjacentRows).toHaveLength(2);
+    expect(adjacentRows[0]).toHaveStyle({ height: "56px" });
+    expect(adjacentRows[1]).toHaveStyle({ height: "56px" });
     expect(rowOffset(adjacentRows[1]) - rowOffset(adjacentRows[0])).toBe(56);
     expect(screen.queryByText("Saved track 24999")).not.toBeInTheDocument();
 

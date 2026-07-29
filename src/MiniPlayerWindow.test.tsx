@@ -203,6 +203,152 @@ describe("Coda mini player", () => {
     expect(onCommand).toHaveBeenCalledWith({ type: "volume", volume: 0.35 });
   });
 
+  it("reports continuous bounded seek changes while pointer-dragging the compact slider", () => {
+    const onCommand = vi.fn();
+    render(
+      <MiniPlayerView
+        snapshot={snapshot}
+        onCommand={onCommand}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    const position = screen.getByRole("group", { name: "Track position" });
+    const control = position.querySelector<HTMLElement>(
+      "[data-base-ui-slider-control]",
+    );
+    if (!control) throw new Error("Missing position slider control");
+    const thumb = position.querySelector<HTMLElement>(
+      "[data-slot=slider-thumb]",
+    );
+    if (!thumb) throw new Error("Missing position slider thumb");
+    vi.spyOn(control, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 100, 20),
+    );
+    vi.spyOn(thumb, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(21, 5, 10, 10),
+    );
+
+    fireEvent.pointerDown(control, {
+      button: 0,
+      buttons: 1,
+      clientX: 35,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
+    fireEvent.pointerMove(document, {
+      buttons: 1,
+      clientX: 72.5,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
+    fireEvent.pointerMove(document, {
+      buttons: 1,
+      clientX: 120,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
+    fireEvent.pointerUp(document, {
+      button: 0,
+      buttons: 0,
+      clientX: 120,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
+
+    expect(onCommand.mock.calls.map(([command]) => command)).toEqual([
+      { type: "seek", positionSeconds: 60 },
+      { type: "seek", positionSeconds: 135 },
+      { type: "seek", positionSeconds: 180 },
+    ]);
+  });
+
+  it("sets compact seek and volume from track presses without pointer movement", () => {
+    const onCommand = vi.fn();
+    render(
+      <MiniPlayerView
+        snapshot={snapshot}
+        onCommand={onCommand}
+        onDismiss={vi.fn()}
+      />,
+    );
+
+    const position = screen.getByRole("group", { name: "Track position" });
+    const positionControl = position.querySelector<HTMLElement>(
+      "[data-base-ui-slider-control]",
+    );
+    if (!positionControl) throw new Error("Missing position slider control");
+    const positionThumb = position.querySelector<HTMLElement>(
+      "[data-slot=slider-thumb]",
+    );
+    if (!positionThumb) throw new Error("Missing position slider thumb");
+    vi.spyOn(positionControl, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 100, 20),
+    );
+    vi.spyOn(positionThumb, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(21, 5, 10, 10),
+    );
+
+    fireEvent.pointerDown(positionControl, {
+      button: 0,
+      buttons: 1,
+      clientX: 35,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
+    expect(onCommand).toHaveBeenCalledWith({
+      type: "seek",
+      positionSeconds: 60,
+    });
+    fireEvent.pointerUp(document, {
+      button: 0,
+      buttons: 0,
+      clientX: 35,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
+
+    const volume = screen.getByRole("group", { name: "Volume" });
+    const control = volume.querySelector<HTMLElement>(
+      "[data-base-ui-slider-control]",
+    );
+    if (!control) throw new Error("Missing volume slider control");
+    const thumb = volume.querySelector<HTMLElement>("[data-slot=slider-thumb]");
+    if (!thumb) throw new Error("Missing volume slider thumb");
+    vi.spyOn(control, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 100, 20),
+    );
+    vi.spyOn(thumb, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(64.8, 5, 10, 10),
+    );
+
+    fireEvent.pointerDown(control, {
+      button: 0,
+      buttons: 1,
+      clientX: 36.5,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
+
+    expect(onCommand).toHaveBeenCalledWith({ type: "volume", volume: 0.35 });
+
+    fireEvent.pointerUp(document, {
+      button: 0,
+      buttons: 0,
+      clientX: 36.5,
+      clientY: 10,
+      pointerId: 1,
+      pointerType: "mouse",
+    });
+  });
+
   it("dispatches play, next, and default unmute actions from their named controls", () => {
     const onCommand = vi.fn();
     render(

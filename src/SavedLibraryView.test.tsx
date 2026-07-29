@@ -1,5 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -170,6 +177,61 @@ beforeEach(() => {
 });
 
 describe("saved Bandcamp library views", () => {
+  it("keeps the selected playlist trigger busy until its delayed transition applies", async () => {
+    const playlistRequest = deferred<PlaylistDetail>();
+    mocks.fetchPlaylist.mockReturnValueOnce(playlistRequest.promise);
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      document,
+      "startViewTransition",
+    );
+    let applyTransitionUpdate: (() => void) | undefined;
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: vi.fn((update: () => void) => {
+        applyTransitionUpdate = update;
+        return { finished: Promise.resolve() };
+      }),
+    });
+
+    try {
+      withQueryClient(<SavedLibraryView mode="playlists" {...commonProps} />);
+
+      const playlistButton = await screen.findByRole("button", {
+        name: /Night drive/,
+      });
+      fireEvent.click(playlistButton);
+
+      expect(playlistButton).toBeDisabled();
+      expect(playlistButton).toHaveAttribute("aria-busy", "true");
+      expect(within(playlistButton).getByRole("status", {
+        name: "Opening Night drive",
+      })).toBeVisible();
+      expect(screen.queryByRole("heading", { name: "Night drive" }))
+        .not.toBeInTheDocument();
+
+      await act(async () => {
+        applyTransitionUpdate?.();
+        await Promise.resolve();
+      });
+
+      expect(await screen.findByText("Loading playlist")).toBeVisible();
+    } finally {
+      await act(async () => {
+        playlistRequest.resolve(detail);
+        await Promise.resolve();
+      });
+      if (originalDescriptor) {
+        Object.defineProperty(
+          document,
+          "startViewTransition",
+          originalDescriptor,
+        );
+      } else {
+        Reflect.deleteProperty(document, "startViewTransition");
+      }
+    }
+  });
+
   it("opens a synced playlist and exposes playback and editing actions", async () => {
     withQueryClient(<SavedLibraryView mode="playlists" {...commonProps} />);
 
@@ -188,8 +250,12 @@ describe("saved Bandcamp library views", () => {
     expect(commonProps.onPlayTracks).toHaveBeenCalledWith([track]);
     const playlistTracks = screen.getByLabelText("Night drive tracks");
     expect(within(playlistTracks).getByRole("listitem")).toHaveClass(
+      "h-14",
       "grid-cols-[2rem_minmax(0,1fr)_3rem_repeat(2,2rem)]",
       "lg:grid-cols-[2rem_minmax(0,1fr)_4rem_repeat(2,2rem)]",
+    );
+    expect(within(playlistTracks).getByRole("listitem")).not.toHaveClass(
+      "min-h-14",
     );
     fireEvent.click(within(playlistTracks).getByRole("button", { name: "Sweeps" }));
     expect(commonProps.onOpenArtist).toHaveBeenCalledWith("Sweeps");
@@ -398,9 +464,23 @@ describe("saved Bandcamp library views", () => {
       name: "Delete playlist",
     });
     await user.click(deleteTrigger);
-    expect(screen.getByRole("alertdialog", {
+    const deleteDialog = screen.getByRole("alertdialog", {
       name: "Delete Night drive?",
-    })).toBeVisible();
+    });
+    expect(deleteDialog).toBeVisible();
+
+    await user.keyboard("{Escape}");
+    expect(deleteDialog).toBeVisible();
+    expect(mocks.deletePlaylist).not.toHaveBeenCalled();
+
+    const backdrop = document.querySelector<HTMLElement>(
+      "[data-slot=alert-dialog-overlay]",
+    );
+    expect(backdrop).not.toBeNull();
+    await user.click(backdrop!);
+    expect(deleteDialog).toBeVisible();
+    expect(mocks.deletePlaylist).not.toHaveBeenCalled();
+
     await user.click(screen.getByRole("button", { name: "Keep playlist" }));
     expect(mocks.deletePlaylist).not.toHaveBeenCalled();
     await waitFor(() => expect(deleteTrigger).toHaveFocus());
@@ -464,8 +544,12 @@ describe("saved Bandcamp library views", () => {
       .toHaveClass("font-display");
     const favoriteTracks = screen.getByLabelText("Favorite tracks");
     expect(within(favoriteTracks).getByRole("listitem")).toHaveClass(
+      "h-14",
       "grid-cols-[2rem_2.5rem_minmax(0,1fr)_3rem_repeat(3,2rem)]",
       "lg:grid-cols-[2rem_2.5rem_minmax(0,1fr)_4rem_repeat(3,2rem)]",
+    );
+    expect(within(favoriteTracks).getByRole("listitem")).not.toHaveClass(
+      "min-h-14",
     );
     fireEvent.click(within(favoriteTracks).getByRole("button", { name: "Remove Mirage from favorites" }));
     expect(commonProps.onToggleFavorite).toHaveBeenCalledWith("song-1", "song", false);
@@ -505,6 +589,80 @@ describe("saved Bandcamp library views", () => {
       favorites.radioShows[0],
       false,
     );
+  });
+
+  it("marks favorite release artwork and title busy while that album opens", () => {
+    withQueryClient(
+      <SavedLibraryView
+        mode="favorites"
+        {...commonProps}
+        loadingAlbumId="album-1"
+      />,
+    );
+
+    const releases = screen.getByRole("heading", { name: "Releases" })
+      .closest("section");
+    if (!releases) throw new Error("Expected a releases section");
+    const artworkButton = within(releases).getByRole("button", {
+      name: "Open Mirage",
+    });
+    const titleButton = within(releases).getByRole("button", {
+      name: "Mirage",
+    });
+
+    expect(artworkButton).toBeDisabled();
+    expect(artworkButton).toHaveAttribute("aria-busy", "true");
+    expect(within(artworkButton).getByRole("status", {
+      name: "Loading Mirage artwork",
+    })).toBeVisible();
+    expect(titleButton).toBeDisabled();
+    expect(titleButton).toHaveAttribute("aria-busy", "true");
+    expect(within(titleButton).getByRole("status", {
+      name: "Loading Mirage release",
+    })).toBeVisible();
+  });
+
+  it("marks a favorite track album link busy while that album opens", () => {
+    withQueryClient(
+      <SavedLibraryView
+        mode="favorites"
+        {...commonProps}
+        loadingAlbumId="album-1"
+      />,
+    );
+
+    const favoriteTracks = screen.getByLabelText("Favorite tracks");
+    const albumButton = within(favoriteTracks).getByRole("button", {
+      name: "Open Mirage album",
+    });
+
+    expect(albumButton).toBeDisabled();
+    expect(albumButton).toHaveAttribute("aria-busy", "true");
+    expect(within(albumButton).getByRole("status", {
+      name: "Loading Mirage album",
+    })).toBeVisible();
+  });
+
+  it("marks a playlist track album link busy while that album opens", async () => {
+    withQueryClient(
+      <SavedLibraryView
+        mode="playlists"
+        {...commonProps}
+        loadingAlbumId="album-1"
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /Night drive/ }));
+    const playlistTracks = await screen.findByLabelText("Night drive tracks");
+    const albumButton = within(playlistTracks).getByRole("button", {
+      name: "Open Mirage album",
+    });
+
+    expect(albumButton).toBeDisabled();
+    expect(albumButton).toHaveAttribute("aria-busy", "true");
+    expect(within(albumButton).getByRole("status", {
+      name: "Loading Mirage album",
+    })).toBeVisible();
   });
 
   it("uses the display token for saved empty-state headings", () => {

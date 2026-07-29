@@ -1,7 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "./legacy.css" layer(components);
 
 @custom-variant dark (&:is(.dark *));
 
@@ -490,8 +489,9 @@ html:not(.coda-view-transitions-supported) .now-playing__up-next {
     font-family: var(--font-sans);
   }
 
-  .connection-steps,
-  .connection-dialog__steps {
-    list-style: decimal;
+  html[data-coda-window="mini-player"],
+  html[data-coda-window="mini-player"] body,
+  html[data-coda-window="mini-player"] #root {
+    background: transparent;
   }
 }

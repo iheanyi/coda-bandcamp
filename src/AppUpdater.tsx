@@ -9,6 +9,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
 import { isDesktop } from "./lib";
 import {
@@ -222,7 +223,7 @@ export function AppUpdatePrompt({
       }}
     >
       <DialogContent
-        className="top-[calc(50%-46px)] max-h-[calc(100%-152px)] w-[min(30rem,92vw)] scrollbar-thin [scrollbar-color:#3e4142_transparent] gap-0 overflow-auto p-8"
+        className="top-[calc(50%-(--spacing(12)))] max-h-[calc(100%-(--spacing(38)))] max-w-120 scrollbar-thin [scrollbar-color:#3e4142_transparent] gap-0 overflow-auto p-8"
         showCloseButton={false}
         aria-busy={busy}
         initialFocus={primaryActionRef}
@@ -257,10 +258,9 @@ export function AppUpdatePrompt({
             <span id="app-update-progress-label">
               Downloading update… {updater.progress}%
             </span>
-            <progress
+            <Progress
               aria-labelledby="app-update-progress-label"
-              className="h-1.5 w-full accent-primary"
-              max={100}
+              className="block w-full [&_[data-slot=progress-track]]:h-1.5"
               value={updater.progress}
             />
           </div>

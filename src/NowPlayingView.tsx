@@ -20,6 +20,7 @@ import {
   memo,
   type CSSProperties,
   type ReactNode,
+  type RefObject,
   useCallback,
   useEffect,
   useRef,
@@ -28,6 +29,7 @@ import {
 } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DrawerTrigger } from "@/components/ui/drawer";
 import { Slider } from "@/components/ui/slider";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -67,6 +69,7 @@ type NowPlayingViewProps = {
   artwork: ReactNode;
   airPlayAvailable: boolean;
   queueOpen: boolean;
+  queueControlRef?: RefObject<HTMLButtonElement | null>;
   onBack: () => void;
   onToggle: () => void;
   onPrevious: () => void;
@@ -77,9 +80,9 @@ type NowPlayingViewProps = {
   onVolume: (value: number) => void;
   onRepeat: () => void;
   onAirPlay: () => void;
-  onToggleQueue: () => void;
   onArtist: (artist: string) => void;
   onAlbum: (track: Track) => void;
+  albumLoading?: boolean;
   onPlayQueueIndex: (index: number) => void;
   onRadioSeries: (seriesId?: number) => void;
   recommendation?: QueueRecommendation;
@@ -171,6 +174,7 @@ const NowPlayingPlaybackControls = memo(function NowPlayingPlaybackControls({
   playing,
   repeat,
   queueOpen,
+  queueControlRef,
   canPrevious,
   canNext,
   onSeek,
@@ -178,7 +182,6 @@ const NowPlayingPlaybackControls = memo(function NowPlayingPlaybackControls({
   onPrevious,
   onToggle,
   onNext,
-  onToggleQueue,
 }: {
   playbackClock: PlaybackClock;
   timeline: readonly RadioChapter[];
@@ -186,6 +189,7 @@ const NowPlayingPlaybackControls = memo(function NowPlayingPlaybackControls({
   playing: boolean;
   repeat: RepeatMode;
   queueOpen: boolean;
+  queueControlRef?: RefObject<HTMLButtonElement | null>;
   canPrevious: boolean;
   canNext: boolean;
   onSeek: (value: number) => void;
@@ -193,7 +197,6 @@ const NowPlayingPlaybackControls = memo(function NowPlayingPlaybackControls({
   onPrevious: () => void;
   onToggle: () => void;
   onNext: () => void;
-  onToggleQueue: () => void;
 }) {
   const currentTime = useSyncExternalStore(
     playbackClock.subscribe,
@@ -305,23 +308,27 @@ const NowPlayingPlaybackControls = memo(function NowPlayingPlaybackControls({
           <TooltipContent>Next</TooltipContent>
         </Tooltip>
         <Tooltip>
-          <TooltipTrigger
+          <DrawerTrigger
             render={
-              <Button
-                variant="ghost"
-                size="icon"
-                className={cn(
-                  "justify-self-center text-[#7e817d]",
-                  queueOpen && "text-primary",
-                )}
-                onClick={onToggleQueue}
-                aria-label={queueOpen ? "Hide queue" : "Show queue"}
-                aria-pressed={queueOpen}
-              />
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    ref={queueControlRef}
+                    className={cn(
+                      "justify-self-center text-[#7e817d]",
+                      queueOpen && "text-primary",
+                    )}
+                    aria-label={queueOpen ? "Hide queue" : "Show queue"}
+                    aria-pressed={queueOpen}
+                  />
+                }
+              >
+                <ListMusic className="size-5" size={20} />
+              </TooltipTrigger>
             }
-          >
-            <ListMusic className="size-5" size={20} />
-          </TooltipTrigger>
+          />
           <TooltipContent>{queueOpen ? "Hide queue" : "Show queue"}</TooltipContent>
         </Tooltip>
       </div>
@@ -456,6 +463,7 @@ function NowPlayingViewComponent({
   artwork,
   airPlayAvailable,
   queueOpen,
+  queueControlRef,
   onBack,
   onToggle,
   onPrevious,
@@ -466,9 +474,9 @@ function NowPlayingViewComponent({
   onVolume,
   onRepeat,
   onAirPlay,
-  onToggleQueue,
   onArtist,
   onAlbum,
+  albumLoading = false,
   onPlayQueueIndex,
   onRadioSeries,
   recommendation,
@@ -549,7 +557,7 @@ function NowPlayingViewComponent({
       </header>
 
       <div className="relative mx-auto grid w-full max-w-5xl grid-cols-[minmax(15rem,24rem)_minmax(17rem,1fr)] items-center gap-16 max-xl:max-w-xl max-xl:grid-cols-1 max-xl:gap-6">
-        <div className="now-playing__artwork aspect-square w-full drop-shadow-[0_32px_44px_rgba(0,0,0,0.42)] max-xl:mx-auto max-xl:w-64 max-lg:w-52 [&_.cover--large]:size-full [&_.cover--large]:rounded-xl [&_.cover--large]:border [&_.cover--large]:border-white/10 [&_.cover--large]:shadow-none">
+        <div className="now-playing__artwork aspect-square w-full drop-shadow-[0_32px_44px_rgba(0,0,0,0.42)] **:data-[cover-size=large]:size-full **:data-[cover-size=large]:rounded-xl **:data-[cover-size=large]:border **:data-[cover-size=large]:border-white/10 **:data-[cover-size=large]:shadow-none max-xl:mx-auto max-xl:w-64 max-lg:w-52">
           {artwork}
         </div>
         <section className="now-playing__details min-w-0 max-xl:text-center" aria-label="Current track">
@@ -616,7 +624,16 @@ function NowPlayingViewComponent({
                   size="compact"
                   className="h-auto max-w-[46%] truncate p-0 text-sm font-medium text-[#c1c2bc] hover:bg-transparent hover:text-primary hover:underline"
                   onClick={() => onAlbum(track)}
+                  aria-busy={albumLoading}
+                  aria-label={albumLoading ? `Loading album ${track.album}` : undefined}
+                  disabled={albumLoading}
                 >
+                  {albumLoading ? (
+                    <Spinner
+                      aria-label={`Loading album ${track.album}`}
+                      className="size-3 shrink-0 text-current motion-reduce:animate-none"
+                    />
+                  ) : null}
                   {track.album}
                 </Button>
               </>
@@ -667,6 +684,7 @@ function NowPlayingViewComponent({
             playing={playing}
             repeat={repeat}
             queueOpen={queueOpen}
+            queueControlRef={queueControlRef}
             canPrevious={canPrevious}
             canNext={canNext}
             onSeek={onSeek}
@@ -674,7 +692,6 @@ function NowPlayingViewComponent({
             onPrevious={onPrevious}
             onToggle={onToggle}
             onNext={onNext}
-            onToggleQueue={onToggleQueue}
           />
 
           <div className="mt-4 flex items-center justify-center gap-1">
@@ -744,14 +761,6 @@ function NowPlayingViewComponent({
               {upcoming.length ? "Up next" : "Keep listening"}
             </h2>
           </div>
-          <Button
-            variant="text"
-            size="compact"
-            className="h-auto p-0 text-xs text-muted-foreground hover:bg-transparent hover:text-foreground"
-            onClick={onToggleQueue}
-          >
-            {queueOpen ? "Hide full queue" : "Show full queue"}
-          </Button>
         </div>
         {upcoming.length ? (
           <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 max-xl:grid-cols-1">
@@ -780,7 +789,7 @@ function NowPlayingViewComponent({
           </div>
         ) : recommendation ? (
           <div className="grid min-h-20 grid-cols-[3.5rem_minmax(0,1fr)_auto] items-center gap-3.5 rounded-lg border border-white/7 bg-[radial-gradient(circle_at_0_0,rgba(221,101,73,0.1),transparent_42%),rgba(255,255,255,0.025)] p-3 max-lg:grid-cols-[3rem_minmax(0,1fr)]">
-            <div className="size-14 overflow-hidden rounded-lg max-lg:size-12 [&_.cover]:size-full">
+            <div className="size-14 overflow-hidden rounded-lg **:data-[slot=cover]:size-full max-lg:size-12">
               {recommendationArtwork}
             </div>
             <div className="flex min-w-0 flex-col overflow-hidden">
