@@ -420,3 +420,17 @@ Do not edit or commit:
 Before handing off a change, review `git diff --check`, report exactly which
 verification commands ran, note any platform behavior that could not be tested
 locally, and call out security or capability changes explicitly.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs are tracked in GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Triage uses the default five-label vocabulary. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Domain documentation uses a single-context layout. See `docs/agents/domain.md`.
