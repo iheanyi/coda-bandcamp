@@ -64,6 +64,7 @@ import {
   fetchPlaylists,
   fetchRadioShow,
   formatTime,
+  invalidateCoverUrl,
   paletteFor,
   updatePlaylist,
 } from "./lib";
@@ -304,15 +305,22 @@ function FavoriteArtwork({
   item: Pick<Album, "title" | "coverArt" | "artworkUrl" | "palette">;
 }) {
   const [url, setUrl] = useState(item.artworkUrl);
+  const [requestVersion, setRequestVersion] = useState(0);
+  const coverIdRef = useRef(item.coverArt);
+  const retryCountRef = useRef(0);
 
   useEffect(() => {
     let active = true;
+    if (coverIdRef.current !== item.coverArt) {
+      coverIdRef.current = item.coverArt;
+      retryCountRef.current = 0;
+    }
     if (item.artworkUrl) {
       setUrl(item.artworkUrl);
       return;
     }
+    setUrl(undefined);
     if (!item.coverArt) {
-      setUrl(undefined);
       return;
     }
     fetchCoverUrl(item.coverArt)
@@ -325,7 +333,15 @@ function FavoriteArtwork({
     return () => {
       active = false;
     };
-  }, [item.artworkUrl, item.coverArt]);
+  }, [item.artworkUrl, item.coverArt, requestVersion]);
+
+  const retryImage = () => {
+    setUrl(undefined);
+    if (!item.coverArt || retryCountRef.current >= 1) return;
+    retryCountRef.current += 1;
+    invalidateCoverUrl(item.coverArt);
+    setRequestVersion((version) => version + 1);
+  };
 
   return (
     <span
@@ -344,7 +360,7 @@ function FavoriteArtwork({
           src={url}
           alt=""
           loading="lazy"
-          onError={() => setUrl(undefined)}
+          onError={retryImage}
         />
       ) : (
         <Music2 size={20} />
@@ -570,6 +586,18 @@ function PlaylistDetailView({
     );
   }
 
+  const firstTrack = playlist.tracks[0];
+  const playlistArtwork = playlist.coverArt ||
+      firstTrack?.coverArt ||
+      firstTrack?.artworkUrl
+    ? {
+      artworkUrl: playlist.coverArt ? undefined : firstTrack?.artworkUrl,
+      coverArt: playlist.coverArt ?? firstTrack?.coverArt,
+      palette: firstTrack?.palette ?? paletteFor(playlist.id),
+      title: playlist.name,
+    }
+    : undefined;
+
   const submitRename = (event: FormEvent) => {
     event.preventDefault();
     const nextName = name.trim();
@@ -591,9 +619,16 @@ function PlaylistDetailView({
         <ArrowLeft size={15} /> All playlists
       </Button>
       <header className="grid min-h-48 grid-cols-[8rem_minmax(0,1fr)] items-center gap-6 rounded-t-xl border border-border bg-[radial-gradient(circle_at_84%_10%,rgba(221,101,73,0.12),transparent_40%),linear-gradient(135deg,#24282a,#191c1e_72%)] p-7">
-        <span className="grid size-32 place-items-center rounded-lg border border-white/7 bg-coda-hover text-[#e1846d]">
-          <ListMusic size={38} />
-        </span>
+        {playlistArtwork ? (
+          <FavoriteArtwork
+            className="size-32 rounded-lg"
+            item={playlistArtwork}
+          />
+        ) : (
+          <span className="grid size-32 place-items-center rounded-lg border border-white/7 bg-coda-hover text-[#e1846d]">
+            <ListMusic size={38} />
+          </span>
+        )}
         <div className="min-w-0">
           <Eyebrow>Bandcamp playlist</Eyebrow>
           {editing ? (
@@ -707,6 +742,7 @@ function PlaylistDetailView({
           className="rounded-b-lg border border-t-0 border-border bg-coda-field"
           getItemKey={playlistTrackKey}
           items={playlist.tracks}
+          rowHeight={64}
           renderItem={(track, { index }, rowProps) => {
             const activeTrack = currentTrackId === track.id;
             const albumLoading = loadingAlbumId === track.albumId;
@@ -714,7 +750,7 @@ function PlaylistDetailView({
             <div
               {...rowProps}
               className={cn(
-                "group grid h-14 grid-cols-[2rem_minmax(0,1fr)_3rem_repeat(2,2rem)] items-center gap-x-1.5 border-b border-white/5 pr-2 pl-1 last:border-b-0 hover:bg-white/3 lg:grid-cols-[2rem_minmax(0,1fr)_4rem_repeat(2,2rem)] lg:gap-x-2 lg:pr-3",
+                "group relative grid h-16 grid-cols-[2rem_2.5rem_minmax(0,1fr)_3rem_repeat(2,2rem)] items-center gap-x-2 py-3 pr-3 pl-1 after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-white/5 last:after:hidden hover:bg-white/3 lg:grid-cols-[2rem_2.5rem_minmax(0,1fr)_4rem_repeat(2,2rem)]",
                 activeTrack && "bg-primary/7.5",
               )}
             >
@@ -743,6 +779,7 @@ function PlaylistDetailView({
                   playing={activeTrack && playing}
                 />
               </Button>
+              <FavoriteArtwork item={track} />
               <div className="flex min-w-0 flex-col gap-1">
                 <Button
                   className={cn(
@@ -788,7 +825,7 @@ function PlaylistDetailView({
                   </Button>
                 </span>
               </div>
-              <span className="flex items-center justify-center gap-1 text-xs text-[#777b76] tabular-nums">
+              <span className="justify-self-end pr-1 text-right text-xs text-[#777b76] tabular-nums">
                 {formatTime(track.duration)}
               </span>
               <Button

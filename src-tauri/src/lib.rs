@@ -2733,6 +2733,20 @@ fn bounded_track_from_value(value: &Value, fallback_album_id: &str) -> Option<Tr
     Some(track)
 }
 
+fn playlist_track_album_id(value: &Value) -> Option<String> {
+    match value.get("albumId") {
+        Some(Value::String(album_id)) => return Some(album_id.clone()),
+        None | Some(Value::Null) => {}
+        Some(_) => return None,
+    }
+    match value.get("parent") {
+        Some(Value::String(parent)) => Some(parent.clone()),
+        // Bandcamp addresses standalone playlist songs as one-track albums by song ID.
+        None | Some(Value::Null) => string_field(value, &["id"]),
+        Some(_) => None,
+    }
+}
+
 fn playlist_detail_from_value(value: &Value) -> Result<PlaylistDetail, String> {
     let summary = playlist_summary_from_value(value)
         .ok_or_else(|| "Bandcamp returned invalid playlist metadata.".to_string())?;
@@ -2751,7 +2765,7 @@ fn playlist_detail_from_value(value: &Value) -> Result<PlaylistDetail, String> {
     let tracks = entries
         .iter()
         .map(|entry| {
-            let fallback_album_id = string_field(entry, &["albumId", "parent"]).unwrap_or_default();
+            let fallback_album_id = playlist_track_album_id(entry).unwrap_or_default();
             bounded_track_from_value(entry, &fallback_album_id).ok_or_else(|| {
                 "Bandcamp returned invalid track metadata in a playlist.".to_string()
             })
@@ -5208,40 +5222,60 @@ mod tests {
     }
 
     #[test]
-    fn loads_playlist_tracks_using_the_parent_when_album_id_is_absent() {
+    fn loads_playlist_tracks_using_the_parent_or_song_id_when_album_id_is_absent() {
         let detail = playlist_detail_from_value(&serde_json::json!({
             "id": "playlist-1",
             "name": "Night drives",
-            "songCount": 1,
-            "duration": 245,
-            "entry": [{
-                "id": "song-1",
-                "parent": "album-1",
-                "title": "Afterimage",
-                "artist": "Night Archive",
-                "album": "Soft Focus",
-                "duration": 245,
-                "track": 2
-            }]
+            "songCount": 2,
+            "duration": 490,
+            "entry": [
+                {
+                    "id": "song-1",
+                    "parent": "album-1",
+                    "title": "Afterimage",
+                    "artist": "Night Archive",
+                    "album": "Soft Focus",
+                    "duration": 245,
+                    "track": 2
+                },
+                {
+                    "id": "standalone-song-1",
+                    "title": "Signal",
+                    "artist": "Night Archive",
+                    "duration": 245,
+                    "coverArt": "standalone-cover-1"
+                }
+            ]
         }))
         .unwrap();
 
         assert_eq!(detail.tracks[0].album_id, "album-1");
+        assert_eq!(detail.tracks[1].album_id, "standalone-song-1");
+    }
 
-        let orphaned_track = serde_json::json!({
-            "id": "playlist-1",
-            "name": "Night drives",
-            "songCount": 1,
-            "duration": 245,
-            "entry": [{
+    #[test]
+    fn rejects_malformed_playlist_album_associations() {
+        for entry in [
+            serde_json::json!({
                 "id": "song-1",
-                "title": "Afterimage",
-                "artist": "Night Archive",
-                "album": "Soft Focus",
-                "duration": 245
-            }]
-        });
-        assert!(playlist_detail_from_value(&orphaned_track).is_err());
+                "albumId": 7,
+                "title": "Afterimage"
+            }),
+            serde_json::json!({
+                "id": "song-1",
+                "parent": false,
+                "title": "Afterimage"
+            }),
+        ] {
+            let playlist = serde_json::json!({
+                "id": "playlist-1",
+                "name": "Night drives",
+                "songCount": 1,
+                "duration": 245,
+                "entry": [entry]
+            });
+            assert!(playlist_detail_from_value(&playlist).is_err());
+        }
     }
 
     #[test]

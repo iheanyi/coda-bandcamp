@@ -21,8 +21,10 @@ import type {
 const mocks = vi.hoisted(() => ({
   createPlaylist: vi.fn(),
   deletePlaylist: vi.fn(),
+  fetchCoverUrl: vi.fn(),
   fetchPlaylist: vi.fn(),
   fetchPlaylists: vi.fn(),
+  invalidateCoverUrl: vi.fn(),
   updatePlaylist: vi.fn(),
 }));
 
@@ -32,8 +34,10 @@ vi.mock("./lib", async (importOriginal) => {
     ...actual,
     createPlaylist: mocks.createPlaylist,
     deletePlaylist: mocks.deletePlaylist,
+    fetchCoverUrl: mocks.fetchCoverUrl,
     fetchPlaylist: mocks.fetchPlaylist,
     fetchPlaylists: mocks.fetchPlaylists,
+    invalidateCoverUrl: mocks.invalidateCoverUrl,
     updatePlaylist: mocks.updatePlaylist,
   };
 });
@@ -173,6 +177,7 @@ beforeEach(() => {
   Object.values(mocks).forEach((mock) => mock.mockReset());
   mocks.fetchPlaylists.mockResolvedValue([summary]);
   mocks.fetchPlaylist.mockResolvedValue(detail);
+  mocks.fetchCoverUrl.mockResolvedValue("https://bandcamp.com/cover.jpg");
   mocks.createPlaylist.mockResolvedValue(detail);
   mocks.updatePlaylist.mockResolvedValue(detail);
   mocks.deletePlaylist.mockResolvedValue(undefined);
@@ -237,6 +242,19 @@ describe("saved Bandcamp library views", () => {
     fireEvent.click(screen.getByRole("button", { name: "Play" }));
     expect(commonProps.onPlayTracks).toHaveBeenCalledWith([track]);
     const playlistTracks = screen.getByLabelText("Night drive tracks");
+    expect(within(playlistTracks).getByRole("listitem")).toHaveClass(
+      "h-16",
+      "py-3",
+      "after:absolute",
+      "grid-cols-[2rem_2.5rem_minmax(0,1fr)_3rem_repeat(2,2rem)]",
+      "lg:grid-cols-[2rem_2.5rem_minmax(0,1fr)_4rem_repeat(2,2rem)]",
+    );
+    expect(within(playlistTracks).getByRole("listitem")).not.toHaveClass(
+      "border-b",
+    );
+    expect(within(playlistTracks).getByRole("listitem")).not.toHaveClass(
+      "h-14",
+    );
     fireEvent.click(within(playlistTracks).getByRole("button", { name: "Sweeps" }));
     expect(commonProps.onOpenArtist).toHaveBeenCalledWith(
       "Sweeps",
@@ -261,6 +279,124 @@ describe("saved Bandcamp library views", () => {
         name: "After hours",
       }),
     );
+  });
+
+  it("uses the first track artwork when Bandcamp omits a playlist cover", async () => {
+    mocks.fetchPlaylist.mockResolvedValueOnce({
+      ...detail,
+      tracks: [{ ...track, coverArt: "first-track-cover" }],
+    });
+    const { container } = withQueryClient(
+      <SavedLibraryView mode="playlists" {...commonProps} />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /Night drive/ }));
+
+    await waitFor(() =>
+      expect(mocks.fetchCoverUrl).toHaveBeenCalledWith("first-track-cover"),
+    );
+    expect(container.querySelector("header img")).toHaveAttribute(
+      "src",
+      "https://bandcamp.com/cover.jpg",
+    );
+  });
+
+  it("clears replaced playlist artwork while the next first-track cover loads", async () => {
+    const nextCover = deferred<string>();
+    mocks.fetchCoverUrl
+      .mockReset()
+      .mockImplementation((coverArtId: string) =>
+        coverArtId === "first-track-cover"
+          ? Promise.resolve("https://bandcamp.com/first-cover.jpg")
+          : nextCover.promise
+      );
+    mocks.fetchPlaylist.mockResolvedValueOnce({
+      ...detail,
+      tracks: [{ ...track, coverArt: "first-track-cover" }],
+    });
+    const { container, queryClient } = withQueryClient(
+      <SavedLibraryView mode="playlists" {...commonProps} />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /Night drive/ }));
+    await waitFor(() =>
+      expect(container.querySelector("header img")).toHaveAttribute(
+        "src",
+        "https://bandcamp.com/first-cover.jpg",
+      ),
+    );
+
+    act(() => {
+      queryClient.setQueryData(
+        ["bandcamp", "playlists", "playlist-1"],
+        {
+          ...detail,
+          tracks: [{ ...track, id: "song-2", coverArt: "next-track-cover" }],
+        },
+      );
+    });
+    await waitFor(() =>
+      expect(container.querySelector("header img")).not.toBeInTheDocument(),
+    );
+
+    await act(async () => {
+      nextCover.resolve("https://bandcamp.com/next-cover.jpg");
+      await nextCover.promise;
+    });
+    await waitFor(() =>
+      expect(container.querySelector("header img")).toHaveAttribute(
+        "src",
+        "https://bandcamp.com/next-cover.jpg",
+      ),
+    );
+  });
+
+  it("invalidates and retries a broken playlist cover once", async () => {
+    let invalidated = false;
+    mocks.fetchCoverUrl
+      .mockReset()
+      .mockImplementation(() =>
+        Promise.resolve(
+          invalidated
+            ? "https://bandcamp.com/refreshed-cover.jpg"
+            : "https://bandcamp.com/expired-cover.jpg",
+        )
+      );
+    mocks.invalidateCoverUrl.mockImplementation(() => {
+      invalidated = true;
+    });
+    mocks.fetchPlaylist.mockResolvedValueOnce({
+      ...detail,
+      tracks: [{ ...track, coverArt: "first-track-cover" }],
+    });
+    const { container } = withQueryClient(
+      <SavedLibraryView mode="playlists" {...commonProps} />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /Night drive/ }));
+    const expired = await waitFor(() => {
+      const image = container.querySelector<HTMLImageElement>("header img");
+      if (!image) throw new Error("Expected playlist artwork");
+      expect(image).toHaveAttribute(
+        "src",
+        "https://bandcamp.com/expired-cover.jpg",
+      );
+      return image;
+    });
+    fireEvent.error(expired);
+
+    await waitFor(() =>
+      expect(mocks.invalidateCoverUrl).toHaveBeenCalledWith(
+        "first-track-cover",
+      ),
+    );
+    await waitFor(() =>
+      expect(container.querySelector("header img")).toHaveAttribute(
+        "src",
+        "https://bandcamp.com/refreshed-cover.jpg",
+      ),
+    );
+    expect(mocks.invalidateCoverUrl).toHaveBeenCalledOnce();
   });
 
   it("moves focus into playlist details and restores the opening row on Back", async () => {
@@ -700,6 +836,94 @@ describe("saved Bandcamp library views", () => {
     expect(trackPause).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(trackPause);
     expect(onTogglePlayback).toHaveBeenCalledOnce();
+  });
+
+  it("keeps virtualized playlist rows aligned to the 64px spacing contract", async () => {
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    const originalResizeObserver = globalThis.ResizeObserver;
+    class ResizeObserverMock implements ResizeObserver {
+      private readonly observed = new WeakSet<Element>();
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      disconnect() {}
+      observe(target: Element) {
+        if (this.observed.has(target)) return;
+        this.observed.add(target);
+        const bounds = target.getBoundingClientRect();
+        this.callback([{
+          borderBoxSize: [{
+            blockSize: bounds.height,
+            inlineSize: bounds.width,
+          }],
+          contentRect: bounds,
+          target,
+        } as unknown as ResizeObserverEntry], this);
+      }
+      unobserve() {}
+    }
+    globalThis.ResizeObserver = ResizeObserverMock;
+    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+      const scrollElement = this.hasAttribute("data-coda-library-scroll");
+      const top = scrollElement ? 0 : 90;
+      const height = scrollElement ? 240 : 0;
+      return {
+        bottom: top + height,
+        height,
+        left: 0,
+        right: 800,
+        top,
+        width: 800,
+        x: 0,
+        y: top,
+        toJSON: () => undefined,
+      };
+    };
+
+    try {
+      const tracks = Array.from({ length: 300 }, (_, index): Track => ({
+        ...track,
+        id: `playlist-track-${index}`,
+        title: `Playlist track ${index}`,
+        track: index + 1,
+      }));
+      mocks.fetchPlaylist.mockResolvedValueOnce({
+        ...detail,
+        duration: tracks.reduce((total, item) => total + item.duration, 0),
+        songCount: tracks.length,
+        tracks,
+      });
+      withQueryClient(
+        <div data-coda-library-scroll>
+          <SavedLibraryView mode="playlists" {...commonProps} />
+        </div>,
+      );
+
+      fireEvent.click(await screen.findByRole("button", { name: /Night drive/ }));
+      const list = await screen.findByRole("list", {
+        name: "Night drive tracks",
+      });
+      await waitFor(() => {
+        const rows = within(list).getAllByRole("listitem");
+        expect(rows.length).toBeGreaterThan(1);
+        expect(rows.length).toBeLessThan(30);
+      });
+      expect(list).toHaveAttribute("data-virtualized", "true");
+      const rows = within(list).getAllByRole("listitem")
+        .sort(
+          (left, right) =>
+            Number(left.dataset.index) - Number(right.dataset.index),
+        )
+        .slice(0, 2);
+      const rowOffset = (element: HTMLElement) => {
+        const match = element.style.transform.match(/translateY\((-?\d+)px\)/);
+        return Number(match?.[1]);
+      };
+      expect(rows[0]).toHaveStyle({ height: "64px" });
+      expect(rows[1]).toHaveStyle({ height: "64px" });
+      expect(rowOffset(rows[1]) - rowOffset(rows[0])).toBe(64);
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = originalRect;
+      globalThis.ResizeObserver = originalResizeObserver;
+    }
   });
 
   it("keeps a large favorites list bounded while preserving current-track controls", async () => {
