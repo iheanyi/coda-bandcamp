@@ -6,6 +6,7 @@ import {
   RefreshCw,
   Search,
   Sparkles,
+  Tags,
 } from "lucide-react";
 import { type FormEvent, memo, useMemo, useState } from "react";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -14,11 +15,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { OverflowMarquee } from "@/components/ui/overflow-marquee";
 import { PlaybackIcon } from "@/components/ui/playback-icon";
-import {
-  NativeSelect,
-  NativeSelectOption,
-} from "@/components/ui/native-select";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { countLabel } from "./countLabel";
@@ -288,18 +292,44 @@ export default function DiscoverView({
               {normalizeGenre(tag)}
             </ToggleGroupItem>
           ))}
-          <NativeSelect
-            className="h-7 max-w-32 rounded-full border border-(--line) bg-[#202325] text-xs text-[#858984] [&_select]:h-7 [&_select]:max-w-20 [&_select]:border-0 [&_select]:bg-transparent [&_select]:py-0 [&_select]:pr-6 [&_select]:pl-2 [&_select]:text-xs [&_select]:text-inherit [&_svg]:right-1 [&_svg]:size-3"
-            value={selectedExtraGenre}
-            aria-label="More Discover genres"
-            onChange={(event) => chooseGenre(event.target.value)}
+          <Select
+            value={selectedExtraGenre || null}
+            onValueChange={(value) => {
+              if (value) chooseGenre(value);
+            }}
             disabled={query.isPending}
           >
-            <NativeSelectOption value="" disabled>More genres</NativeSelectOption>
-            {EXTRA_GENRES.map((tag) => (
-              <NativeSelectOption key={tag} value={tag}>{normalizeGenre(tag)}</NativeSelectOption>
-            ))}
-          </NativeSelect>
+            <SelectTrigger
+              aria-label="More Discover genres"
+              className="h-7 items-center justify-center gap-1.5 rounded-full border-(--line) bg-[#202325] px-2.5 py-0 text-xs font-semibold text-[#858984] hover:text-[#d8d7d1] data-open:border-primary/40 data-open:text-[#efede7] [&_[data-slot=select-icon]_svg]:size-3"
+              size="sm"
+            >
+              <Tags
+                aria-hidden="true"
+                className="size-3"
+                data-slot="select-leading-icon"
+              />
+              <SelectValue
+                className="min-w-0 flex-none justify-center text-center"
+                placeholder="More genres"
+              />
+            </SelectTrigger>
+            <SelectContent
+              align="start"
+              alignItemWithTrigger={false}
+              className="min-w-40 rounded-lg border border-(--line-strong) bg-popover p-1 text-xs shadow-lg"
+            >
+              {EXTRA_GENRES.map((tag) => (
+                <SelectItem
+                  className="py-1.5 pr-8 pl-2 text-xs text-[#a8aaa5] focus:bg-white/5 focus:text-[#efede7]"
+                  key={tag}
+                  value={tag}
+                >
+                  {normalizeGenre(tag)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </ToggleGroup>
         <ToggleGroup
           className="w-auto rounded-full border border-(--line) p-0.5"

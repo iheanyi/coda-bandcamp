@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -98,6 +99,7 @@ describe("Discover", () => {
   });
 
   it("loads previews, queues a result, and supports the full genre selector", async () => {
+    const user = userEvent.setup();
     const { onQueue } = renderDiscover();
 
     expect(await screen.findByText("Blue Hours")).toBeInTheDocument();
@@ -107,9 +109,18 @@ describe("Discover", () => {
       album: "Blue Hours",
     }));
 
-    fireEvent.change(screen.getByLabelText("More Discover genres"), {
-      target: { value: "jazz" },
+    const genreSelect = screen.getByRole("combobox", {
+      name: "More Discover genres",
     });
+    expect(genreSelect).toHaveAttribute("data-slot", "select-trigger");
+    expect(genreSelect).toHaveClass("items-center", "justify-center");
+    expect(genreSelect.querySelector('[data-slot="select-leading-icon"]'))
+      .toBeInTheDocument();
+    expect(genreSelect.querySelector('[data-slot="select-icon"]'))
+      .toBeInTheDocument();
+
+    await user.click(genreSelect);
+    await user.click(await screen.findByRole("option", { name: "Jazz" }));
     await waitFor(() =>
       expect(mocks.fetchDiscover).toHaveBeenLastCalledWith(
         expect.objectContaining({ tag: "jazz" }),
