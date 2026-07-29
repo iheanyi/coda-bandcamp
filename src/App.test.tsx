@@ -2461,6 +2461,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       "p-0",
       "right-0",
       "bottom-0",
+      "items-end",
       "border-0",
       "bg-transparent",
       "shadow-none",
@@ -2477,6 +2478,8 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     const albumCard = queueAlbum.closest("article");
     if (!albumCard) throw new Error("Expected queue action inside an album card");
     const artistControl = within(albumCard).getByTitle("Browse Night Archive");
+    expect(artistControl.parentElement).toHaveClass("pr-8");
+    expect(artistControl.parentElement).not.toHaveClass("pr-6");
     expect(artistControl).toHaveClass("overflow-hidden");
     expect(
       within(artistControl).getByTestId("overflow-marquee"),

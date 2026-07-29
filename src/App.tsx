@@ -655,7 +655,7 @@ const AlbumCard = memo(function AlbumCard({
           </Button>
         </span>
       </div>
-      <div className="flex min-w-0 flex-col pt-2.5 pr-6">
+      <div className="flex min-w-0 flex-col pt-2.5 pr-8">
         <Button
           className="h-auto w-full min-w-0 justify-start overflow-hidden p-0 text-left text-xs font-bold text-[#e5e3dd] hover:bg-transparent hover:text-[#e5e3dd]"
           onClick={() => onOpen(album)}
@@ -677,7 +677,7 @@ const AlbumCard = memo(function AlbumCard({
         </Button>
       </div>
       <Button
-        className="absolute right-0 bottom-0 border-0 bg-transparent text-[#777b76] opacity-0 shadow-none group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-transparent hover:text-primary"
+        className="absolute right-0 bottom-0 items-end border-0 bg-transparent text-[#777b76] opacity-0 shadow-none group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-transparent hover:text-primary"
         onClick={() => onQueue(album)}
         size="icon-compact"
         title="Add album to queue"
