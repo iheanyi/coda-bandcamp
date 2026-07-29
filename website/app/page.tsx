@@ -29,39 +29,21 @@ const features = [
   },
   {
     number: "04",
-    title: "Playlists that stay in sync",
+    title: "Playlists and favorites, together",
     description:
-      "Manage Bandcamp playlists from the desktop, while keeping quick favorites private to the device in front of you.",
+      "Build playlists, keep favorites close, and move from saved music to the next track without breaking your flow.",
   },
   {
     number: "05",
-    title: "Scrobbling that respects listening",
+    title: "Your listening history, connected",
     description:
-      "Connect Last.fm through its desktop flow. Tracks scrobble only after genuine listening time reaches the threshold.",
+      "Connect Last.fm and let Coda keep track of the music you actually play.",
   },
   {
     number: "06",
-    title: "Native where it matters",
+    title: "Desktop controls, where you expect them",
     description:
-      "Use system title bars, media controls, tray actions, secure credential storage, and AirPlay on supported macOS hosts.",
-  },
-];
-
-const securityDetails = [
-  {
-    title: "Your normal Bandcamp password never enters Coda",
-    description:
-      "Coda connects with separate credentials generated from Bandcamp Fan Settings through Bandcamp’s official Subsonic endpoint.",
-  },
-  {
-    title: "Credentials stay in the operating system vault",
-    description:
-      "Generated credentials are stored in Keychain, Windows Credential Manager, or Linux Secret Service—not local app files.",
-  },
-  {
-    title: "Signed media links are treated as temporary",
-    description:
-      "Stream and artwork URLs are refreshed when needed and never written into your persisted player session.",
+      "Use media keys, tray controls, and AirPlay on supported Macs without keeping a browser tab open.",
   },
 ];
 
@@ -104,11 +86,6 @@ function Header() {
             </a>
           </div>
           <div className="text-sm font-normal text-[#aaa9a5]">
-            <a href="#security" className="hover:text-[#f6f2e9]">
-              Security
-            </a>
-          </div>
-          <div className="text-sm font-normal text-[#aaa9a5]">
             <a href="#open-source" className="hover:text-[#f6f2e9]">
               Open source
             </a>
@@ -145,14 +122,6 @@ function Header() {
                   className="flex rounded-lg px-3 py-2.5 hover:bg-white/6 hover:text-white"
                 >
                   Features
-                </a>
-              </div>
-              <div className="text-base text-[#d6d2ca] sm:text-sm">
-                <a
-                  href="#security"
-                  className="flex rounded-lg px-3 py-2.5 hover:bg-white/6 hover:text-white"
-                >
-                  Security
                 </a>
               </div>
               <div className="text-base text-[#d6d2ca] sm:text-sm">
@@ -254,7 +223,7 @@ export default function Home() {
             macOS · Windows · Linux
           </p>
           <p className="text-base text-[#858581] sm:text-sm">
-            Official Bandcamp Subsonic connection.
+            Your Bandcamp collection in a real desktop player.
           </p>
           <p className="text-base text-[#858581] sm:text-sm">
             MIT licensed and open source.
@@ -299,53 +268,19 @@ export default function Home() {
         </div>
       </section>
 
-      <section id="security" className="scroll-mt-20 border-t border-white/8 py-24 sm:py-32">
-        <div className="mx-auto grid max-w-7xl gap-12 px-4 sm:px-6 lg:grid-cols-[5fr_7fr] lg:px-8">
-          <div className="grid gap-6">
-            <p className="font-mono text-base font-medium uppercase tracking-wide text-[#ec6848] sm:text-sm">
-              A small security surface
-            </p>
-            <h2 className="max-w-[35ch] text-balance text-4xl font-semibold tracking-tight sm:max-w-[30ch] sm:text-5xl">
-              The music comes through. Your secrets stay put
-            </h2>
-            <p className="max-w-[40ch] text-pretty text-xl text-[#aaa9a5] sm:max-w-[48ch] sm:text-lg">
-              Coda keeps account and network work behind the native boundary,
-              where desktop credential storage and strict URL validation can do
-              their jobs.
-            </p>
-          </div>
-
-          <dl className="grid gap-12">
-            {securityDetails.map((detail) => (
-              <div
-                key={detail.title}
-                className="grid gap-12 border-t border-white/10 pt-5 sm:grid-cols-[5fr_7fr]"
-              >
-                <dt className="text-lg font-semibold text-[#f6f2e9]">
-                  {detail.title}
-                </dt>
-                <dd className="text-pretty text-lg text-[#91908c] sm:text-base">
-                  {detail.description}
-                </dd>
-              </div>
-            ))}
-          </dl>
-        </div>
-      </section>
-
       <section id="open-source" className="scroll-mt-20 border-t border-white/8 py-24 sm:py-32">
         <div className="mx-auto grid max-w-7xl items-end gap-12 px-4 sm:px-6 lg:grid-cols-[7fr_5fr] lg:px-8">
           <div className="grid gap-6">
             <p className="font-mono text-base font-medium uppercase tracking-wide text-[#ec6848] sm:text-sm">
-              Yours to inspect
+              Free and open source
             </p>
             <h2 className="max-w-[35ch] text-balance text-4xl font-semibold tracking-tight sm:max-w-[30ch] sm:text-5xl">
-              Open source, cross-platform, and independent
+              Made for music collectors, not engagement metrics
             </h2>
             <p className="max-w-[40ch] text-pretty text-xl text-[#aaa9a5] sm:max-w-[48ch] sm:text-lg">
-              Coda is built in the open with Tauri, Rust, React, and TypeScript.
-              Read the security model, follow development, or contribute the
-              feature your library needs next.
+              Download Coda, play the records you own, and shape what comes
+              next. No subscription, no endless feed, and no business model
+              standing between you and your collection.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-4 lg:justify-end">
@@ -380,14 +315,6 @@ export default function Home() {
             <div className="text-base font-normal text-[#858581] sm:text-sm">
               <a href={repositoryUrl} className="hover:text-[#f6f2e9]">
                 GitHub
-              </a>
-            </div>
-            <div className="text-base font-normal text-[#858581] sm:text-sm">
-              <a
-                href={`${repositoryUrl}/blob/main/SECURITY.md`}
-                className="hover:text-[#f6f2e9]"
-              >
-                Security
               </a>
             </div>
             <p className="text-base text-[#858581] sm:text-sm">

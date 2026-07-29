@@ -34,9 +34,10 @@ test("server-renders the Coda landing page", async () => {
   );
   assert.match(html, /Your Bandcamp library, built for listening/);
   assert.match(html, /Download Coda v0\.2\.0/);
-  assert.match(html, /Official Bandcamp Subsonic connection\./);
-  assert.match(html, /Credentials stay in the operating system vault/);
+  assert.match(html, /Your Bandcamp collection in a real desktop player\./);
+  assert.match(html, /Made for music collectors, not engagement metrics/);
   assert.match(html, /Independent of Bandcamp and Last\.fm\./);
   assert.match(html, /\/coda-demo\.gif/);
+  assert.doesNotMatch(html, /href="#security"|security model/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });
