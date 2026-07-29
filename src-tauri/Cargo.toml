@@ -66,7 +66,7 @@ keyring = { version = "3", features = ["linux-native-sync-persistent", "crypto-r
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
 tauri-plugin-window-state = "2.4"
 
-[dev-dependencies]
+[target.'cfg(not(target_os = "windows"))'.dev-dependencies]
 tauri = { version = "2", default-features = false, features = ["test"] }
 
 [profile.release]
