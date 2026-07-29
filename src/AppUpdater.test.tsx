@@ -238,6 +238,14 @@ describe("app updater experience", () => {
     updaterMocks.checkForAppUpdate.mockResolvedValue(undefined);
 
     renderUpdater();
+    const settings = screen.getByRole("region", { name: "Coda updates" });
+    expect(settings).toHaveClass(
+      "grid-cols-[auto_minmax(0,1fr)]",
+      "gap-x-3",
+    );
+    expect(
+      settings.querySelector('[data-slot="connection-setting-content"]'),
+    ).toHaveClass("min-w-0");
     const checkButton = await screen.findByRole("button", {
       name: "Check for updates",
     });

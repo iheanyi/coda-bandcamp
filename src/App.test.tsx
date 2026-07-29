@@ -8,7 +8,7 @@ import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CodaMotionProvider } from "./MotionProvider";
 import { albumQueryKey } from "./libraryQueries";
-import type { Album, Track } from "./types";
+import type { Album, LastFmStatus, Track } from "./types";
 
 function applyCompiledStyles(
   css: string,
@@ -432,6 +432,29 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       .not.toHaveClass("bottom-23");
     expect(dialog.querySelector('[data-slot="connection-dialog-scroll"]'))
       .toHaveClass("min-h-0", "overflow-y-auto");
+    const lastFmSettings = within(dialog).getByRole("region", {
+      name: "Last.fm scrobbling",
+    });
+    expect(lastFmSettings).toHaveClass(
+      "grid-cols-[auto_minmax(0,1fr)]",
+      "gap-x-3",
+    );
+    expect(
+      lastFmSettings.querySelector('[data-slot="connection-setting-content"]'),
+    ).toHaveClass("min-w-0");
+    const lastFmStateRow = lastFmSettings.querySelector(
+      '[data-slot="lastfm-state-row"]',
+    );
+    expect(lastFmStateRow).toHaveClass(
+      "grid-cols-[minmax(0,1fr)_auto]",
+      "min-h-8",
+    );
+    expect(lastFmStateRow).toHaveTextContent(
+      "Connect Last.fm to send Now Playing updates and scrobbles.",
+    );
+    expect(
+      within(lastFmSettings).getByRole("button", { name: "Connect Last.fm" }),
+    ).toBeEnabled();
     await waitFor(() => expect(dialog).toBeVisible());
   });
 
@@ -521,6 +544,15 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(await within(dialog).findByRole("button", {
       name: "Opening Last.fm…",
     })).toBeDisabled();
+    expect(
+      within(dialog).getByText("Connecting", {
+        selector: '[data-slot="lastfm-status"]',
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", { name: "Opening Last.fm…" })
+        .closest('[data-slot="lastfm-state-row"]'),
+    ).toHaveClass("grid-cols-[minmax(0,1fr)_auto]");
 
     try {
       fireEvent.keyDown(document, { key: "Escape" });
@@ -1985,15 +2017,12 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
   });
 
   it("connects Last.fm without asking Coda for a Last.fm password", async () => {
+    const completion = deferred<LastFmStatus>();
     mocks.beginLastFmAuthorization.mockResolvedValue({
       authorizationUrl: "https://www.last.fm/api/auth/?api_key=key&token=token",
       token: "token",
     });
-    mocks.completeLastFmAuthorization.mockResolvedValue({
-      configured: true,
-      connected: true,
-      username: "nightlistener",
-    });
+    mocks.completeLastFmAuthorization.mockReturnValue(completion.promise);
     renderApp();
 
     fireEvent.click(screen.getByRole("button", { name: "Connection settings" }));
@@ -2001,10 +2030,114 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(within(dialog).queryByLabelText(/Last\.fm password/i)).not.toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Connect Last.fm" }));
     await waitFor(() => expect(mocks.openLastFmAuthorization).toHaveBeenCalledOnce());
+    expect(
+      within(dialog).getByText("Approval pending", {
+        selector: '[data-slot="lastfm-status"]',
+      }),
+    ).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Finish connection" }));
 
+    expect(await within(dialog).findByRole("button", {
+      name: "Finishing…",
+    })).toBeDisabled();
+    expect(
+      within(dialog).getByText("Finishing", {
+        selector: '[data-slot="lastfm-status"]',
+      }),
+    ).toBeInTheDocument();
+    await act(async () => {
+      completion.resolve({
+        configured: true,
+        connected: true,
+        username: "nightlistener",
+      });
+      await completion.promise;
+    });
     expect(await within(dialog).findByText("nightlistener")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText("Connected", {
+        selector: '[data-slot="lastfm-status"]',
+      }),
+    ).toBeInTheDocument();
     expect(mocks.completeLastFmAuthorization).toHaveBeenCalledWith("token");
+  });
+
+  it("keeps Last.fm disconnecting, disconnected, and error states cohesive", async () => {
+    const disconnection = deferred<LastFmStatus>();
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    mocks.getLastFmStatus.mockResolvedValue({
+      configured: true,
+      connected: true,
+      username: "nightlistener",
+    });
+    mocks.disconnectLastFm.mockReturnValue(disconnection.promise);
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    fireEvent.click(screen.getByRole("button", { name: "Connection settings" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Disconnect" }));
+
+    expect(await within(dialog).findByRole("button", {
+      name: "Disconnecting…",
+    })).toBeDisabled();
+    expect(
+      within(dialog).getByText("Disconnecting", {
+        selector: '[data-slot="lastfm-status"]',
+      }),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      disconnection.resolve({ configured: true, connected: false });
+      await disconnection.promise;
+    });
+    expect(
+      within(dialog).getByText("Not connected", {
+        selector: '[data-slot="lastfm-status"]',
+      }),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText(
+      "Connect Last.fm to send Now Playing updates and scrobbles.",
+    )).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", { name: "Connect Last.fm" }),
+    ).toBeEnabled();
+
+    mocks.beginLastFmAuthorization.mockRejectedValue(
+      new Error("Last.fm could not start authorization."),
+    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "Connect Last.fm" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "Last.fm could not start authorization.",
+    );
+    expect(
+      within(dialog).getByText("Not connected", {
+        selector: '[data-slot="lastfm-status"]',
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps unavailable Last.fm settings in the shared state row", async () => {
+    mocks.getLastFmStatus.mockResolvedValue({
+      configured: false,
+      connected: false,
+    });
+    renderApp();
+
+    fireEvent.click(screen.getByRole("button", { name: "Connection settings" }));
+    const unavailableDialog = await screen.findByRole("dialog");
+    expect(
+      within(unavailableDialog).getByText("Unavailable", {
+        selector: '[data-slot="lastfm-status"]',
+      }),
+    ).toBeInTheDocument();
+    expect(within(unavailableDialog).getByText(
+      "Last.fm credentials have not been added to this Coda build yet.",
+    )).toBeInTheDocument();
+    expect(
+      within(unavailableDialog).queryByRole("button", { name: "Connect Last.fm" }),
+    ).not.toBeInTheDocument();
   });
 
   it("updates Now Playing and scrobbles after actual listened time", async () => {

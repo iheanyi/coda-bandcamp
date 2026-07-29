@@ -2152,6 +2152,22 @@ function ConnectionDialog({
     settingsOpening ||
     disconnecting ||
     lastFmAction !== "idle";
+  const lastFmStateLabel =
+    lastFmAction === "starting"
+      ? "Connecting"
+      : lastFmAction === "finishing"
+        ? "Finishing"
+        : lastFmAction === "disconnecting"
+          ? "Disconnecting"
+          : lastFmStatus.connected
+            ? "Connected"
+            : lastFmToken
+              ? "Approval pending"
+              : lastFmStatus.configured
+                ? "Not connected"
+                : "Unavailable";
+  const lastFmConnectedAndIdle =
+    lastFmStatus.connected && lastFmAction === "idle";
 
   return (
     <Dialog
@@ -2273,38 +2289,70 @@ function ConnectionDialog({
           </>
         ) : null}
         <Separator className="my-5" />
-        <section className="grid gap-3" aria-labelledby="lastfm-settings-title">
-          <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2.5">
-            <AudioLines className="mt-px text-[#d4d2cc]" size={17} />
-            <div>
-              <h3 id="lastfm-settings-title" className="m-0 text-sm font-semibold text-[#deddd7]">Last.fm scrobbling</h3>
-              <p className="mt-1 mb-0 text-xs/normal text-[#858984]">
+        <section
+          className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3"
+          aria-labelledby="lastfm-settings-title"
+          data-slot="connection-setting"
+        >
+          <AudioLines className="mt-px shrink-0 text-[#d4d2cc]" size={17} />
+          <div
+            className="grid min-w-0 gap-3"
+            data-slot="connection-setting-content"
+          >
+            <div className="grid min-w-0 gap-1">
+              <div className="flex min-w-0 items-center justify-between gap-3">
+                <h3
+                  id="lastfm-settings-title"
+                  className="m-0 min-w-0 text-sm font-semibold text-[#deddd7]"
+                >
+                  Last.fm scrobbling
+                </h3>
+                <Badge
+                  aria-live="polite"
+                  data-slot="lastfm-status"
+                  variant={lastFmConnectedAndIdle ? "success" : "secondary"}
+                >
+                  {lastFmStateLabel}
+                </Badge>
+              </div>
+              <p className="m-0 text-xs/normal text-[#858984]">
                 Send Now Playing updates and scrobble after half the track or four minutes,
                 whichever comes first.
               </p>
             </div>
-            <Badge variant={lastFmStatus.connected ? "success" : "secondary"}>
-              {lastFmStatus.connected ? "Connected" : "Not connected"}
-            </Badge>
-          </div>
-          {lastFmStatus.connected ? (
-            <div className="flex items-center justify-between gap-3 pl-7">
-              <span className="text-xs text-[#8f928d]">Scrobbling as <strong className="font-semibold text-[#d0d1cb]">{lastFmStatus.username}</strong></span>
-              <Button
-                type="button"
-                onClick={() => void removeLastFm()}
-                disabled={lastFmAction !== "idle"}
-                size="compact"
-              >
-                {lastFmAction === "disconnecting" ? <Spinner aria-hidden="true" className="size-4" /> : null}
-                {lastFmAction === "disconnecting" ? "Disconnecting…" : "Disconnect"}
-              </Button>
-            </div>
-          ) : lastFmStatus.configured ? (
-            <div className="flex items-center justify-between gap-3 pl-7">
-              {lastFmToken ? (
-                <>
-                  <p className="m-0 text-xs/normal text-[#858984]">Approve Coda in the browser, then return here to finish.</p>
+            <div
+              aria-busy={lastFmAction !== "idle"}
+              className="grid min-h-8 grid-cols-[minmax(0,1fr)_auto] items-center gap-2"
+              data-slot="lastfm-state-row"
+            >
+              <p className="m-0 min-w-0 text-xs/normal text-[#8f928d]">
+                {lastFmStatus.connected ? (
+                  <>
+                    Scrobbling as{" "}
+                    <strong className="font-semibold text-[#d0d1cb]">
+                      {lastFmStatus.username}
+                    </strong>
+                  </>
+                ) : lastFmToken ? (
+                  "Approve Coda in the browser, then return here to finish."
+                ) : lastFmStatus.configured ? (
+                  "Connect Last.fm to send Now Playing updates and scrobbles."
+                ) : (
+                  "Last.fm credentials have not been added to this Coda build yet."
+                )}
+              </p>
+              {lastFmStatus.connected ? (
+                <Button
+                  type="button"
+                  onClick={() => void removeLastFm()}
+                  disabled={lastFmAction !== "idle"}
+                  size="compact"
+                >
+                  {lastFmAction === "disconnecting" ? <Spinner aria-hidden="true" className="size-4" /> : null}
+                  {lastFmAction === "disconnecting" ? "Disconnecting…" : "Disconnect"}
+                </Button>
+              ) : lastFmStatus.configured ? (
+                lastFmToken ? (
                   <Button
                     type="button"
                     onClick={() => void finishLastFm()}
@@ -2314,26 +2362,25 @@ function ConnectionDialog({
                     {lastFmAction === "finishing" ? <Spinner aria-hidden="true" className="size-4" /> : <Check size={15} />}
                     {lastFmAction === "finishing" ? "Finishing…" : "Finish connection"}
                   </Button>
-                </>
-              ) : (
-                <Button
-                  type="button"
-                  onClick={() => void beginLastFm()}
-                  disabled={lastFmAction !== "idle"}
-                  size="compact"
-                >
-                  {lastFmAction === "starting" ? <Spinner aria-hidden="true" className="size-4" /> : <ExternalLink size={15} />}
-                  {lastFmAction === "starting" ? "Opening Last.fm…" : "Connect Last.fm"}
-                </Button>
-              )}
+                ) : (
+                  <Button
+                    type="button"
+                    onClick={() => void beginLastFm()}
+                    disabled={lastFmAction !== "idle"}
+                    size="compact"
+                  >
+                    {lastFmAction === "starting" ? <Spinner aria-hidden="true" className="size-4" /> : <ExternalLink size={15} />}
+                    {lastFmAction === "starting" ? "Opening Last.fm…" : "Connect Last.fm"}
+                  </Button>
+                )
+              ) : null}
             </div>
-          ) : (
-            <p className="mt-1 mb-0 pl-7 text-xs/normal text-[#858984]">
-              Last.fm credentials have not been added to this Coda build yet.
+            {lastFmError ? <Alert variant="danger">{lastFmError}</Alert> : null}
+            <p className="m-0 text-xs/normal text-[#656965]">
+              The Last.fm session key is stored in your system credential vault. Coda never
+              sees your Last.fm password.
             </p>
-          )}
-          {lastFmError ? <Alert variant="danger">{lastFmError}</Alert> : null}
-          <small className="block pl-7 text-xs/normal text-[#656965]">The Last.fm session key is stored in your system credential vault. Coda never sees your Last.fm password.</small>
+          </div>
         </section>
         {appUpdater.supported ? (
           <>

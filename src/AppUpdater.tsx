@@ -139,56 +139,62 @@ export function AppUpdateSettings({
 
   return (
     <section
-      className="grid gap-3"
+      className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3"
       aria-labelledby="app-update-settings-title"
+      data-slot="connection-setting"
     >
-      <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2.5">
-        <RefreshCw className="mt-px text-[#d4d2cc]" size={17} />
-        <div>
-          <h3
-            id="app-update-settings-title"
-            className="m-0 text-sm font-semibold text-[#deddd7]"
-          >
-            Coda updates
-          </h3>
-          <p className="mt-1 mb-0 text-xs/normal text-[#858984]">
+      <RefreshCw className="mt-px shrink-0 text-[#d4d2cc]" size={17} />
+      <div
+        className="grid min-w-0 gap-3"
+        data-slot="connection-setting-content"
+      >
+        <div className="grid min-w-0 gap-1">
+          <div className="flex min-w-0 items-center justify-between gap-3">
+            <h3
+              id="app-update-settings-title"
+              className="m-0 min-w-0 text-sm font-semibold text-[#deddd7]"
+            >
+              Coda updates
+            </h3>
+            <p
+              className={`m-0 inline-flex shrink-0 items-center gap-1.5 text-xs font-bold whitespace-nowrap before:size-1.5 before:rounded-full before:content-[''] ${
+                updater.update
+                  ? "text-[#9fbaa7] before:bg-coda-success"
+                  : "text-[#7d817c] before:bg-[#656965]"
+              }`}
+            >
+              {updater.update ? "Update available" : "Automatic"}
+            </p>
+          </div>
+          <p className="m-0 text-xs/normal text-[#858984]">
             Check GitHub Releases for a signed update built for this computer.
           </p>
         </div>
-        <span
-          className={`inline-flex items-center gap-1.5 text-xs font-bold whitespace-nowrap before:size-1.5 before:rounded-full before:content-[''] ${
-            updater.update
-              ? "text-[#9fbaa7] before:bg-coda-success"
-              : "text-[#7d817c] before:bg-[#656965]"
-          }`}
-        >
-          {updater.update ? "Update available" : "Automatic"}
-        </span>
-      </div>
-      <div className="flex items-center gap-3 pl-7">
-        <Button
-          type="button"
-          onClick={() => void updater.checkManually()}
-          disabled={updater.checking}
-        >
-          {updater.checking ? (
-            <Spinner
-              aria-hidden="true"
-              className="size-4 text-current motion-reduce:animate-none"
-            />
-          ) : null}
-          {updater.checking ? "Checking…" : "Check for updates"}
-        </Button>
-        {updater.manualCheckState === "current" ? (
-          <p
-            className="mt-1 mb-0 text-xs/normal text-[#858984]"
-            role="status"
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            type="button"
+            onClick={() => void updater.checkManually()}
+            disabled={updater.checking}
           >
-            Coda is up to date.
-          </p>
-        ) : null}
+            {updater.checking ? (
+              <Spinner
+                aria-hidden="true"
+                className="size-4 text-current motion-reduce:animate-none"
+              />
+            ) : null}
+            {updater.checking ? "Checking…" : "Check for updates"}
+          </Button>
+          {updater.manualCheckState === "current" ? (
+            <p
+              className="m-0 text-xs/normal text-[#858984]"
+              role="status"
+            >
+              Coda is up to date.
+            </p>
+          ) : null}
+        </div>
         {updater.manualCheckState === "error" ? (
-          <Alert className="w-auto" variant="danger">
+          <Alert variant="danger">
             Coda couldn’t check for updates. Check your connection and try again.
           </Alert>
         ) : null}
