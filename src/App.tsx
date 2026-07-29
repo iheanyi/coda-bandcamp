@@ -4554,32 +4554,35 @@ export default function App() {
       openDiscoverArtist(release);
       return;
     }
-    void transitionCodaView(() => {
-      setNowPlayingOpen(false);
-      if (artist === "Bandcamp Radio") {
+    if (artist === "Bandcamp Radio") {
+      void transitionCodaView(() => {
+        setNowPlayingOpen(false);
         setView("radio");
         setRadioSeriesId(undefined);
         setRadioRequestedShowId(undefined);
         setSelectedAlbum(undefined);
         setSelectedArtist(undefined);
         setSelectedArtistFallback(undefined);
-        return;
-      }
-      const key = artistKey(artist);
-      const hasReleaseArtist = albums.some(
-        (album) => artistKey(album.artist) === key,
-      );
-      const sourceAlbum = albumId
-        ? albums.find((album) => album.id === albumId)
+      }, "page-forward");
+      return;
+    }
+    const key = artistKey(artist);
+    const hasReleaseArtist = albums.some(
+      (album) => artistKey(album.artist) === key,
+    );
+    const sourceAlbum = albumId
+      ? albums.find((album) => album.id === albumId)
+      : undefined;
+    const fallbackAlbum =
+      sourceAlbum && artistKey(sourceAlbum.artist) !== key
+        ? sourceAlbum
         : undefined;
-      const fallbackAlbum =
-        sourceAlbum && artistKey(sourceAlbum.artist) !== key
-          ? sourceAlbum
-          : undefined;
-      if (!hasReleaseArtist && !fallbackAlbum) {
-        notify(`Could not find a saved release for ${artist}.`, "bad");
-        return;
-      }
+    if (!hasReleaseArtist && !fallbackAlbum) {
+      notify(`Could not find a saved release for ${artist}.`, "bad");
+      return;
+    }
+    void transitionCodaView(() => {
+      setNowPlayingOpen(false);
       setView("library");
       setBrowseMode("artists");
       setSelectedArtist(key);
@@ -4633,7 +4636,7 @@ export default function App() {
       setView("radio");
       setSelectedAlbum(undefined);
       setSelectedArtist(undefined);
-    }, "page-forward");
+    }, "page-forward", { skipSnapshot: true });
   }, []);
   const openRadioShow = useCallback((show: RadioShowSummary) => {
     void transitionCodaView(() => {
@@ -4643,7 +4646,7 @@ export default function App() {
       setView("radio");
       setSelectedAlbum(undefined);
       setSelectedArtist(undefined);
-    }, "page-forward");
+    }, "page-forward", { skipSnapshot: true });
   }, []);
   const getRadioChapterLocalLinks = useCallback(
     (chapter: RadioChapter): RadioChapterLocalLinks => {

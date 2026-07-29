@@ -1444,6 +1444,9 @@ export default function SavedLibraryView({
           <PlaylistList
             playlists={playlists.data ?? []}
             onOpen={(item) => {
+              const hasCachedDetail = queryClient.getQueryData<PlaylistDetail>(
+                playlistQueryKey(item.id),
+              ) !== undefined;
               setOpeningPlaylistId(item.id);
               void transitionCodaView(
                 () => {
@@ -1451,6 +1454,7 @@ export default function SavedLibraryView({
                   setOpeningPlaylistId(undefined);
                 },
                 "page-forward",
+                { skipSnapshot: !hasCachedDetail },
               );
             }}
             onCreate={(name) => createMutation.mutate(name)}

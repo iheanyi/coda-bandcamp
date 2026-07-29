@@ -177,20 +177,17 @@ beforeEach(() => {
 });
 
 describe("saved Bandcamp library views", () => {
-  it("keeps the selected playlist trigger busy until its delayed transition applies", async () => {
+  it("opens a cold playlist directly into its live loading state", async () => {
     const playlistRequest = deferred<PlaylistDetail>();
     mocks.fetchPlaylist.mockReturnValueOnce(playlistRequest.promise);
     const originalDescriptor = Object.getOwnPropertyDescriptor(
       document,
       "startViewTransition",
     );
-    let applyTransitionUpdate: (() => void) | undefined;
+    const startViewTransition = vi.fn();
     Object.defineProperty(document, "startViewTransition", {
       configurable: true,
-      value: vi.fn((update: () => void) => {
-        applyTransitionUpdate = update;
-        return { finished: Promise.resolve() };
-      }),
+      value: startViewTransition,
     });
 
     try {
@@ -201,20 +198,8 @@ describe("saved Bandcamp library views", () => {
       });
       fireEvent.click(playlistButton);
 
-      expect(playlistButton).toBeDisabled();
-      expect(playlistButton).toHaveAttribute("aria-busy", "true");
-      expect(within(playlistButton).getByRole("status", {
-        name: "Opening Night drive",
-      })).toBeVisible();
-      expect(screen.queryByRole("heading", { name: "Night drive" }))
-        .not.toBeInTheDocument();
-
-      await act(async () => {
-        applyTransitionUpdate?.();
-        await Promise.resolve();
-      });
-
-      expect(await screen.findByText("Loading playlist")).toBeVisible();
+      expect(startViewTransition).not.toHaveBeenCalled();
+      expect(screen.getByText("Loading playlist")).toBeVisible();
     } finally {
       await act(async () => {
         playlistRequest.resolve(detail);

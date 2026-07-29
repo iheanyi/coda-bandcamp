@@ -81,6 +81,7 @@ const mocks = vi.hoisted(() => ({
   fetchLibrary: vi.fn(),
   fetchFavorites: vi.fn(),
   fetchRadioShow: vi.fn(),
+  fetchRadioShows: vi.fn(),
   fetchStreamUrl: vi.fn(),
   getLastFmStatus: vi.fn(),
   hasConnection: vi.fn(),
@@ -116,6 +117,7 @@ vi.mock("./lib", async (importOriginal) => {
     fetchLibrary: mocks.fetchLibrary,
     fetchFavorites: mocks.fetchFavorites,
     fetchRadioShow: mocks.fetchRadioShow,
+    fetchRadioShows: mocks.fetchRadioShows,
     fetchStreamUrl: mocks.fetchStreamUrl,
     getLastFmStatus: mocks.getLastFmStatus,
     hasConnection: mocks.hasConnection,
@@ -283,6 +285,16 @@ beforeEach(() => {
         albumUrl: "https://nightarchive.bandcamp.com/album/night-signals",
       },
     ],
+  });
+  mocks.fetchRadioShows.mockReset().mockResolvedValue({
+    results: [{
+      id: 979,
+      subtitle: "The Coda Broadcast",
+      title: "Bandcamp Weekly",
+      description: "A broadcast from Bandcamp.",
+      publishedAt: "2026-07-20T12:00:00Z",
+    }],
+    hasMore: false,
   });
   mocks.fetchStreamUrl.mockReset().mockResolvedValue("https://example.test/restored.mp3");
   mocks.getLastFmStatus.mockReset().mockResolvedValue({
@@ -3479,6 +3491,74 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     })).toBeInTheDocument();
   });
 
+  it("keeps Now Playing open when an artist destination cannot be resolved", async () => {
+    const orphanTrack: Track = {
+      ...tracks[0],
+      id: "orphan-track",
+      artist: "Missing Artist",
+      album: "Missing Release",
+      albumId: "missing-album",
+      streamUrl: undefined,
+    };
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    mocks.loadPlayerState.mockResolvedValue({
+      version: 1,
+      savedAt: Date.now(),
+      queue: [orphanTrack],
+      currentIndex: 0,
+      positionSeconds: 0,
+      volume: 0.72,
+      repeatMode: "off",
+      queueOpen: false,
+    });
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      document,
+      "startViewTransition",
+    );
+    const startViewTransition = vi.fn((update: () => void) => {
+      update();
+      return { finished: Promise.resolve() };
+    });
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: startViewTransition,
+    });
+
+    try {
+      renderApp();
+
+      fireEvent.click(await screen.findByRole("button", {
+        name: "Open Now Playing",
+      }));
+      const nowPlaying = await screen.findByRole("article", {
+        name: "First Light",
+      });
+      startViewTransition.mockClear();
+
+      fireEvent.click(within(nowPlaying).getByRole("button", {
+        name: "Missing Artist",
+      }));
+
+      expect(startViewTransition).not.toHaveBeenCalled();
+      expect(screen.getByRole("article", { name: "First Light" }))
+        .toBeInTheDocument();
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Could not find a saved release for Missing Artist.",
+      );
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(
+          document,
+          "startViewTransition",
+          originalDescriptor,
+        );
+      } else {
+        Reflect.deleteProperty(document, "startViewTransition");
+      }
+    }
+  });
+
   it("opens Discover album metadata as an internal release and returns to Now Playing", async () => {
     renderApp();
 
@@ -3878,6 +3958,69 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       name: "Soft Focus release details",
     });
     expect(within(reopenedAlbum).getByText("First Light")).toBeInTheDocument();
+  });
+
+  it("opens a favorite Radio detail without snapshotting its loading state", async () => {
+    window.localStorage.setItem(
+      "coda.local-favorites.v1",
+      JSON.stringify({
+        version: 2,
+        albumIds: [],
+        songIds: [],
+        albums: [],
+        tracks: [],
+        radioShowIds: [979],
+        radioShows: [{
+          id: 979,
+          subtitle: "The Coda Broadcast",
+          title: "Bandcamp Weekly",
+          description: "A broadcast from Bandcamp.",
+          publishedAt: "2026-07-20T12:00:00Z",
+        }],
+      }),
+    );
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      document,
+      "startViewTransition",
+    );
+    const startViewTransition = vi.fn((update: () => void) => {
+      update();
+      return { finished: Promise.resolve() };
+    });
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: startViewTransition,
+    });
+
+    try {
+      renderApp();
+
+      await screen.findByText("Soft Focus");
+      fireEvent.click(screen.getByRole("button", { name: "Favorites" }));
+      await screen.findByText("On this device");
+      startViewTransition.mockClear();
+
+      fireEvent.click(screen.getByRole("button", {
+        name: "Open The Coda Broadcast details",
+      }));
+
+      expect(startViewTransition).not.toHaveBeenCalled();
+      expect(await screen.findByRole("heading", {
+        name: "Songs in this show",
+      })).toBeInTheDocument();
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(
+          document,
+          "startViewTransition",
+          originalDescriptor,
+        );
+      } else {
+        Reflect.deleteProperty(document, "startViewTransition");
+      }
+    }
   });
 
   it("renders a favorite album tracklist locally when its detail transition applies late", async () => {

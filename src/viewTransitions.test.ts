@@ -7,6 +7,14 @@ const originalStartViewTransition = Object.getOwnPropertyDescriptor(
 );
 const originalMatchMedia = window.matchMedia;
 
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
 afterEach(() => {
   document.documentElement.classList.remove(
     "coda-view-transitioning",
@@ -75,5 +83,105 @@ describe("transitionCodaView", () => {
 
     expect(update).toHaveBeenCalledOnce();
     expect(startViewTransition).not.toHaveBeenCalled();
+  });
+
+  it("keeps only the newest transition active during rapid navigation", async () => {
+    const first = deferred();
+    const second = deferred();
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: vi.fn((update: () => void) => {
+        update();
+        return {
+          finished: document.documentElement.classList.contains(
+              "coda-transition--page-forward",
+            )
+            ? first.promise
+            : second.promise,
+        };
+      }),
+    });
+
+    const firstTransition = transitionCodaView(vi.fn(), "page-forward");
+    const secondTransition = transitionCodaView(vi.fn(), "page-back");
+
+    expect(document.documentElement).not.toHaveClass(
+      "coda-transition--page-forward",
+    );
+    expect(document.documentElement).toHaveClass(
+      "coda-view-transitioning",
+      "coda-transition--page-back",
+    );
+
+    first.resolve();
+    await firstTransition;
+
+    expect(document.documentElement).toHaveClass(
+      "coda-view-transitioning",
+      "coda-transition--page-back",
+    );
+
+    second.resolve();
+    await secondTransition;
+
+    expect(document.documentElement).not.toHaveClass(
+      "coda-view-transitioning",
+      "coda-transition--page-back",
+    );
+  });
+
+  it("ignores a superseded transition update that arrives late", async () => {
+    const callbacks: Array<() => void> = [];
+    const transitions = [deferred(), deferred()];
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: vi.fn((update: () => void) => {
+        const transition = transitions[callbacks.length];
+        callbacks.push(update);
+        return { finished: transition.promise };
+      }),
+    });
+    const firstUpdate = vi.fn();
+    const secondUpdate = vi.fn();
+
+    const firstTransition = transitionCodaView(firstUpdate, "page-forward");
+    const secondTransition = transitionCodaView(secondUpdate, "page-back");
+
+    callbacks[1]();
+    callbacks[0]();
+
+    expect(secondUpdate).toHaveBeenCalledOnce();
+    expect(firstUpdate).not.toHaveBeenCalled();
+
+    transitions[0].resolve();
+    transitions[1].resolve();
+    await Promise.all([firstTransition, secondTransition]);
+  });
+
+  it("cancels an active snapshot before immediate navigation", async () => {
+    const active = deferred();
+    const skipTransition = vi.fn(() => active.resolve());
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: vi.fn((update: () => void) => {
+        update();
+        return { finished: active.promise, skipTransition };
+      }),
+    });
+    const immediateUpdate = vi.fn();
+
+    const activeTransition = transitionCodaView(vi.fn(), "page-forward");
+    await transitionCodaView(immediateUpdate, "page-crossfade", {
+      skipSnapshot: true,
+    });
+
+    expect(immediateUpdate).toHaveBeenCalledOnce();
+    expect(skipTransition).toHaveBeenCalledOnce();
+    expect(document.documentElement).not.toHaveClass(
+      "coda-view-transitioning",
+      "coda-transition--page-forward",
+    );
+
+    await activeTransition;
   });
 });

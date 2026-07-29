@@ -8,6 +8,7 @@ export type CodaViewTransitionKind =
 
 type CodaViewTransition = {
   finished: Promise<void>;
+  skipTransition?: () => void;
 };
 
 type CodaViewTransitionOptions = {
@@ -24,12 +25,29 @@ const TRANSITION_CLASSES: Record<CodaViewTransitionKind, string> = {
   "page-back": "coda-transition--page-back",
   "page-crossfade": "coda-transition--page-crossfade",
 };
+const TRANSITION_CLASS_NAMES = Object.values(TRANSITION_CLASSES);
+let latestTransitionId = 0;
+let activeTransition:
+  | { id: number; transition: CodaViewTransition }
+  | undefined;
+
+function clearTransitionClasses() {
+  document.documentElement.classList.remove(
+    "coda-view-transitioning",
+    ...TRANSITION_CLASS_NAMES,
+  );
+}
 
 export function transitionCodaView(
   update: () => void,
   kind: CodaViewTransitionKind,
   options: CodaViewTransitionOptions = {},
 ): Promise<void> {
+  const transitionId = ++latestTransitionId;
+  activeTransition?.transition.skipTransition?.();
+  activeTransition = undefined;
+  clearTransitionClasses();
+
   if (options.skipSnapshot) {
     update();
     return Promise.resolve();
@@ -55,24 +73,28 @@ export function transitionCodaView(
     const transition = transitionDocument.startViewTransition.call(
       transitionDocument,
       () => {
+        if (latestTransitionId !== transitionId) return;
         updated = true;
         flushSync(update);
       },
     );
+    if (latestTransitionId === transitionId) {
+      activeTransition = { id: transitionId, transition };
+    } else {
+      transition.skipTransition?.();
+    }
     return transition.finished
       .catch(() => undefined)
       .finally(() => {
-        document.documentElement.classList.remove(
-          "coda-view-transitioning",
-          transitionClass,
-        );
+        if (latestTransitionId !== transitionId) return;
+        activeTransition = undefined;
+        clearTransitionClasses();
       });
   } catch {
-    document.documentElement.classList.remove(
-      "coda-view-transitioning",
-      transitionClass,
-    );
-    if (!updated) update();
+    if (latestTransitionId === transitionId) {
+      clearTransitionClasses();
+      if (!updated) update();
+    }
     return Promise.resolve();
   }
 }
