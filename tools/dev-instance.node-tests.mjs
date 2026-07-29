@@ -26,6 +26,7 @@ import {
   resolveDevIdentity,
   resolveDevPort,
   runManagedCommand,
+  stopStaleNativeDevelopmentProcesses,
 } from "./dev-instance.mjs";
 
 const baseConfig = {
@@ -63,6 +64,48 @@ test("routes standard desktop development through the stable native launcher", a
     packageManifest.scripts["desktop:dev"],
     "node tools/dev-instance.mjs",
   );
+});
+
+test("stops only this worktree's orphaned native development executable", async () => {
+  const repository = "/workspace/shadcn-tailwind";
+  const expectedExecutable = path.join(
+    repository,
+    "src-tauri",
+    "target",
+    "debug",
+    "coda-shadcn-tailwind",
+  );
+  const running = new Set([41, 42, 43]);
+  const signaled = [];
+
+  const stopped = await stopStaleNativeDevelopmentProcesses(
+    "shadcn-tailwind",
+    {
+      isProcessRunning: (pid) => running.has(pid),
+      listProcesses: () => [
+        { parentPid: 1, pid: 41 },
+        { parentPid: 900, pid: 42 },
+        { parentPid: 1, pid: 43 },
+      ],
+      platform: "darwin",
+      pollIntervalMs: 0,
+      readExecutablePath: (pid) =>
+        pid === 43
+          ? "/workspace/other/src-tauri/target/debug/coda-shadcn-tailwind"
+          : expectedExecutable,
+      repository,
+      signalProcess: (pid, signal) => {
+        signaled.push([pid, signal]);
+        running.delete(pid);
+      },
+      timeoutMs: 20,
+    },
+  );
+
+  assert.deepEqual(stopped, [41]);
+  assert.deepEqual(signaled, [[41, "SIGTERM"]]);
+  assert.equal(running.has(42), true);
+  assert.equal(running.has(43), true);
 });
 
 async function waitFor(check, timeoutMs = 3_000) {

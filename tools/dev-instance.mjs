@@ -36,6 +36,109 @@ function readPosixProcessGroupId(pid) {
   return Number(value);
 }
 
+function listProcessParents() {
+  const output = execFileSync("ps", ["-axo", "pid=,ppid="], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  return output
+    .split("\n")
+    .map((line) => line.trim().match(/^(\d+)\s+(\d+)$/))
+    .filter(Boolean)
+    .map((match) => ({
+      pid: Number(match[1]),
+      parentPid: Number(match[2]),
+    }));
+}
+
+function readProcessExecutablePath(pid) {
+  try {
+    const output = execFileSync(
+      "lsof",
+      ["-a", "-p", String(pid), "-d", "txt", "-Fn"],
+      {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    );
+    return output
+      .split("\n")
+      .find((line) => line.startsWith("n"))
+      ?.slice(1);
+  } catch {
+    return undefined;
+  }
+}
+
+function isProcessRunning(pid) {
+  try {
+    const state = execFileSync("ps", ["-o", "state=", "-p", String(pid)], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return state !== "" && !state.startsWith("Z");
+  } catch {
+    return false;
+  }
+}
+
+export async function stopStaleNativeDevelopmentProcesses(
+  executableSlug,
+  {
+    isProcessRunning: processIsRunning = isProcessRunning,
+    listProcesses = listProcessParents,
+    platform = process.platform,
+    pollIntervalMs = 20,
+    readExecutablePath = readProcessExecutablePath,
+    repository = repositoryRoot,
+    signalProcess = (pid, signal) => process.kill(pid, signal),
+    timeoutMs = 1_000,
+  } = {},
+) {
+  if (platform !== "darwin") return [];
+  const expectedExecutable = path.resolve(
+    repository,
+    "src-tauri",
+    "target",
+    "debug",
+    `coda-${normalizeInstanceSlug(executableSlug)}`,
+  );
+  const staleProcesses = listProcesses().filter(
+    ({ parentPid, pid }) =>
+      parentPid === 1 &&
+      pid !== process.pid &&
+      path.resolve(readExecutablePath(pid) ?? "") === expectedExecutable,
+  );
+  const stopped = [];
+  for (const { pid } of staleProcesses) {
+    try {
+      signalProcess(pid, "SIGTERM");
+      stopped.push(pid);
+    } catch (cause) {
+      if (!cause || typeof cause !== "object" || cause.code !== "ESRCH") {
+        throw cause;
+      }
+    }
+  }
+
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  while (
+    stopped.some((pid) => processIsRunning(pid)) &&
+    Date.now() < deadline
+  ) {
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.max(0, pollIntervalMs)),
+    );
+  }
+  const remaining = stopped.filter((pid) => processIsRunning(pid));
+  if (remaining.length) {
+    throw new Error(
+      `Coda could not stop stale native development process ${remaining.join(", ")}.`,
+    );
+  }
+  return stopped;
+}
+
 export function collectNativeToolchain(repository = repositoryRoot) {
   const tauriExecutable =
     process.platform === "win32"
@@ -440,6 +543,7 @@ function gitOutput(args) {
 export async function runDevInstance(environment = process.env) {
   const configPath = path.join(repositoryRoot, "src-tauri", "tauri.conf.json");
   const baseConfig = JSON.parse(await readFile(configPath, "utf8"));
+  await stopStaleNativeDevelopmentProcesses(path.basename(repositoryRoot));
   const groveServer =
     environment.PORT === undefined
       ? readRegisteredGroveServer(repositoryRoot)
