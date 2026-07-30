@@ -12,6 +12,12 @@ test("exports the Coda site for its GitHub Pages project path", async () => {
     /<title>Coda — Your Bandcamp library, built for listening<\/title>/i,
   );
   assert.match(html, /href="\/coda-bandcamp\/"/);
+  assert.match(html, /Download Coda/);
+  assert.match(
+    html,
+    /href="https:\/\/github\.com\/iheanyi\/coda-bandcamp\/releases\/latest"/,
+  );
+  assert.doesNotMatch(html, /Download Coda v\d+\.\d+\.\d+/);
   assert.match(html, /src="\/coda-bandcamp\/coda-demo\.gif"/);
   assert.match(html, /src="\/coda-bandcamp\/_next\/static\//);
   assert.match(

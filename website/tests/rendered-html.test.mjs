@@ -33,7 +33,12 @@ test("server-renders the Coda landing page", async () => {
     /<title>Coda — Your Bandcamp library, built for listening<\/title>/i,
   );
   assert.match(html, /Your Bandcamp library, built for listening/);
-  assert.match(html, /Download Coda v0\.2\.0/);
+  assert.match(html, /Download Coda/);
+  assert.match(
+    html,
+    /href="https:\/\/github\.com\/iheanyi\/coda-bandcamp\/releases\/latest"/,
+  );
+  assert.doesNotMatch(html, /Download Coda v\d+\.\d+\.\d+/);
   assert.match(html, /Your Bandcamp collection in a real desktop player\./);
   assert.match(html, /Made for music collectors, not engagement metrics/);
   assert.match(html, /Independent of Bandcamp and Last\.fm\./);

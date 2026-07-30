@@ -181,7 +181,7 @@ export default function Home() {
                   rel="noreferrer"
                   className="inline-flex rounded-lg bg-[#ec6848] px-4 py-3 font-semibold text-[#17191b] ring-1 ring-[#ec6848] hover:bg-[#f1785b] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#ec6848] sm:py-2.5"
                 >
-                  Download Coda v0.2.0
+                  Download Coda
                 </a>
               </div>
               <div className="text-base sm:text-sm">
