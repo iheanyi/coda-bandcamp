@@ -7,6 +7,11 @@ import {
 
 export type CodaViewTransitionKind =
   | "album-detail"
+  | "artist-detail"
+  | "playlist-detail"
+  | "playlist-detail-close"
+  | "radio-detail"
+  | "radio-detail-close"
   | "now-playing-open"
   | "now-playing-close"
   | "page-forward"
@@ -30,6 +35,11 @@ type ViewTransitionDocument = Document & {
 
 const TRANSITION_CLASSES: Record<CodaViewTransitionKind, string> = {
   "album-detail": "coda-transition--album-detail",
+  "artist-detail": "coda-transition--artist-detail",
+  "playlist-detail": "coda-transition--playlist-detail",
+  "playlist-detail-close": "coda-transition--playlist-detail-close",
+  "radio-detail": "coda-transition--radio-detail",
+  "radio-detail-close": "coda-transition--radio-detail-close",
   "now-playing-open": "coda-transition--now-playing-open",
   "now-playing-close": "coda-transition--now-playing-close",
   "page-forward": "coda-transition--page-forward",
@@ -65,7 +75,7 @@ export function transitionCodaView(
   activeTransition = undefined;
   clearTransitionClasses();
 
-  if (options.skipSnapshot) {
+  if (options.skipSnapshot || kind === "page-back") {
     if (motionViewTransitionsEnabled()) {
       supersedeMotionViewTransition();
     }

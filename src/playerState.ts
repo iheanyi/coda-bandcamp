@@ -80,6 +80,10 @@ export function isEphemeralTrackId(id: string): boolean {
   return id.startsWith("discover:");
 }
 
+export function normalizedReleaseTitle(title: string): string {
+  return title === "Unknown release" ? "" : title;
+}
+
 function isInvalidRadioTrackId(id: string): boolean {
   return id.startsWith("radio:") && !/^radio:[1-9]\d{0,15}$/.test(id);
 }
@@ -87,13 +91,17 @@ function isInvalidRadioTrackId(id: string): boolean {
 function parseTrack(value: unknown): PlayerStateTrack | undefined {
   if (!isRecord(value)) return undefined;
   const palette = parsePalette(value.palette);
+  const album =
+    typeof value.album === "string"
+      ? normalizedReleaseTitle(value.album)
+      : value.album;
   if (
     !isBoundedText(value.id, true) ||
     isEphemeralTrackId(value.id) ||
     isInvalidRadioTrackId(value.id) ||
     !isBoundedText(value.title, true) ||
     !isBoundedText(value.artist, true) ||
-    !isBoundedText(value.album, true) ||
+    !isBoundedText(album) ||
     !isBoundedText(value.albumId, true) ||
     !isNonNegativeInteger(value.duration) ||
     value.duration > MAX_TRACK_SECONDS ||
@@ -111,7 +119,7 @@ function parseTrack(value: unknown): PlayerStateTrack | undefined {
     id: value.id,
     title: value.title,
     artist: value.artist,
-    album: value.album,
+    album,
     albumId: value.albumId,
     duration: value.duration,
     track: value.track,

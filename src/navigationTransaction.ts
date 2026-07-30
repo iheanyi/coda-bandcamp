@@ -1,4 +1,8 @@
 export type NavigationIntent = "forward" | "back" | "crossfade";
+export type NavigationEntrance =
+  | "none"
+  | "page-forward"
+  | "shared-element";
 
 export const MAX_NAVIGATION_IDENTIFIER_LENGTH = 128;
 export const MAX_NAVIGATION_SCROLL_TOP = 10_000_000;
@@ -6,6 +10,7 @@ export const MAX_NAVIGATION_SCROLL_TOP = 10_000_000;
 export type NavigationTransactionInput = Readonly<{
   routeKey: string;
   intent: NavigationIntent;
+  entrance: NavigationEntrance;
   sourceTrigger?: HTMLElement | null;
   returnScrollTop?: number;
   destinationHeadingId: string;
@@ -16,6 +21,7 @@ export type NavigationTransaction = Readonly<{
   identity: number;
   routeKey: string;
   intent: NavigationIntent;
+  entrance: NavigationEntrance;
   sourceTrigger?: HTMLElement;
   returnScrollTop: number;
   destinationHeadingId: string;
@@ -77,6 +83,7 @@ export function createNavigationTransaction(
     identity,
     routeKey: boundedIdentifier(input.routeKey, "routeKey"),
     intent: input.intent,
+    entrance: input.entrance,
     ...(input.sourceTrigger ? { sourceTrigger: input.sourceTrigger } : {}),
     returnScrollTop: boundedScrollTop(input.returnScrollTop),
     destinationHeadingId: boundedIdentifier(

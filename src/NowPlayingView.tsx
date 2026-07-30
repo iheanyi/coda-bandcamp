@@ -44,6 +44,7 @@ import { cn } from "@/lib/utils";
 import { codaMotion } from "./motion";
 import { formatTime, openBandcampUrl } from "./lib";
 import { countLabel } from "./countLabel";
+import { normalizedReleaseTitle } from "./playerState";
 import {
   RadioChapterArtwork,
   RadioChapterCopy,
@@ -535,6 +536,7 @@ function NowPlayingViewComponent({
     ? `https://bandcamp.com/radio?show=${radioShowId}`
     : undefined;
   const radioSeries = radioShowUrl ? radioSeriesByTitle(track.album) : undefined;
+  const releaseTitle = normalizedReleaseTitle(track.album);
 
   const openRadioChapter = useCallback((url: string) => {
     setRadioLinkError("");
@@ -620,7 +622,12 @@ function NowPlayingViewComponent({
                 <ExternalLink className="size-5 shrink-0 text-[#858984] transition-[color,transform] duration-(--duration-coda-standard) ease-coda-enter group-hover/show:translate-x-0.5 group-hover/show:-translate-y-0.5 group-hover/show:text-(--now-playing-accent) motion-reduce:transition-none" aria-hidden="true" />
               </Button>
             ) : (
-              track.title
+              <span
+                className="inline-block max-w-full align-top"
+                data-coda-now-playing-title-detail=""
+              >
+                {track.title}
+              </span>
             )}
           </h1>
           <div className="mt-4 flex min-w-0 items-center gap-2 text-[#696d68] max-xl:justify-center">
@@ -641,7 +648,7 @@ function NowPlayingViewComponent({
                   className="h-auto max-w-[46%] truncate p-0 text-sm font-medium text-[#c1c2bc] hover:bg-transparent hover:text-primary"
                   onClick={() => onRadioSeries(radioSeries?.id)}
                 >
-                  {track.album}
+                  {releaseTitle}
                 </Button>
               </>
             ) : (
@@ -654,24 +661,28 @@ function NowPlayingViewComponent({
                 >
                   <OverflowMarquee text={track.artist} />
                 </Button>
-                <span aria-hidden="true">·</span>
-                <Button
-                  variant="text"
-                  size="compact"
-                  className="h-auto min-w-0 max-w-[46%] overflow-hidden p-0 text-sm font-medium text-[#c1c2bc] hover:bg-transparent hover:text-primary"
-                  onClick={(event) => onAlbum(track, event.currentTarget)}
-                  aria-busy={albumLoading}
-                  aria-label={albumLoading ? `Loading album ${track.album}` : undefined}
-                  disabled={albumLoading}
-                >
-                  {albumLoading ? (
-                    <Spinner
-                      aria-label={`Loading album ${track.album}`}
-                      className="size-3 shrink-0 text-current motion-reduce:animate-none"
-                    />
-                  ) : null}
-                  <OverflowMarquee className="flex-1" text={track.album} />
-                </Button>
+                {releaseTitle ? (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <Button
+                      variant="text"
+                      size="compact"
+                      className="h-auto min-w-0 max-w-[46%] overflow-hidden p-0 text-sm font-medium text-[#c1c2bc] hover:bg-transparent hover:text-primary"
+                      onClick={(event) => onAlbum(track, event.currentTarget)}
+                      aria-busy={albumLoading}
+                      aria-label={albumLoading ? `Loading album ${releaseTitle}` : undefined}
+                      disabled={albumLoading}
+                    >
+                      {albumLoading ? (
+                        <Spinner
+                          aria-label={`Loading album ${releaseTitle}`}
+                          className="size-3 shrink-0 text-current motion-reduce:animate-none"
+                        />
+                      ) : null}
+                      <OverflowMarquee className="flex-1" text={releaseTitle} />
+                    </Button>
+                  </>
+                ) : null}
               </>
             )}
           </div>

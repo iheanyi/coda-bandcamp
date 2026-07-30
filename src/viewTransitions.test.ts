@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const motionMocks = vi.hoisted(() => ({
   animateView: vi.fn(),
@@ -19,6 +19,10 @@ const originalStartViewTransition = Object.getOwnPropertyDescriptor(
 );
 const originalMatchMedia = window.matchMedia;
 
+beforeEach(() => {
+  vi.stubEnv("VITE_CODA_MOTION_VIEW_TRANSITIONS", "0");
+});
+
 function deferred() {
   let resolve!: () => void;
   let reject!: (reason?: unknown) => void;
@@ -37,6 +41,7 @@ function motionBuilder(options: { reject?: unknown } = {}) {
   const builder = {
     add: vi.fn(),
     class: vi.fn(),
+    crop: vi.fn(),
     enter: vi.fn(),
     exit: vi.fn(),
     group: vi.fn(),
@@ -48,6 +53,7 @@ function motionBuilder(options: { reject?: unknown } = {}) {
   for (const method of [
     "add",
     "class",
+    "crop",
     "enter",
     "exit",
     "group",
@@ -67,10 +73,37 @@ function motionBuilder(options: { reject?: unknown } = {}) {
 
 afterEach(() => {
   document.querySelector(".player__art-link")?.remove();
+  document.querySelector(".album-detail__artwork")?.remove();
+  document.querySelectorAll(
+    [
+      "[data-coda-artist-artwork-source]",
+      "[data-coda-artist-name-source]",
+      "[data-coda-artist-name-detail]",
+      "[data-coda-album-title-source]",
+      "[data-coda-album-title-detail]",
+      "[data-coda-playlist-identity-source]",
+      "[data-coda-playlist-identity-detail]",
+      "[data-coda-playlist-title-source]",
+      "[data-coda-playlist-title-detail]",
+      "[data-coda-playlist-title-return]",
+      "[data-coda-radio-artwork-source]",
+      "[data-coda-radio-artwork-detail]",
+      "[data-coda-radio-title-source]",
+      "[data-coda-radio-title-detail]",
+      "[data-coda-radio-title-return]",
+      "[data-coda-now-playing-title-compact]",
+      "[data-coda-now-playing-title-detail]",
+    ].join(","),
+  ).forEach((element) => element.remove());
   document.documentElement.classList.remove(
     "coda-view-transitioning",
     "coda-view-transitions-supported",
     "coda-transition--album-detail",
+    "coda-transition--artist-detail",
+    "coda-transition--playlist-detail",
+    "coda-transition--playlist-detail-close",
+    "coda-transition--radio-detail",
+    "coda-transition--radio-detail-close",
     "coda-transition--now-playing-open",
     "coda-transition--now-playing-close",
     "coda-transition--page-forward",
@@ -117,10 +150,14 @@ describe("transitionCodaView", () => {
 
     const cases: Array<[CodaViewTransitionKind, string]> = [
       ["album-detail", "coda-transition--album-detail"],
+      ["artist-detail", "coda-transition--artist-detail"],
+      ["playlist-detail", "coda-transition--playlist-detail"],
+      ["playlist-detail-close", "coda-transition--playlist-detail-close"],
+      ["radio-detail", "coda-transition--radio-detail"],
+      ["radio-detail-close", "coda-transition--radio-detail-close"],
       ["now-playing-open", "coda-transition--now-playing-open"],
       ["now-playing-close", "coda-transition--now-playing-close"],
       ["page-forward", "coda-transition--page-forward"],
-      ["page-back", "coda-transition--page-back"],
       ["page-crossfade", "coda-transition--page-crossfade"],
     ];
     for (const [kind, className] of cases) {
@@ -132,6 +169,20 @@ describe("transitionCodaView", () => {
       );
       expect(document.documentElement).not.toHaveClass(className);
     }
+  });
+
+  it("returns from unpaired destinations without taking a snapshot", async () => {
+    const startViewTransition = vi.fn();
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: startViewTransition,
+    });
+    const update = vi.fn();
+
+    await transitionCodaView(update, "page-back");
+
+    expect(update).toHaveBeenCalledOnce();
+    expect(startViewTransition).not.toHaveBeenCalled();
   });
 
   it("bypasses automatic motion when reduced motion is requested", async () => {
@@ -170,14 +221,14 @@ describe("transitionCodaView", () => {
     });
 
     const firstTransition = transitionCodaView(vi.fn(), "page-forward");
-    const secondTransition = transitionCodaView(vi.fn(), "page-back");
+    const secondTransition = transitionCodaView(vi.fn(), "page-crossfade");
 
     expect(document.documentElement).not.toHaveClass(
       "coda-transition--page-forward",
     );
     expect(document.documentElement).toHaveClass(
       "coda-view-transitioning",
-      "coda-transition--page-back",
+      "coda-transition--page-crossfade",
     );
 
     first.resolve();
@@ -185,7 +236,7 @@ describe("transitionCodaView", () => {
 
     expect(document.documentElement).toHaveClass(
       "coda-view-transitioning",
-      "coda-transition--page-back",
+      "coda-transition--page-crossfade",
     );
 
     second.resolve();
@@ -193,7 +244,7 @@ describe("transitionCodaView", () => {
 
     expect(document.documentElement).not.toHaveClass(
       "coda-view-transitioning",
-      "coda-transition--page-back",
+      "coda-transition--page-crossfade",
     );
   });
 
@@ -207,8 +258,8 @@ describe("transitionCodaView", () => {
       },
       {
         lifecycle: "updateCallbackDone",
-        kind: "page-back",
-        className: "coda-transition--page-back",
+        kind: "page-crossfade",
+        className: "coda-transition--page-crossfade",
         cause: new Error("Update callback failed"),
       },
     ] as const;
@@ -284,7 +335,7 @@ describe("transitionCodaView", () => {
     });
 
     const firstTransition = transitionCodaView(vi.fn(), "page-forward");
-    const secondTransition = transitionCodaView(vi.fn(), "page-back");
+    const secondTransition = transitionCodaView(vi.fn(), "page-crossfade");
 
     firstReady.reject(new DOMException("Skipped", "AbortError"));
     await Promise.resolve();
@@ -293,7 +344,7 @@ describe("transitionCodaView", () => {
     expect(document.documentElement).toHaveClass(
       "coda-view-transitions-supported",
       "coda-view-transitioning",
-      "coda-transition--page-back",
+      "coda-transition--page-crossfade",
     );
 
     firstFinished.resolve();
@@ -317,7 +368,7 @@ describe("transitionCodaView", () => {
     const secondUpdate = vi.fn();
 
     const firstTransition = transitionCodaView(firstUpdate, "page-forward");
-    const secondTransition = transitionCodaView(secondUpdate, "page-back");
+    const secondTransition = transitionCodaView(secondUpdate, "page-crossfade");
 
     callbacks[1]();
     callbacks[0]();
@@ -388,22 +439,52 @@ describe("transitionCodaView with Motion view transitions", () => {
     expect(builder.old).toHaveBeenCalledWith(
       {
         opacity: 0,
-        transform: "translateX(-8px)",
+        transform: "translateX(-6px)",
       },
-      expect.objectContaining({ duration: 0.14 }),
+      expect.objectContaining({ duration: 0.12 }),
     );
     expect(builder.new).toHaveBeenCalledWith(
       {
         opacity: [0, 1],
-        transform: ["translateX(12px)", "translateX(0px)"],
+        transform: ["translateX(10px)", "translateX(0px)"],
       },
-      expect.objectContaining({ delay: 0.035, duration: 0.22 }),
+      expect.objectContaining({ delay: 0.015, duration: 0.18 }),
     );
     expect(document.documentElement).toHaveClass(
       "coda-view-transitions-supported",
     );
     expect(document.documentElement).not.toHaveClass(
       "coda-view-transitioning",
+    );
+  });
+
+  it("restores unpaired Back navigation immediately", async () => {
+    enableMotionViewTransitions();
+    const update = vi.fn();
+
+    await transitionCodaView(update, "page-back");
+
+    expect(update).toHaveBeenCalledOnce();
+    expect(motionMocks.animateView).not.toHaveBeenCalled();
+  });
+
+  it("uses a quick dissolve for major destination changes", async () => {
+    enableMotionViewTransitions();
+    const builder = motionBuilder();
+    motionMocks.animateView.mockImplementation((update: () => void) => {
+      update();
+      return builder;
+    });
+
+    await transitionCodaView(vi.fn(), "page-crossfade");
+
+    expect(builder.old).toHaveBeenCalledWith(
+      { opacity: 0 },
+      expect.objectContaining({ duration: 0.12 }),
+    );
+    expect(builder.new).toHaveBeenCalledWith(
+      { opacity: [0, 1] },
+      expect.objectContaining({ duration: 0.18 }),
     );
   });
 
@@ -438,6 +519,203 @@ describe("transitionCodaView with Motion view transitions", () => {
         transform: "translateY(6px)",
       },
       expect.objectContaining({ duration: 0.14 }),
+    );
+  });
+
+  it.each([
+    [
+      "radio-detail",
+      "data-coda-radio-artwork-source",
+      "[data-coda-radio-artwork-detail]",
+      "coda-motion-shared-artwork",
+    ],
+    [
+      "radio-detail-close",
+      "data-coda-radio-artwork-detail",
+      "[data-coda-radio-artwork-return]",
+      "coda-motion-shared-artwork",
+    ],
+    [
+      "playlist-detail",
+      "data-coda-playlist-identity-source",
+      "[data-coda-playlist-identity-detail]",
+      "coda-motion-shared-identity",
+    ],
+    [
+      "playlist-detail-close",
+      "data-coda-playlist-identity-detail",
+      "[data-coda-playlist-identity-return]",
+      "coda-motion-shared-identity",
+    ],
+  ] as const)(
+    "pairs stable identity layers for %s",
+    async (kind, sourceAttribute, destination, transitionClass) => {
+      enableMotionViewTransitions();
+      const source = document.createElement("div");
+      source.setAttribute(sourceAttribute, "");
+      document.body.append(source);
+      const builder = motionBuilder();
+      motionMocks.animateView.mockImplementation((update: () => void) => {
+        update();
+        return builder;
+      });
+
+      await transitionCodaView(vi.fn(), kind);
+
+      expect(builder.add).toHaveBeenCalledWith(source, destination);
+      expect(builder.class).toHaveBeenCalledWith(transitionClass);
+      expect(builder.layout).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "spring",
+          bounce: transitionClass === "coda-motion-shared-artwork"
+            ? 0.08
+            : 0.04,
+        }),
+      );
+    },
+  );
+
+  it.each([
+    [
+      "album-detail",
+      "data-coda-album-title-source",
+      "[data-coda-album-title-detail]",
+    ],
+    [
+      "artist-detail",
+      "data-coda-artist-name-source",
+      "[data-coda-artist-name-detail]",
+    ],
+    [
+      "radio-detail",
+      "data-coda-radio-title-source",
+      "[data-coda-radio-title-detail]",
+    ],
+    [
+      "radio-detail-close",
+      "data-coda-radio-title-detail",
+      "[data-coda-radio-title-return]",
+    ],
+    [
+      "playlist-detail",
+      "data-coda-playlist-title-source",
+      "[data-coda-playlist-title-detail]",
+    ],
+    [
+      "playlist-detail-close",
+      "data-coda-playlist-title-detail",
+      "[data-coda-playlist-title-return]",
+    ],
+    [
+      "now-playing-open",
+      "data-coda-now-playing-title-compact",
+      "[data-coda-now-playing-title-detail]",
+    ],
+    [
+      "now-playing-close",
+      "data-coda-now-playing-title-detail",
+      "[data-coda-now-playing-title-compact]",
+    ],
+  ] as const)(
+    "pairs the identity title separately for %s",
+    async (kind, sourceAttribute, destination) => {
+      enableMotionViewTransitions();
+      const source = document.createElement("span");
+      source.setAttribute(sourceAttribute, "");
+      document.body.append(source);
+      const builder = motionBuilder();
+      motionMocks.animateView.mockImplementation((update: () => void) => {
+        update();
+        return builder;
+      });
+
+      await transitionCodaView(vi.fn(), kind);
+
+      expect(builder.add).toHaveBeenCalledWith(source, destination);
+      expect(builder.class).toHaveBeenCalledWith(
+        "coda-motion-shared-title",
+      );
+      expect(builder.group).toHaveBeenCalledWith(false);
+      expect(builder.crop).toHaveBeenCalledWith(false);
+      expect(builder.layout).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "spring",
+          visualDuration: 0.44,
+          bounce: 0,
+        }),
+      );
+      expect(builder.old).toHaveBeenCalledWith(
+        { opacity: [0, 0] },
+      );
+      expect(builder.new).toHaveBeenCalledWith(
+        { opacity: [1, 1] },
+      );
+    },
+  );
+
+  it.each([
+    ["album-detail", "[data-coda-album-detail-surface]"],
+    ["artist-detail", "[data-coda-artist-detail-surface]"],
+    ["radio-detail", "[data-coda-radio-detail-surface]"],
+    ["playlist-detail", "[data-coda-playlist-detail-surface]"],
+  ] as const)(
+    "keeps the incoming detail surface opaque for %s",
+    async (kind, selector) => {
+      enableMotionViewTransitions();
+      const builder = motionBuilder();
+      motionMocks.animateView.mockImplementation((update: () => void) => {
+        update();
+        return builder;
+      });
+
+      await transitionCodaView(vi.fn(), kind);
+
+      expect(builder.add).toHaveBeenCalledWith(selector);
+      expect(builder.class).toHaveBeenCalledWith(
+        "coda-motion-detail-surface",
+      );
+      expect(builder.group).toHaveBeenCalledWith(false);
+      expect(builder.enter).toHaveBeenCalledWith(
+        {
+          transform: ["translateY(8px)", "translateY(0px)"],
+        },
+        expect.objectContaining({
+          duration: 0.3,
+          ease: [0.22, 1, 0.36, 1],
+        }),
+      );
+    },
+  );
+
+  it("pairs artist artwork only for the forward drill-in", async () => {
+    enableMotionViewTransitions();
+    const source = document.createElement("div");
+    source.dataset.codaArtistArtworkSource = "";
+    const cover = document.createElement("div");
+    cover.dataset.slot = "cover";
+    source.append(cover);
+    document.body.append(source);
+    const builder = motionBuilder();
+    motionMocks.animateView.mockImplementation((update: () => void) => {
+      update();
+      return builder;
+    });
+
+    await transitionCodaView(vi.fn(), "artist-detail");
+
+    expect(builder.add).toHaveBeenCalledWith(
+      cover,
+      ":is([data-coda-artist-artwork-detail][data-slot='cover'], [data-coda-artist-artwork-detail] [data-slot='cover'])",
+    );
+    expect(builder.class).toHaveBeenCalledWith(
+      "coda-motion-shared-artwork",
+    );
+    expect(builder.layout).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "spring",
+        visualDuration: 0.46,
+        bounce: 0.08,
+      }),
     );
   });
 

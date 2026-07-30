@@ -1,4 +1,5 @@
 import { MAX_PLAYBACK_POSITION_SECONDS } from "./playbackClock";
+import { normalizedReleaseTitle } from "./playerState";
 import type { Track } from "./types";
 
 export const MINI_PLAYER_STATE_EVENT = "coda://mini-player-state";
@@ -116,7 +117,9 @@ export function createMiniPlayerSnapshot(
         id: boundedText(input.track.id, "unknown-track"),
         title: boundedText(input.display?.title, input.track.title),
         artist: boundedText(input.display?.artist, input.track.artist),
-        album: boundedText(input.display?.album, input.track.album, true),
+        album: normalizedReleaseTitle(
+          boundedText(input.display?.album, input.track.album, true),
+        ),
         artworkUrl: artworkUrl(
           input.display?.artworkUrl ?? input.track.artworkUrl,
         ),
@@ -153,7 +156,7 @@ function parseMiniPlayerTrack(value: unknown): MiniPlayerTrack | undefined {
     id: value.id,
     title: value.title,
     artist: value.artist,
-    album: value.album,
+    album: normalizedReleaseTitle(value.album),
     artworkUrl: value.artworkUrl,
     palette: [value.palette[0] as string, value.palette[1] as string],
   };

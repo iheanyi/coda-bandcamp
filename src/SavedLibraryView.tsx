@@ -76,6 +76,7 @@ import {
   resolveNavigationReturnFocus,
   resolveNavigationReturnScrollTop,
   settleNavigationTransaction,
+  type NavigationEntrance,
 } from "./navigationTransaction";
 import { boundRadioChapters } from "./radioPlayback";
 import type {
@@ -402,12 +403,14 @@ function PlaylistList({
   onCreate,
   creating,
   openingPlaylistId,
+  returningPlaylistId,
 }: {
   playlists: PlaylistSummary[];
   onOpen: (playlist: PlaylistSummary, trigger: HTMLButtonElement) => void;
   onCreate: (name: string) => void;
   creating: boolean;
   openingPlaylistId?: string;
+  returningPlaylistId?: string;
 }) {
   const [name, setName] = useState("");
   const submit = (event: FormEvent) => {
@@ -460,26 +463,45 @@ function PlaylistList({
             return (
               <Button
                 aria-busy={optimistic || opening || undefined}
-                className="grid h-auto min-h-20 grid-cols-[3.25rem_minmax(0,1fr)_auto] items-center gap-3 rounded-lg border-border bg-white/2 p-3.5 text-left font-normal transition-[border-color,background-color,transform] duration-(--duration-coda-fast) hover:-translate-y-px hover:border-input hover:bg-white/3.5"
+                className="grid h-auto min-h-20 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg border-border bg-white/2 p-3.5 text-left font-normal transition-[border-color,background-color,transform] duration-(--duration-coda-fast) hover:-translate-y-px hover:border-input hover:bg-white/3.5"
                 disabled={optimistic || opening}
                 data-playlist-open={playlist.id}
                 key={playlist.id}
                 onClick={(event) => onOpen(playlist, event.currentTarget)}
               >
-                <span className="grid size-13 place-items-center rounded-lg border border-white/7 bg-coda-hover text-[#e1846d]">
-                  <ListMusic size={25} />
-                </span>
-                <span className="flex min-w-0 flex-col">
-                  <OverflowMarquee
-                    className="text-xs text-[#dcdbd5]"
-                    text={playlist.name}
-                  />
-                  <span className="mt-1 truncate text-xs text-[#777b76]">
+                <span className="grid min-w-0 grid-cols-[3.25rem_minmax(0,1fr)] items-center gap-x-3 gap-y-1">
+                  <span
+                    className="row-span-3 grid size-13 place-items-center rounded-lg border border-white/7 bg-coda-hover text-[#e1846d]"
+                    data-coda-playlist-identity-return={
+                      returningPlaylistId === playlist.id
+                        ? playlist.id
+                        : undefined
+                    }
+                    data-playlist-identity={playlist.id}
+                  >
+                    <ListMusic size={25} />
+                  </span>
+                  <span
+                    className="min-w-0"
+                    data-playlist-title={playlist.id}
+                  >
+                    <OverflowMarquee
+                      className="text-xs text-[#dcdbd5]"
+                      staticTextProps={{
+                        "data-coda-playlist-title-return":
+                          returningPlaylistId === playlist.id
+                            ? playlist.id
+                            : undefined,
+                      }}
+                      text={playlist.name}
+                    />
+                  </span>
+                  <span className="col-start-2 truncate text-xs text-[#777b76]">
                     {countLabel(playlist.songCount, "track")}
                     {playlist.duration ? ` · ${formatTime(playlist.duration)}` : ""}
                   </span>
                   {playlist.comment ? (
-                    <small className="mt-1 truncate text-xs text-[#777b76]">
+                    <small className="col-start-2 truncate text-xs text-[#777b76]">
                       {playlist.comment}
                     </small>
                   ) : null}
@@ -610,7 +632,10 @@ function PlaylistDetailView({
   };
 
   return (
-    <article aria-busy={actionPending}>
+    <article
+      aria-busy={actionPending}
+      data-coda-playlist-detail-surface={playlist.id}
+    >
       <Button
         className="mb-3 -ml-1 h-auto gap-1.5 p-1 text-xs font-bold"
         onClick={onBack}
@@ -619,121 +644,134 @@ function PlaylistDetailView({
         <ArrowLeft size={15} /> All playlists
       </Button>
       <header className="grid min-h-48 grid-cols-[8rem_minmax(0,1fr)] items-center gap-6 rounded-t-xl border border-border bg-[radial-gradient(circle_at_84%_10%,rgba(221,101,73,0.12),transparent_40%),linear-gradient(135deg,#24282a,#191c1e_72%)] p-7">
-        {playlistArtwork ? (
-          <FavoriteArtwork
-            className="size-32 rounded-lg"
-            item={playlistArtwork}
-          />
-        ) : (
-          <span className="grid size-32 place-items-center rounded-lg border border-white/7 bg-coda-hover text-[#e1846d]">
-            <ListMusic size={38} />
-          </span>
-        )}
-        <div className="min-w-0">
+        <div
+          className="size-32"
+          data-coda-playlist-identity-detail={playlist.id}
+        >
+          {playlistArtwork ? (
+            <FavoriteArtwork
+              className="size-32 rounded-lg"
+              item={playlistArtwork}
+            />
+          ) : (
+            <span className="grid size-32 place-items-center rounded-lg border border-white/7 bg-coda-hover text-[#e1846d]">
+              <ListMusic size={38} />
+            </span>
+          )}
+        </div>
+        <div
+          className="min-w-0"
+          data-coda-playlist-metadata-detail={playlist.id}
+        >
           <Eyebrow>Bandcamp playlist</Eyebrow>
           {editing ? (
             <form
               className="flex max-w-xl items-center gap-2"
               onSubmit={submitRename}
             >
-              <Input
-                className="h-11 text-2xl font-semibold"
-                autoFocus
-                value={name}
-                maxLength={256}
-                aria-label="Playlist name"
-                onChange={(event) => setName(event.target.value)}
-              />
+                <Input
+                  className="h-11 text-2xl font-semibold"
+                  autoFocus
+                  value={name}
+                  maxLength={256}
+                  aria-label="Playlist name"
+                  onChange={(event) => setName(event.target.value)}
+                />
+                <Button
+                  type="submit"
+                  aria-label="Save playlist name"
+                  disabled={actionPending}
+                  size="icon"
+                  variant="ghost"
+                >
+                  {renaming
+                    ? <Spinner aria-hidden="true" className="size-4 text-current" />
+                    : <Check size={17} />}
+                </Button>
+                <Button
+                  type="button"
+                  aria-label="Cancel renaming"
+                  disabled={actionPending}
+                  onClick={() => {
+                    setEditing(false);
+                    setName(playlist.name);
+                  }}
+                  size="icon"
+                  variant="ghost"
+                >
+                  <X size={17} />
+                </Button>
+              </form>
+            ) : (
+              <div className="flex items-center gap-2">
+                <h1
+                  id="playlist-detail-heading"
+                  className="m-0 max-w-2xl truncate font-display text-4xl leading-none font-semibold tracking-tighter text-[#f1efe9] outline-none"
+                  tabIndex={-1}
+                >
+                  <span
+                    className="inline-block max-w-full truncate align-top"
+                    data-coda-playlist-title-detail={playlist.id}
+                  >
+                    {playlist.name}
+                  </span>
+                </h1>
+                <Button
+                  onClick={() => setEditing(true)}
+                  aria-label={`Rename ${playlist.name}`}
+                  size="icon"
+                  variant="ghost"
+                >
+                  <Pencil size={15} />
+                </Button>
+              </div>
+            )}
+            <p className="mt-2 mb-0 text-xs text-[#858984]">
+              {countLabel(playlist.songCount, "track")}
+              {playlist.duration ? ` · ${formatTime(playlist.duration)}` : ""}
+              {" · Synced with Bandcamp"}
+            </p>
+            <div className="mt-5 flex flex-wrap gap-2">
               <Button
-                type="submit"
-                aria-label="Save playlist name"
-                disabled={actionPending}
-                size="icon"
-                variant="ghost"
+                className={cn(
+                  activePlaylist &&
+                    "shadow-[inset_0_0_0_1px_rgba(255,255,255,0.18),0_8px_24px_rgba(221,101,73,0.16)]",
+                  activePlaylist && playing && "bg-[color-mix(in_srgb,var(--primary)_82%,#17191b)]",
+                )}
+                disabled={!playlist.tracks.length}
+                onClick={
+                  activePlaylist
+                    ? onTogglePlayback
+                    : () => onPlay(playlist.tracks)
+                }
+                aria-label={
+                  activePlaylist
+                    ? `${playing ? "Pause" : "Resume"} ${playlist.name}`
+                    : "Play"
+                }
+                aria-pressed={activePlaylist && playing}
+                variant="primary"
               >
-                {renaming
-                  ? <Spinner aria-hidden="true" className="size-4 text-current" />
-                  : <Check size={17} />}
+                <PlaybackIcon
+                  className="size-4"
+                  playing={activePlaylist && playing}
+                />
+                {activePlaylist ? (playing ? "Pause" : "Resume") : "Play"}
               </Button>
               <Button
-                type="button"
-                aria-label="Cancel renaming"
-                disabled={actionPending}
-                onClick={() => {
-                  setEditing(false);
-                  setName(playlist.name);
-                }}
-                size="icon"
-                variant="ghost"
+                disabled={!playlist.tracks.length}
+                onClick={() => onPlay(shuffled(playlist.tracks))}
               >
-                <X size={17} />
+                <Shuffle size={16} /> Shuffle
               </Button>
-            </form>
-          ) : (
-            <div className="flex items-center gap-2">
-              <h1
-                id="playlist-detail-heading"
-                className="m-0 max-w-2xl truncate font-display text-4xl leading-none font-semibold tracking-tighter text-[#f1efe9] outline-none"
-                tabIndex={-1}
-              >
-                {playlist.name}
-              </h1>
               <Button
-                onClick={() => setEditing(true)}
-                aria-label={`Rename ${playlist.name}`}
-                size="icon"
-                variant="ghost"
+                disabled={!playlist.tracks.length}
+                onClick={() => onQueue(playlist.tracks)}
               >
-                <Pencil size={15} />
+                <ListPlus size={16} /> Add to queue
               </Button>
             </div>
-          )}
-          <p className="mt-2 mb-0 text-xs text-[#858984]">
-            {countLabel(playlist.songCount, "track")}
-            {playlist.duration ? ` · ${formatTime(playlist.duration)}` : ""}
-            {" · Synced with Bandcamp"}
-          </p>
-          <div className="mt-5 flex flex-wrap gap-2">
-            <Button
-              className={cn(
-                activePlaylist &&
-                  "shadow-[inset_0_0_0_1px_rgba(255,255,255,0.18),0_8px_24px_rgba(221,101,73,0.16)]",
-                activePlaylist && playing && "bg-[color-mix(in_srgb,var(--primary)_82%,#17191b)]",
-              )}
-              disabled={!playlist.tracks.length}
-              onClick={
-                activePlaylist
-                  ? onTogglePlayback
-                  : () => onPlay(playlist.tracks)
-              }
-              aria-label={
-                activePlaylist
-                  ? `${playing ? "Pause" : "Resume"} ${playlist.name}`
-                  : "Play"
-              }
-              aria-pressed={activePlaylist && playing}
-              variant="primary"
-            >
-              <PlaybackIcon
-                className="size-4"
-                playing={activePlaylist && playing}
-              />
-              {activePlaylist ? (playing ? "Pause" : "Resume") : "Play"}
-            </Button>
-            <Button
-              disabled={!playlist.tracks.length}
-              onClick={() => onPlay(shuffled(playlist.tracks))}
-            >
-              <Shuffle size={16} /> Shuffle
-            </Button>
-            <Button
-              disabled={!playlist.tracks.length}
-              onClick={() => onQueue(playlist.tracks)}
-            >
-              <ListPlus size={16} /> Add to queue
-            </Button>
           </div>
-        </div>
       </header>
 
       {playlist.tracks.length ? (
@@ -1197,6 +1235,7 @@ export default function SavedLibraryView({
   const queryClient = useQueryClient();
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string>();
   const [openingPlaylistId, setOpeningPlaylistId] = useState<string>();
+  const [returningPlaylistId, setReturningPlaylistId] = useState<string>();
   const playlistNavigationRef = useRef(createNavigationTransactionState());
   const playlistReturnFocusRequestedRef = useRef(false);
   const playlistScrollTopRef = useRef<number | undefined>(undefined);
@@ -1206,18 +1245,37 @@ export default function SavedLibraryView({
   }>();
   const closePlaylist = () => {
     const transaction = playlistNavigationRef.current.active;
+    const closingPlaylistId = selectedPlaylistId;
+    const reversesSharedIdentity =
+      transaction?.entrance === "shared-element" &&
+      transaction.sharedElementOwner === "coda-playlist-identity" &&
+      transaction.sourceTrigger?.dataset.playlistOpen === closingPlaylistId &&
+      Boolean(closingPlaylistId);
     playlistReturnFocusRequestedRef.current = Boolean(transaction);
     playlistScrollTopRef.current = transaction
       ? resolveNavigationReturnScrollTop(transaction)
       : 0;
     void transitionCodaView(
-      () => setSelectedPlaylistId(undefined),
-      "page-back",
-    );
+      () => {
+        setReturningPlaylistId(
+          reversesSharedIdentity ? closingPlaylistId : undefined,
+        );
+        setSelectedPlaylistId(undefined);
+      },
+      reversesSharedIdentity ? "playlist-detail-close" : "page-back",
+      { skipSnapshot: transaction?.entrance === "none" },
+    ).finally(() => {
+      if (!closingPlaylistId) return;
+      setReturningPlaylistId((current) =>
+        current === closingPlaylistId ? undefined : current
+      );
+    });
   };
   const beginPlaylistNavigation = (
     _playlistId: string,
     sourceTrigger?: HTMLElement,
+    entrance: NavigationEntrance = "page-forward",
+    sharedElementOwner?: string,
   ) => {
     const returnScrollTop =
       document.querySelector<HTMLElement>("[data-coda-library-scroll]")
@@ -1228,9 +1286,11 @@ export default function SavedLibraryView({
       {
         routeKey: "playlist-detail",
         intent: "forward",
+        entrance,
         sourceTrigger,
         returnScrollTop,
         destinationHeadingId: "playlist-detail-heading",
+        sharedElementOwner,
       },
     );
     playlistScrollTopRef.current = 0;
@@ -1574,20 +1634,66 @@ export default function SavedLibraryView({
               const hasCachedDetail = queryClient.getQueryData<PlaylistDetail>(
                 playlistQueryKey(item.id),
               ) !== undefined;
-              beginPlaylistNavigation(item.id, trigger);
+              const sourceIdentity = trigger.querySelector<HTMLElement>(
+                "[data-playlist-identity]",
+              );
+              const sourceTitleRoot = trigger.querySelector<HTMLElement>(
+                "[data-playlist-title]",
+              );
+              const sourceTitle = sourceTitleRoot?.querySelector<HTMLElement>(
+                '[data-slot="overflow-marquee-text"]',
+              );
+              const hasSharedIdentity =
+                hasCachedDetail &&
+                sourceIdentity?.dataset.playlistIdentity === item.id;
+              const entrance: NavigationEntrance = hasSharedIdentity
+                ? "shared-element"
+                : hasCachedDetail
+                  ? "page-forward"
+                  : "none";
+              beginPlaylistNavigation(
+                item.id,
+                trigger,
+                entrance,
+                hasSharedIdentity ? "coda-playlist-identity" : undefined,
+              );
               setOpeningPlaylistId(item.id);
-              void transitionCodaView(
+              if (hasSharedIdentity) {
+                sourceIdentity.setAttribute(
+                  "data-coda-playlist-identity-source",
+                  item.id,
+                );
+                if (
+                  sourceTitleRoot?.dataset.playlistTitle === item.id &&
+                  sourceTitle
+                ) {
+                  sourceTitle.setAttribute(
+                    "data-coda-playlist-title-source",
+                    item.id,
+                  );
+                }
+              }
+              const playlistTransition = transitionCodaView(
                 () => {
                   setSelectedPlaylistId(item.id);
                   setOpeningPlaylistId(undefined);
                 },
-                "page-forward",
+                hasSharedIdentity ? "playlist-detail" : "page-forward",
                 { skipSnapshot: !hasCachedDetail },
               );
+              void playlistTransition.finally(() => {
+                sourceIdentity?.removeAttribute(
+                  "data-coda-playlist-identity-source",
+                );
+                sourceTitle?.removeAttribute(
+                  "data-coda-playlist-title-source",
+                );
+              });
             }}
             onCreate={(name) => createMutation.mutate(name)}
             creating={createMutation.isPending}
             openingPlaylistId={openingPlaylistId}
+            returningPlaylistId={returningPlaylistId}
           />
         )}
       </section>

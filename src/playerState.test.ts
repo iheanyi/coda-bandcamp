@@ -115,6 +115,18 @@ describe("player state persistence", () => {
     expect(state.queue[0]).not.toHaveProperty("coverArt");
   });
 
+  it("keeps missing release metadata empty and migrates the legacy placeholder", () => {
+    expect(createPlayerState({
+      ...input,
+      queue: [{ ...track, album: "" }],
+    }).queue[0].album).toBe("");
+
+    expect(parsePlayerState({
+      ...createPlayerState(input),
+      queue: [{ ...track, album: "Unknown release" }],
+    })?.queue[0].album).toBe("");
+  });
+
   it("omits Discover previews but preserves refreshable Radio shows", () => {
     const state = createPlayerState({
       ...input,

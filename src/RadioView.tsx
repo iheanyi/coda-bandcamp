@@ -100,10 +100,14 @@ const RadioArtwork = memo(function RadioArtwork({
   show,
   eager = false,
   className,
+  detail = false,
+  returning = false,
 }: {
   show: RadioShowSummary;
   eager?: boolean;
   className?: string;
+  detail?: boolean;
+  returning?: boolean;
 }) {
   return (
     <div
@@ -111,6 +115,9 @@ const RadioArtwork = memo(function RadioArtwork({
         "grid aspect-square place-items-center overflow-hidden rounded-lg border border-white/7 bg-coda-hover text-6xl font-bold text-[#a2a49f]",
         className,
       )}
+      data-radio-show-artwork={show.id}
+      data-coda-radio-artwork-detail={detail ? show.id : undefined}
+      data-coda-radio-artwork-return={returning ? show.id : undefined}
     >
       {show.artworkUrl ? (
         <img
@@ -228,6 +235,7 @@ const RadioCard = memo(function RadioCard({
   onToggleFavorite,
   onOpenItem,
   onBrowseSeries,
+  returningArtwork,
 }: {
   show: RadioShowSummary;
   busyAction?: "play" | "queue" | "detail";
@@ -244,12 +252,14 @@ const RadioCard = memo(function RadioCard({
   onToggleFavorite: (show: RadioShowSummary) => void;
   onOpenItem: (url: string) => void;
   onBrowseSeries: (seriesId: number) => void;
+  returningArtwork: boolean;
 }) {
   return (
     <article className="group/card min-w-0 overflow-hidden rounded-lg border border-(--line) bg-white/2 transition-[transform,border-color,background-color] duration-(--duration-coda-standard) ease-coda-enter [contain-intrinsic-size:24rem_15rem] [content-visibility:auto] hover:-translate-y-0.5 hover:border-(--line-strong) hover:bg-white/4 motion-reduce:transition-none">
       <RadioArtwork
         show={show}
         className="rounded-none border-x-0 border-t-0 text-3xl"
+        returning={returningArtwork}
       />
       <div className="flex min-h-44 flex-col p-3.5">
         <div className="min-h-3.5 text-xs font-bold tracking-widest text-[#cb7560] uppercase">
@@ -260,8 +270,16 @@ const RadioCard = memo(function RadioCard({
         </div>
         <h3
           className="mt-1.5 mb-1 min-w-0 font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-base/tight font-semibold text-[#ebe9e3]"
+          data-radio-show-title={show.id}
         >
-          <OverflowMarquee text={show.subtitle} />
+          <OverflowMarquee
+            staticTextProps={{
+              "data-coda-radio-title-return": returningArtwork
+                ? show.id
+                : undefined,
+            }}
+            text={show.subtitle}
+          />
         </h3>
         <time className="text-xs text-[#737772]" dateTime={show.publishedAt}>
           {showDate(show.publishedAt)}
@@ -436,6 +454,7 @@ const RadioDetail = memo(function RadioDetail({
     <section
       className="mx-auto w-full max-w-5xl pt-2 pb-12"
       aria-labelledby="radio-detail-title"
+      data-coda-radio-detail-surface
     >
       <Button
         variant="text"
@@ -448,9 +467,12 @@ const RadioDetail = memo(function RadioDetail({
       </Button>
       <header className="grid min-h-76 grid-cols-[16rem_minmax(0,1fr)] items-center gap-12 overflow-hidden rounded-xl border border-(--line) bg-[radial-gradient(circle_at_78%_5%,rgba(221,101,73,0.15),transparent_40%),linear-gradient(140deg,#25292b,#181b1d_72%)] p-8 max-xl:min-h-64 max-xl:grid-cols-[12rem_minmax(0,1fr)] max-xl:gap-6 max-xl:p-6 max-lg:min-h-48 max-lg:grid-cols-[8rem_minmax(0,1fr)] max-lg:gap-4 max-lg:p-5">
         <div className="aspect-square w-64 drop-shadow-[0_22px_30px_rgba(0,0,0,0.32)] max-xl:w-48 max-lg:w-32 [&>div]:size-full">
-          <RadioArtwork show={show} eager />
+          <RadioArtwork show={show} eager detail />
         </div>
-        <div className="min-w-0">
+        <div
+          className="min-w-0"
+          data-coda-radio-metadata-detail
+        >
           <Badge
             variant="artwork"
             className="h-auto gap-1.5 border-0 bg-transparent p-0 text-xs tracking-widest text-[#d47761] uppercase"
@@ -466,7 +488,12 @@ const RadioDetail = memo(function RadioDetail({
             className="m-0 max-w-2xl font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-5xl/tight font-semibold tracking-tighter text-balance text-[#f3f0ea] outline-none max-lg:text-3xl"
             tabIndex={-1}
           >
-            {show.subtitle}
+            <span
+              className="inline-block max-w-full align-top"
+              data-coda-radio-title-detail={show.id}
+            >
+              {show.subtitle}
+            </span>
           </h1>
           <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-xs font-semibold text-[#b0b2ac]">
             <span className="inline-flex items-center gap-1"><CalendarDays size={13} /> {showDate(show.publishedAt)}</span>
@@ -667,6 +694,8 @@ export default function RadioView({
     action: "play" | "queue" | "detail";
   }>();
   const [selectedShow, setSelectedShow] = useState<RadioShow>();
+  const [returningRadioArtworkId, setReturningRadioArtworkId] =
+    useState<number>();
   const [actionError, setActionError] = useState("");
   const selectedSeries = BANDCAMP_RADIO_SERIES.find(
     (series) => series.id === selectedSeriesId,
@@ -751,15 +780,31 @@ export default function RadioView({
       const returnScrollTop =
         document.querySelector<HTMLElement>("[data-coda-library-scroll]")
           ?.scrollTop ?? 0;
+      const sourceArticle = sourceTrigger?.closest<HTMLElement>("article");
+      const sourceArtwork = sourceArticle?.querySelector<HTMLElement>(
+        `[data-radio-show-artwork="${show.id}"]`,
+      );
+      const sourceTitleRoot = sourceArtwork
+        ? sourceArticle?.querySelector<HTMLElement>(
+            `[data-radio-show-title="${show.id}"]`,
+          )
+        : undefined;
+      const sourceTitle = sourceTitleRoot?.querySelector<HTMLElement>(
+        ':is([data-slot="overflow-marquee-text"], [data-coda-radio-title-text])',
+      ) ?? sourceTitleRoot;
       radioReturnFocusRequestedRef.current = false;
       radioNavigationRef.current = replaceNavigationTransaction(
         radioNavigationRef.current,
         {
           routeKey: "radio-detail",
           intent: "forward",
+          entrance: sourceArtwork ? "shared-element" : "page-forward",
           sourceTrigger,
           returnScrollTop,
           destinationHeadingId: "radio-detail-title",
+          sharedElementOwner: sourceArtwork
+            ? "coda-radio-artwork"
+            : undefined,
         },
       );
       setBusy({ id: show.id, action: "detail" });
@@ -769,10 +814,28 @@ export default function RadioView({
         const details = loaded.series || !show.series
           ? loaded
           : { ...loaded, series: show.series };
-        void transitionCodaView(() => {
-          onRequestedShowChange(show.id);
-          setSelectedShow(details);
-        }, "page-forward");
+        sourceArtwork?.setAttribute(
+          "data-coda-radio-artwork-source",
+          String(show.id),
+        );
+        sourceTitle?.setAttribute(
+          "data-coda-radio-title-source",
+          String(show.id),
+        );
+        void transitionCodaView(
+          () => {
+            onRequestedShowChange(show.id);
+            setSelectedShow(details);
+          },
+          sourceArtwork ? "radio-detail" : "page-forward",
+        ).finally(() => {
+          sourceArtwork?.removeAttribute(
+            "data-coda-radio-artwork-source",
+          );
+          sourceTitle?.removeAttribute(
+            "data-coda-radio-title-source",
+          );
+        });
       } catch (cause) {
         const activeTransaction = radioNavigationRef.current.active;
         if (activeTransaction) {
@@ -969,15 +1032,31 @@ export default function RadioView({
         actionError={actionError}
         onBack={() => {
           const transaction = radioNavigationRef.current.active;
+          const closingShowId = selectedShow.id;
+          const reversesSharedArtwork =
+            transaction?.entrance === "shared-element" &&
+            transaction.sharedElementOwner === "coda-radio-artwork" &&
+            transaction.sourceTrigger?.dataset.radioShowOpen ===
+              String(closingShowId);
           radioReturnFocusRequestedRef.current = Boolean(transaction);
           radioScrollTopRef.current = transaction
             ? resolveNavigationReturnScrollTop(transaction)
             : 0;
-          void transitionCodaView(() => {
-            setSelectedShow(undefined);
-            onRequestedShowChange(undefined);
-            setActionError("");
-          }, "page-back");
+          void transitionCodaView(
+            () => {
+              setReturningRadioArtworkId(
+                reversesSharedArtwork ? closingShowId : undefined,
+              );
+              setSelectedShow(undefined);
+              onRequestedShowChange(undefined);
+              setActionError("");
+            },
+            reversesSharedArtwork ? "radio-detail-close" : "page-back",
+          ).finally(() => {
+            setReturningRadioArtworkId((current) =>
+              current === closingShowId ? undefined : current
+            );
+          });
         }}
         onPlay={onPlay}
         onQueue={onQueue}
@@ -1003,7 +1082,11 @@ export default function RadioView({
       {seriesNavigation}
       <article className="relative mb-9 grid grid-cols-[minmax(13rem,20rem)_minmax(0,1fr)] items-center gap-16 overflow-hidden rounded-xl border border-(--line) bg-[radial-gradient(circle_at_88%_7%,rgba(221,101,73,0.2),transparent_34%),radial-gradient(circle_at_5%_100%,rgba(115,77,151,0.11),transparent_38%),linear-gradient(135deg,#202325_0%,#17191b_72%)] p-12 shadow-[0_22px_58px_rgba(0,0,0,0.16)] before:pointer-events-none before:absolute before:-top-36 before:-right-24 before:size-90 before:rounded-full before:border before:border-white/4 before:shadow-[0_0_0_46px_rgba(255,255,255,0.012),0_0_0_92px_rgba(255,255,255,0.008)] before:content-[''] max-xl:grid-cols-[12rem_minmax(0,1fr)] max-xl:gap-6 max-xl:p-6 max-lg:grid-cols-[8rem_minmax(0,1fr)] max-lg:items-start max-lg:gap-4 max-lg:p-5">
         <div className="relative z-1 min-w-0 drop-shadow-[0_24px_32px_rgba(0,0,0,0.33)]">
-          <RadioArtwork show={featured} eager />
+          <RadioArtwork
+            show={featured}
+            eager
+            returning={returningRadioArtworkId === featured.id}
+          />
         </div>
         <div className="relative z-1 min-w-0">
           <Badge
@@ -1013,8 +1096,21 @@ export default function RadioView({
             <Headphones size={13} />
             {selectedSeries ? "Latest episode" : "Latest broadcast"}
           </Badge>
-          <h1 className="m-0 max-w-2xl font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-6xl leading-none font-semibold tracking-tighter text-balance text-[#f5f2eb] max-xl:text-5xl max-lg:text-3xl">
-            {featured.subtitle}
+          <h1
+            className="m-0 max-w-2xl font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-6xl leading-none font-semibold tracking-tighter text-balance text-[#f5f2eb] max-xl:text-5xl max-lg:text-3xl"
+            data-radio-show-title={featured.id}
+          >
+            <span
+              className="inline-block max-w-full align-top"
+              data-coda-radio-title-text={featured.id}
+              data-coda-radio-title-return={
+                returningRadioArtworkId === featured.id
+                  ? featured.id
+                  : undefined
+              }
+            >
+              {featured.subtitle}
+            </span>
           </h1>
           <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-xs font-semibold text-[#b0b2ac]">
             <span className="inline-flex items-center gap-1">
@@ -1154,6 +1250,7 @@ export default function RadioView({
             onToggleFavorite={onToggleFavorite}
             onOpenItem={openItem}
             onBrowseSeries={selectSeries}
+            returningArtwork={returningRadioArtworkId === show.id}
           />
         ))}
       </div>

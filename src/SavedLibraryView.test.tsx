@@ -75,6 +75,13 @@ const detail: PlaylistDetail = {
   tracks: [track],
 };
 
+const otherSummary: PlaylistSummary = {
+  id: "playlist-2",
+  name: "Sunday morning",
+  songCount: 2,
+  duration: 392,
+};
+
 const favorites: LocalFavoriteCollection = {
   albumIds: ["album-1"],
   songIds: ["song-1"],
@@ -227,6 +234,352 @@ describe("saved Bandcamp library views", () => {
     }
   });
 
+  it("keeps Back instant when a playlist opened without a warm identity snapshot", async () => {
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      document,
+      "startViewTransition",
+    );
+    const startViewTransition = vi.fn();
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: startViewTransition,
+    });
+
+    try {
+      withQueryClient(<SavedLibraryView mode="playlists" {...commonProps} />);
+
+      fireEvent.click(await screen.findByRole("button", {
+        name: /Night drive/,
+      }));
+      expect(await screen.findByRole("heading", { name: "Night drive" }))
+        .toBeInTheDocument();
+      expect(startViewTransition).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole("button", { name: "All playlists" }));
+
+      expect(startViewTransition).not.toHaveBeenCalled();
+      expect(await screen.findByRole("button", { name: /Night drive/ }))
+        .toBeInTheDocument();
+      expect(
+        document.querySelector("[data-coda-playlist-identity-return]"),
+      ).not.toBeInTheDocument();
+    } finally {
+      if (originalDescriptor) {
+        Object.defineProperty(
+          document,
+          "startViewTransition",
+          originalDescriptor,
+        );
+      } else {
+        Reflect.deleteProperty(document, "startViewTransition");
+      }
+    }
+  });
+
+  it("pairs a warm playlist identity with its detail and returning row", async () => {
+    vi.stubEnv("VITE_CODA_MOTION_VIEW_TRANSITIONS", "0");
+    mocks.fetchPlaylists.mockResolvedValueOnce([summary, otherSummary]);
+    const snapshots: Array<{
+      className: string;
+      beforeDetail?: string;
+      beforeSource?: string;
+      beforeTitleDetail?: string;
+      beforeTitleSource?: string;
+      afterDetail?: string;
+      afterReturn?: string;
+      afterTitleDetail?: string;
+      afterTitleReturn?: string;
+      afterFocusedPlaylist?: string;
+      afterScrollTop?: number;
+      identityAndTitleAreSeparate?: boolean;
+    }> = [];
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      document,
+      "startViewTransition",
+    );
+    const startViewTransition = vi.fn((update: () => void) => {
+      const snapshot = {
+        className: document.documentElement.className,
+        beforeDetail: document
+          .querySelector<HTMLElement>(
+            "[data-coda-playlist-identity-detail]",
+          )
+          ?.dataset.codaPlaylistIdentityDetail,
+        beforeSource: document
+          .querySelector<HTMLElement>(
+            "[data-coda-playlist-identity-source]",
+          )
+          ?.dataset.codaPlaylistIdentitySource,
+        beforeTitleDetail: document
+          .querySelector<HTMLElement>(
+            "[data-coda-playlist-title-detail]",
+          )
+          ?.dataset.codaPlaylistTitleDetail,
+        beforeTitleSource: document
+          .querySelector<HTMLElement>(
+            "[data-coda-playlist-title-source]",
+          )
+          ?.dataset.codaPlaylistTitleSource,
+        beforeTitleSourceIsStatic:
+          document.querySelector(
+            "[data-coda-playlist-title-source]",
+          )?.matches('[data-slot="overflow-marquee-text"]') ?? false,
+        afterDetail: undefined as string | undefined,
+        afterReturn: undefined as string | undefined,
+        afterTitleDetail: undefined as string | undefined,
+        afterTitleReturn: undefined as string | undefined,
+        afterTitleReturnIsStatic: false,
+        afterFocusedPlaylist: undefined as string | undefined,
+        afterScrollTop: undefined as number | undefined,
+        identityAndTitleAreSeparate: undefined as boolean | undefined,
+      };
+      expect(document.querySelectorAll(
+        "[data-coda-playlist-identity-source]",
+      )).toHaveLength(snapshot.beforeSource ? 1 : 0);
+      expect(document.querySelectorAll(
+        "[data-coda-playlist-title-source]",
+      )).toHaveLength(snapshot.beforeTitleSource ? 1 : 0);
+      update();
+      snapshot.afterDetail = document
+        .querySelector<HTMLElement>(
+          "[data-coda-playlist-identity-detail]",
+        )
+        ?.dataset.codaPlaylistIdentityDetail;
+      snapshot.afterReturn = document
+        .querySelector<HTMLElement>(
+          "[data-coda-playlist-identity-return]",
+        )
+        ?.dataset.codaPlaylistIdentityReturn;
+      snapshot.afterTitleDetail = document
+        .querySelector<HTMLElement>(
+          "[data-coda-playlist-title-detail]",
+        )
+        ?.dataset.codaPlaylistTitleDetail;
+      snapshot.afterTitleReturn = document
+        .querySelector<HTMLElement>(
+          "[data-coda-playlist-title-return]",
+        )
+        ?.dataset.codaPlaylistTitleReturn;
+      snapshot.afterTitleReturnIsStatic =
+        document.querySelector(
+          "[data-coda-playlist-title-return]",
+        )?.matches('[data-slot="overflow-marquee-text"]') ?? false;
+      const identityTarget = document.querySelector<HTMLElement>(
+        "[data-coda-playlist-identity-detail], [data-coda-playlist-identity-return]",
+      );
+      const titleTarget = document.querySelector<HTMLElement>(
+        "[data-coda-playlist-title-detail], [data-coda-playlist-title-return]",
+      );
+      snapshot.identityAndTitleAreSeparate =
+        Boolean(identityTarget) &&
+        Boolean(titleTarget) &&
+        identityTarget !== titleTarget;
+      expect(document.querySelectorAll(
+        "[data-coda-playlist-identity-return]",
+      )).toHaveLength(snapshot.afterReturn ? 1 : 0);
+      expect(document.querySelectorAll(
+        "[data-coda-playlist-title-return]",
+      )).toHaveLength(snapshot.afterTitleReturn ? 1 : 0);
+      snapshot.afterFocusedPlaylist =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement.dataset.playlistOpen
+          : undefined;
+      snapshot.afterScrollTop = document
+        .querySelector<HTMLElement>("[data-coda-library-scroll]")
+        ?.scrollTop;
+      snapshots.push(snapshot);
+      return { finished: Promise.resolve() };
+    });
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: startViewTransition,
+    });
+
+    try {
+      const { queryClient } = withQueryClient(
+        <div data-coda-library-scroll>
+          <SavedLibraryView mode="playlists" {...commonProps} />
+        </div>,
+      );
+      await screen.findByRole("button", { name: /Night drive/ });
+      const scrollRoot = document.querySelector<HTMLElement>(
+        "[data-coda-library-scroll]",
+      );
+      expect(scrollRoot).toBeInTheDocument();
+      scrollRoot!.scrollTop = 173;
+      queryClient.setQueryData(
+        ["bandcamp", "playlists", summary.id],
+        detail,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /Night drive/ }));
+
+      expect(startViewTransition).toHaveBeenCalledOnce();
+      expect(screen.getByRole("heading", { name: "Night drive" }))
+        .toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "All playlists" }));
+
+      expect(startViewTransition).toHaveBeenCalledTimes(2);
+      expect(snapshots).toEqual([
+        {
+          className: expect.stringContaining(
+            "coda-transition--playlist-detail",
+          ),
+          beforeDetail: undefined,
+          beforeSource: summary.id,
+          beforeTitleDetail: undefined,
+          beforeTitleSource: summary.id,
+          beforeTitleSourceIsStatic: true,
+          afterDetail: summary.id,
+          afterReturn: undefined,
+          afterTitleDetail: summary.id,
+          afterTitleReturn: undefined,
+          afterTitleReturnIsStatic: false,
+          afterFocusedPlaylist: undefined,
+          afterScrollTop: 0,
+          identityAndTitleAreSeparate: true,
+        },
+        {
+          className: expect.stringContaining(
+            "coda-transition--playlist-detail-close",
+          ),
+          beforeDetail: summary.id,
+          beforeSource: undefined,
+          beforeTitleDetail: summary.id,
+          beforeTitleSource: undefined,
+          beforeTitleSourceIsStatic: false,
+          afterDetail: undefined,
+          afterReturn: summary.id,
+          afterTitleDetail: undefined,
+          afterTitleReturn: summary.id,
+          afterTitleReturnIsStatic: true,
+          afterFocusedPlaylist: summary.id,
+          afterScrollTop: 173,
+          identityAndTitleAreSeparate: true,
+        },
+      ]);
+      await waitFor(() =>
+        expect(document.querySelectorAll(
+          "[data-coda-playlist-identity-return], [data-coda-playlist-title-return]",
+        )).toHaveLength(0)
+      );
+    } finally {
+      vi.unstubAllEnvs();
+      document.documentElement.classList.remove(
+        "coda-transition--playlist-detail",
+        "coda-transition--playlist-detail-close",
+      );
+      if (originalDescriptor) {
+        Object.defineProperty(
+          document,
+          "startViewTransition",
+          originalDescriptor,
+        );
+      } else {
+        Reflect.deleteProperty(document, "startViewTransition");
+      }
+    }
+  });
+
+  it("keeps the icon pair when Back starts while the playlist name is being edited", async () => {
+    vi.stubEnv("VITE_CODA_MOTION_VIEW_TRANSITIONS", "0");
+    const returnSnapshot: {
+      beforeIcon?: string;
+      beforeTitle?: string;
+      afterIcon?: string;
+      afterTitle?: string;
+    } = {};
+    let transitionCount = 0;
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      document,
+      "startViewTransition",
+    );
+    const startViewTransition = vi.fn((update: () => void) => {
+      transitionCount += 1;
+      if (transitionCount === 2) {
+        returnSnapshot.beforeIcon = document
+          .querySelector<HTMLElement>(
+            "[data-coda-playlist-identity-detail]",
+          )
+          ?.dataset.codaPlaylistIdentityDetail;
+        returnSnapshot.beforeTitle = document
+          .querySelector<HTMLElement>(
+            "[data-coda-playlist-title-detail]",
+          )
+          ?.dataset.codaPlaylistTitleDetail;
+      }
+      update();
+      if (transitionCount === 2) {
+        returnSnapshot.afterIcon = document
+          .querySelector<HTMLElement>(
+            "[data-coda-playlist-identity-return]",
+          )
+          ?.dataset.codaPlaylistIdentityReturn;
+        returnSnapshot.afterTitle = document
+          .querySelector<HTMLElement>(
+            "[data-coda-playlist-title-return]",
+          )
+          ?.dataset.codaPlaylistTitleReturn;
+      }
+      return { finished: Promise.resolve() };
+    });
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: startViewTransition,
+    });
+
+    try {
+      const { queryClient } = withQueryClient(
+        <SavedLibraryView mode="playlists" {...commonProps} />,
+      );
+      await screen.findByRole("button", { name: /Night drive/ });
+      queryClient.setQueryData(
+        ["bandcamp", "playlists", summary.id],
+        detail,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /Night drive/ }));
+      fireEvent.click(await screen.findByRole("button", {
+        name: `Rename ${summary.name}`,
+      }));
+      expect(screen.getByRole("textbox", { name: "Playlist name" }))
+        .toBeInTheDocument();
+      expect(
+        document.querySelector("[data-coda-playlist-title-detail]"),
+      ).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole("button", { name: "All playlists" }));
+
+      expect(returnSnapshot).toEqual({
+        beforeIcon: summary.id,
+        beforeTitle: undefined,
+        afterIcon: summary.id,
+        afterTitle: summary.id,
+      });
+      await waitFor(() =>
+        expect(document.querySelectorAll(
+          "[data-coda-playlist-identity-return], [data-coda-playlist-title-return]",
+        )).toHaveLength(0)
+      );
+    } finally {
+      vi.unstubAllEnvs();
+      document.documentElement.classList.remove(
+        "coda-transition--playlist-detail",
+        "coda-transition--playlist-detail-close",
+      );
+      if (originalDescriptor) {
+        Object.defineProperty(
+          document,
+          "startViewTransition",
+          originalDescriptor,
+        );
+      } else {
+        Reflect.deleteProperty(document, "startViewTransition");
+      }
+    }
+  });
+
   it("opens a synced playlist and exposes playback and editing actions", async () => {
     withQueryClient(<SavedLibraryView mode="playlists" {...commonProps} />);
 
@@ -237,8 +590,16 @@ describe("saved Bandcamp library views", () => {
     ).toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: /Night drive/ }));
-    expect(await screen.findByRole("heading", { name: "Night drive" }))
-      .toBeInTheDocument();
+    const playlistHeading = await screen.findByRole("heading", {
+      name: "Night drive",
+    });
+    expect(playlistHeading).toBeInTheDocument();
+    expect(document.querySelector("[data-coda-playlist-metadata-detail]"))
+      .toHaveAttribute("data-coda-playlist-metadata-detail", summary.id);
+    expect(within(playlistHeading).getByText(summary.name)).toHaveAttribute(
+      "data-coda-playlist-title-detail",
+      summary.id,
+    );
     fireEvent.click(screen.getByRole("button", { name: "Play" }));
     expect(commonProps.onPlayTracks).toHaveBeenCalledWith([track]);
     const playlistTracks = screen.getByLabelText("Night drive tracks");

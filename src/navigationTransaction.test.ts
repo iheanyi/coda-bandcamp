@@ -15,6 +15,7 @@ import {
 const baseInput: NavigationTransactionInput = {
   routeKey: "album:soft-focus",
   intent: "forward",
+  entrance: "page-forward",
   returnScrollTop: 312,
   destinationHeadingId: "album-detail-heading",
 };
@@ -92,6 +93,7 @@ describe("navigation transactions", () => {
     const transaction = createNavigationTransaction(1, {
       ...baseInput,
       returnScrollTop: Number.POSITIVE_INFINITY,
+      entrance: "shared-element",
       sharedElementOwner: "now-playing-artwork",
       serverPayload: { credentials: "not-navigation-state" },
       collection: ["not", "retained"],
@@ -101,6 +103,7 @@ describe("navigation transactions", () => {
     });
 
     expect(transaction.returnScrollTop).toBe(0);
+    expect(transaction.entrance).toBe("shared-element");
     expect(transaction.sharedElementOwner).toBe("now-playing-artwork");
     expect(transaction).not.toHaveProperty("serverPayload");
     expect(transaction).not.toHaveProperty("collection");

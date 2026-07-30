@@ -113,6 +113,10 @@ describe("NowPlayingView Radio metadata", () => {
     );
 
     const albumLink = screen.getByRole("button", { name: "Soft Focus" });
+    expect(
+      within(screen.getByRole("heading", { name: "Static Bloom" }))
+        .getByText("Static Bloom"),
+    ).toHaveAttribute("data-coda-now-playing-title-detail", "");
     fireEvent.click(albumLink);
     expect(onAlbum).toHaveBeenCalledOnce();
 
@@ -164,6 +168,59 @@ describe("NowPlayingView Radio metadata", () => {
     expect(onAlbum).toHaveBeenCalledOnce();
   });
 
+  it("omits the release label when a standalone track has no album name", () => {
+    const noOp = vi.fn();
+    const onAlbum = vi.fn();
+    const trackWithoutRelease = {
+      ...libraryTrack,
+      album: "Unknown release",
+    };
+
+    renderNowPlaying(
+      <NowPlayingView
+        track={trackWithoutRelease}
+        radioTimeline={[]}
+        queue={[trackWithoutRelease]}
+        currentIndex={0}
+        playing
+        playbackClock={createPlaybackClock(45)}
+        duration={trackWithoutRelease.duration}
+        volume={0.7}
+        repeat="off"
+        artwork={<span>Artwork</span>}
+        airPlayAvailable={false}
+        queueOpen={false}
+        onBack={noOp}
+        onToggle={noOp}
+        onPrevious={noOp}
+        onNext={noOp}
+        canPrevious
+        canNext
+        onSeek={noOp}
+        onVolume={noOp}
+        onRepeat={noOp}
+        onAirPlay={noOp}
+        onArtist={noOp}
+        onAlbum={onAlbum}
+        albumLoading={false}
+        onPlayQueueIndex={noOp}
+        onRadioSeries={noOp}
+        recommendationLoading={false}
+        onPlayRecommendation={noOp}
+        onAnotherRecommendation={noOp}
+      />,
+    );
+
+    const currentTrack = screen.getByRole("region", {
+      name: "Current track",
+    });
+    expect(within(currentTrack).getByRole("button", {
+      name: trackWithoutRelease.artist,
+    })).toBeInTheDocument();
+    expect(within(currentTrack).queryByText("Soft Focus")).not.toBeInTheDocument();
+    expect(onAlbum).not.toHaveBeenCalled();
+  });
+
   it("focuses the track heading and routes playback, queue, and slider state", () => {
     const onBack = vi.fn();
     const onToggle = vi.fn();
@@ -209,7 +266,11 @@ describe("NowPlayingView Radio metadata", () => {
     );
     const { rerender } = renderNowPlaying(view(false));
 
-    expect(screen.getByRole("heading", { name: "Kinrose" })).toHaveFocus();
+    const radioHeading = screen.getByRole("heading", { name: "Kinrose" });
+    expect(radioHeading).toHaveFocus();
+    expect(radioHeading).not.toHaveAttribute(
+      "data-coda-now-playing-title-detail",
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     fireEvent.click(screen.getByRole("button", { name: "Repeat off" }));

@@ -4,14 +4,21 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ComponentPropsWithoutRef,
 } from "react";
 import { cn } from "@/lib/utils";
 
+type OverflowMarqueeStaticTextProps = ComponentPropsWithoutRef<"span"> & {
+  [attribute: `data-${string}`]: string | number | undefined;
+};
+
 export function OverflowMarquee({
   className,
+  staticTextProps,
   text,
 }: {
   className?: string;
+  staticTextProps?: OverflowMarqueeStaticTextProps;
   text: string;
 }) {
   const textRef = useRef<HTMLSpanElement>(null);
@@ -44,10 +51,12 @@ export function OverflowMarquee({
       } as CSSProperties}
     >
       <span
+        {...staticTextProps}
         ref={textRef}
         className={cn(
           "block truncate",
           overflowing && "group-hover/marquee:opacity-0 group-focus-within/marquee:opacity-0",
+          staticTextProps?.className,
         )}
         data-slot="overflow-marquee-text"
         title={overflowing ? text : undefined}

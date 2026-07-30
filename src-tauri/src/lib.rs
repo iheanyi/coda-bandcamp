@@ -361,7 +361,7 @@ fn validate_persisted_album_tracks(
             || validate_subsonic_id(&track.album_id, "album").is_err()
             || !valid_subsonic_text(&track.title, MAX_SUBSONIC_TEXT_LENGTH, true)
             || !valid_subsonic_text(&track.artist, MAX_SUBSONIC_TEXT_LENGTH, true)
-            || !valid_subsonic_text(&track.album, MAX_SUBSONIC_TEXT_LENGTH, true)
+            || !valid_subsonic_text(&track.album, MAX_SUBSONIC_TEXT_LENGTH, false)
             || track.duration > MAX_SUBSONIC_DURATION_SECONDS
             || track.track > MAX_PLAYER_TRACK_NUMBER
             || track
@@ -1185,7 +1185,7 @@ fn validate_player_state(state: &PlayerStateSnapshot) -> Result<(), String> {
             || !valid_radio_track_id(&track.id)
             || !valid_player_text(&track.title, true)
             || !valid_player_text(&track.artist, true)
-            || !valid_player_text(&track.album, true)
+            || !valid_player_text(&track.album, false)
             || !valid_player_text(&track.album_id, true)
             || track.duration as f64 > MAX_PLAYER_SECONDS
             || track.track > MAX_PLAYER_TRACK_NUMBER
@@ -2657,7 +2657,7 @@ fn track_from_value(value: &Value, fallback_album_id: &str) -> Option<Track> {
         id,
         title: string_field(value, &["title"]).unwrap_or_else(|| "Untitled track".into()),
         artist: string_field(value, &["artist"]).unwrap_or_else(|| "Unknown artist".into()),
-        album: string_field(value, &["album"]).unwrap_or_else(|| "Unknown release".into()),
+        album: string_field(value, &["album"]).unwrap_or_default(),
         album_id: string_field(value, &["albumId"]).unwrap_or_else(|| fallback_album_id.into()),
         duration: number_field(value, "duration").unwrap_or(0),
         track: number_field(value, "track").unwrap_or(0),
@@ -2709,7 +2709,7 @@ fn bounded_track_from_value(value: &Value, fallback_album_id: &str) -> Option<Tr
     validate_subsonic_id(&track.album_id, "album").ok()?;
     if !valid_subsonic_text(&track.title, MAX_SUBSONIC_TEXT_LENGTH, true)
         || !valid_subsonic_text(&track.artist, MAX_SUBSONIC_TEXT_LENGTH, true)
-        || !valid_subsonic_text(&track.album, MAX_SUBSONIC_TEXT_LENGTH, true)
+        || !valid_subsonic_text(&track.album, MAX_SUBSONIC_TEXT_LENGTH, false)
         || track.duration as f64 > MAX_PLAYER_SECONDS
         || track.track > MAX_PLAYER_TRACK_NUMBER
         || track
@@ -5462,6 +5462,56 @@ mod tests {
             track.music_brainz_id.as_deref(),
             Some("189002e7-3285-4e2e-92a3-7f6c30d407a2")
         );
+    }
+
+    #[test]
+    fn preserves_missing_release_metadata_as_empty_across_native_track_boundaries() {
+        let track = bounded_track_from_value(
+            &serde_json::json!({
+                "id": "song-1",
+                "title": "Afterimage",
+                "artist": "Night Archive",
+                "albumId": "album-1",
+                "duration": 210,
+                "track": 2
+            }),
+            "album-1",
+        )
+        .expect("valid Subsonic track without release metadata");
+        assert!(track.album.is_empty());
+        assert!(bounded_track_from_value(
+            &serde_json::json!({
+                "id": "song-1",
+                "title": "Afterimage",
+                "artist": "Night Archive",
+                "album": "Bad\nrelease",
+                "albumId": "album-1"
+            }),
+            "album-1",
+        )
+        .is_none());
+
+        let cached = PersistedAlbumTracks {
+            version: ALBUM_TRACK_CACHE_ENTRY_VERSION,
+            saved_at: 1_800_000_000_000,
+            album_id: "album-1".into(),
+            tracks: vec![track],
+        };
+        assert!(validate_persisted_album_tracks(&cached, "album-1", 1_800_000_000_000,).is_ok());
+
+        let mut player = sample_player_state();
+        player.queue[0].album.clear();
+        assert!(validate_player_state(&player).is_ok());
+
+        let mut invalid_cached = cached;
+        invalid_cached.tracks[0].album = "Bad\nrelease".into();
+        assert!(
+            validate_persisted_album_tracks(&invalid_cached, "album-1", 1_800_000_000_000,)
+                .is_err()
+        );
+
+        player.queue[0].album = "Bad\nrelease".into();
+        assert!(validate_player_state(&player).is_err());
     }
 
     #[test]

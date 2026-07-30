@@ -57,6 +57,21 @@ describe("mini player event contract", () => {
     expect(JSON.stringify(snapshot)).not.toContain("cover-1");
   });
 
+  it("keeps missing release metadata empty across the compact-window boundary", () => {
+    const snapshot = createMiniPlayerSnapshot({
+      track: { ...track, album: "Unknown release" },
+      playing: false,
+      positionSeconds: 0,
+      durationSeconds: 180,
+      volume: 0.72,
+      canPrevious: false,
+      canNext: false,
+    });
+
+    expect(snapshot.track?.album).toBe("");
+    expect(parseMiniPlayerSnapshot(snapshot)).toEqual(snapshot);
+  });
+
   it("validates unknown snapshots before the compact window renders them", () => {
     const valid = createMiniPlayerSnapshot({
       track,

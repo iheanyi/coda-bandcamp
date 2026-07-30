@@ -165,6 +165,7 @@ function deferred<Value>() {
 }
 
 beforeEach(() => {
+  vi.stubEnv("VITE_CODA_MOTION_VIEW_TRANSITIONS", "0");
   window.localStorage.clear();
   mocks.beginLastFmAuthorization.mockReset();
   mocks.checkpointPlayerState.mockReset().mockResolvedValue(true);
@@ -866,6 +867,33 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     volume.focus();
     fireEvent.keyDown(volume, { key: "ArrowRight" });
     await waitFor(() => expect(audio!.volume).toBeCloseTo(0.45));
+  });
+
+  it("omits the compact-player release label when metadata has no album name", async () => {
+    const trackWithoutRelease = {
+      ...tracks[0],
+      album: "Unknown release",
+    };
+    mocks.loadPlayerState.mockResolvedValue({
+      version: 1,
+      savedAt: Date.now(),
+      queue: [trackWithoutRelease],
+      currentIndex: 0,
+      positionSeconds: 0,
+      volume: 0.72,
+      repeatMode: "off",
+      queueOpen: false,
+    });
+
+    renderApp();
+
+    const player = await screen.findByRole("contentinfo");
+    expect(within(player).getByRole("button", {
+      name: trackWithoutRelease.artist,
+    })).toBeInTheDocument();
+    expect(
+      player.querySelector("[data-player-album-link]"),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps the pending compact-player album action named", async () => {
@@ -1604,6 +1632,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       ),
     );
     expect(screen.getAllByText("Second signal").length).toBeGreaterThan(0);
+    expect(
+      document.querySelector("[data-coda-now-playing-title-compact]"),
+    ).not.toBeInTheDocument();
     expect(mocks.fetchStreamUrl).not.toHaveBeenCalledWith("radio:979");
 
     const audio = container.querySelector("audio")!;
@@ -1626,6 +1657,10 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         }),
       ),
     );
+    fireEvent.click(screen.getByRole("button", { name: "Open Now Playing" }));
+    expect(
+      document.querySelector("[data-coda-now-playing-title-detail]"),
+    ).not.toBeInTheDocument();
   });
 
   it("uses player Previous and Next as Radio chapter transport before changing queue items", async () => {
@@ -2216,9 +2251,8 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     );
   });
 
-  it("keeps Back scroll restoration pending while cold album hydration settles", async () => {
+  it("does not invent a Back snapshot after a cold album opened without one", async () => {
     const request = deferred<Track[]>();
-    const transitionFinished = deferred<void>();
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
     mocks.fetchAlbum.mockReturnValueOnce(request.promise);
@@ -2238,31 +2272,26 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       document,
       "startViewTransition",
     );
-    let commitBack: (() => void) | undefined;
+    const startViewTransition = vi.fn();
     Object.defineProperty(document, "startViewTransition", {
       configurable: true,
-      value: vi.fn((update: () => void) => {
-        commitBack = update;
-        return { finished: transitionFinished.promise };
-      }),
+      value: startViewTransition,
     });
 
     try {
       fireEvent.click(within(albumPage).getByRole("button", {
         name: "Back to releases",
       }));
-      expect(commitBack).toBeDefined();
+
+      expect(startViewTransition).not.toHaveBeenCalled();
+      expect(await screen.findByRole("list", {
+        name: "All releases",
+      })).toBeInTheDocument();
+      expect(libraryPane.scrollTop).toBe(312);
 
       await act(async () => request.resolve(tracks));
-      expect(screen.getByRole("article", {
-        name: "Soft Focus release details",
-      })).toBeInTheDocument();
-      expect(libraryPane.scrollTop).toBe(0);
 
-      act(() => commitBack!());
-      await act(async () => transitionFinished.resolve());
-
-      expect(await screen.findByRole("list", {
+      expect(screen.getByRole("list", {
         name: "All releases",
       })).toBeInTheDocument();
       expect(libraryPane.scrollTop).toBe(312);
@@ -2275,15 +2304,43 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     }
   });
 
-  it("opens a prefetched album through a warm snapshot without a loader", async () => {
+  it("opens a prefetched album through a warm snapshot and restores it instantly", async () => {
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
+    const capturedTransitionClasses: string[] = [];
+    const titleSnapshots: Array<{
+      sourceBeforeUpdate: number;
+      sourceIsStaticText: boolean;
+      detailAfterUpdate: number;
+      detailSurfaceAfterUpdate: number;
+      metadataDetailAfterUpdate: number;
+    }> = [];
     const originalDescriptor = Object.getOwnPropertyDescriptor(
       document,
       "startViewTransition",
     );
     const startViewTransition = vi.fn((update: () => void) => {
+      const sourceBeforeUpdate = document.querySelectorAll(
+        "[data-coda-album-title-source]",
+      ).length;
+      const sourceIsStaticText = document.querySelector(
+        "[data-coda-album-title-source]",
+      )?.matches('[data-slot="overflow-marquee-text"]') ?? false;
       update();
+      capturedTransitionClasses.push(document.documentElement.className);
+      titleSnapshots.push({
+        sourceBeforeUpdate,
+        sourceIsStaticText,
+        detailAfterUpdate: document.querySelectorAll(
+          "[data-coda-album-title-detail]",
+        ).length,
+        detailSurfaceAfterUpdate: document.querySelectorAll(
+          "[data-coda-album-detail-surface]",
+        ).length,
+        metadataDetailAfterUpdate: document.querySelectorAll(
+          "[data-coda-album-metadata-detail]",
+        ).length,
+      });
       return { finished: Promise.resolve() };
     });
     Object.defineProperty(document, "startViewTransition", {
@@ -2299,19 +2356,157 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       const openButton = screen.getByRole("button", {
         name: "Open Soft Focus",
       });
+      const libraryPane = screen.getByRole("main");
+      libraryPane.scrollTop = 312;
+      openButton.focus();
 
       fireEvent.click(openButton);
 
       expect(startViewTransition).toHaveBeenCalledOnce();
+      expect(capturedTransitionClasses).toEqual([
+        expect.stringContaining("coda-transition--album-detail"),
+      ]);
+      expect(titleSnapshots).toEqual([{
+        sourceBeforeUpdate: 1,
+        sourceIsStaticText: true,
+        detailAfterUpdate: 1,
+        detailSurfaceAfterUpdate: 1,
+        metadataDetailAfterUpdate: 1,
+      }]);
       expect(screen.queryByRole("status")).not.toBeInTheDocument();
       const albumPage = screen.getByRole("article", {
         name: "Soft Focus release details",
       });
       expect(within(albumPage).getByText("First Light")).toBeInTheDocument();
       expect(within(albumPage).queryByRole("status")).not.toBeInTheDocument();
+
+      fireEvent.click(within(albumPage).getByRole("button", {
+        name: "Back to releases",
+      }));
+
+      expect(startViewTransition).toHaveBeenCalledOnce();
+      expect(await screen.findByRole("list", {
+        name: "All releases",
+      })).toBeInTheDocument();
+      expect(
+        document.querySelector("[data-coda-album-title-source]"),
+      ).not.toBeInTheDocument();
+      expect(libraryPane.scrollTop).toBe(312);
+      await waitFor(() =>
+        expect(screen.getByRole("button", {
+          name: "Open Soft Focus",
+        })).toHaveFocus()
+      );
     } finally {
       document.documentElement.classList.remove(
         "coda-transition--album-detail",
+      );
+      if (originalDescriptor) {
+        Object.defineProperty(document, "startViewTransition", originalDescriptor);
+      } else {
+        Reflect.deleteProperty(document, "startViewTransition");
+      }
+    }
+  });
+
+  it("morphs a clicked artist cover forward and restores the virtualized list instantly", async () => {
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    const snapshots: Array<{
+      className: string;
+      artworkSourceBeforeUpdate: number;
+      artworkDetailAfterUpdate: number;
+      nameSourceBeforeUpdate: number;
+      nameDetailAfterUpdate: number;
+      metadataDetailAfterUpdate: number;
+    }> = [];
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      document,
+      "startViewTransition",
+    );
+    const startViewTransition = vi.fn((update: () => void) => {
+      const artworkSourceBeforeUpdate = document.querySelectorAll(
+        "[data-coda-artist-artwork-source]",
+      ).length;
+      const nameSourceBeforeUpdate = document.querySelectorAll(
+        "[data-coda-artist-name-source]",
+      ).length;
+      update();
+      snapshots.push({
+        className: document.documentElement.className,
+        artworkSourceBeforeUpdate,
+        artworkDetailAfterUpdate: document.querySelectorAll(
+          "[data-coda-artist-artwork-detail]",
+        ).length,
+        nameSourceBeforeUpdate,
+        nameDetailAfterUpdate: document.querySelectorAll(
+          "[data-coda-artist-name-detail]",
+        ).length,
+        metadataDetailAfterUpdate: document.querySelectorAll(
+          "[data-coda-artist-metadata-detail]",
+        ).length,
+      });
+      return { finished: Promise.resolve() };
+    });
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: startViewTransition,
+    });
+
+    try {
+      renderApp();
+
+      await screen.findByText("Soft Focus");
+      fireEvent.click(screen.getByRole("button", { name: /Artists\s*1/ }));
+      const libraryPane = screen.getByRole("main");
+      libraryPane.scrollTop = 312;
+      const artistCard = await screen.findByRole("button", {
+        name: "Browse Night Archive",
+      });
+      artistCard.focus();
+
+      fireEvent.click(artistCard);
+
+      expect(startViewTransition).toHaveBeenCalledOnce();
+      expect(snapshots).toEqual([{
+        className: expect.stringContaining(
+          "coda-transition--artist-detail",
+        ),
+        artworkSourceBeforeUpdate: 1,
+        artworkDetailAfterUpdate: 1,
+        nameSourceBeforeUpdate: 1,
+        nameDetailAfterUpdate: 1,
+        metadataDetailAfterUpdate: 1,
+      }]);
+      expect(await screen.findByRole("heading", {
+        name: "Night Archive",
+      })).toHaveFocus();
+      expect(libraryPane.scrollTop).toBe(0);
+
+      fireEvent.click(screen.getByRole("button", { name: "All artists" }));
+
+      expect(startViewTransition).toHaveBeenCalledOnce();
+      expect(await screen.findByRole("list", {
+        name: "Artists",
+      })).toBeInTheDocument();
+      expect(libraryPane.scrollTop).toBe(312);
+      await waitFor(() =>
+        expect(screen.getByRole("button", {
+          name: "Browse Night Archive",
+        })).toHaveFocus()
+      );
+      expect(
+        document.querySelector("[data-coda-artist-artwork-detail]"),
+      ).not.toBeInTheDocument();
+      expect(
+        document.querySelector("[data-coda-artist-artwork-source]"),
+      ).not.toBeInTheDocument();
+      expect(
+        document.querySelector("[data-coda-artist-name-source]"),
+      ).not.toBeInTheDocument();
+    } finally {
+      document.documentElement.classList.remove(
+        "coda-transition--artist-detail",
       );
       if (originalDescriptor) {
         Object.defineProperty(document, "startViewTransition", originalDescriptor);
@@ -2381,8 +2576,30 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       document,
       "startViewTransition",
     );
+    const titleSnapshots: Array<{
+      compactBeforeUpdate: number;
+      detailBeforeUpdate: number;
+      compactAfterUpdate: number;
+      detailAfterUpdate: number;
+    }> = [];
     const startViewTransition = vi.fn((update: () => void) => {
+      const compactBeforeUpdate = document.querySelectorAll(
+        "[data-coda-now-playing-title-compact]",
+      ).length;
+      const detailBeforeUpdate = document.querySelectorAll(
+        "[data-coda-now-playing-title-detail]",
+      ).length;
       update();
+      titleSnapshots.push({
+        compactBeforeUpdate,
+        detailBeforeUpdate,
+        compactAfterUpdate: document.querySelectorAll(
+          "[data-coda-now-playing-title-compact]",
+        ).length,
+        detailAfterUpdate: document.querySelectorAll(
+          "[data-coda-now-playing-title-detail]",
+        ).length,
+      });
       return { finished: Promise.resolve() };
     });
     Object.defineProperty(document, "startViewTransition", {
@@ -2401,11 +2618,31 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
       const nowPlaying = screen.getByRole("article", { name: "First Light" });
       expect(startViewTransition).toHaveBeenCalledOnce();
+      expect(titleSnapshots).toEqual([{
+        compactBeforeUpdate: 1,
+        detailBeforeUpdate: 0,
+        compactAfterUpdate: 0,
+        detailAfterUpdate: 1,
+      }]);
 
       fireEvent.click(within(nowPlaying).getByRole("button", {
         name: "Back",
       }));
       expect(startViewTransition).toHaveBeenCalledTimes(2);
+      expect(titleSnapshots).toEqual([
+        {
+          compactBeforeUpdate: 1,
+          detailBeforeUpdate: 0,
+          compactAfterUpdate: 0,
+          detailAfterUpdate: 1,
+        },
+        {
+          compactBeforeUpdate: 0,
+          detailBeforeUpdate: 1,
+          compactAfterUpdate: 1,
+          detailAfterUpdate: 0,
+        },
+      ]);
       await waitFor(() =>
         expect(screen.getByRole("button", { name: "Open Now Playing" })).toHaveFocus(),
       );

@@ -186,7 +186,10 @@ import {
   RadioChapterCopy,
   type RadioChapterLocalLinks,
 } from "./RadioChapterMetadata";
-import { isEphemeralTrackId } from "./playerState";
+import {
+  isEphemeralTrackId,
+  normalizedReleaseTitle,
+} from "./playerState";
 import {
   createPlaybackClock,
   type PlaybackClock,
@@ -381,7 +384,7 @@ function lastFmTrackInput(track: Track): LastFmTrackInput {
   return {
     artist: track.artist,
     title: track.title,
-    album: track.album,
+    album: normalizedReleaseTitle(track.album),
     ...(track.albumArtist ? { albumArtist: track.albumArtist } : {}),
     ...(track.musicBrainzId ? { musicBrainzId: track.musicBrainzId } : {}),
     duration: Math.max(0, Math.floor(track.duration)),
@@ -425,11 +428,13 @@ function CoverArt({
   size = "card",
   fallbackArtworkUrl,
   animateChanges = false,
+  artistArtworkDetail = false,
 }: {
   album: Pick<Album, "id" | "title" | "artist" | "coverArt" | "artworkUrl" | "palette">;
   size?: "card" | "small" | "large";
   fallbackArtworkUrl?: string;
   animateChanges?: boolean;
+  artistArtworkDetail?: boolean;
 }) {
   const [url, setUrl] = useState<string>();
   const [requestVersion, setRequestVersion] = useState(0);
@@ -500,6 +505,7 @@ function CoverArt({
     <div
       data-slot="cover"
       data-cover-size={size}
+      data-coda-artist-artwork-detail={artistArtworkDetail || undefined}
       className={`relative isolate shrink-0 overflow-hidden bg-(--cover-base) text-[#f7f3e8] ${sizeClassName} ${
         animateChanges
           ? "[&>img]:animate-[cover-artwork-in_var(--duration-coda-standard)_var(--ease-coda-enter)]"
@@ -719,7 +725,12 @@ const AlbumCard = memo(function AlbumCard({
           size="compact"
           variant="text"
         >
-          <OverflowMarquee className="w-full" text={album.title} />
+          <span
+            className="block min-w-0 max-w-full overflow-hidden"
+            data-coda-album-title-target={album.id}
+          >
+            <OverflowMarquee className="w-full" text={album.title} />
+          </span>
         </Button>
         <Button
           className="mt-1 h-auto w-full min-w-0 justify-start overflow-hidden p-0 text-left text-xs font-medium text-[#868984] hover:bg-transparent hover:text-[#dc8973]"
@@ -750,19 +761,26 @@ const ArtistCard = memo(function ArtistCard({
   onOpen,
 }: {
   group: ArtistGroup;
-  onOpen: (group: ArtistGroup) => void;
+  onOpen: (group: ArtistGroup, trigger: HTMLElement) => void;
 }) {
   return (
     <Button
       className="group grid h-auto w-full min-w-0 grid-cols-[2.5rem_minmax(0,1fr)_auto] items-center gap-3 rounded-lg border border-border bg-[#171a1c] p-2 text-left text-inherit [contain-intrinsic-size:62px] [content-visibility:auto] hover:border-(--line-strong) hover:bg-popover"
-      onClick={() => onOpen(group)}
+      onClick={(event) => onOpen(group, event.currentTarget)}
       data-artist-open={group.key}
       aria-label={`Browse ${group.name}`}
       variant="secondary"
     >
       <CoverArt album={group.representative} size="small" />
       <span className="flex min-w-0 flex-col gap-1">
-        <strong className="truncate text-xs font-bold text-[#e8e6df]">{group.name}</strong>
+        <strong className="min-w-0 text-xs font-bold text-[#e8e6df]">
+          <span
+            className="inline-block max-w-full truncate align-top"
+            data-coda-artist-name-target={group.key}
+          >
+            {group.name}
+          </span>
+        </strong>
         <span className="truncate text-xs font-normal text-[#777b76]">
           {countLabel(group.releaseCount, "release")}
           {" · "}
@@ -796,9 +814,19 @@ const ArtistHero = memo(function ArtistHero({
   onTogglePlayback: () => void;
 }) {
   return (
-    <section className="relative -mt-2 mb-6 grid grid-cols-[7.5rem_minmax(0,1fr)] items-end gap-4 overflow-hidden rounded-lg border border-border bg-[radial-gradient(circle_at_88%_20%,rgba(221,101,73,0.13),transparent_38%),linear-gradient(135deg,#202426,#171a1c_72%)] p-4 select-none *:data-[slot=cover]:size-30 *:data-[slot=cover]:rounded-lg xl:grid-cols-[9.5rem_minmax(0,1fr)] xl:gap-6 xl:p-5 xl:*:data-[slot=cover]:size-38">
-      <CoverArt album={group.representative} size="large" />
-      <div className="relative z-1 min-w-0">
+    <section
+      className="relative -mt-2 mb-6 grid grid-cols-[7.5rem_minmax(0,1fr)] items-end gap-4 overflow-hidden rounded-lg border border-border bg-[radial-gradient(circle_at_88%_20%,rgba(221,101,73,0.13),transparent_38%),linear-gradient(135deg,#202426,#171a1c_72%)] p-4 select-none *:data-[slot=cover]:size-30 *:data-[slot=cover]:rounded-lg xl:grid-cols-[9.5rem_minmax(0,1fr)] xl:gap-6 xl:p-5 xl:*:data-[slot=cover]:size-38"
+      data-coda-artist-detail-surface=""
+    >
+      <CoverArt
+        album={group.representative}
+        size="large"
+        artistArtworkDetail
+      />
+      <div
+        className="relative z-1 min-w-0"
+        data-coda-artist-metadata-detail=""
+      >
         <Button className="mb-3 -ml-1 h-auto gap-1 p-1 text-xs text-[#8b8f89] hover:bg-transparent hover:text-[#f0eee8] xl:mb-4" onClick={onBack} size="compact" variant="text">
           <ArrowLeft size={14} />
           All artists
@@ -809,7 +837,12 @@ const ArtistHero = memo(function ArtistHero({
           className="mt-1 mb-2 truncate font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-2xl leading-none font-semibold tracking-tighter text-[#f2f0e9] outline-none xl:text-3xl"
           tabIndex={-1}
         >
-          {group.name}
+          <span
+            className="inline-block max-w-full truncate align-top"
+            data-coda-artist-name-detail=""
+          >
+            {group.name}
+          </span>
         </h2>
         <p className="m-0 text-xs text-[#858983]">
           {countLabel(group.releaseCount, "release")}
@@ -1401,6 +1434,9 @@ const PlayerTrack = memo(function PlayerTrack({
     radioTimeline,
   );
   const activeChapter = radioAiring.current;
+  const releaseTitle = track
+    ? normalizedReleaseTitle(track.album)
+    : "";
   const favoriteControl = track ? (
     <Button
       className={`size-7 shrink-0 ${favorite ? "text-[#ef8066]" : ""}`}
@@ -1464,10 +1500,18 @@ const PlayerTrack = memo(function PlayerTrack({
           ) : (
             <div className="flex min-w-0 flex-1 flex-col gap-1">
               <div className="flex min-w-0 items-center gap-1">
-                <OverflowMarquee
-                  className="max-w-full text-xs font-bold text-[#e6e4de]"
-                  text={track.title}
-                />
+                <span
+                  className="min-w-0 max-w-full flex-1 overflow-hidden"
+                >
+                  <OverflowMarquee
+                    className="max-w-full text-xs font-bold text-[#e6e4de]"
+                    staticTextProps={{
+                      "data-coda-now-playing-title-compact":
+                        track.radioChapters?.length ? undefined : "",
+                    }}
+                    text={track.title}
+                  />
+                </span>
                 {favoriteControl}
               </div>
               <span className="flex min-w-0 items-center gap-1 text-xs text-[#7f827e]">
@@ -1479,25 +1523,29 @@ const PlayerTrack = memo(function PlayerTrack({
                 >
                   <OverflowMarquee text={track.artist} />
                 </Button>
-                <span aria-hidden="true" className="shrink-0">·</span>
-                <Button
-                  className="h-auto min-w-0 max-w-[46%] overflow-hidden p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73]"
-                  data-player-album-link
-                  onClick={(event) => onAlbum(track, event.currentTarget)}
-                  aria-busy={albumLoading || undefined}
-                  aria-label={albumLoading ? `Loading album ${track.album}` : undefined}
-                  disabled={albumLoading}
-                  size="compact"
-                  variant="text"
-                >
-                  {albumLoading ? (
-                    <Spinner
-                      aria-label={`Loading album ${track.album}`}
-                      className="size-3.5"
-                    />
-                  ) : null}
-                  <OverflowMarquee className="flex-1" text={track.album} />
-                </Button>
+                {releaseTitle ? (
+                  <>
+                    <span aria-hidden="true" className="shrink-0">·</span>
+                    <Button
+                      className="h-auto min-w-0 max-w-[46%] overflow-hidden p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73]"
+                      data-player-album-link
+                      onClick={(event) => onAlbum(track, event.currentTarget)}
+                      aria-busy={albumLoading || undefined}
+                      aria-label={albumLoading ? `Loading album ${releaseTitle}` : undefined}
+                      disabled={albumLoading}
+                      size="compact"
+                      variant="text"
+                    >
+                      {albumLoading ? (
+                        <Spinner
+                          aria-label={`Loading album ${releaseTitle}`}
+                          className="size-3.5"
+                        />
+                      ) : null}
+                      <OverflowMarquee className="flex-1" text={releaseTitle} />
+                    </Button>
+                  </>
+                ) : null}
               </span>
             </div>
           )}
@@ -1828,7 +1876,11 @@ function AlbumDetailPage({
       ? "tracks"
       : "empty";
   return (
-    <article className="mx-auto -mt-2 mb-8 w-full max-w-4xl" aria-label={`${album.title} release details`}>
+    <article
+      className="mx-auto -mt-2 mb-8 w-full max-w-4xl"
+      aria-label={`${album.title} release details`}
+      data-coda-album-detail-surface=""
+    >
       <Button className="mb-3.5 -ml-1 h-auto gap-1.5 p-1 text-xs text-[#8d918b] hover:bg-transparent hover:text-[#eceae4]" onClick={onBack} size="compact" variant="text">
         <ArrowLeft size={15} />
         Back to releases
@@ -1837,7 +1889,10 @@ function AlbumDetailPage({
         <div className="album-detail__artwork size-40 drop-shadow-[0_16px_25px_rgba(0,0,0,0.25)] *:data-[slot=cover]:size-full *:data-[slot=cover]:rounded-lg xl:size-56">
           <CoverArt album={album} size="large" />
         </div>
-        <div className="min-w-0 pb-1">
+        <div
+          className="min-w-0 pb-1"
+          data-coda-album-metadata-detail=""
+        >
             <span className="mb-2.5 text-xs font-bold tracking-widest text-[#777b76] uppercase">{album.songCount === 1 ? "Single" : "Album"}</span>
             <h2
               id="album-detail-heading"
@@ -1845,7 +1900,12 @@ function AlbumDetailPage({
               tabIndex={-1}
               title={album.title}
             >
-              {album.title}
+              <span
+                className="inline-block max-w-full align-top"
+                data-coda-album-title-detail=""
+              >
+                {album.title}
+              </span>
             </h2>
             <Button
               className="mx-0 my-2 block h-auto max-w-full justify-start truncate p-0 text-sm font-semibold text-[#d98771] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
@@ -2622,7 +2682,7 @@ export default function App() {
           artist: currentSystemMediaChapter?.artist ?? currentTrack.artist,
           album:
             currentSystemMediaChapter?.album ??
-            currentTrack.album,
+            normalizedReleaseTitle(currentTrack.album),
           artworkUrl:
             directSystemMediaArtworkUrl,
           palette: currentTrack.palette,
@@ -4054,6 +4114,17 @@ export default function App() {
     const sourceArtwork = coldLoad || sourceCard?.dataset.albumCard !== album.id
       ? undefined
       : sourceCard.querySelector<HTMLElement>("[data-slot=cover]") ?? undefined;
+    const albumTitleTarget = sourceCard?.querySelector<HTMLElement>(
+      "[data-coda-album-title-target]",
+    );
+    const staticAlbumTitle = albumTitleTarget?.querySelector<HTMLElement>(
+      '[data-slot="overflow-marquee-text"]',
+    );
+    const sourceTitle =
+      sourceArtwork &&
+      albumTitleTarget?.dataset.codaAlbumTitleTarget === album.id
+        ? staticAlbumTitle
+        : undefined;
     albumDetailReturnScrollTopRef.current = returnScrollTop;
     albumReturnContextRef.current = { nowPlayingOpen, view };
     detailReturnFocusRequestedRef.current = false;
@@ -4062,6 +4133,11 @@ export default function App() {
       {
         routeKey: "album-detail",
         intent: "forward",
+        entrance: coldLoad
+          ? "none"
+          : sourceArtwork
+            ? "shared-element"
+            : "page-forward",
         sourceTrigger,
         returnScrollTop,
         destinationHeadingId: "album-detail-heading",
@@ -4072,6 +4148,7 @@ export default function App() {
     );
     pendingLibraryScrollTopRef.current = 0;
     sourceArtwork?.classList.add("coda-album-artwork-source");
+    sourceTitle?.setAttribute("data-coda-album-title-source", "");
     let albumForDetail = coldLoad
       ? album
       : albumWithTracks(album, cachedTracks);
@@ -4093,6 +4170,7 @@ export default function App() {
     );
     void albumTransition.finally(() => {
       sourceArtwork?.classList.remove("coda-album-artwork-source");
+      sourceTitle?.removeAttribute("data-coda-album-title-source");
     });
     try {
       const ready = await ensureTracks(album, sessionGeneration);
@@ -4732,13 +4810,17 @@ export default function App() {
     pendingLibraryScrollTopRef.current = transaction
       ? resolveNavigationReturnScrollTop(transaction)
       : albumDetailReturnScrollTopRef.current;
-    void transitionCodaView(() => {
-      setSelectedAlbum(undefined);
-      setView(returnContext.view);
-      if (returnContext.nowPlayingOpen && currentTrack) {
-        setNowPlayingOpen(true);
-      }
-    }, "page-back");
+    void transitionCodaView(
+      () => {
+        setSelectedAlbum(undefined);
+        setView(returnContext.view);
+        if (returnContext.nowPlayingOpen && currentTrack) {
+          setNowPlayingOpen(true);
+        }
+      },
+      "page-back",
+      { skipSnapshot: true },
+    );
   }, [currentTrack]);
   const openNowPlaying = useCallback(() => {
     if (currentTrack) {
@@ -4874,21 +4956,47 @@ export default function App() {
     setSelectedArtist(undefined);
     setSelectedAlbum(undefined);
   }, []);
-  const openArtist = useCallback((group: ArtistGroup) => {
+  const openArtist = useCallback((
+    group: ArtistGroup,
+    sourceTrigger: HTMLElement,
+  ) => {
     const returnScrollTop = libraryPaneRef.current?.scrollTop ?? 0;
+    const sourceArtwork =
+      sourceTrigger.querySelector<HTMLElement>("[data-slot=cover]") ??
+      undefined;
+    const artistNameTarget = sourceTrigger.querySelector<HTMLElement>(
+      "[data-coda-artist-name-target]",
+    );
+    const sourceName =
+      sourceArtwork &&
+      artistNameTarget?.dataset.codaArtistNameTarget === group.key
+        ? artistNameTarget
+        : undefined;
     detailReturnFocusRequestedRef.current = false;
     detailNavigationRef.current = replaceNavigationTransaction(
       detailNavigationRef.current,
       {
         routeKey: "artist-detail",
         intent: "forward",
-        sourceTrigger: currentNavigationTrigger(),
+        entrance: sourceArtwork ? "shared-element" : "page-forward",
+        sourceTrigger,
         returnScrollTop,
         destinationHeadingId: "artist-detail-heading",
+        sharedElementOwner: sourceArtwork
+          ? "coda-artist-artwork"
+          : undefined,
       },
     );
     pendingLibraryScrollTopRef.current = 0;
-    void transitionCodaView(() => setSelectedArtist(group.key), "page-forward");
+    sourceArtwork?.setAttribute("data-coda-artist-artwork-source", "");
+    sourceName?.setAttribute("data-coda-artist-name-source", "");
+    void transitionCodaView(
+      () => setSelectedArtist(group.key),
+      sourceArtwork ? "artist-detail" : "page-forward",
+    ).finally(() => {
+      sourceArtwork?.removeAttribute("data-coda-artist-artwork-source");
+      sourceName?.removeAttribute("data-coda-artist-name-source");
+    });
   }, []);
   const backToArtists = useCallback(() => {
     const transaction = detailNavigationRef.current.active;
@@ -4897,7 +5005,11 @@ export default function App() {
       ? resolveNavigationReturnScrollTop(transaction)
       : 0;
     setSelectedArtistFallback(undefined);
-    void transitionCodaView(() => setSelectedArtist(undefined), "page-back");
+    void transitionCodaView(
+      () => setSelectedArtist(undefined),
+      "page-back",
+      { skipSnapshot: true },
+    );
   }, []);
   const openDiscoverArtist = useCallback((release: DiscoverRelease) => {
     const artistUrl = discoverArtistUrl(release);
@@ -4930,7 +5042,7 @@ export default function App() {
         setSelectedAlbum(undefined);
         setSelectedArtist(undefined);
         setSelectedArtistFallback(undefined);
-      }, "page-forward");
+      }, "page-crossfade");
       return;
     }
     const key = artistKey(artist);
