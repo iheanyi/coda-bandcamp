@@ -43,6 +43,11 @@ test("server-renders the Coda landing page", async () => {
   assert.match(html, /Made for music collectors, not engagement metrics/);
   assert.match(html, /Independent of Bandcamp and Last\.fm\./);
   assert.match(html, /\/coda-demo\.gif/);
+  assert.match(
+    html,
+    /rel="(?:shortcut icon|icon)" href="https:\/\/coda-bandcamp-desktop\.iekechukwu\.chatgpt\.site\/coda-icon\.svg"/,
+  );
+  assert.doesNotMatch(html, /rel="shortcut icon"[^>]+coda-icon\.png/);
   assert.doesNotMatch(html, /href="#security"|security model/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });

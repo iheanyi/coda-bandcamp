@@ -24,6 +24,11 @@ test("exports the Coda site for its GitHub Pages project path", async () => {
     html,
     /content="https:\/\/iheanyi\.github\.io\/coda-bandcamp\/og\.png"/,
   );
+  assert.match(
+    html,
+    /rel="(?:shortcut icon|icon)" href="https:\/\/iheanyi\.github\.io\/coda-bandcamp\/coda-icon\.svg"/,
+  );
+  assert.doesNotMatch(html, /rel="shortcut icon"[^>]+coda-icon\.png/);
   assert.doesNotMatch(html, /(?:href|src)="\/_next\//);
   assert.doesNotMatch(html, /(?:href|src)="\/coda-(?:icon|demo)/);
   assert.doesNotMatch(html, /localhost/);

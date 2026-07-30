@@ -30,7 +30,7 @@ export const metadata: Metadata = {
   description,
   icons: {
     icon: new URL("coda-icon.svg", siteUrl).href,
-    shortcut: new URL("coda-icon.png", siteUrl).href,
+    shortcut: new URL("coda-icon.svg", siteUrl).href,
     apple: new URL("coda-icon.png", siteUrl).href,
   },
   openGraph: {
