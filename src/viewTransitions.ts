@@ -1,4 +1,9 @@
 import { flushSync } from "react-dom";
+import {
+  motionViewTransitionsEnabled,
+  supersedeMotionViewTransition,
+  transitionCodaViewWithMotion,
+} from "./motionViewTransitions";
 
 export type CodaViewTransitionKind =
   | "album-detail"
@@ -61,6 +66,9 @@ export function transitionCodaView(
   clearTransitionClasses();
 
   if (options.skipSnapshot) {
+    if (motionViewTransitionsEnabled()) {
+      supersedeMotionViewTransition();
+    }
     update();
     return Promise.resolve();
   }
@@ -70,8 +78,21 @@ export function transitionCodaView(
     typeof window.matchMedia === "function" &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   if (!transitionDocument.startViewTransition || prefersReducedMotion) {
+    if (motionViewTransitionsEnabled()) {
+      supersedeMotionViewTransition();
+    }
     update();
     return Promise.resolve();
+  }
+
+  if (motionViewTransitionsEnabled()) {
+    document.documentElement.classList.add(
+      "coda-view-transitions-supported",
+      "coda-view-transitioning",
+    );
+    return transitionCodaViewWithMotion(update, kind).finally(() => {
+      document.documentElement.classList.remove("coda-view-transitioning");
+    });
   }
 
   const transitionClass = TRANSITION_CLASSES[kind];

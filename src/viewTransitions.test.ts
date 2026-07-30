@@ -1,4 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+const motionMocks = vi.hoisted(() => ({
+  animateView: vi.fn(),
+}));
+
+vi.mock("motion", () => ({
+  animateView: motionMocks.animateView,
+}));
+
 import {
   transitionCodaView,
   type CodaViewTransitionKind,
@@ -20,7 +29,44 @@ function deferred() {
   return { promise, reject, resolve };
 }
 
+function motionBuilder(options: { reject?: unknown } = {}) {
+  const controls = {
+    finished: Promise.resolve(),
+    stop: vi.fn(),
+  };
+  const builder = {
+    add: vi.fn(),
+    class: vi.fn(),
+    enter: vi.fn(),
+    exit: vi.fn(),
+    group: vi.fn(),
+    layout: vi.fn(),
+    new: vi.fn(),
+    old: vi.fn(),
+    then: vi.fn(),
+  };
+  for (const method of [
+    "add",
+    "class",
+    "enter",
+    "exit",
+    "group",
+    "layout",
+    "new",
+    "old",
+  ] as const) {
+    builder[method].mockReturnValue(builder);
+  }
+  builder.then.mockImplementation((resolve, reject) => (
+    options.reject === undefined
+      ? Promise.resolve(controls).then(resolve, reject)
+      : Promise.reject(options.reject).then(resolve, reject)
+  ));
+  return builder;
+}
+
 afterEach(() => {
+  document.querySelector(".player__art-link")?.remove();
   document.documentElement.classList.remove(
     "coda-view-transitioning",
     "coda-view-transitions-supported",
@@ -44,6 +90,8 @@ afterEach(() => {
     configurable: true,
     value: originalMatchMedia,
   });
+  vi.unstubAllEnvs();
+  motionMocks.animateView.mockReset();
 });
 
 describe("transitionCodaView", () => {
@@ -307,5 +355,118 @@ describe("transitionCodaView", () => {
     );
 
     await activeTransition;
+  });
+});
+
+describe("transitionCodaView with Motion view transitions", () => {
+  function enableMotionViewTransitions() {
+    vi.stubEnv("VITE_CODA_MOTION_VIEW_TRANSITIONS", "1");
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: vi.fn(),
+    });
+  }
+
+  it("uses Motion to animate only the page pane with forward direction", async () => {
+    enableMotionViewTransitions();
+    const builder = motionBuilder();
+    motionMocks.animateView.mockImplementation((update: () => void) => {
+      update();
+      return builder;
+    });
+    const update = vi.fn();
+
+    await transitionCodaView(update, "page-forward");
+
+    expect(update).toHaveBeenCalledOnce();
+    expect(motionMocks.animateView).toHaveBeenCalledWith(
+      expect.any(Function),
+      { interrupt: "immediate" },
+    );
+    expect(builder.add).toHaveBeenCalledWith(".library-pane");
+    expect(builder.group).toHaveBeenCalledWith(false);
+    expect(builder.old).toHaveBeenCalledWith(
+      {
+        opacity: 0,
+        transform: "translateX(-8px)",
+      },
+      expect.objectContaining({ duration: 0.14 }),
+    );
+    expect(builder.new).toHaveBeenCalledWith(
+      {
+        opacity: [0, 1],
+        transform: ["translateX(12px)", "translateX(0px)"],
+      },
+      expect.objectContaining({ delay: 0.035, duration: 0.22 }),
+    );
+    expect(document.documentElement).toHaveClass(
+      "coda-view-transitions-supported",
+    );
+    expect(document.documentElement).not.toHaveClass(
+      "coda-view-transitioning",
+    );
+  });
+
+  it("pairs the compact and full artwork without requiring stable CSS names", async () => {
+    enableMotionViewTransitions();
+    const source = document.createElement("button");
+    source.className = "player__art-link";
+    document.body.append(source);
+    const builder = motionBuilder();
+    motionMocks.animateView.mockImplementation((update: () => void) => {
+      update();
+      return builder;
+    });
+
+    await transitionCodaView(vi.fn(), "now-playing-open");
+
+    expect(builder.add).toHaveBeenCalledWith(
+      source,
+      ".now-playing__artwork",
+    );
+    expect(builder.class).toHaveBeenCalledWith(
+      "coda-motion-shared-artwork",
+    );
+    expect(builder.layout).toHaveBeenCalledWith(
+      expect.objectContaining({ duration: 0.44 }),
+    );
+    expect(builder.old).not.toHaveBeenCalled();
+    expect(builder.new).not.toHaveBeenCalled();
+    expect(builder.exit).toHaveBeenCalledWith(
+      {
+        opacity: 0,
+        transform: "translateY(6px)",
+      },
+      expect.objectContaining({ duration: 0.14 }),
+    );
+  });
+
+  it("commits without Motion when reduced motion is requested", async () => {
+    enableMotionViewTransitions();
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn(() => ({ matches: true })),
+    });
+    const update = vi.fn();
+
+    await transitionCodaView(update, "page-back");
+
+    expect(update).toHaveBeenCalledOnce();
+    expect(motionMocks.animateView).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the requested state when Motion cannot start", async () => {
+    enableMotionViewTransitions();
+    motionMocks.animateView.mockReturnValue(
+      motionBuilder({ reject: new DOMException("Snapshot failed") }),
+    );
+    const update = vi.fn();
+
+    await transitionCodaView(update, "page-crossfade");
+
+    expect(update).toHaveBeenCalledOnce();
+    expect(document.documentElement).not.toHaveClass(
+      "coda-view-transitioning",
+    );
   });
 });

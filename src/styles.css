@@ -235,6 +235,23 @@
   animation: none;
 }
 
+::view-transition-group(.coda-motion-shared-artwork) {
+  z-index: 40;
+}
+
+::view-transition-image-pair(.coda-motion-shared-artwork) {
+  overflow: clip;
+  border-radius: 11px;
+  background: #17191b;
+  box-shadow: 0 30px 58px rgba(0, 0, 0, 0.38);
+}
+
+::view-transition-old(.coda-motion-shared-artwork),
+::view-transition-new(.coda-motion-shared-artwork) {
+  height: 100%;
+  object-fit: cover;
+}
+
 ::view-transition-group(coda-now-playing-artwork) {
   z-index: 40;
   animation-duration: var(--duration-coda-shared-artwork);
