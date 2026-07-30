@@ -212,6 +212,23 @@ function configureMotionTransition(
         "[data-coda-artist-name-detail]",
       );
       return;
+    case "discover-detail":
+      configureSharedElement(
+        transition,
+        document.querySelector("[data-coda-discover-artwork-source]"),
+        "[data-coda-discover-artwork-detail]",
+        codaMotion.detailArtwork,
+      );
+      configureDetailSurface(
+        transition,
+        "[data-coda-discover-detail-surface]",
+      );
+      configureSharedTitle(
+        transition,
+        document.querySelector("[data-coda-discover-title-source]"),
+        "[data-coda-discover-title-detail]",
+      );
+      return;
     case "radio-detail":
       configureSharedElement(
         transition,

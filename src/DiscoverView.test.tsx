@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -90,7 +96,9 @@ describe("Discover", () => {
 
     expect(await screen.findByRole("button", { name: "Exploring…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "All genres" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Best-selling" })).toBeDisabled();
+    expect(screen.getByRole("combobox", {
+      name: "Sort Discover results",
+    })).toBeDisabled();
 
     resolveDiscover({ results: [], resultCount: 0, hasMore: false });
     expect(await screen.findByText("No releases found")).toBeInTheDocument();
@@ -107,12 +115,13 @@ describe("Discover", () => {
       album: "Blue Hours",
     }));
 
-    const genreSelect = screen.getByRole("combobox", {
-      name: "More Discover genres",
+    const genreNavigation = screen.getByRole("navigation", {
+      name: "Filter Discover by genre",
     });
 
-    await user.click(genreSelect);
-    await user.click(await screen.findByRole("option", { name: "Jazz" }));
+    await user.click(within(genreNavigation).getByRole("button", {
+      name: "Jazz",
+    }));
     await waitFor(() =>
       expect(mocks.fetchDiscover).toHaveBeenLastCalledWith(
         expect.objectContaining({ tag: "jazz" }),
@@ -121,12 +130,64 @@ describe("Discover", () => {
     );
   });
 
+  it("uses the Collection-style genre rail and sort menu", async () => {
+    renderDiscover();
+
+    await screen.findByText("Blue Hours");
+    const genres = screen.getByRole("navigation", {
+      name: "Filter Discover by genre",
+    });
+    expect(genres).toHaveClass("overflow-x-auto");
+    expect(screen.queryByRole("combobox", {
+      name: "More Discover genres",
+    })).not.toBeInTheDocument();
+
+    Object.defineProperties(genres, {
+      clientWidth: { configurable: true, value: 240 },
+      scrollWidth: { configurable: true, value: 720 },
+    });
+    fireEvent(window, new Event("resize"));
+    expect(screen.getByRole("button", {
+      name: "Show more genres",
+    })).toBeInTheDocument();
+
+    Object.defineProperty(genres, "scrollLeft", {
+      configurable: true,
+      value: 480,
+      writable: true,
+    });
+    fireEvent.scroll(genres);
+    expect(screen.getByRole("button", {
+      name: "Show previous genres",
+    })).toBeInTheDocument();
+    expect(screen.queryByRole("button", {
+      name: "Show more genres",
+    })).not.toBeInTheDocument();
+
+    expect(screen.getByRole("combobox", {
+      name: "Sort Discover results",
+    })).toHaveTextContent("Best-selling");
+  });
+
   it("routes release and artist destinations through their explicit handlers", async () => {
     const onOpenArtist = vi.fn();
     const onOpenRelease = vi.fn();
     renderDiscover(vi.fn(), { onOpenArtist, onOpenRelease });
 
     const title = await screen.findByRole("button", { name: "Blue Hours" });
+    const card = title.closest("article");
+    expect(card).toHaveAttribute(
+      "data-discover-release-card",
+      "release-1",
+    );
+    expect(card?.querySelector("[data-coda-discover-artwork]")).toHaveAttribute(
+      "data-coda-discover-artwork",
+      "release-1",
+    );
+    expect(within(title).getByText("Blue Hours")).toHaveAttribute(
+      "data-coda-discover-title",
+      "release-1",
+    );
     fireEvent.click(title);
     expect(onOpenRelease).toHaveBeenNthCalledWith(
       1,
@@ -161,13 +222,12 @@ describe("Discover", () => {
   });
 
   it("exposes the active genre and sort as pressed controls", async () => {
+    const user = userEvent.setup();
     renderDiscover();
 
     await screen.findByText("Blue Hours");
     const allGenres = screen.getByRole("button", { name: "All genres" });
-    const bestSelling = screen.getByRole("button", { name: "Best-selling" });
     expect(allGenres).toHaveAttribute("aria-pressed", "true");
-    expect(bestSelling).toHaveAttribute("aria-pressed", "true");
 
     fireEvent.click(screen.getByRole("button", { name: "Rock" }));
     expect(screen.getByRole("button", { name: "Rock" })).toHaveAttribute(
@@ -182,14 +242,21 @@ describe("Discover", () => {
         "*",
       ),
     );
-    const newArrivals = screen.getByRole("button", { name: "New arrivals" });
-    await waitFor(() => expect(newArrivals).not.toBeDisabled());
-    fireEvent.click(newArrivals);
-    expect(newArrivals).toHaveAttribute(
-      "aria-pressed",
-      "true",
+    const sort = screen.getByRole("combobox", {
+      name: "Sort Discover results",
+    });
+    await waitFor(() => expect(sort).not.toBeDisabled());
+    await user.click(sort);
+    await user.click(await screen.findByRole("option", {
+      name: "New arrivals",
+    }));
+    expect(sort).toHaveTextContent("New arrivals");
+    await waitFor(() =>
+      expect(mocks.fetchDiscover).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sort: "new" }),
+        "*",
+      ),
     );
-    expect(bestSelling).toHaveAttribute("aria-pressed", "false");
   });
 
   it("appends the next page of discoveries using the returned cursor", async () => {

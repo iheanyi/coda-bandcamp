@@ -42,6 +42,19 @@ describe("DiscoverReleaseDetail", () => {
     let detail = screen.getByRole("article", {
       name: "Blue Hours",
     });
+    expect(detail).toHaveAttribute("data-coda-discover-detail-surface");
+    expect(
+      detail.querySelector("[data-coda-discover-artwork-detail]"),
+    ).toHaveAttribute(
+      "data-coda-discover-artwork-detail",
+      "discover:release-1",
+    );
+    expect(within(detail).getByRole("heading", {
+      name: "Blue Hours",
+    }).firstElementChild).toHaveAttribute(
+      "data-coda-discover-title-detail",
+      "discover:release-1",
+    );
     fireEvent.click(within(detail).getByRole("button", {
       name: "Signal Garden",
     }));

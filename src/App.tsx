@@ -4111,20 +4111,24 @@ export default function App() {
     const sourceCard = sourceTrigger?.closest<HTMLElement>(
       "[data-album-card]",
     );
-    const sourceArtwork = coldLoad || sourceCard?.dataset.albumCard !== album.id
+    const matchingSourceCard =
+      !coldLoad && sourceCard?.dataset.albumCard === album.id;
+    const sourceArtwork = !matchingSourceCard
       ? undefined
-      : sourceCard.querySelector<HTMLElement>("[data-slot=cover]") ?? undefined;
-    const albumTitleTarget = sourceCard?.querySelector<HTMLElement>(
-      "[data-coda-album-title-target]",
-    );
+      : sourceCard?.querySelector<HTMLElement>("[data-slot=cover]") ?? undefined;
+    const albumTitleTarget = matchingSourceCard
+      ? sourceCard?.querySelector<HTMLElement>(
+          "[data-coda-album-title-target]",
+        )
+      : undefined;
     const staticAlbumTitle = albumTitleTarget?.querySelector<HTMLElement>(
       '[data-slot="overflow-marquee-text"]',
     );
     const sourceTitle =
-      sourceArtwork &&
       albumTitleTarget?.dataset.codaAlbumTitleTarget === album.id
         ? staticAlbumTitle
         : undefined;
+    const hasSharedAlbumIdentity = Boolean(sourceArtwork || sourceTitle);
     albumDetailReturnScrollTopRef.current = returnScrollTop;
     albumReturnContextRef.current = { nowPlayingOpen, view };
     detailReturnFocusRequestedRef.current = false;
@@ -4135,7 +4139,7 @@ export default function App() {
         intent: "forward",
         entrance: coldLoad
           ? "none"
-          : sourceArtwork
+          : hasSharedAlbumIdentity
             ? "shared-element"
             : "page-forward",
         sourceTrigger,
@@ -4143,7 +4147,9 @@ export default function App() {
         destinationHeadingId: "album-detail-heading",
         sharedElementOwner: sourceArtwork
           ? "coda-album-artwork"
-          : undefined,
+          : sourceTitle
+            ? "coda-album-title"
+            : undefined,
       },
     );
     pendingLibraryScrollTopRef.current = 0;
@@ -4165,7 +4171,7 @@ export default function App() {
         setView("library");
         setSelectedAlbum(albumForDetail);
       },
-      sourceArtwork ? "album-detail" : "page-forward",
+      hasSharedAlbumIdentity ? "album-detail" : "page-forward",
       { skipSnapshot: coldLoad },
     );
     void albumTransition.finally(() => {
@@ -4243,16 +4249,42 @@ export default function App() {
         !nowPlayingOpen &&
         Boolean(trigger?.hasAttribute("data-player-album-link"));
       pendingLibraryScrollTopRef.current = 0;
-      void transitionCodaView(() => {
-        setDiscoverDetail({
-          release,
-          previousView: view,
-          returnToNowPlaying: nowPlayingOpen,
-          returnScrollTop,
-        });
-        setNowPlayingOpen(false);
-        setView("discover");
-      }, "page-forward");
+      const sourceArtwork = nowPlayingOpen
+        ? document.querySelector<HTMLElement>(".now-playing__artwork")
+        : undefined;
+      const candidateTitle = nowPlayingOpen
+        ? trigger?.querySelector<HTMLElement>(
+            '[data-slot="overflow-marquee-text"]',
+          )
+        : undefined;
+      const sourceTitle =
+        candidateTitle?.textContent?.trim() === release.title
+          ? candidateTitle
+          : undefined;
+      sourceArtwork?.setAttribute(
+        "data-coda-discover-artwork-source",
+        "",
+      );
+      sourceTitle?.setAttribute("data-coda-discover-title-source", "");
+      const discoverTransition = transitionCodaView(
+        () => {
+          setDiscoverDetail({
+            release,
+            previousView: view,
+            returnToNowPlaying: nowPlayingOpen,
+            returnScrollTop,
+          });
+          setNowPlayingOpen(false);
+          setView("discover");
+        },
+        sourceArtwork || sourceTitle ? "discover-detail" : "page-forward",
+      );
+      void discoverTransition.finally(() => {
+        sourceArtwork?.removeAttribute(
+          "data-coda-discover-artwork-source",
+        );
+        sourceTitle?.removeAttribute("data-coda-discover-title-source");
+      });
       return;
     }
     if (track.id.startsWith("radio:")) {
@@ -5094,18 +5126,42 @@ export default function App() {
     if (view === "discover") {
       discoverListScrollTopRef.current = returnScrollTop;
     }
+    const sourceCard = trigger.closest<HTMLElement>(
+      "[data-discover-release-card]",
+    );
+    const sourceArtwork =
+      sourceCard?.dataset.discoverReleaseCard === release.id
+        ? sourceCard.querySelector<HTMLElement>(
+            "[data-coda-discover-artwork]",
+          ) ?? undefined
+        : undefined;
+    const sourceTitle =
+      sourceCard?.dataset.discoverReleaseCard === release.id
+        ? sourceCard.querySelector<HTMLElement>(
+            "[data-coda-discover-title]",
+          ) ?? undefined
+        : undefined;
     discoverDetailReturnFocusRef.current = trigger;
     discoverDetailReturnPlayerAlbumFocusRef.current = false;
     pendingLibraryScrollTopRef.current = 0;
-    void transitionCodaView(() => {
-      setDiscoverDetail({
-        release,
-        previousView: view,
-        returnToNowPlaying: false,
-        returnScrollTop,
-      });
-      setView("discover");
-    }, "page-forward");
+    sourceArtwork?.setAttribute("data-coda-discover-artwork-source", "");
+    sourceTitle?.setAttribute("data-coda-discover-title-source", "");
+    const discoverTransition = transitionCodaView(
+      () => {
+        setDiscoverDetail({
+          release,
+          previousView: view,
+          returnToNowPlaying: false,
+          returnScrollTop,
+        });
+        setView("discover");
+      },
+      sourceArtwork || sourceTitle ? "discover-detail" : "page-forward",
+    );
+    void discoverTransition.finally(() => {
+      sourceArtwork?.removeAttribute("data-coda-discover-artwork-source");
+      sourceTitle?.removeAttribute("data-coda-discover-title-source");
+    });
   }, [notify, view]);
   const browseRadioSeries = useCallback((seriesId?: number) => {
     void transitionCodaView(() => {

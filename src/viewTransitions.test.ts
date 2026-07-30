@@ -81,6 +81,10 @@ afterEach(() => {
       "[data-coda-artist-name-detail]",
       "[data-coda-album-title-source]",
       "[data-coda-album-title-detail]",
+      "[data-coda-discover-artwork-source]",
+      "[data-coda-discover-artwork-detail]",
+      "[data-coda-discover-title-source]",
+      "[data-coda-discover-title-detail]",
       "[data-coda-playlist-identity-source]",
       "[data-coda-playlist-identity-detail]",
       "[data-coda-playlist-title-source]",
@@ -100,6 +104,7 @@ afterEach(() => {
     "coda-view-transitions-supported",
     "coda-transition--album-detail",
     "coda-transition--artist-detail",
+    "coda-transition--discover-detail",
     "coda-transition--playlist-detail",
     "coda-transition--playlist-detail-close",
     "coda-transition--radio-detail",
@@ -151,6 +156,7 @@ describe("transitionCodaView", () => {
     const cases: Array<[CodaViewTransitionKind, string]> = [
       ["album-detail", "coda-transition--album-detail"],
       ["artist-detail", "coda-transition--artist-detail"],
+      ["discover-detail", "coda-transition--discover-detail"],
       ["playlist-detail", "coda-transition--playlist-detail"],
       ["playlist-detail-close", "coda-transition--playlist-detail-close"],
       ["radio-detail", "coda-transition--radio-detail"],
@@ -524,6 +530,12 @@ describe("transitionCodaView with Motion view transitions", () => {
 
   it.each([
     [
+      "discover-detail",
+      "data-coda-discover-artwork-source",
+      "[data-coda-discover-artwork-detail]",
+      "coda-motion-shared-artwork",
+    ],
+    [
       "radio-detail",
       "data-coda-radio-artwork-source",
       "[data-coda-radio-artwork-detail]",
@@ -585,6 +597,11 @@ describe("transitionCodaView with Motion view transitions", () => {
       "artist-detail",
       "data-coda-artist-name-source",
       "[data-coda-artist-name-detail]",
+    ],
+    [
+      "discover-detail",
+      "data-coda-discover-title-source",
+      "[data-coda-discover-title-detail]",
     ],
     [
       "radio-detail",
@@ -656,6 +673,7 @@ describe("transitionCodaView with Motion view transitions", () => {
   it.each([
     ["album-detail", "[data-coda-album-detail-surface]"],
     ["artist-detail", "[data-coda-artist-detail-surface]"],
+    ["discover-detail", "[data-coda-discover-detail-surface]"],
     ["radio-detail", "[data-coda-radio-detail-surface]"],
     ["playlist-detail", "[data-coda-playlist-detail-surface]"],
   ] as const)(

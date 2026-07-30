@@ -178,6 +178,7 @@
   html:is(
     .coda-transition--album-detail,
     .coda-transition--artist-detail,
+    .coda-transition--discover-detail,
     .coda-transition--playlist-detail,
     .coda-transition--playlist-detail-close,
     .coda-transition--radio-detail,
@@ -228,6 +229,27 @@
       [data-coda-artist-name-detail]
     ) {
     view-transition-name: coda-artist-name;
+  }
+
+  html.coda-transition--discover-detail
+    :is(
+      [data-coda-discover-artwork-source],
+      [data-coda-discover-artwork-detail]
+    ) {
+    view-transition-name: coda-discover-artwork;
+  }
+
+  html.coda-transition--discover-detail
+    [data-coda-discover-detail-surface] {
+    view-transition-name: coda-discover-detail-surface;
+  }
+
+  html.coda-transition--discover-detail
+    :is(
+      [data-coda-discover-title-source],
+      [data-coda-discover-title-detail]
+    ) {
+    view-transition-name: coda-discover-title;
   }
 
   html:is(
@@ -335,6 +357,7 @@
 
 ::view-transition-group(coda-album-artwork),
 ::view-transition-group(coda-artist-artwork),
+::view-transition-group(coda-discover-artwork),
 ::view-transition-group(coda-radio-artwork),
 ::view-transition-group(coda-playlist-identity) {
   z-index: 35;
@@ -344,6 +367,7 @@
 
 ::view-transition-image-pair(coda-album-artwork),
 ::view-transition-image-pair(coda-artist-artwork),
+::view-transition-image-pair(coda-discover-artwork),
 ::view-transition-image-pair(coda-radio-artwork) {
   overflow: clip;
   border-radius: 11px;
@@ -355,6 +379,8 @@
 ::view-transition-new(coda-album-artwork),
 ::view-transition-old(coda-artist-artwork),
 ::view-transition-new(coda-artist-artwork),
+::view-transition-old(coda-discover-artwork),
+::view-transition-new(coda-discover-artwork),
 ::view-transition-old(coda-radio-artwork),
 ::view-transition-new(coda-radio-artwork) {
   height: 100%;
@@ -390,6 +416,7 @@
 
 ::view-transition-group(coda-album-title),
 ::view-transition-group(coda-artist-name),
+::view-transition-group(coda-discover-title),
 ::view-transition-group(coda-radio-title),
 ::view-transition-group(coda-playlist-title),
 ::view-transition-group(coda-now-playing-title),
@@ -401,6 +428,7 @@
 
 ::view-transition-image-pair(coda-album-title),
 ::view-transition-image-pair(coda-artist-name),
+::view-transition-image-pair(coda-discover-title),
 ::view-transition-image-pair(coda-radio-title),
 ::view-transition-image-pair(coda-playlist-title),
 ::view-transition-image-pair(coda-now-playing-title),
@@ -411,6 +439,7 @@
 
 ::view-transition-old(coda-album-title),
 ::view-transition-old(coda-artist-name),
+::view-transition-old(coda-discover-title),
 ::view-transition-old(coda-radio-title),
 ::view-transition-old(coda-playlist-title),
 ::view-transition-old(coda-now-playing-title),
@@ -421,6 +450,7 @@
 
 ::view-transition-new(coda-album-title),
 ::view-transition-new(coda-artist-name),
+::view-transition-new(coda-discover-title),
 ::view-transition-new(coda-radio-title),
 ::view-transition-new(coda-playlist-title),
 ::view-transition-new(coda-now-playing-title),
@@ -432,6 +462,7 @@
 
 ::view-transition-group(coda-album-detail-surface),
 ::view-transition-group(coda-artist-detail-surface),
+::view-transition-group(coda-discover-detail-surface),
 ::view-transition-group(coda-radio-detail-surface),
 ::view-transition-group(coda-playlist-detail-surface),
 ::view-transition-group(.coda-motion-detail-surface) {
@@ -440,6 +471,7 @@
 
 ::view-transition-image-pair(coda-album-detail-surface),
 ::view-transition-image-pair(coda-artist-detail-surface),
+::view-transition-image-pair(coda-discover-detail-surface),
 ::view-transition-image-pair(coda-radio-detail-surface),
 ::view-transition-image-pair(coda-playlist-detail-surface),
 ::view-transition-image-pair(.coda-motion-detail-surface) {
@@ -450,18 +482,28 @@
 html:is(
   .coda-transition--album-detail,
   .coda-transition--artist-detail,
+  .coda-transition--discover-detail,
   .coda-transition--radio-detail,
   .coda-transition--playlist-detail
 )::view-transition-new(coda-album-detail-surface),
 html:is(
   .coda-transition--album-detail,
   .coda-transition--artist-detail,
+  .coda-transition--discover-detail,
   .coda-transition--radio-detail,
   .coda-transition--playlist-detail
 )::view-transition-new(coda-artist-detail-surface),
 html:is(
   .coda-transition--album-detail,
   .coda-transition--artist-detail,
+  .coda-transition--discover-detail,
+  .coda-transition--radio-detail,
+  .coda-transition--playlist-detail
+)::view-transition-new(coda-discover-detail-surface),
+html:is(
+  .coda-transition--album-detail,
+  .coda-transition--artist-detail,
+  .coda-transition--discover-detail,
   .coda-transition--radio-detail,
   .coda-transition--playlist-detail
 )::view-transition-new(coda-radio-detail-surface),
@@ -476,6 +518,7 @@ html:is(
 
 :is(
   [data-coda-album-title-source],
+  [data-coda-discover-title-source],
   [data-coda-radio-title-source],
   [data-coda-radio-title-return],
   [data-coda-playlist-title-source],
@@ -491,6 +534,7 @@ html:is(
 
 :is(
   [data-coda-album-title-source],
+  [data-coda-discover-title-source],
   [data-coda-radio-title-source],
   [data-coda-radio-title-return],
   [data-coda-playlist-title-source],
@@ -558,6 +602,7 @@ html:is(
 html:is(
   .coda-transition--album-detail,
   .coda-transition--artist-detail,
+  .coda-transition--discover-detail,
   .coda-transition--playlist-detail,
   .coda-transition--playlist-detail-close,
   .coda-transition--radio-detail,

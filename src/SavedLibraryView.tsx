@@ -350,6 +350,7 @@ function FavoriteArtwork({
         "relative grid size-10 shrink-0 place-items-center overflow-hidden rounded-md text-white/70 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.07)]",
         className,
       )}
+      data-slot={url ? "cover" : undefined}
       style={{
         background: `linear-gradient(145deg, ${item.palette[0]}, ${item.palette[1]})`,
       }}
@@ -669,109 +670,109 @@ function PlaylistDetailView({
               className="flex max-w-xl items-center gap-2"
               onSubmit={submitRename}
             >
-                <Input
-                  className="h-11 text-2xl font-semibold"
-                  autoFocus
-                  value={name}
-                  maxLength={256}
-                  aria-label="Playlist name"
-                  onChange={(event) => setName(event.target.value)}
-                />
-                <Button
-                  type="submit"
-                  aria-label="Save playlist name"
-                  disabled={actionPending}
-                  size="icon"
-                  variant="ghost"
-                >
-                  {renaming
-                    ? <Spinner aria-hidden="true" className="size-4 text-current" />
-                    : <Check size={17} />}
-                </Button>
-                <Button
-                  type="button"
-                  aria-label="Cancel renaming"
-                  disabled={actionPending}
-                  onClick={() => {
-                    setEditing(false);
-                    setName(playlist.name);
-                  }}
-                  size="icon"
-                  variant="ghost"
-                >
-                  <X size={17} />
-                </Button>
-              </form>
-            ) : (
-              <div className="flex items-center gap-2">
-                <h1
-                  id="playlist-detail-heading"
-                  className="m-0 max-w-2xl truncate font-display text-4xl leading-none font-semibold tracking-tighter text-[#f1efe9] outline-none"
-                  tabIndex={-1}
-                >
-                  <span
-                    className="inline-block max-w-full truncate align-top"
-                    data-coda-playlist-title-detail={playlist.id}
-                  >
-                    {playlist.name}
-                  </span>
-                </h1>
-                <Button
-                  onClick={() => setEditing(true)}
-                  aria-label={`Rename ${playlist.name}`}
-                  size="icon"
-                  variant="ghost"
-                >
-                  <Pencil size={15} />
-                </Button>
-              </div>
-            )}
-            <p className="mt-2 mb-0 text-xs text-[#858984]">
-              {countLabel(playlist.songCount, "track")}
-              {playlist.duration ? ` · ${formatTime(playlist.duration)}` : ""}
-              {" · Synced with Bandcamp"}
-            </p>
-            <div className="mt-5 flex flex-wrap gap-2">
+              <Input
+                className="h-11 text-2xl font-semibold"
+                autoFocus
+                value={name}
+                maxLength={256}
+                aria-label="Playlist name"
+                onChange={(event) => setName(event.target.value)}
+              />
               <Button
-                className={cn(
-                  activePlaylist &&
-                    "shadow-[inset_0_0_0_1px_rgba(255,255,255,0.18),0_8px_24px_rgba(221,101,73,0.16)]",
-                  activePlaylist && playing && "bg-[color-mix(in_srgb,var(--primary)_82%,#17191b)]",
-                )}
-                disabled={!playlist.tracks.length}
-                onClick={
-                  activePlaylist
-                    ? onTogglePlayback
-                    : () => onPlay(playlist.tracks)
-                }
-                aria-label={
-                  activePlaylist
-                    ? `${playing ? "Pause" : "Resume"} ${playlist.name}`
-                    : "Play"
-                }
-                aria-pressed={activePlaylist && playing}
-                variant="primary"
+                type="submit"
+                aria-label="Save playlist name"
+                disabled={actionPending}
+                size="icon"
+                variant="ghost"
               >
-                <PlaybackIcon
-                  className="size-4"
-                  playing={activePlaylist && playing}
-                />
-                {activePlaylist ? (playing ? "Pause" : "Resume") : "Play"}
+                {renaming
+                  ? <Spinner aria-hidden="true" className="size-4 text-current" />
+                  : <Check size={17} />}
               </Button>
               <Button
-                disabled={!playlist.tracks.length}
-                onClick={() => onPlay(shuffled(playlist.tracks))}
+                type="button"
+                aria-label="Cancel renaming"
+                disabled={actionPending}
+                onClick={() => {
+                  setEditing(false);
+                  setName(playlist.name);
+                }}
+                size="icon"
+                variant="ghost"
               >
-                <Shuffle size={16} /> Shuffle
+                <X size={17} />
               </Button>
-              <Button
-                disabled={!playlist.tracks.length}
-                onClick={() => onQueue(playlist.tracks)}
+            </form>
+          ) : (
+            <div className="flex items-center gap-2">
+              <h1
+                id="playlist-detail-heading"
+                className="m-0 max-w-2xl truncate font-display text-4xl leading-none font-semibold tracking-tighter text-[#f1efe9] outline-none"
+                tabIndex={-1}
               >
-                <ListPlus size={16} /> Add to queue
+                <span
+                  className="inline-block max-w-full truncate align-top"
+                  data-coda-playlist-title-detail={playlist.id}
+                >
+                  {playlist.name}
+                </span>
+              </h1>
+              <Button
+                onClick={() => setEditing(true)}
+                aria-label={`Rename ${playlist.name}`}
+                size="icon"
+                variant="ghost"
+              >
+                <Pencil size={15} />
               </Button>
             </div>
+          )}
+          <p className="mt-2 mb-0 text-xs text-[#858984]">
+            {countLabel(playlist.songCount, "track")}
+            {playlist.duration ? ` · ${formatTime(playlist.duration)}` : ""}
+            {" · Synced with Bandcamp"}
+          </p>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <Button
+              className={cn(
+                activePlaylist &&
+                  "shadow-[inset_0_0_0_1px_rgba(255,255,255,0.18),0_8px_24px_rgba(221,101,73,0.16)]",
+                activePlaylist && playing && "bg-[color-mix(in_srgb,var(--primary)_82%,#17191b)]",
+              )}
+              disabled={!playlist.tracks.length}
+              onClick={
+                activePlaylist
+                  ? onTogglePlayback
+                  : () => onPlay(playlist.tracks)
+              }
+              aria-label={
+                activePlaylist
+                  ? `${playing ? "Pause" : "Resume"} ${playlist.name}`
+                  : "Play"
+              }
+              aria-pressed={activePlaylist && playing}
+              variant="primary"
+            >
+              <PlaybackIcon
+                className="size-4"
+                playing={activePlaylist && playing}
+              />
+              {activePlaylist ? (playing ? "Pause" : "Resume") : "Play"}
+            </Button>
+            <Button
+              disabled={!playlist.tracks.length}
+              onClick={() => onPlay(shuffled(playlist.tracks))}
+            >
+              <Shuffle size={16} /> Shuffle
+            </Button>
+            <Button
+              disabled={!playlist.tracks.length}
+              onClick={() => onQueue(playlist.tracks)}
+            >
+              <ListPlus size={16} /> Add to queue
+            </Button>
           </div>
+        </div>
       </header>
 
       {playlist.tracks.length ? (
@@ -1864,6 +1865,7 @@ export default function SavedLibraryView({
                       "group relative grid h-14 grid-cols-[2rem_2.5rem_minmax(0,1fr)_3rem_repeat(3,2rem)] items-center gap-x-1.5 overflow-hidden border-b border-white/7 pr-2 pl-1 transition-colors last:border-b-0 hover:bg-white/3 lg:grid-cols-[2rem_2.5rem_minmax(0,1fr)_4rem_repeat(3,2rem)] lg:gap-x-2 lg:pr-3",
                       activeTrack && "bg-primary/5 before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-primary before:content-['']",
                     )}
+                    data-album-card={track.albumId}
                   >
                     <Button
                       className={cn(
@@ -1920,6 +1922,7 @@ export default function SavedLibraryView({
                             "gap-1 disabled:opacity-100",
                           )}
                           data-album-open={track.albumId}
+                          data-coda-album-title-target={track.albumId}
                           data-navigation-slot={`favorite-track:${track.id}`}
                           disabled={albumLoading}
                           onClick={(event) =>
@@ -1932,7 +1935,10 @@ export default function SavedLibraryView({
                               className="size-3 text-current"
                             />
                           ) : null}
-                          {track.album}
+                          <OverflowMarquee
+                            className="max-w-full"
+                            text={track.album}
+                          />
                         </Button>
                       </div>
                     </div>
@@ -2115,6 +2121,7 @@ export default function SavedLibraryView({
                   return (
                     <article
                       className="grid grid-cols-[minmax(0,1fr)_2rem] items-center gap-1 rounded-lg border border-border bg-white/2 p-2"
+                      data-album-card={album.id}
                       key={album.id}
                     >
                       <div className="grid min-w-0 grid-cols-[3rem_minmax(0,1fr)] items-center gap-3">
@@ -2149,6 +2156,7 @@ export default function SavedLibraryView({
                             aria-label={albumLoading ? album.title : undefined}
                             className="h-auto w-fit max-w-full justify-start gap-1 overflow-hidden rounded-none p-0 text-xs text-[#d8d7d1] hover:bg-transparent hover:text-accent-foreground disabled:opacity-100"
                             data-album-open={album.id}
+                            data-coda-album-title-target={album.id}
                             data-navigation-slot="title"
                             disabled={albumLoading}
                             onClick={(event) =>

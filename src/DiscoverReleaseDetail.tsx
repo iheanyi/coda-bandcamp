@@ -46,6 +46,7 @@ export function DiscoverReleaseDetail({
     <article
       className="mx-auto -mt-2 mb-8 w-full max-w-4xl"
       aria-labelledby="discover-release-heading"
+      data-coda-discover-detail-surface=""
     >
       <Button
         className="mb-4 -ml-1 h-auto gap-1.5 p-1 text-xs text-muted-foreground hover:bg-transparent hover:text-foreground"
@@ -59,6 +60,7 @@ export function DiscoverReleaseDetail({
       <header className="flex items-end gap-8 overflow-hidden rounded-t-xl border border-border bg-[radial-gradient(circle_at_82%_20%,rgba(221,101,73,0.13),transparent_37%),linear-gradient(135deg,#24282a,#191c1e_70%)] p-8 max-xl:items-center max-xl:gap-6 max-xl:p-6">
         <div
           className="grid size-56 shrink-0 place-items-center overflow-hidden rounded-xl bg-[linear-gradient(145deg,var(--cover-accent),transparent_72%),var(--cover-base)] text-4xl font-bold text-white/80 shadow-2xl max-xl:size-48"
+          data-coda-discover-artwork-detail={release.id}
           style={
             {
               "--cover-accent": palette[0],
@@ -85,7 +87,12 @@ export function DiscoverReleaseDetail({
             className="m-0 max-w-xl font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-4xl leading-none font-semibold tracking-tighter wrap-anywhere text-foreground outline-none max-xl:text-3xl"
             tabIndex={-1}
           >
-            {release.title}
+            <span
+              className="inline-block max-w-full align-top"
+              data-coda-discover-title-detail={release.id}
+            >
+              {release.title}
+            </span>
           </h1>
           <Button
             className="my-3 h-auto max-w-full justify-start truncate p-0 text-sm font-semibold text-primary hover:bg-transparent hover:text-primary hover:underline"

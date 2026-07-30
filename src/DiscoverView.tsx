@@ -1,14 +1,25 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import {
+  ArrowDownUp,
   ArrowUpRight,
+  ChevronLeft,
+  ChevronRight,
   Disc3,
   Plus,
   RefreshCw,
   Search,
   Sparkles,
-  Tags,
 } from "lucide-react";
-import { type FormEvent, memo, useMemo, useState } from "react";
+import {
+  type FormEvent,
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,7 +35,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { countLabel } from "./countLabel";
 import { discoverPreviewTrack } from "./discover";
 import { DISCOVER_GENRES, normalizeGenre } from "./genres";
@@ -42,8 +52,13 @@ import type {
   Track,
 } from "./types";
 
-const PRIMARY_GENRES: readonly string[] = DISCOVER_GENRES.slice(0, 11);
-const EXTRA_GENRES: readonly string[] = DISCOVER_GENRES.slice(PRIMARY_GENRES.length);
+const DISCOVER_SORT_OPTIONS: ReadonlyArray<{
+  value: DiscoverSort;
+  label: string;
+}> = [
+  { value: "top", label: "Best-selling" },
+  { value: "new", label: "New arrivals" },
+];
 
 const DiscoverCard = memo(function DiscoverCard({
   release,
@@ -74,9 +89,13 @@ const DiscoverCard = memo(function DiscoverCard({
   const active = Boolean(track && currentTrackId === track.id);
 
   return (
-    <article className="group/card grid min-w-0 grid-cols-[--spacing(28)_minmax(0,1fr)] overflow-hidden rounded-lg border border-(--line) bg-white/[0.018] [contain-intrinsic-size:--spacing(28)_--spacing(75)] [content-visibility:auto] hover:border-(--line-strong) hover:bg-white/3">
+    <article
+      className="group/card grid min-w-0 grid-cols-[--spacing(28)_minmax(0,1fr)] overflow-hidden rounded-lg border border-(--line) bg-white/[0.018] [contain-intrinsic-size:--spacing(28)_--spacing(75)] [content-visibility:auto] hover:border-(--line-strong) hover:bg-white/3"
+      data-discover-release-card={release.id}
+    >
       <div
         className="relative grid size-28 place-items-center overflow-hidden bg-[linear-gradient(145deg,var(--cover-accent),transparent_72%),var(--cover-base)] text-2xl font-bold text-white/78"
+        data-coda-discover-artwork={release.id}
         style={
           {
             "--cover-accent": palette[0],
@@ -130,7 +149,13 @@ const DiscoverCard = memo(function DiscoverCard({
             onClick={(event) => onOpenRelease(release, event.currentTarget)}
             title={release.title}
           >
-            <OverflowMarquee className="w-full text-left" text={release.title} />
+            <OverflowMarquee
+              className="w-full text-left"
+              staticTextProps={{
+                "data-coda-discover-title": release.id,
+              }}
+              text={release.title}
+            />
           </Button>
           <Button
             variant="text"
@@ -215,14 +240,11 @@ export default function DiscoverView({
   );
   const total = query.data?.pages[0]?.resultCount ?? 0;
   const selectedGenre = filters.tag.toLocaleLowerCase("en-US");
-  const quickGenres = useMemo(
-    () =>
-      EXTRA_GENRES.includes(selectedGenre)
-        ? [...PRIMARY_GENRES, selectedGenre]
-        : PRIMARY_GENRES,
-    [selectedGenre],
-  );
-  const selectedExtraGenre = EXTRA_GENRES.includes(selectedGenre) ? selectedGenre : "";
+  const genreRailRef = useRef<HTMLElement>(null);
+  const [genreRailEdges, setGenreRailEdges] = useState({
+    start: false,
+    end: false,
+  });
 
   const chooseGenre = (tag: string) => {
     const nextTag = tag === "all" ? "" : tag;
@@ -235,6 +257,61 @@ export default function DiscoverView({
   };
   const chooseSort = (sort: DiscoverSort) =>
     setFilters((value) => ({ ...value, sort }));
+  const updateGenreRailEdges = useCallback((rail: HTMLElement | null) => {
+    if (!rail) return;
+    const maxScrollLeft = Math.max(0, rail.scrollWidth - rail.clientWidth);
+    const nextEdges = {
+      start: rail.scrollLeft > 1,
+      end: rail.scrollLeft < maxScrollLeft - 1,
+    };
+    setGenreRailEdges((current) =>
+      current.start === nextEdges.start && current.end === nextEdges.end
+        ? current
+        : nextEdges,
+    );
+  }, []);
+  const scrollGenreRail = useCallback(
+    (direction: -1 | 1) => {
+      const rail = genreRailRef.current;
+      if (!rail) return;
+      const left =
+        rail.scrollLeft +
+        direction * Math.max(160, Math.round(rail.clientWidth * 0.7));
+      if (typeof rail.scrollTo === "function") {
+        rail.scrollTo({
+          behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+            ? "auto"
+            : "smooth",
+          left,
+        });
+      } else {
+        rail.scrollLeft = left;
+        updateGenreRailEdges(rail);
+      }
+    },
+    [updateGenreRailEdges],
+  );
+
+  useLayoutEffect(() => {
+    const rail = genreRailRef.current;
+    if (!rail) return;
+    const updateEdges = () => updateGenreRailEdges(rail);
+    updateEdges();
+    window.addEventListener("resize", updateEdges);
+    return () => window.removeEventListener("resize", updateEdges);
+  }, [updateGenreRailEdges]);
+
+  useEffect(() => {
+    if (selectedGenre) return;
+    const rail = genreRailRef.current;
+    if (!rail) return;
+    if (typeof rail.scrollTo === "function") {
+      rail.scrollTo({ behavior: "auto", left: 0 });
+    } else {
+      rail.scrollLeft = 0;
+    }
+    updateGenreRailEdges(rail);
+  }, [selectedGenre, updateGenreRailEdges]);
 
   return (
     <section
@@ -253,6 +330,7 @@ export default function DiscoverView({
           <label className="sr-only" htmlFor="discover-tag">Search Discover by tag</label>
           <Input
             id="discover-tag"
+            name="discover-tag"
             className="h-full min-w-0 flex-1 rounded-none border-0 bg-transparent px-2.5 text-xs text-[#ebe8e1] shadow-none focus-visible:border-0 focus-visible:ring-0"
             value={draftTag}
             maxLength={64}
@@ -266,88 +344,110 @@ export default function DiscoverView({
         </form>
       </div>
 
-      <div className="flex items-start justify-between gap-4 border-b border-(--line) pb-4 max-xl:flex-col">
-        <ToggleGroup
-          className="w-auto flex-wrap gap-1 rounded-none"
-          aria-label="Discover genres"
-          value={[selectedGenre || "all"]}
-          spacing={4}
-          disabled={query.isPending}
-          onValueChange={(values) => {
-            const nextTag = values[0];
-            if (nextTag) chooseGenre(nextTag);
-          }}
-        >
-          <ToggleGroupItem value="all" variant="default" size="sm" className="h-7 min-w-0 rounded-full border border-transparent px-2.5 text-xs font-semibold text-[#858984] hover:text-[#d8d7d1] aria-pressed:border-(--line) aria-pressed:bg-[#26292b] aria-pressed:text-[#efede7]">
-            All genres
-          </ToggleGroupItem>
-          {quickGenres.map((tag) => (
-            <ToggleGroupItem
-              key={tag}
-              value={tag}
-              variant="default"
-              size="sm"
-              className="h-7 min-w-0 rounded-full border border-transparent px-2.5 text-xs font-semibold text-[#858984] hover:text-[#d8d7d1] aria-pressed:border-(--line) aria-pressed:bg-[#26292b] aria-pressed:text-[#efede7]"
-            >
-              {normalizeGenre(tag)}
-            </ToggleGroupItem>
-          ))}
-          <Select
-            value={selectedExtraGenre || null}
-            onValueChange={(value) => {
-              if (value) chooseGenre(value);
-            }}
-            disabled={query.isPending}
+      <div className="flex items-center gap-2 border-b border-(--line) pb-3 lg:gap-4">
+        <div className="relative min-w-0 flex-1">
+          <nav
+            ref={genreRailRef}
+            aria-label="Filter Discover by genre"
+            className="flex items-center gap-1 overflow-x-auto overscroll-x-contain pr-10 scroll-px-10 scrollbar-none [&::-webkit-scrollbar]:hidden"
+            onScroll={(event) => updateGenreRailEdges(event.currentTarget)}
           >
-            <SelectTrigger
-              aria-label="More Discover genres"
-              className="h-7 items-center justify-center gap-1.5 rounded-full border-(--line) bg-[#202325] px-2.5 py-0 text-xs font-semibold text-[#858984] hover:text-[#d8d7d1] data-open:border-primary/40 data-open:text-[#efede7] [&_[data-slot=select-icon]_svg]:size-3"
-              size="sm"
+            <Button
+              type="button"
+              className="h-8 shrink-0 px-3 text-xs font-semibold text-[#888b86] hover:bg-transparent hover:text-[#dddcd7] aria-pressed:bg-coda-active aria-pressed:text-[#f0eee8]"
+              onClick={() => chooseGenre("all")}
+              aria-pressed={!selectedGenre}
+              disabled={query.isPending}
+              size="compact"
+              variant="ghost"
             >
-              <Tags
+              All genres
+            </Button>
+            {DISCOVER_GENRES.map((tag) => (
+              <Button
+                type="button"
+                key={tag}
+                className="h-8 shrink-0 px-3 text-xs font-semibold text-[#888b86] hover:bg-transparent hover:text-[#dddcd7] aria-pressed:bg-coda-active aria-pressed:text-[#f0eee8]"
+                onClick={() => chooseGenre(tag)}
+                aria-pressed={selectedGenre === tag}
+                disabled={query.isPending}
+                size="compact"
+                variant="ghost"
+              >
+                {normalizeGenre(tag)}
+              </Button>
+            ))}
+          </nav>
+          {genreRailEdges.start ? (
+            <>
+              <span
                 aria-hidden="true"
-                className="size-3"
-                data-slot="select-leading-icon"
+                className="pointer-events-none absolute inset-y-0 left-0 w-10 bg-linear-to-r from-background to-transparent"
               />
-              <SelectValue
-                className="min-w-0 flex-none justify-center text-center"
-                placeholder="More genres"
+              <Button
+                type="button"
+                aria-label="Show previous genres"
+                className="absolute top-1/2 left-0 z-10 -translate-y-1/2 rounded-full border-border bg-[#1b1e20] text-[#9a9d98] shadow-md hover:bg-[#26292b] hover:text-[#efede7]"
+                onClick={() => scrollGenreRail(-1)}
+                size="icon-compact"
+                variant="secondary"
+              >
+                <ChevronLeft aria-hidden="true" className="size-3.5" />
+              </Button>
+            </>
+          ) : null}
+          {genreRailEdges.end ? (
+            <>
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-y-0 right-0 w-12 bg-linear-to-l from-background to-transparent"
               />
-            </SelectTrigger>
-            <SelectContent
-              align="start"
-              alignItemWithTrigger={false}
-              className="min-w-40 rounded-lg border border-(--line-strong) bg-popover p-1 text-xs shadow-lg"
-            >
-              {EXTRA_GENRES.map((tag) => (
-                <SelectItem
-                  className="py-1.5 pr-8 pl-2 text-xs text-[#a8aaa5] focus:bg-white/5 focus:text-[#efede7]"
-                  key={tag}
-                  value={tag}
-                >
-                  {normalizeGenre(tag)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </ToggleGroup>
-        <ToggleGroup
-          className="w-auto rounded-full border border-(--line) p-0.5"
-          aria-label="Sort Discover results"
-          value={[filters.sort]}
-          disabled={query.isPending}
-          onValueChange={(values) => {
-            const nextSort = values[0] as DiscoverSort | undefined;
-            if (nextSort) chooseSort(nextSort);
+              <Button
+                type="button"
+                aria-label="Show more genres"
+                className="absolute top-1/2 right-0 z-10 -translate-y-1/2 rounded-full border-border bg-[#1b1e20] text-[#9a9d98] shadow-md hover:bg-[#26292b] hover:text-[#efede7]"
+                onClick={() => scrollGenreRail(1)}
+                size="icon-compact"
+                variant="secondary"
+              >
+                <ChevronRight aria-hidden="true" className="size-3.5" />
+              </Button>
+            </>
+          ) : null}
+        </div>
+        <Select
+          items={DISCOVER_SORT_OPTIONS}
+          value={filters.sort}
+          onValueChange={(value) => {
+            if (value) chooseSort(value);
           }}
+          disabled={query.isPending}
         >
-          <ToggleGroupItem value="top" variant="default" size="sm" className="h-7 min-w-0 rounded-full border-0 px-2.5 text-xs font-semibold text-[#858984] hover:text-[#d8d7d1] aria-pressed:bg-(--accent-soft) aria-pressed:text-[#e9917a]">
-            Best-selling
-          </ToggleGroupItem>
-          <ToggleGroupItem value="new" variant="default" size="sm" className="h-7 min-w-0 rounded-full border-0 px-2.5 text-xs font-semibold text-[#858984] hover:text-[#d8d7d1] aria-pressed:bg-(--accent-soft) aria-pressed:text-[#e9917a]">
-            New arrivals
-          </ToggleGroupItem>
-        </ToggleGroup>
+          <SelectTrigger
+            aria-label="Sort Discover results"
+            className="h-8 max-w-40 shrink-0 gap-1.5 rounded-sm border-border bg-muted px-2 py-0 text-xs font-semibold text-[#858984] hover:bg-muted hover:text-[#d8d7d1] data-open:border-primary/40 data-open:bg-muted data-open:text-[#efede7]"
+            size="sm"
+          >
+            <ArrowDownUp aria-hidden="true" className="size-3.5" />
+            <SelectValue className="min-w-0" />
+          </SelectTrigger>
+          <SelectContent
+            align="end"
+            alignItemWithTrigger={false}
+            className="min-w-40 rounded-lg border border-(--line-strong) bg-popover p-1 text-xs shadow-lg"
+            sideOffset={6}
+          >
+            {DISCOVER_SORT_OPTIONS.map(({ value, label }) => (
+              <SelectItem
+                className="py-1.5 pr-8 pl-2 text-xs text-[#a8aaa5] focus:bg-white/5 focus:text-[#efede7]"
+                key={value}
+                value={value}
+              >
+                {label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {query.isPending ? (

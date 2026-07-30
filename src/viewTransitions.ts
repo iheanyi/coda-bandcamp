@@ -8,6 +8,7 @@ import {
 export type CodaViewTransitionKind =
   | "album-detail"
   | "artist-detail"
+  | "discover-detail"
   | "playlist-detail"
   | "playlist-detail-close"
   | "radio-detail"
@@ -36,6 +37,7 @@ type ViewTransitionDocument = Document & {
 const TRANSITION_CLASSES: Record<CodaViewTransitionKind, string> = {
   "album-detail": "coda-transition--album-detail",
   "artist-detail": "coda-transition--artist-detail",
+  "discover-detail": "coda-transition--discover-detail",
   "playlist-detail": "coda-transition--playlist-detail",
   "playlist-detail-close": "coda-transition--playlist-detail-close",
   "radio-detail": "coda-transition--radio-detail",

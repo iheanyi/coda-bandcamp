@@ -1091,6 +1091,14 @@ describe("saved Bandcamp library views", () => {
     const favoriteAlbumButton = within(favoriteTracks).getByRole("button", {
       name: "Open Mirage album",
     });
+    expect(favoriteAlbumButton).toHaveAttribute(
+      "data-coda-album-title-target",
+      "album-1",
+    );
+    expect(favoriteAlbumButton.closest("[data-album-card]")).toHaveAttribute(
+      "data-album-card",
+      "album-1",
+    );
     fireEvent.click(favoriteAlbumButton);
     expect(commonProps.onOpenTrackAlbum).toHaveBeenCalledWith(
       track,
@@ -1112,6 +1120,21 @@ describe("saved Bandcamp library views", () => {
     expect(commonProps.onToggleRadioFavorite).toHaveBeenCalledWith(
       favorites.radioShows[0],
       false,
+    );
+    const favoriteReleases = screen.getByRole("heading", {
+      name: "Releases",
+    }).closest("section");
+    if (!favoriteReleases) throw new Error("Expected favorite releases");
+    const favoriteReleaseTitle = within(favoriteReleases).getByRole("button", {
+      name: "Mirage",
+    });
+    expect(favoriteReleaseTitle).toHaveAttribute(
+      "data-coda-album-title-target",
+      "album-1",
+    );
+    expect(favoriteReleaseTitle.closest("[data-album-card]")).toHaveAttribute(
+      "data-album-card",
+      "album-1",
     );
   });
 
