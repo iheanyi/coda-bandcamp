@@ -26,6 +26,8 @@ import type {
 } from "./types";
 
 export const isDesktop = () => "__TAURI_INTERNALS__" in window;
+const isWindowsDesktop = () =>
+  isDesktop() && navigator.userAgent.includes("Windows");
 
 const LIBRARY_CACHE_KEY = "coda.library.v1";
 const LIBRARY_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -49,6 +51,20 @@ export type LibrarySyncProgress = {
   pageIndex: number;
   loaded: number;
   albums: Album[];
+};
+
+export type SystemMediaMetadataInput = {
+  title: string;
+  artist: string;
+  album: string;
+  artworkUrl?: string;
+  canPrevious: boolean;
+  canNext: boolean;
+};
+
+export type SystemMediaControlEvent = {
+  action: "play" | "pause" | "previous" | "next" | "seek";
+  positionSeconds?: number;
 };
 
 type NativeLibrarySyncEvent = {
@@ -532,6 +548,29 @@ export async function fetchRadioShow(showId: number): Promise<RadioShow> {
     throw new Error("Bandcamp Radio is available in the Coda desktop app.");
   }
   return invoke<RadioShow>("radio_show", { showId });
+}
+
+export async function updateSystemMediaMetadata(
+  input?: SystemMediaMetadataInput,
+): Promise<void> {
+  if (!isWindowsDesktop()) return;
+  return invoke("update_system_media_metadata", { input });
+}
+
+export async function updateSystemMediaPlayback(playing: boolean): Promise<void> {
+  if (!isWindowsDesktop()) return;
+  return invoke("update_system_media_playback", { playing });
+}
+
+export async function updateSystemMediaTimeline(
+  positionSeconds: number,
+  durationSeconds: number,
+): Promise<void> {
+  if (!isWindowsDesktop()) return;
+  return invoke("update_system_media_timeline", {
+    positionSeconds,
+    durationSeconds,
+  });
 }
 
 export async function openBandcampUrl(value: string): Promise<void> {

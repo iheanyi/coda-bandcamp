@@ -30,6 +30,7 @@
         "resizable": true,
         "visible": true,
         "backgroundColor": "#111315",
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,HardwareMediaKeyHandling",
         "devtools": false
       },
       {

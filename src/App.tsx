@@ -131,6 +131,10 @@ import {
   savePlayerState,
   scrobbleLastFm,
   updateLastFmNowPlaying,
+  updateSystemMediaMetadata,
+  updateSystemMediaPlayback,
+  updateSystemMediaTimeline,
+  type SystemMediaControlEvent,
 } from "./lib";
 import {
   artistKey,
@@ -331,6 +335,7 @@ const MAX_ARTWORK_DETAILS_PER_REFRESH = 200;
 const SEARCH_QUEUE_CONCURRENCY = 6;
 const PLAYER_STATE_SAVE_DEBOUNCE_MS = 450;
 const PLAYER_STATE_CHECKPOINT_MS = 5_000;
+const SYSTEM_MEDIA_TIMELINE_UPDATE_MS = 5_000;
 const PREVIOUS_RESTART_THRESHOLD_SECONDS = 4;
 const CODA_APP_NAME = import.meta.env.VITE_CODA_APP_NAME?.trim() || "Coda";
 const LIBRARY_COLLATOR = new Intl.Collator(undefined, {
@@ -2548,6 +2553,8 @@ export default function App() {
   const [streamUrl, setStreamUrl] = useState<string>();
   const [airPlayAvailable, setAirPlayAvailable] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const lastSystemMediaTimelineUpdateRef = useRef(Number.NEGATIVE_INFINITY);
+  const systemMediaErrorNotifiedRef = useRef(false);
   const playbackIndexRef = useRef(currentIndex);
   playbackIndexRef.current = currentIndex;
   const queuePanelRef = useRef<HTMLDivElement>(null);
@@ -2705,6 +2712,11 @@ export default function App() {
       systemMediaDisplay,
     ],
   );
+  const nativeSystemMediaArtworkUrl =
+    directSystemMediaArtworkUrl ??
+    (resolvedSystemMediaArtwork?.identity === systemMediaArtworkIdentity
+      ? resolvedSystemMediaArtwork.url
+      : undefined);
   const currentRadioScrobbleTimeline = useMemo(
     () =>
       currentTrack?.id.startsWith("radio:")
@@ -2884,6 +2896,15 @@ export default function App() {
     if (playerStateErrorNotifiedRef.current) return;
     playerStateErrorNotifiedRef.current = true;
     notify(`${summary}: ${String(cause).replace(/^Error:\s*/, "")}`, "bad");
+  }, [notify]);
+  const reportSystemMediaError = useCallback((cause: unknown) => {
+    if (systemMediaErrorNotifiedRef.current) return;
+    systemMediaErrorNotifiedRef.current = true;
+    console.error("Windows media controls could not start.", cause);
+    notify(
+      "Windows media controls could not start. Quit Coda from the tray and reopen it.",
+      "bad",
+    );
   }, [notify]);
 
   const favoriteTrackIds = useMemo(
@@ -3497,9 +3518,33 @@ export default function App() {
     playbackClock,
   ]);
 
+  const syncSystemMediaTimeline = useCallback((
+    audio: HTMLAudioElement,
+    force = false,
+  ) => {
+    const durationSeconds = Number.isFinite(audio.duration)
+      ? audio.duration
+      : currentTrack?.duration ?? 0;
+    if (durationSeconds <= 0) return;
+    const now = performance.now();
+    if (
+      !force &&
+      now - lastSystemMediaTimelineUpdateRef.current <
+        SYSTEM_MEDIA_TIMELINE_UPDATE_MS
+    ) {
+      return;
+    }
+    lastSystemMediaTimelineUpdateRef.current = now;
+    void updateSystemMediaTimeline(
+      audio.currentTime,
+      durationSeconds,
+    ).catch(reportSystemMediaError);
+  }, [currentTrack?.duration, reportSystemMediaError]);
+
   const handleAudioSeeking = useCallback((event: SyntheticEvent<HTMLAudioElement>) => {
     const positionSeconds = event.currentTarget.currentTime;
     playbackClock.seek(positionSeconds);
+    syncSystemMediaTimeline(event.currentTarget, true);
     playbackSessionRef.current.lastPosition = positionSeconds;
     if (radioScrobbleProgressRef.current) {
       radioScrobbleProgressRef.current = {
@@ -3507,7 +3552,7 @@ export default function App() {
         lastPosition: positionSeconds,
       };
     }
-  }, [playbackClock]);
+  }, [playbackClock, syncSystemMediaTimeline]);
 
   const handleAudioLoadedMetadata = useCallback((event: SyntheticEvent<HTMLAudioElement>) => {
     const pending = pendingRestorePositionRef.current;
@@ -3526,12 +3571,14 @@ export default function App() {
     }
     event.currentTarget.currentTime = position;
     playbackClock.restore(position);
+    syncSystemMediaTimeline(event.currentTarget, true);
     pendingRestorePositionRef.current = undefined;
-  }, [currentTrack?.id, playbackClock]);
+  }, [currentTrack?.id, playbackClock, syncSystemMediaTimeline]);
 
   const handleAudioTimeUpdate = useCallback((event: SyntheticEvent<HTMLAudioElement>) => {
     const position = event.currentTarget.currentTime;
     playbackClock.updateFromMedia(position);
+    syncSystemMediaTimeline(event.currentTarget);
 
     const track = currentTrack;
     if (!track) return;
@@ -3591,6 +3638,7 @@ export default function App() {
     notify,
     playbackClock,
     playing,
+    syncSystemMediaTimeline,
   ]);
 
   useEffect(() => {
@@ -4037,6 +4085,38 @@ export default function App() {
     currentIndex + 1 < queue.length ||
     (repeat === "all" && queue.length > 1)
   );
+  const currentSystemMediaChapterIndex = currentSystemMediaChapter
+    ? currentRadioTimeline.indexOf(currentSystemMediaChapter)
+    : -1;
+  const nativeSystemMediaCanNext =
+    canNext ||
+    (currentSystemMediaChapterIndex >= 0 &&
+      currentSystemMediaChapterIndex < currentRadioTimeline.length - 1);
+
+  useEffect(() => {
+    if (!systemMediaDisplay) {
+      void updateSystemMediaMetadata().catch(reportSystemMediaError);
+      return;
+    }
+    void updateSystemMediaMetadata({
+      title: systemMediaDisplay.title,
+      artist: systemMediaDisplay.artist,
+      album: systemMediaDisplay.album,
+      artworkUrl: nativeSystemMediaArtworkUrl,
+      canPrevious: true,
+      canNext: nativeSystemMediaCanNext,
+    }).catch(reportSystemMediaError);
+  }, [
+    nativeSystemMediaArtworkUrl,
+    nativeSystemMediaCanNext,
+    reportSystemMediaError,
+    systemMediaDisplay,
+  ]);
+
+  useEffect(() => {
+    if (!currentTrack) return;
+    void updateSystemMediaPlayback(playing).catch(reportSystemMediaError);
+  }, [currentTrack, playing, reportSystemMediaError]);
 
   const libraryBrowseCounts = useMemo(
     () => {
@@ -4693,6 +4773,17 @@ export default function App() {
     playbackClock.seek(value);
     if (audioRef.current) audioRef.current.currentTime = value;
   }, [playbackClock]);
+  const seekFromSystemMediaControls = useCallback((positionSeconds: number) => {
+    const durationSeconds =
+      audioRef.current && Number.isFinite(audioRef.current.duration)
+        ? audioRef.current.duration
+        : currentTrack?.duration ?? 0;
+    seek(
+      durationSeconds > 0
+        ? Math.min(durationSeconds, Math.max(0, positionSeconds))
+        : Math.max(0, positionSeconds),
+    );
+  }, [currentTrack?.duration, seek]);
 
   const cycleRepeat = useCallback(() => {
     setRepeat((value) => value === "off" ? "all" : value === "all" ? "one" : "off");
@@ -5225,6 +5316,7 @@ export default function App() {
     onTogglePlayback: togglePlayback,
     onPrevious: previous,
     onNext: next,
+    onSeek: seekFromSystemMediaControls,
     onShuffleLibrary: shuffleLibrary,
   });
   useEffect(() => {
@@ -5234,6 +5326,7 @@ export default function App() {
       onTogglePlayback: togglePlayback,
       onPrevious: previous,
       onNext: next,
+      onSeek: seekFromSystemMediaControls,
       onShuffleLibrary: shuffleLibrary,
     };
   }, [
@@ -5241,12 +5334,13 @@ export default function App() {
     pauseFromSystemMediaControls,
     playFromSystemMediaControls,
     previous,
+    seekFromSystemMediaControls,
     shuffleLibrary,
     togglePlayback,
   ]);
   useEffect(() => {
     if (!isDesktop()) return;
-    let unlisten: (() => void) | undefined;
+    let unlisten: (() => void)[] = [];
     let disposed = false;
     const safelyUnlisten = (dispose: () => void) => {
       try {
@@ -5256,7 +5350,7 @@ export default function App() {
       }
     };
     void import("@tauri-apps/api/event")
-      .then(({ listen }) =>
+      .then(({ listen }) => Promise.all([
         listen<string>("coda://tray-control", ({ payload }) => {
           const handlers = desktopControlHandlersRef.current;
           if (payload === "play") handlers.onPlay();
@@ -5268,10 +5362,26 @@ export default function App() {
             void handlers.onShuffleLibrary();
           }
         }),
-      )
+        listen<SystemMediaControlEvent>(
+          "coda://system-media-control",
+          ({ payload }) => {
+            const handlers = desktopControlHandlersRef.current;
+            if (payload.action === "play") handlers.onPlay();
+            if (payload.action === "pause") handlers.onPause();
+            if (payload.action === "previous") handlers.onPrevious();
+            if (payload.action === "next") handlers.onNext();
+            if (
+              payload.action === "seek" &&
+              typeof payload.positionSeconds === "number"
+            ) {
+              handlers.onSeek(payload.positionSeconds);
+            }
+          },
+        ),
+      ]))
       .then((dispose) => {
         if (disposed) {
-          safelyUnlisten(dispose);
+          dispose.forEach(safelyUnlisten);
         } else {
           unlisten = dispose;
         }
@@ -5281,7 +5391,7 @@ export default function App() {
       });
     return () => {
       disposed = true;
-      if (unlisten) safelyUnlisten(unlisten);
+      unlisten.forEach(safelyUnlisten);
     };
   }, []);
   const isInitialLoading =
@@ -6071,6 +6181,7 @@ export default function App() {
         onDurationChange={(event) => {
           if (Number.isFinite(event.currentTarget.duration)) {
             playbackClock.updateFromMedia(event.currentTarget.currentTime);
+            syncSystemMediaTimeline(event.currentTarget, true);
           }
         }}
         onEnded={handleAudioEnded}

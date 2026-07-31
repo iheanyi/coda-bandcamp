@@ -12,7 +12,7 @@ use reqwest::{
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::num::NonZeroU32;
@@ -31,6 +31,7 @@ use tauri::{
 
 #[cfg(target_os = "macos")]
 mod macos_window;
+mod system_media;
 
 #[cfg(desktop)]
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
@@ -118,6 +119,8 @@ const PLAYER_DIAGNOSTIC_FILE: &str = "player-state-diagnostic.log";
 const MAX_PLAYER_DIAGNOSTIC_BYTES: u64 = 64 * 1024;
 const MAX_PLAYER_STATE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_PLAYER_CHECKPOINT_BYTES: usize = 16 * 1024;
+const MAX_SYSTEM_MEDIA_ARTWORK_BYTES: usize = 5 * 1024 * 1024;
+const MAX_SYSTEM_MEDIA_ARTWORK_CACHE: usize = 32;
 const MAX_PLAYER_QUEUE_LENGTH: usize = 25_000;
 const MAX_PLAYER_TEXT_LENGTH: usize = 1_024;
 const MAX_PLAYER_SECONDS: f64 = 7.0 * 24.0 * 60.0 * 60.0;
@@ -143,6 +146,40 @@ const ALBUM_TRACKS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("a
 struct ConnectionInput {
     username: String,
     password: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SystemMediaMetadataInput {
+    title: String,
+    artist: String,
+    album: String,
+    artwork_url: Option<String>,
+    can_previous: bool,
+    can_next: bool,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SystemMediaControlEvent {
+    action: String,
+    position_seconds: Option<f64>,
+}
+
+struct SystemMediaState {
+    session: Mutex<Option<system_media::NativeMediaSession>>,
+    artwork_cache: Mutex<VecDeque<(String, system_media::SystemMediaArtwork)>>,
+    metadata_generation: AtomicU64,
+}
+
+impl SystemMediaState {
+    fn new() -> Self {
+        Self {
+            session: Mutex::new(None),
+            artwork_cache: Mutex::new(VecDeque::new()),
+            metadata_generation: AtomicU64::new(0),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -3945,6 +3982,201 @@ async fn radio_show(show_id: u64) -> Result<RadioShow, String> {
     radio_show_from_raw(body)
 }
 
+fn validate_system_media_metadata(
+    input: &SystemMediaMetadataInput,
+) -> Result<Option<String>, String> {
+    for (label, value) in [
+        ("title", input.title.as_str()),
+        ("artist", input.artist.as_str()),
+        ("album", input.album.as_str()),
+    ] {
+        if !valid_subsonic_text(value, MAX_SUBSONIC_TEXT_LENGTH, true) {
+            return Err(format!("The system media {label} is invalid."));
+        }
+    }
+    match input.artwork_url.as_deref() {
+        Some(value) => allowed_url(value, "media")
+            .or_else(|| allowed_url(value, "bandcamp"))
+            .map(Some)
+            .ok_or_else(|| "The system media artwork URL is invalid.".into()),
+        None => Ok(None),
+    }
+}
+
+#[tauri::command]
+async fn update_system_media_metadata(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SystemMediaState>,
+    input: Option<SystemMediaMetadataInput>,
+) -> Result<(), String> {
+    let generation = state.metadata_generation.fetch_add(1, Ordering::SeqCst) + 1;
+    let Some(input) = input else {
+        let session = state
+            .session
+            .lock()
+            .map_err(|_| "The Windows media session is unavailable.".to_string())?;
+        return match session.as_ref() {
+            Some(session) => session.clear(),
+            None => Ok(()),
+        };
+    };
+    let artwork_url = validate_system_media_metadata(&input)?;
+    let artwork = match artwork_url.as_deref() {
+        Some(url) => Some(resolve_system_media_artwork(&state, url).await?),
+        None => None,
+    };
+    if state.metadata_generation.load(Ordering::SeqCst) != generation {
+        return Ok(());
+    }
+    with_system_media_session(&app, &state, |session| {
+        session.update_metadata(
+            input.title.trim(),
+            input.artist.trim(),
+            input.album.trim(),
+            artwork.as_ref(),
+            input.can_previous,
+            input.can_next,
+        )
+    })
+}
+
+async fn resolve_system_media_artwork(
+    state: &SystemMediaState,
+    url: &str,
+) -> Result<system_media::SystemMediaArtwork, String> {
+    {
+        let mut cache = state
+            .artwork_cache
+            .lock()
+            .map_err(|_| "The Windows artwork cache is unavailable.".to_string())?;
+        if let Some(index) = cache.iter().position(|(key, _)| key == url) {
+            let entry = cache
+                .remove(index)
+                .expect("cached artwork index was present");
+            let artwork = entry.1.clone();
+            cache.push_back(entry);
+            return Ok(artwork);
+        }
+    }
+
+    let bytes = fetch_system_media_artwork(url).await?;
+    let artwork = system_media::artwork_from_bytes(&bytes)?;
+    let mut cache = state
+        .artwork_cache
+        .lock()
+        .map_err(|_| "The Windows artwork cache is unavailable.".to_string())?;
+    if cache.len() >= MAX_SYSTEM_MEDIA_ARTWORK_CACHE {
+        cache.pop_front();
+    }
+    cache.push_back((url.to_string(), artwork.clone()));
+    Ok(artwork)
+}
+
+async fn fetch_system_media_artwork(url: &str) -> Result<Vec<u8>, String> {
+    let url = Url::parse(url).map_err(|_| "The system media artwork URL is invalid.")?;
+    let response = send_bandcamp_request(
+        http_client()?
+            .get(url)
+            .header(reqwest::header::ACCEPT, "image/jpeg,image/png,image/webp"),
+        "Bandcamp artwork",
+        BandcampRetryPolicy::SafeRead,
+    )
+    .await?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Bandcamp artwork returned HTTP {}.",
+            response.status().as_u16()
+        ));
+    }
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_SYSTEM_MEDIA_ARTWORK_BYTES as u64)
+    {
+        return Err("Bandcamp artwork returned an unexpectedly large response.".into());
+    }
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .map(|value| value.trim().to_ascii_lowercase());
+    if !matches!(
+        content_type.as_deref(),
+        Some("image/jpeg" | "image/png" | "image/webp")
+    ) {
+        return Err("Bandcamp artwork returned an unexpected content type.".into());
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|_| "Bandcamp artwork returned an unreadable response.".to_string())?;
+    if !valid_system_media_artwork_bytes(&bytes) {
+        return Err("Bandcamp artwork returned an unexpected image.".into());
+    }
+    Ok(bytes.to_vec())
+}
+
+fn valid_system_media_artwork_bytes(bytes: &[u8]) -> bool {
+    if bytes.is_empty() || bytes.len() > MAX_SYSTEM_MEDIA_ARTWORK_BYTES {
+        return false;
+    }
+    bytes.starts_with(&[0xff, 0xd8, 0xff])
+        || bytes.starts_with(b"\x89PNG\r\n\x1a\n")
+        || (bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP")
+}
+
+#[tauri::command]
+fn update_system_media_playback(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SystemMediaState>,
+    playing: bool,
+) -> Result<(), String> {
+    with_system_media_session(&app, &state, |session| session.update_playback(playing))
+}
+
+#[tauri::command]
+fn update_system_media_timeline(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SystemMediaState>,
+    position_seconds: f64,
+    duration_seconds: f64,
+) -> Result<(), String> {
+    if !position_seconds.is_finite()
+        || position_seconds < 0.0
+        || !duration_seconds.is_finite()
+        || duration_seconds <= 0.0
+        || duration_seconds > MAX_PLAYER_SECONDS
+    {
+        return Err("The system media timeline is invalid.".into());
+    }
+    with_system_media_session(&app, &state, |session| {
+        session.update_timeline(position_seconds, duration_seconds)
+    })
+}
+
+fn with_system_media_session<T>(
+    app: &tauri::AppHandle,
+    state: &SystemMediaState,
+    update: impl FnOnce(&system_media::NativeMediaSession) -> Result<T, String>,
+) -> Result<T, String> {
+    let mut session = state
+        .session
+        .lock()
+        .map_err(|_| "The Windows media session is unavailable.".to_string())?;
+    if session.is_none() {
+        let window = app
+            .get_webview_window("main")
+            .ok_or_else(|| "Coda's main window is unavailable for media controls.".to_string())?;
+        system_media::set_window_app_user_model_id(&window)?;
+        *session = Some(system_media::NativeMediaSession::new(&window, app.clone())?);
+    }
+    update(
+        session
+            .as_ref()
+            .expect("system media session was initialized"),
+    )
+}
+
 #[cfg(desktop)]
 fn with_window_state_plugin<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder.plugin(
@@ -3962,7 +4194,13 @@ fn with_window_state_plugin<R: tauri::Runtime>(builder: tauri::Builder<R>) -> ta
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default()
+    let _ = system_media::set_process_app_user_model_id();
+    let builder = tauri::Builder::default();
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
+        show_main_window(app);
+    }));
+    let builder = builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init());
     #[cfg(desktop)]
@@ -3993,6 +4231,7 @@ pub fn run() {
                     }
                 }
                 ensure_window_is_visible(app);
+                app.manage(SystemMediaState::new());
 
                 #[cfg(target_os = "macos")]
                 if let Some(window) = app.get_webview_window("main") {
@@ -4130,7 +4369,10 @@ pub fn run() {
             get_cover_url,
             discover,
             radio_shows,
-            radio_show
+            radio_show,
+            update_system_media_metadata,
+            update_system_media_playback,
+            update_system_media_timeline
         ])
         .run(tauri::generate_context!())
         .expect("error while running Coda");
@@ -5849,6 +6091,78 @@ mod tests {
         }))
         .unwrap();
         assert!(radio_show_from_raw(raw).is_err());
+    }
+
+    #[test]
+    fn system_media_metadata_is_bounded_and_keeps_artwork_allowlisted() {
+        let valid = SystemMediaMetadataInput {
+            title: "Afterimage".into(),
+            artist: "Night Archive".into(),
+            album: "Soft Focus".into(),
+            artwork_url: Some("https://f4.bcbits.com/img/a123_10.jpg".into()),
+            can_previous: true,
+            can_next: true,
+        };
+        assert_eq!(
+            validate_system_media_metadata(&valid).unwrap().as_deref(),
+            Some("https://f4.bcbits.com/img/a123_10.jpg")
+        );
+
+        let mut invalid = valid.clone();
+        invalid.title = "bad\nmetadata".into();
+        assert!(validate_system_media_metadata(&invalid).is_err());
+        invalid = valid;
+        invalid.artwork_url = Some("https://evil.example/cover.jpg".into());
+        assert!(validate_system_media_metadata(&invalid).is_err());
+    }
+
+    #[test]
+    fn system_media_artwork_accepts_only_bounded_supported_images() {
+        assert!(valid_system_media_artwork_bytes(&[0xff, 0xd8, 0xff, 0xe0]));
+        assert!(valid_system_media_artwork_bytes(b"\x89PNG\r\n\x1a\nrest"));
+        assert!(valid_system_media_artwork_bytes(b"RIFFsizeWEBPrest"));
+        assert!(!valid_system_media_artwork_bytes(b"<html>not an image"));
+        assert!(!valid_system_media_artwork_bytes(&vec![
+            0xff;
+            MAX_SYSTEM_MEDIA_ARTWORK_BYTES
+                + 1
+        ]));
+    }
+
+    #[test]
+    fn windows_media_identity_matches_the_installer_and_disables_webview_keys() {
+        let config: Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let package: Value = serde_json::from_str(include_str!("../../package.json")).unwrap();
+        assert_eq!(
+            config.get("version").and_then(Value::as_str),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert_eq!(
+            package.get("version").and_then(Value::as_str),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert_eq!(
+            config.get("identifier").and_then(Value::as_str),
+            Some(SERVICE_NAME)
+        );
+        let browser_args = config
+            .pointer("/app/windows/0/additionalBrowserArgs")
+            .and_then(Value::as_str)
+            .unwrap();
+        let disabled_features = browser_args
+            .strip_prefix("--disable-features=")
+            .unwrap()
+            .split(',')
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            disabled_features,
+            BTreeSet::from([
+                "HardwareMediaKeyHandling",
+                "msPdfOOUI",
+                "msSmartScreenProtection",
+                "msWebOOUI",
+            ])
+        );
     }
 
     #[cfg(desktop)]
