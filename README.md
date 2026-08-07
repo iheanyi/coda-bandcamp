@@ -63,17 +63,21 @@ npm run desktop:build
 Tauri produces Windows installers on Windows, macOS bundles on macOS, and Linux
 packages on Linux.
 
-For local development and signed builds with Last.fm enabled, copy
-`.env.example` to the gitignored `.env`, fill in the values, and authorize the
-project environment once:
+For local development with Last.fm enabled, copy `.env.example` to either the
+gitignored `.env` or `.env.local`, fill in the values, and authorize the project
+environment once:
 
 ```sh
-cp .env.example .env
+cp .env.example .env.local
 direnv allow
 ```
 
-After that, `npm run dev` automatically inherits the Last.fm credentials. For
-a signed local build, run:
+The checked-in `.envrc` loads `.env` first and `.env.local` second, so either
+file works and machine-local values take precedence. After that, restart
+`npm run dev` so Rust recompiles with the Last.fm credentials.
+
+For a signed local build, keep the required build credentials in `.env` and
+run:
 
 ```sh
 npm run desktop:build:local
@@ -82,7 +86,7 @@ npm run desktop:build:local
 The local build command also loads `.env` explicitly before Rust compiles, so
 the compile-time Last.fm credentials and Tauri updater signing credentials
 reach the native build even outside a direnv-enabled shell. Do not commit
-`.env`.
+`.env` or `.env.local`.
 
 ## Connect Bandcamp
 
