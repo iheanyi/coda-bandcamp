@@ -159,6 +159,7 @@ struct SystemMediaMetadataInput {
     can_next: bool,
 }
 
+#[cfg(target_os = "windows")]
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SystemMediaControlEvent {
