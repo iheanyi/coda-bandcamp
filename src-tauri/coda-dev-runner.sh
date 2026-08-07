@@ -40,9 +40,27 @@ find_signing_identity_hash() {
     awk 'NR == 1 { print $2 }'
 }
 
+resolve_signing_identity() {
+  identity_hash=""
+  if [ "$identity" != "-" ]; then
+    identity_hash="$(find_signing_identity_hash)"
+  fi
+
+  if printf '%s\n' "$identity_hash" | grep -Eq '^[0-9A-F]{40}$'; then
+    signing_identity="$identity_hash"
+    code_requirement="=identifier \"$signing_identifier\" and certificate leaf = H\"$identity_hash\""
+  elif [ -n "${CODA_DEV_CODESIGN_IDENTITY:-}" ] && [ "$identity" != "-" ]; then
+    printf 'Coda could not find the requested macOS code-signing identity "%s".\n' "$identity" >&2
+    exit 1
+  else
+    signing_identity="-"
+    code_requirement="=identifier \"$signing_identifier\""
+  fi
+}
+
 bundle_dev_app() {
   signed_executable="$1"
-  identity_hash="$2"
+  signing_identity="$2"
   executable_directory="$(dirname -- "$signed_executable")"
   target_triple="$(basename -- "$(dirname -- "$executable_directory")")"
 
@@ -68,7 +86,7 @@ bundle_dev_app() {
   cp "$signed_executable" "$bundled_executable"
   codesign \
     --force \
-    --sign "$identity_hash" \
+    --sign "$signing_identity" \
     --timestamp=none \
     --identifier "$signing_identifier" \
     "$app_bundle"
@@ -157,14 +175,7 @@ case "${1:-}" in
       fi
       instance_executable="$(dirname -- "$executable")/coda-$executable_slug"
     fi
-    identity_hash="$(find_signing_identity_hash)"
-
-    if ! printf '%s\n' "$identity_hash" | grep -Eq '^[0-9A-F]{40}$'; then
-      printf 'Coda could not find the macOS code-signing identity "%s".\n' "$identity" >&2
-      exit 1
-    fi
-
-    code_requirement="=identifier \"$signing_identifier\" and certificate leaf = H\"$identity_hash\""
+    resolve_signing_identity
     if [ -n "$executable_slug" ]; then
       fingerprint_file="$instance_executable.native-fingerprint"
       cached_schema=""
@@ -200,7 +211,7 @@ case "${1:-}" in
         cp "$executable" "$signing_executable"
         codesign \
           --force \
-          --sign "$identity_hash" \
+          --sign "$signing_identity" \
           --timestamp=none \
           --identifier "$signing_identifier" \
           "$signing_executable"
@@ -218,14 +229,14 @@ case "${1:-}" in
     else
       codesign \
         --force \
-        --sign "$identity_hash" \
+        --sign "$signing_identity" \
         --timestamp=none \
         --identifier "$signing_identifier" \
         "$executable"
       codesign --verify --strict -R "$code_requirement" "$executable"
     fi
 
-    bundle_dev_app "$executable" "$identity_hash"
+    bundle_dev_app "$executable" "$signing_identity"
     exec "$bundled_executable" "$@"
     ;;
   *)

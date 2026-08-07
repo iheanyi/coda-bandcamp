@@ -50,7 +50,9 @@ On macOS, the command packages and launches
 `src-tauri/target/debug/bundle/macos/Coda Dev.app`. The development flavor uses
 `com.coda.bandcamp.dev`, so macOS can discover it independently from an
 installed production build while Vite and Tauri continue to provide hot
-reloading.
+reloading. No local signing certificate is required: Coda uses the optional
+`Coda Local Development` identity when it exists and otherwise signs the app
+ad hoc.
 
 To create a native installer for the current platform:
 
@@ -61,16 +63,26 @@ npm run desktop:build
 Tauri produces Windows installers on Windows, macOS bundles on macOS, and Linux
 packages on Linux.
 
-For a signed local build with Last.fm enabled, copy `.env.example` to the
-gitignored `.env.local`, fill in the values, and run:
+For local development and signed builds with Last.fm enabled, copy
+`.env.example` to the gitignored `.env`, fill in the values, and authorize the
+project environment once:
+
+```sh
+cp .env.example .env
+direnv allow
+```
+
+After that, `npm run dev` automatically inherits the Last.fm credentials. For
+a signed local build, run:
 
 ```sh
 npm run desktop:build:local
 ```
 
-The local build command loads `.env.local` before Rust compiles, so the
-compile-time Last.fm credentials and Tauri updater signing credentials reach
-the native build. Do not commit `.env.local`.
+The local build command also loads `.env` explicitly before Rust compiles, so
+the compile-time Last.fm credentials and Tauri updater signing credentials
+reach the native build even outside a direnv-enabled shell. Do not commit
+`.env`.
 
 ## Connect Bandcamp
 

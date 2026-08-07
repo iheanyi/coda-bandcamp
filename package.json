@@ -16,7 +16,7 @@
     "tauri": "tauri",
     "desktop:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "desktop:build": "tauri build",
-    "desktop:build:local": "node --env-file=.env.local ./node_modules/@tauri-apps/cli/tauri.js build"
+    "desktop:build:local": "node --env-file=.env ./node_modules/@tauri-apps/cli/tauri.js build"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
