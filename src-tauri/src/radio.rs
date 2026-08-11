@@ -1,29 +1,156 @@
 use crate::bandcamp_http::{fetch_bounded_json, fetch_bounded_json_request, http_client};
-use crate::models::{
-    RadioChapter, RadioSeries, RadioShow, RadioShowSummary, RadioShowsPage, RadioShowsRequest,
-    RawRadioList, RawRadioSeriesShow, RawRadioShow, RawRadioShowsPage, RawRadioSummary,
-    RawRadioUrlHints,
-};
+use crate::models::{RadioChapter, RadioSeries, RadioShow, RadioShowSummary, RadioShowsPage};
 use crate::url_policy::{allowed_url, UrlKind};
-use crate::{
-    MAX_RADIO_CHAPTERS, MAX_RADIO_CURSOR_LENGTH, MAX_RADIO_DURATION_SECONDS, MAX_RADIO_SHOWS,
-    MAX_RADIO_TEXT_LENGTH, RADIO_LIST_ENDPOINT, RADIO_SERIES_CATALOG, RADIO_SHOWS_ENDPOINT,
-    RADIO_SHOW_ENDPOINT, RADIO_SHOW_PAGE_SIZE,
-};
+use crate::validation::{valid_library_date, MAX_RADIO_CHAPTERS};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use url::Url;
 
+const RADIO_LIST_ENDPOINT: &str = "https://bandcamp.com/api/bcweekly/2/list";
+const RADIO_SHOWS_ENDPOINT: &str = "https://bandcamp.com/api/radio_api/1/get_radio_shows";
+const RADIO_SHOW_ENDPOINT: &str = "https://bandcamp.com/api/bcweekly/2/get";
+const MAX_RADIO_SHOWS: usize = 1_000;
+pub(super) const MAX_RADIO_SHOW_ID: u64 = 1_000_000;
+const RADIO_SHOW_PAGE_SIZE: u64 = 24;
+const MAX_RADIO_CURSOR_LENGTH: usize = 128;
+pub(super) const MAX_RADIO_TEXT_LENGTH: usize = 4_096;
+const MAX_RADIO_DURATION_SECONDS: f64 = 24.0 * 60.0 * 60.0;
+const RADIO_SERIES_CATALOG: &[(u64, &str, &str)] = &[
+    (1, "Bandcamp Electronic", "bandcamp-electronic"),
+    (2, "Bandcamp Selects", "bandcamp-selects"),
+    (4, "The Game Show", "the-game-show"),
+    (5, "The Hip Hop Show", "the-hip-hop-show"),
+    (6, "The Indie Show", "the-indie-show"),
+    (7, "The Metal Show", "the-metal-show"),
+];
+
+#[derive(Debug, Deserialize)]
+pub(super) struct RawRadioList {
+    #[serde(default)]
+    pub(super) results: Vec<RawRadioSummary>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct RawRadioShowsPage {
+    #[serde(default)]
+    pub(super) items: Vec<RawRadioSeriesShow>,
+    pub(super) next_cursor: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct RawRadioSeriesShow {
+    pub(super) item_id: u64,
+    #[serde(default)]
+    pub(super) title: String,
+    #[serde(default)]
+    pub(super) description: String,
+    #[serde(default)]
+    pub(super) date: String,
+    pub(super) image_id: Option<u64>,
+    pub(super) franchise_name: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct RadioShowsRequest {
+    page_size: u64,
+    next_cursor: Option<String>,
+    radio_franchise_id: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct RawRadioSummary {
+    pub(super) id: u64,
+    #[serde(default)]
+    pub(super) subtitle: String,
+    #[serde(default)]
+    pub(super) desc: String,
+    #[serde(default)]
+    pub(super) published_date: String,
+    pub(super) v2_image_id: Option<u64>,
+    pub(super) screen_image_id: Option<u64>,
+    pub(super) image_id: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct RawRadioShow {
+    pub(super) show_id: u64,
+    #[serde(default)]
+    pub(super) title: String,
+    #[serde(default)]
+    pub(super) subtitle: String,
+    #[serde(default)]
+    pub(super) desc: String,
+    #[serde(default)]
+    pub(super) published_date: String,
+    pub(super) show_v2_image_id: Option<u64>,
+    pub(super) show_screen_image_id: Option<u64>,
+    pub(super) show_image_id: Option<u64>,
+    pub(super) audio_duration: Option<f64>,
+    #[serde(default)]
+    pub(super) audio_stream: BTreeMap<String, String>,
+    #[serde(default)]
+    pub(super) tracks: Vec<RawRadioChapter>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct RawRadioChapter {
+    #[serde(default)]
+    pub(super) title: String,
+    #[serde(default)]
+    pub(super) artist: String,
+    pub(super) album_title: Option<String>,
+    pub(super) timecode: Option<f64>,
+    pub(super) track_url: Option<String>,
+    pub(super) url: Option<String>,
+    pub(super) album_url: Option<String>,
+    pub(super) track_art_id: Option<u64>,
+    pub(super) url_hints: Option<RawRadioUrlHints>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct RawRadioUrlHints {
+    pub(super) subdomain: Option<String>,
+}
+
 pub(super) fn clean_radio_text(value: &str, fallback: &str) -> String {
-    let cleaned = value
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .chars()
-        .take(MAX_RADIO_TEXT_LENGTH)
-        .collect::<String>();
+    if value.len() > MAX_RADIO_TEXT_LENGTH.saturating_mul(4)
+        || value
+            .chars()
+            .any(|character| character.is_control() && !character.is_whitespace())
+    {
+        return fallback.into();
+    }
+    let mut cleaned = String::with_capacity(value.len().min(MAX_RADIO_TEXT_LENGTH));
+    for word in value.split_whitespace() {
+        let separator_bytes = usize::from(!cleaned.is_empty());
+        if cleaned
+            .len()
+            .saturating_add(separator_bytes)
+            .saturating_add(word.len())
+            > MAX_RADIO_TEXT_LENGTH
+        {
+            return fallback.into();
+        }
+        if separator_bytes == 1 {
+            cleaned.push(' ');
+        }
+        cleaned.push_str(word);
+    }
     if cleaned.is_empty() {
         fallback.into()
     } else {
         cleaned
+    }
+}
+
+pub(super) fn clean_radio_date(value: &str) -> String {
+    let cleaned = clean_radio_text(value, "");
+    if valid_library_date(&cleaned) {
+        cleaned
+    } else {
+        "Date unavailable".into()
     }
 }
 
@@ -105,14 +232,14 @@ pub(super) fn radio_artist_url(
 }
 
 pub(super) fn radio_summary_from_raw(value: RawRadioSummary) -> Option<RadioShowSummary> {
-    if value.id == 0 {
+    if value.id == 0 || value.id > MAX_RADIO_SHOW_ID {
         return None;
     }
     Some(RadioShowSummary {
         id: value.id,
         subtitle: clean_radio_text(&value.subtitle, "Untitled episode"),
         description: clean_radio_text(&value.desc, "A Bandcamp-curated radio show."),
-        published_at: clean_radio_text(&value.published_date, "Date unavailable"),
+        published_at: clean_radio_date(&value.published_date),
         artwork_url: radio_artwork_url(
             value
                 .v2_image_id
@@ -127,7 +254,7 @@ pub(super) fn radio_summary_from_series_raw(
     value: RawRadioSeriesShow,
     requested_series: Option<&RadioSeries>,
 ) -> Option<RadioShowSummary> {
-    if value.item_id == 0 {
+    if value.item_id == 0 || value.item_id > MAX_RADIO_SHOW_ID {
         return None;
     }
     let series = value
@@ -139,14 +266,14 @@ pub(super) fn radio_summary_from_series_raw(
         id: value.item_id,
         subtitle: clean_radio_text(&value.title, "Untitled episode"),
         description: clean_radio_text(&value.description, "A Bandcamp-curated radio show."),
-        published_at: clean_radio_text(&value.date, "Date unavailable"),
+        published_at: clean_radio_date(&value.date),
         artwork_url: radio_artwork_url(value.image_id),
         series,
     })
 }
 
 pub(super) fn radio_show_from_raw(value: RawRadioShow) -> Result<RadioShow, String> {
-    if value.show_id == 0 {
+    if value.show_id == 0 || value.show_id > MAX_RADIO_SHOW_ID {
         return Err("Bandcamp Radio returned an invalid show identifier.".into());
     }
     let duration = value.audio_duration.unwrap_or_default();
@@ -169,7 +296,10 @@ pub(super) fn radio_show_from_raw(value: RawRadioShow) -> Result<RadioShow, Stri
         .take(MAX_RADIO_CHAPTERS)
         .filter_map(|chapter| {
             let timecode = chapter.timecode.unwrap_or_default();
-            if !timecode.is_finite() || !(0.0..=MAX_RADIO_DURATION_SECONDS).contains(&timecode) {
+            if !timecode.is_finite()
+                || !(0.0..=MAX_RADIO_DURATION_SECONDS).contains(&timecode)
+                || timecode > duration
+            {
                 return None;
             }
             let track_url = chapter
@@ -212,7 +342,7 @@ pub(super) fn radio_show_from_raw(value: RawRadioShow) -> Result<RadioShow, Stri
         title,
         subtitle: clean_radio_text(&value.subtitle, "Untitled episode"),
         description: clean_radio_text(&value.desc, "A Bandcamp-curated radio show."),
-        published_at: clean_radio_text(&value.published_date, "Date unavailable"),
+        published_at: clean_radio_date(&value.published_date),
         artwork_url: radio_artwork_url(
             value
                 .show_v2_image_id
@@ -287,7 +417,7 @@ pub(super) async fn radio_shows(
 
 #[tauri::command]
 pub(super) async fn radio_show(show_id: u64) -> Result<RadioShow, String> {
-    if show_id == 0 || show_id > 1_000_000 {
+    if show_id == 0 || show_id > MAX_RADIO_SHOW_ID {
         return Err("The Bandcamp Radio show identifier is invalid.".into());
     }
     let mut url = Url::parse(RADIO_SHOW_ENDPOINT)

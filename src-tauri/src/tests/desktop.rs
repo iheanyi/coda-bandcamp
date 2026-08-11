@@ -124,6 +124,15 @@ fn window_state_lookup_errors_do_not_override_a_restored_window() {
 }
 
 #[test]
+fn updater_plugin_is_enabled_only_for_the_production_identifier() {
+    assert!(!updater_enabled_for_app_identifier("com.coda.bandcamp.dev"));
+    assert!(updater_enabled_for_app_identifier(APP_ID));
+    assert!(!updater_enabled_for_app_identifier(
+        "com.coda.bandcamp.preview"
+    ));
+}
+
+#[test]
 fn windows_media_identity_matches_the_installer_and_disables_webview_keys() {
     let config: Value = serde_json::from_str(include_str!("../../tauri.conf.json")).unwrap();
     let package: Value = serde_json::from_str(include_str!("../../../package.json")).unwrap();
@@ -184,6 +193,14 @@ fn recognizes_windows_on_monitors_with_negative_coordinates() {
     assert!(!overlaps_monitor(
         [4_000, 2_000, 1_000, 700],
         [-1_920, 0, 1_920, 1_080]
+    ));
+}
+
+#[test]
+fn monitor_overlap_math_is_saturating_for_extreme_coordinates() {
+    assert!(!overlaps_monitor(
+        [i32::MIN, i32::MIN, 1, 1],
+        [i32::MAX, i32::MAX, 1, 1],
     ));
 }
 

@@ -8,7 +8,11 @@ pub(crate) enum UrlKind {
 
 pub(crate) fn allowed_url(value: &str, kind: UrlKind) -> Option<String> {
     let parsed = Url::parse(value).ok()?;
-    if parsed.scheme() != "https" {
+    if parsed.scheme() != "https"
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.port().is_some_and(|port| port != 443)
+    {
         return None;
     }
     let host = parsed.host_str()?.to_ascii_lowercase();

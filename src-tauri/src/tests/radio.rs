@@ -67,6 +67,17 @@ fn parses_and_bounds_public_radio_metadata() {
 }
 
 #[test]
+fn radio_text_normalization_never_emits_controls_or_oversized_utf8() {
+    assert_eq!(clean_radio_text("A new\nshow", "fallback"), "A new show");
+    assert_eq!(clean_radio_text("Bad\u{0000}title", "fallback"), "fallback");
+    assert_eq!(
+        clean_radio_text(&"é".repeat(MAX_RADIO_TEXT_LENGTH / 2 + 1), "fallback"),
+        "fallback"
+    );
+    assert_eq!(clean_radio_date("not-a-date"), "Date unavailable");
+}
+
+#[test]
 fn parses_series_radio_pages_and_validates_opaque_cursors() {
     let series = radio_series_by_id(5).unwrap();
     let summary = radio_summary_from_series_raw(
@@ -90,6 +101,17 @@ fn parses_series_radio_pages_and_validates_opaque_cursors() {
     assert!(validate_radio_cursor(Some("../not-a-cursor".into())).is_err());
     assert!(validate_radio_cursor(Some("".into())).is_err());
     assert!(radio_series_by_id(3).is_none());
+
+    assert!(radio_summary_from_raw(RawRadioSummary {
+        id: MAX_RADIO_SHOW_ID + 1,
+        subtitle: "Invalid".into(),
+        desc: String::new(),
+        published_date: String::new(),
+        v2_image_id: None,
+        screen_image_id: None,
+        image_id: None,
+    })
+    .is_none());
 }
 
 #[test]
@@ -135,4 +157,28 @@ fn rejects_untrusted_radio_stream_hosts() {
     }))
     .unwrap();
     assert!(radio_show_from_raw(raw).is_err());
+}
+
+#[test]
+fn rejects_out_of_range_show_ids_and_chapters_beyond_the_timeline() {
+    let invalid_show: RawRadioShow = serde_json::from_value(serde_json::json!({
+        "show_id": MAX_RADIO_SHOW_ID + 1,
+        "audio_duration": 60,
+        "audio_stream": { "mp3-128": "https://bandcamp.com/stream_redirect" }
+    }))
+    .unwrap();
+    assert!(radio_show_from_raw(invalid_show).is_err());
+
+    let show: RawRadioShow = serde_json::from_value(serde_json::json!({
+        "show_id": 979,
+        "audio_duration": 60,
+        "audio_stream": { "mp3-128": "https://bandcamp.com/stream_redirect" },
+        "tracks": [{
+            "title": "After the end",
+            "artist": "Artist",
+            "timecode": 61
+        }]
+    }))
+    .unwrap();
+    assert!(radio_show_from_raw(show).unwrap().chapters.is_empty());
 }

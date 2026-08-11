@@ -1,15 +1,25 @@
-use crate::models::{Album, ConnectionInput, LibraryCacheSnapshot};
-use crate::storage::{timestamp_ms, write_bytes_atomically};
-use crate::subsonic::{load_credentials, validate_album};
-use crate::{
-    CONNECTION_GENERATION, LIBRARY_CACHE_FILE, LIBRARY_CACHE_LOCK, LIBRARY_CACHE_TTL_MS,
-    LIBRARY_CACHE_VERSION, LIBRARY_SYNC_GENERATION, MAX_LIBRARY_ALBUMS, MAX_LIBRARY_CACHE_BYTES,
-};
+use crate::models::{Album, LibraryCacheSnapshot};
+use crate::storage::write_bytes_atomically;
+use crate::subsonic::validate_album;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::Mutex;
 use tauri::Manager;
+
+pub(super) const LIBRARY_CACHE_VERSION: u8 = 1;
+pub(super) const LIBRARY_CACHE_FILE: &str = "library-cache-v1.json";
+pub(super) const LIBRARY_CACHE_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
+pub(super) const LIBRARY_FULL_RECONCILE_INTERVAL_MS: u64 = 24 * 60 * 60 * 1_000;
+pub(super) const MAX_LIBRARY_ALBUMS: usize = 5_000;
+const MAX_LIBRARY_CACHE_BYTES: usize = 32 * 1024 * 1024;
+
+pub(super) static LIBRARY_CACHE_LOCK: Mutex<()> = Mutex::new(());
+
+enum LibraryCacheReadError {
+    Discardable(String),
+    Operational(String),
+}
 
 pub(super) fn library_cache_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
@@ -44,33 +54,48 @@ pub(super) fn validate_library_cache(
     Ok(())
 }
 
-pub(super) fn read_library_cache(
+fn read_library_cache_classified(
     path: &Path,
     now: u64,
-) -> Result<Option<LibraryCacheSnapshot>, String> {
+) -> Result<Option<LibraryCacheSnapshot>, LibraryCacheReadError> {
     let file = match fs::File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("Could not open the saved library: {error}")),
+        Err(error) => {
+            return Err(LibraryCacheReadError::Operational(format!(
+                "Could not open the saved library: {error}"
+            )))
+        }
     };
     if file
         .metadata()
-        .map_err(|error| format!("Could not inspect the saved library: {error}"))?
+        .map_err(|error| {
+            LibraryCacheReadError::Operational(format!(
+                "Could not inspect the saved library: {error}"
+            ))
+        })?
         .len()
         > MAX_LIBRARY_CACHE_BYTES as u64
     {
-        return Err("The saved library is unexpectedly large.".into());
+        return Err(LibraryCacheReadError::Discardable(
+            "The saved library is unexpectedly large.".into(),
+        ));
     }
     let mut bytes = Vec::new();
     file.take((MAX_LIBRARY_CACHE_BYTES + 1) as u64)
         .read_to_end(&mut bytes)
-        .map_err(|error| format!("Could not read the saved library: {error}"))?;
+        .map_err(|error| {
+            LibraryCacheReadError::Operational(format!("Could not read the saved library: {error}"))
+        })?;
     if bytes.len() > MAX_LIBRARY_CACHE_BYTES {
-        return Err("The saved library is unexpectedly large.".into());
+        return Err(LibraryCacheReadError::Discardable(
+            "The saved library is unexpectedly large.".into(),
+        ));
     }
-    let snapshot: LibraryCacheSnapshot = serde_json::from_slice(&bytes)
-        .map_err(|_| "The saved library is malformed.".to_string())?;
-    validate_library_cache(&snapshot, now)?;
+    let snapshot: LibraryCacheSnapshot = serde_json::from_slice(&bytes).map_err(|_| {
+        LibraryCacheReadError::Discardable("The saved library is malformed.".into())
+    })?;
+    validate_library_cache(&snapshot, now).map_err(LibraryCacheReadError::Discardable)?;
     Ok(Some(snapshot))
 }
 
@@ -102,61 +127,15 @@ pub(super) fn load_library_cache_or_clear_invalid(
     path: &Path,
     now: u64,
 ) -> Result<Option<LibraryCacheSnapshot>, String> {
-    match read_library_cache(path, now) {
+    match read_library_cache_classified(path, now) {
         Ok(snapshot) => Ok(snapshot),
-        Err(error)
-            if error.contains("malformed")
-                || error.contains("unsupported version")
-                || error.contains("timestamp")
-                || error.contains("expired")
-                || error.contains("too many")
-                || error.contains("invalid album")
-                || error.contains("unexpectedly large") =>
-        {
-            match fs::remove_file(path) {
-                Ok(()) => Ok(None),
-                Err(remove_error) if remove_error.kind() == std::io::ErrorKind::NotFound => {
-                    Ok(None)
-                }
-                Err(remove_error) => Err(format!(
-                    "Could not remove an invalid saved library ({error}; {remove_error})"
-                )),
-            }
-        }
-        Err(error) => Err(error),
+        Err(LibraryCacheReadError::Discardable(error)) => match fs::remove_file(path) {
+            Ok(()) => Ok(None),
+            Err(remove_error) if remove_error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(remove_error) => Err(format!(
+                "Could not remove an invalid saved library ({error}; {remove_error})"
+            )),
+        },
+        Err(LibraryCacheReadError::Operational(error)) => Err(error),
     }
-}
-
-pub(super) fn save_library_cache_if_connection_current(
-    app: &tauri::AppHandle,
-    albums: &[Album],
-    expected_generation: u64,
-    expected_sync_generation: u64,
-    expected_credentials: &ConnectionInput,
-    replace_connection: bool,
-    last_full_sync_at: u64,
-) -> Result<bool, String> {
-    let _guard = LIBRARY_CACHE_LOCK
-        .lock()
-        .map_err(|_| "The library cache lock is unavailable.".to_string())?;
-    if CONNECTION_GENERATION.load(Ordering::Acquire) != expected_generation
-        || LIBRARY_SYNC_GENERATION.load(Ordering::Acquire) != expected_sync_generation
-        || load_credentials().ok().as_ref() != Some(expected_credentials)
-    {
-        return Ok(false);
-    }
-    let path = library_cache_path(app)?;
-    if replace_connection {
-        match fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(format!(
-                    "Could not remove the prior saved library before reconnecting: {error}"
-                ))
-            }
-        }
-    }
-    write_library_cache(&path, albums, timestamp_ms()?, last_full_sync_at)?;
-    Ok(true)
 }

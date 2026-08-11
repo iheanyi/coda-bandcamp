@@ -42,7 +42,7 @@ fn validates_bounded_player_state_and_rejects_unrestorable_tracks() {
     assert_eq!(radio_progress.scrobbled_chapter_keys, ["60:chapter"]);
 
     let mut implausible_track_number = valid.clone();
-    implausible_track_number.queue[0].track = MAX_PLAYER_TRACK_NUMBER + 1;
+    implausible_track_number.queue[0].track = MAX_TRACK_NUMBER + 1;
     assert!(validate_player_state(&implausible_track_number).is_err());
 
     let mut oversized = valid;
@@ -88,6 +88,10 @@ fn persisted_player_shape_rejects_urls_and_unknown_fields() {
     value["queue"][0]["streamUrl"] =
         Value::String("https://bandcamp.com/api/subsonic/rest/stream.view?t=signed".into());
     assert!(serde_json::from_value::<PlayerStateSnapshot>(value).is_err());
+
+    let mut blank_track = sample_player_state();
+    blank_track.queue[0].title = "   ".into();
+    assert!(validate_player_state(&blank_track).is_err());
 }
 
 #[test]
@@ -104,7 +108,53 @@ fn atomically_round_trips_player_state_and_discards_corruption() {
     fs::write(&path, b"{ definitely not valid json").unwrap();
     assert!(load_player_state_or_clear_invalid(&path).unwrap().is_none());
     assert!(!path.exists());
+
+    let mut invalid_radio_state = sample_player_state();
+    invalid_radio_state.queue[0].id = "radio:979".into();
+    invalid_radio_state.last_fm_progress = None;
+    invalid_radio_state.radio_scrobble_progress = Some(RadioScrobbleProgress {
+        show_track_id: "radio:980".into(),
+        active_chapter_key: None,
+        chapter_started_at: 0,
+        chapter_listened_seconds: 0.0,
+        last_position: 0.0,
+        chapter_now_playing_sent: false,
+        chapter_scrobble_state: "idle".into(),
+        show_started_at: 0,
+        show_listened_seconds: 0.0,
+        show_scrobble_state: "idle".into(),
+        scrobbled_chapter_keys: Vec::new(),
+    });
+    fs::write(&path, serde_json::to_vec(&invalid_radio_state).unwrap()).unwrap();
+    assert!(load_player_state_or_clear_invalid(&path).unwrap().is_none());
+    assert!(!path.exists());
     fs::remove_dir(directory).unwrap();
+}
+
+#[test]
+fn a_checkpoint_cleanup_failure_cannot_commit_a_conflicting_full_snapshot() {
+    let state_path = temporary_player_state_path("checkpoint-cleanup-failure");
+    let directory = state_path.parent().unwrap().to_path_buf();
+    let checkpoint_path = directory.join("checkpoint-that-cannot-be-removed");
+    fs::create_dir_all(&checkpoint_path).unwrap();
+
+    let original = sample_player_state();
+    write_player_state(&state_path, &original).unwrap();
+    let mut replacement = original.clone();
+    replacement.queue[0].id = "replacement-track".into();
+
+    assert!(write_player_state_without_stale_checkpoint(
+        &state_path,
+        &checkpoint_path,
+        &replacement,
+    )
+    .is_err());
+    assert_eq!(
+        read_player_state(&state_path).unwrap().unwrap().queue[0].id,
+        original.queue[0].id
+    );
+
+    fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]

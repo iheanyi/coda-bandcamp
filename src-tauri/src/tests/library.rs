@@ -1,6 +1,5 @@
 use super::*;
 use redb::ReadableDatabase;
-use std::sync::atomic::Ordering;
 
 #[test]
 fn atomically_round_trips_bounded_library_cache_without_media_urls() {
@@ -13,7 +12,9 @@ fn atomically_round_trips_bounded_library_cache_without_media_urls() {
     assert!(!serialized.contains("streamUrl"));
     assert!(!serialized.contains("\"tracks\""));
 
-    let restored = read_library_cache(&path, now + 1_000).unwrap().unwrap();
+    let restored = load_library_cache_or_clear_invalid(&path, now + 1_000)
+        .unwrap()
+        .unwrap();
     assert_eq!(restored.version, LIBRARY_CACHE_VERSION);
     assert_eq!(restored.last_full_sync_at, now);
     assert_eq!(restored.albums.len(), 1);
@@ -77,6 +78,17 @@ fn rejects_expired_future_malformed_and_overfull_library_caches() {
 }
 
 #[test]
+fn keeps_operational_cache_failures_distinct_from_discardable_corruption() {
+    let path = temporary_library_cache_path("operational-error");
+    fs::create_dir_all(&path).unwrap();
+
+    assert!(load_library_cache_or_clear_invalid(&path, 1_800_000_000_000).is_err());
+    assert!(path.is_dir());
+
+    fs::remove_dir_all(path.parent().unwrap()).unwrap();
+}
+
+#[test]
 fn newest_probe_skips_only_unchanged_recent_full_caches() {
     let now = 1_800_000_000_000;
     let mut older = sample_album("album-older");
@@ -110,6 +122,33 @@ fn newest_probe_skips_only_unchanged_recent_full_caches() {
 }
 
 #[test]
+fn cache_persistence_failures_do_not_discard_a_live_library_sync() {
+    assert!(finish_library_cache_write(Ok(true), "cache write").is_ok());
+    assert!(finish_library_cache_write(Err("disk full".into()), "cache write").is_ok());
+    assert!(finish_library_cache_write(Ok(false), "cache write").is_err());
+}
+
+#[test]
+fn account_cache_reset_is_required_when_the_previous_owner_is_unknown_or_changes() {
+    let first = ConnectionInput {
+        username: "first-user".into(),
+        password: "first-password".into(),
+    };
+    let refreshed = ConnectionInput {
+        username: "first-user".into(),
+        password: "new-password".into(),
+    };
+    let second = ConnectionInput {
+        username: "second-user".into(),
+        password: "second-password".into(),
+    };
+
+    assert!(connection_owner_changed(None, &first));
+    assert!(!connection_owner_changed(Some(&first), &refreshed));
+    assert!(connection_owner_changed(Some(&first), &second));
+}
+
+#[test]
 fn forced_album_refresh_supersedes_older_cache_and_network_requests() {
     let suffix: String = rand::thread_rng()
         .sample_iter(&Alphanumeric)
@@ -117,7 +156,7 @@ fn forced_album_refresh_supersedes_older_cache_and_network_requests() {
         .map(char::from)
         .collect();
     let album_id = format!("album-refresh-{suffix}");
-    let connection_generation = CONNECTION_GENERATION.load(Ordering::Acquire);
+    let connection_generation = current_connection_generation();
     let original_generation = album_refresh_generation(&album_id).unwrap();
 
     assert!(
@@ -435,6 +474,28 @@ fn bandcamp_read_retries_only_transient_statuses() {
     ] {
         assert!(!is_retryable_bandcamp_status(status));
     }
+}
+
+#[test]
+fn request_errors_do_not_expose_request_urls_or_query_secrets() {
+    let secret = "generated-auth-token";
+    let error = tauri::async_runtime::block_on(async {
+        reqwest::Client::builder()
+            .connect_timeout(Duration::from_millis(100))
+            .timeout(Duration::from_millis(250))
+            .build()
+            .unwrap()
+            .get(format!("https://127.0.0.1:1/?t={secret}&s=salt"))
+            .send()
+            .await
+            .unwrap_err()
+    });
+    assert!(error.url().is_some());
+
+    let message = redacted_request_error("Bandcamp", error);
+    assert!(!message.contains(secret));
+    assert!(!message.contains("127.0.0.1"));
+    assert!(!message.contains("s=salt"));
 }
 
 #[test]

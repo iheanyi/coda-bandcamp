@@ -4,26 +4,23 @@ use crate::album_cache::{
     read_persisted_album_tracks, write_persisted_album_tracks,
 };
 use crate::library_cache::{
-    library_cache_path, load_library_cache_or_clear_invalid,
-    save_library_cache_if_connection_current,
+    library_cache_path, load_library_cache_or_clear_invalid, write_library_cache,
+    LIBRARY_CACHE_LOCK, LIBRARY_FULL_RECONCILE_INTERVAL_MS, MAX_LIBRARY_ALBUMS,
 };
 use crate::models::{Album, ConnectionInput, LibraryCacheSnapshot, LibrarySyncEvent, Track};
 use crate::storage::{run_blocking, timestamp_ms};
 use crate::subsonic::{
-    bounded_album_from_value, bounded_track_from_value, credential_entry, load_credentials,
-    load_credentials_async, request_json, store_credentials_async, validate_credentials,
-    validate_identifier,
-};
-use crate::{
-    CONNECTION_GENERATION, LIBRARY_CACHE_LOCK, LIBRARY_FULL_RECONCILE_INTERVAL_MS,
-    LIBRARY_SYNC_GENERATION, MAX_LIBRARY_ALBUMS, MAX_PLAYLIST_TRACKS,
+    advance_connection_generation, bounded_album_from_value, bounded_track_from_value,
+    credential_entry, current_connection_generation, load_credentials, load_credentials_async,
+    request_json, store_credentials_async, validate_credentials, validate_identifier,
+    MAX_PLAYLIST_TRACKS,
 };
 use chrono::DateTime;
 use serde_json::Value;
 use std::collections::{BTreeSet, VecDeque};
 use std::fs;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Mutex, OnceLock,
 };
 use tauri::ipc::Channel;
@@ -42,13 +39,66 @@ struct AlbumPersistJob {
 
 static ALBUM_PERSIST_QUEUE: OnceLock<Mutex<VecDeque<AlbumPersistJob>>> = OnceLock::new();
 static ALBUM_PERSIST_WORKER_RUNNING: AtomicBool = AtomicBool::new(false);
+static LIBRARY_SYNC_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+pub(super) fn library_sync_generation() -> u64 {
+    LIBRARY_SYNC_GENERATION.load(Ordering::Acquire)
+}
+
+fn advance_library_sync_generation() -> u64 {
+    LIBRARY_SYNC_GENERATION.fetch_add(1, Ordering::AcqRel) + 1
+}
+
+pub(super) fn save_library_cache_if_connection_current(
+    app: &tauri::AppHandle,
+    albums: &[Album],
+    expected_generation: u64,
+    expected_sync_generation: u64,
+    expected_credentials: &ConnectionInput,
+    last_full_sync_at: u64,
+) -> Result<bool, String> {
+    let _guard = LIBRARY_CACHE_LOCK
+        .lock()
+        .map_err(|_| "The library cache lock is unavailable.".to_string())?;
+    if current_connection_generation() != expected_generation
+        || library_sync_generation() != expected_sync_generation
+        || load_credentials().ok().as_ref() != Some(expected_credentials)
+    {
+        return Ok(false);
+    }
+    write_library_cache(
+        &library_cache_path(app)?,
+        albums,
+        timestamp_ms()?,
+        last_full_sync_at,
+    )?;
+    Ok(true)
+}
+
+pub(super) fn connection_owner_changed(
+    previous_credentials: Option<&ConnectionInput>,
+    next_credentials: &ConnectionInput,
+) -> bool {
+    previous_credentials
+        .map(|credentials| credentials.username != next_credentials.username)
+        .unwrap_or(true)
+}
+
+fn clear_library_cache_file(app: &tauri::AppHandle) -> Result<(), String> {
+    let _guard = LIBRARY_CACHE_LOCK
+        .lock()
+        .map_err(|_| "The library cache lock is unavailable.".to_string())?;
+    match fs::remove_file(library_cache_path(app)?) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("Could not remove the prior saved library: {error}")),
+    }
+}
 
 #[tauri::command]
 pub(super) async fn has_connection() -> bool {
     run_blocking("Could not finish checking the Bandcamp connection", || {
-        Ok(credential_entry()
-            .and_then(|entry| entry.get_password().map_err(|error| error.to_string()))
-            .is_ok())
+        Ok(load_credentials().is_ok())
     })
     .await
     .unwrap_or(false)
@@ -58,6 +108,8 @@ fn disconnect_blocking(app: tauri::AppHandle) -> Result<(), String> {
     let _guard = LIBRARY_CACHE_LOCK
         .lock()
         .map_err(|_| "The library cache lock is unavailable.".to_string())?;
+    let database = album_metadata_database(&app)?;
+    clear_persisted_album_tracks(database)?;
     let path = library_cache_path(&app)?;
     match fs::remove_file(path) {
         Ok(()) => {}
@@ -66,12 +118,9 @@ fn disconnect_blocking(app: tauri::AppHandle) -> Result<(), String> {
     }
     match credential_entry()?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => {
-            CONNECTION_GENERATION.fetch_add(1, Ordering::AcqRel);
-            LIBRARY_SYNC_GENERATION.fetch_add(1, Ordering::AcqRel);
+            advance_connection_generation();
+            advance_library_sync_generation();
             clear_album_refresh_generations();
-            if let Ok(database) = album_metadata_database(&app) {
-                let _ = clear_persisted_album_tracks(database);
-            }
             Ok(())
         }
         Err(error) => Err(format!("Could not remove credentials: {error}")),
@@ -236,9 +285,9 @@ pub(super) fn ensure_library_sync_current(
     expected_sync_generation: u64,
     expected_connection_generation: Option<u64>,
 ) -> Result<(), String> {
-    if LIBRARY_SYNC_GENERATION.load(Ordering::Acquire) != expected_sync_generation
+    if library_sync_generation() != expected_sync_generation
         || expected_connection_generation
-            .is_some_and(|expected| CONNECTION_GENERATION.load(Ordering::Acquire) != expected)
+            .is_some_and(|expected| current_connection_generation() != expected)
     {
         return Err("The Bandcamp connection changed before sync completed.".into());
     }
@@ -284,6 +333,24 @@ pub(super) fn connection_error(error: String) -> String {
     }
 }
 
+pub(super) fn finish_library_cache_write(
+    result: Result<bool, String>,
+    operation: &str,
+) -> Result<(), String> {
+    match result {
+        Ok(true) => Ok(()),
+        Ok(false) => Err("The Bandcamp connection changed before sync completed.".into()),
+        Err(error) => {
+            // The live library is already usable and the credential state is
+            // committed. A restart-safe cache is an optimization, so a local
+            // disk failure must not turn a successful connection or sync into
+            // a false user-facing failure.
+            eprintln!("{operation}: {error}");
+            Ok(())
+        }
+    }
+}
+
 #[tauri::command]
 pub(super) async fn connect(
     app: tauri::AppHandle,
@@ -296,10 +363,25 @@ pub(super) async fn connect(
         || Ok(load_credentials().ok()),
     )
     .await?;
-    let sync_generation = LIBRARY_SYNC_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
+    let sync_generation = advance_library_sync_generation();
     let albums = fetch_library_with_credentials(&input, &on_progress, None, sync_generation)
         .await
         .map_err(connection_error)?;
+    ensure_library_sync_current(sync_generation, None)?;
+    if connection_owner_changed(previous_credentials.as_ref(), &input) {
+        let album_cache_app = app.clone();
+        run_blocking("Could not finish resetting the album cache", move || {
+            let database = album_metadata_database(&album_cache_app)?;
+            clear_persisted_album_tracks(database)
+        })
+        .await?;
+
+        let library_cache_app = app.clone();
+        run_blocking("Could not finish resetting the library cache", move || {
+            clear_library_cache_file(&library_cache_app)
+        })
+        .await?;
+    }
     ensure_library_sync_current(sync_generation, None)?;
     store_credentials_async(input.clone()).await?;
 
@@ -314,21 +396,8 @@ pub(super) async fn connect(
         );
     }
 
-    let connection_generation = CONNECTION_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
+    let connection_generation = advance_connection_generation();
     clear_album_refresh_generations();
-    if previous_credentials
-        .as_ref()
-        .is_some_and(|credentials| credentials.username != input.username)
-    {
-        let album_cache_app = app.clone();
-        run_blocking("Could not finish resetting the album cache", move || {
-            if let Ok(database) = album_metadata_database(&album_cache_app) {
-                let _ = clear_persisted_album_tracks(database);
-            }
-            Ok(())
-        })
-        .await?;
-    }
     let cache_app = app.clone();
     let cached_albums = albums.clone();
     let cached_credentials = input.clone();
@@ -340,15 +409,12 @@ pub(super) async fn connect(
             connection_generation,
             sync_generation,
             &cached_credentials,
-            true,
             full_sync_at,
         )
     })
     .await
-    .map_err(|error| format!("Could not save the library cache: {error}"))??;
-    if !cache_result {
-        return Err("The Bandcamp connection changed before sync completed.".into());
-    }
+    .map_err(|error| format!("Could not save the library cache: {error}"))?;
+    finish_library_cache_write(cache_result, "Could not save the library cache")?;
 
     Ok(albums)
 }
@@ -360,8 +426,8 @@ pub(super) async fn fetch_library(
     force_full: bool,
 ) -> Result<Vec<Album>, String> {
     let credentials = load_credentials_async().await?;
-    let connection_generation = CONNECTION_GENERATION.load(Ordering::Acquire);
-    let sync_generation = LIBRARY_SYNC_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
+    let connection_generation = current_connection_generation();
+    let sync_generation = advance_library_sync_generation();
     let now = timestamp_ms()?;
     let cached_snapshot = if force_full {
         None
@@ -395,15 +461,12 @@ pub(super) async fn fetch_library(
                         connection_generation,
                         sync_generation,
                         &cached_credentials,
-                        false,
                         last_full_sync_at,
                     )
                 })
                 .await
-                .map_err(|error| format!("Could not refresh the library cache: {error}"))??;
-                if !cache_result {
-                    return Err("The Bandcamp connection changed before sync completed.".into());
-                }
+                .map_err(|error| format!("Could not refresh the library cache: {error}"))?;
+                finish_library_cache_write(cache_result, "Could not refresh the library cache")?;
                 return Ok(response_albums);
             }
         }
@@ -427,15 +490,12 @@ pub(super) async fn fetch_library(
             connection_generation,
             sync_generation,
             &cached_credentials,
-            false,
             full_sync_at,
         )
     })
     .await
-    .map_err(|error| format!("Could not save the library cache: {error}"))??;
-    if !cache_result {
-        return Err("The Bandcamp connection changed before sync completed.".into());
-    }
+    .map_err(|error| format!("Could not save the library cache: {error}"))?;
+    finish_library_cache_write(cache_result, "Could not save the library cache")?;
     Ok(albums)
 }
 
@@ -589,7 +649,7 @@ pub(super) fn ensure_album_request_current(
     album_id: &str,
     refresh_generation: u64,
 ) -> Result<(), String> {
-    if CONNECTION_GENERATION.load(Ordering::Acquire) != connection_generation {
+    if current_connection_generation() != connection_generation {
         return Err("The Bandcamp connection changed while the album was loading.".into());
     }
     if album_refresh_generation(album_id)? != refresh_generation {
@@ -605,7 +665,7 @@ pub(super) async fn fetch_album(
     force_refresh: bool,
 ) -> Result<Vec<Track>, String> {
     validate_identifier(&album_id)?;
-    let connection_generation = CONNECTION_GENERATION.load(Ordering::Acquire);
+    let connection_generation = current_connection_generation();
     let refresh_generation = if force_refresh {
         bump_album_refresh_generation(&album_id)?
     } else {

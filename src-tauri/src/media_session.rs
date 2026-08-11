@@ -1,17 +1,40 @@
 use crate::bandcamp_http::{
     http_client, read_bounded_response, send_bandcamp_request, BandcampRetryPolicy,
 };
-use crate::models::{SystemMediaMetadataInput, SystemMediaState};
+use crate::models::SystemMediaMetadataInput;
 use crate::system_media;
 use crate::url_policy::{allowed_url, UrlKind};
-use crate::validation::valid_bounded_text;
-use crate::{
-    MAX_PLAYER_SECONDS, MAX_SUBSONIC_TEXT_LENGTH, MAX_SYSTEM_MEDIA_ARTWORK_BYTES,
-    MAX_SYSTEM_MEDIA_ARTWORK_CACHE,
+use crate::validation::{valid_bounded_text, MAX_MEDIA_SECONDS, MAX_METADATA_TEXT_LENGTH};
+use std::collections::VecDeque;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Mutex,
 };
-use std::sync::atomic::Ordering;
 use tauri::Manager;
 use url::Url;
+
+pub(super) const MAX_SYSTEM_MEDIA_ARTWORK_BYTES: usize = 5 * 1024 * 1024;
+const MAX_SYSTEM_MEDIA_ARTWORK_CACHE: usize = 32;
+
+pub(crate) struct SystemMediaState {
+    session: Mutex<Option<system_media::NativeMediaSession>>,
+    artwork_cache: Mutex<VecDeque<(String, system_media::SystemMediaArtwork)>>,
+    metadata_generation: AtomicU64,
+    playback_generation: AtomicU64,
+    timeline_generation: AtomicU64,
+}
+
+impl SystemMediaState {
+    pub(crate) fn new() -> Self {
+        Self {
+            session: Mutex::new(None),
+            artwork_cache: Mutex::new(VecDeque::new()),
+            metadata_generation: AtomicU64::new(0),
+            playback_generation: AtomicU64::new(0),
+            timeline_generation: AtomicU64::new(0),
+        }
+    }
+}
 
 pub(super) fn validate_system_media_metadata(
     input: &SystemMediaMetadataInput,
@@ -21,7 +44,7 @@ pub(super) fn validate_system_media_metadata(
         ("artist", input.artist.as_str()),
         ("album", input.album.as_str()),
     ] {
-        if !valid_bounded_text(value, MAX_SUBSONIC_TEXT_LENGTH, true) {
+        if !valid_bounded_text(value, MAX_METADATA_TEXT_LENGTH, true) {
             return Err(format!("The system media {label} is invalid."));
         }
     }
@@ -100,12 +123,11 @@ pub(super) async fn resolve_system_media_artwork(
             .lock()
             .map_err(|_| "The Windows artwork cache is unavailable.".to_string())?;
         if let Some(index) = cache.iter().position(|(key, _)| key == &lookup_url) {
-            let entry = cache
-                .remove(index)
-                .expect("cached artwork index was present");
-            let artwork = entry.1.clone();
-            cache.push_back(entry);
-            return Ok(Some(artwork));
+            if let Some(entry) = cache.remove(index) {
+                let artwork = entry.1.clone();
+                cache.push_back(entry);
+                return Ok(Some(artwork));
+            }
         }
         Ok(None)
     })
@@ -138,7 +160,10 @@ pub(super) async fn resolve_system_media_artwork(
 }
 
 pub(super) async fn fetch_system_media_artwork(url: &str) -> Result<Vec<u8>, String> {
-    let url = Url::parse(url).map_err(|_| "The system media artwork URL is invalid.")?;
+    let url = allowed_url(url, UrlKind::BandcampMedia)
+        .or_else(|| allowed_url(url, UrlKind::BandcampPage))
+        .ok_or("The system media artwork URL is invalid.")?;
+    let url = Url::parse(&url).map_err(|_| "The system media artwork URL is invalid.")?;
     let response = send_bandcamp_request(
         http_client()?
             .get(url)
@@ -221,18 +246,21 @@ pub(super) async fn update_system_media_playback(
     .await
 }
 
+pub(super) fn valid_system_media_timeline(position_seconds: f64, duration_seconds: f64) -> bool {
+    position_seconds.is_finite()
+        && (0.0..=MAX_MEDIA_SECONDS).contains(&position_seconds)
+        && duration_seconds.is_finite()
+        && duration_seconds > 0.0
+        && duration_seconds <= MAX_MEDIA_SECONDS
+}
+
 #[tauri::command]
 pub(super) async fn update_system_media_timeline(
     app: tauri::AppHandle,
     position_seconds: f64,
     duration_seconds: f64,
 ) -> Result<(), String> {
-    if !position_seconds.is_finite()
-        || position_seconds < 0.0
-        || !duration_seconds.is_finite()
-        || duration_seconds <= 0.0
-        || duration_seconds > MAX_PLAYER_SECONDS
-    {
+    if !valid_system_media_timeline(position_seconds, duration_seconds) {
         return Err("The system media timeline is invalid.".into());
     }
     let generation = app
@@ -274,9 +302,8 @@ pub(super) fn with_system_media_session(
     if !is_current() {
         return Ok(());
     }
-    update(
-        session
-            .as_ref()
-            .expect("system media session was initialized"),
-    )
+    let session = session
+        .as_ref()
+        .ok_or_else(|| "The Windows media session could not be initialized.".to_string())?;
+    update(session)
 }

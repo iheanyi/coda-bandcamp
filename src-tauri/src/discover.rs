@@ -1,17 +1,73 @@
 use crate::bandcamp_http::{
     http_client, read_bounded_response, send_bandcamp_request, BandcampRetryPolicy,
-};
-use crate::models::{
-    DiscoverInput, DiscoverPage, DiscoverRelease, DiscoverRequest, DiscoverTrack, RawDiscoverPage,
-    RawDiscoverRelease,
-};
-use crate::storage::run_blocking;
-use crate::url_policy::{allowed_url, UrlKind};
-use crate::{
-    DISCOVER_ENDPOINT, DISCOVER_PAGE_SIZE, MAX_DISCOVER_CURSOR_LENGTH, MAX_DISCOVER_TAG_LENGTH,
     MAX_JSON_RESPONSE_BYTES,
 };
+use crate::models::{DiscoverInput, DiscoverPage, DiscoverRelease, DiscoverTrack};
+use crate::storage::run_blocking;
+use crate::url_policy::{allowed_url, UrlKind};
+use crate::validation::{
+    bounded_trimmed_text, valid_bounded_text, MAX_MEDIA_SECONDS, MAX_METADATA_TEXT_LENGTH,
+};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+const DISCOVER_ENDPOINT: &str = "https://bandcamp.com/api/discover/1/discover_web";
+const DISCOVER_PAGE_SIZE: usize = 40;
+const MAX_DISCOVER_TAG_LENGTH: usize = 64;
+const MAX_DISCOVER_CURSOR_LENGTH: usize = 2_048;
+pub(super) const MAX_DISCOVER_OPAQUE_ID_LENGTH: usize = 512;
+const DISCOVER_ID_PREFIX: &str = "discover:";
+
+#[derive(Debug, Deserialize)]
+pub(super) struct RawDiscoverPage {
+    #[serde(default)]
+    pub(super) results: Vec<RawDiscoverRelease>,
+    #[serde(default)]
+    result_count: u64,
+    cursor: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct RawDiscoverRelease {
+    item_id: Value,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    item_url: String,
+    album_artist: Option<String>,
+    band_name: Option<String>,
+    band_location: Option<String>,
+    genre: Option<String>,
+    primary_image: Option<RawDiscoverImage>,
+    featured_track: Option<RawDiscoverTrack>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawDiscoverImage {
+    image_id: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawDiscoverTrack {
+    id: Value,
+    #[serde(default)]
+    title: String,
+    stream_url: Option<String>,
+    duration: Option<f64>,
+}
+
+#[derive(Serialize)]
+struct DiscoverRequest<'a> {
+    category_id: u8,
+    tag_norm_names: Vec<&'a str>,
+    geoname_id: u8,
+    slice: &'a str,
+    time_facet_id: Option<u8>,
+    cursor: &'a str,
+    size: usize,
+    include_result_types: [&'a str; 2],
+    followed_bands: bool,
+}
 
 pub(super) fn validate_discover_input(input: &DiscoverInput) -> Result<(), String> {
     let tag = input.tag.trim();
@@ -31,53 +87,76 @@ pub(super) fn validate_discover_input(input: &DiscoverInput) -> Result<(), Strin
 }
 
 pub(super) fn value_id(value: &Value) -> Option<String> {
-    match value {
+    let value = match value {
         Value::String(value) if !value.is_empty() => Some(value.clone()),
         Value::Number(value) => Some(value.to_string()),
         _ => None,
-    }
+    }?;
+    let maximum_value_length = MAX_DISCOVER_OPAQUE_ID_LENGTH - DISCOVER_ID_PREFIX.len();
+    (value.trim() == value && valid_bounded_text(&value, maximum_value_length, true))
+        .then_some(value)
+}
+
+fn discover_text(value: &str, fallback: &str) -> String {
+    bounded_trimmed_text(value, MAX_METADATA_TEXT_LENGTH)
+        .unwrap_or(fallback)
+        .to_string()
+}
+
+fn optional_discover_text(value: Option<String>) -> Option<String> {
+    value
+        .as_deref()
+        .and_then(|value| bounded_trimmed_text(value, MAX_METADATA_TEXT_LENGTH))
+        .map(str::to_string)
+}
+
+fn discover_duration(value: Option<f64>) -> Option<u64> {
+    let value = value.unwrap_or_default();
+    (value.is_finite() && (0.0..=MAX_MEDIA_SECONDS).contains(&value)).then(|| value.round() as u64)
+}
+
+fn opaque_discover_id(value: &Value) -> Option<String> {
+    value_id(value).map(|value| format!("{DISCOVER_ID_PREFIX}{value}"))
 }
 
 pub(super) fn discover_release_from_raw(value: RawDiscoverRelease) -> Option<DiscoverRelease> {
-    let id = value_id(&value.item_id)?;
+    let id = opaque_discover_id(&value.item_id)?;
     let item_url = allowed_url(&value.item_url, UrlKind::BandcampPage)?;
-    let title = if value.title.trim().is_empty() {
-        "Untitled release".into()
-    } else {
-        value.title.trim().to_string()
-    };
+    let title = discover_text(&value.title, "Untitled release");
     let artist = value
         .album_artist
-        .or(value.band_name)
-        .filter(|artist| !artist.trim().is_empty())
+        .as_deref()
+        .and_then(|artist| bounded_trimmed_text(artist, MAX_METADATA_TEXT_LENGTH))
+        .or_else(|| {
+            value
+                .band_name
+                .as_deref()
+                .and_then(|artist| bounded_trimmed_text(artist, MAX_METADATA_TEXT_LENGTH))
+        })
+        .map(str::to_string)
         .unwrap_or_else(|| "Unknown artist".into());
     let artwork_url = value
         .primary_image
         .and_then(|image| image.image_id)
         .map(|image_id| format!("https://f4.bcbits.com/img/a{image_id}_10.jpg"));
     let featured_track = value.featured_track.and_then(|track| {
-        let id = value_id(&track.id)?;
+        let id = opaque_discover_id(&track.id)?;
         let stream_url = allowed_url(track.stream_url.as_deref()?, UrlKind::BandcampMedia)?;
+        let duration = discover_duration(track.duration)?;
         Some(DiscoverTrack {
-            id: format!("discover:{id}"),
-            title: if track.title.trim().is_empty() {
-                "Featured track".into()
-            } else {
-                track.title.trim().to_string()
-            },
-            duration: track.duration.unwrap_or_default().max(0.0).round() as u64,
+            id,
+            title: discover_text(&track.title, "Featured track"),
+            duration,
             stream_url,
         })
     });
 
     Some(DiscoverRelease {
-        id: format!("discover:{id}"),
+        id,
         title,
         artist,
-        genre: value.genre.filter(|genre| !genre.trim().is_empty()),
-        location: value
-            .band_location
-            .filter(|location| !location.trim().is_empty()),
+        genre: optional_discover_text(value.genre),
+        location: optional_discover_text(value.band_location),
         item_url,
         artwork_url,
         featured_track,

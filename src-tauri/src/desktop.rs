@@ -129,7 +129,9 @@ pub(super) fn mini_player_position(
             .saturating_sub(window_length)
             .saturating_sub(EDGE_GUTTER)
             .max(minimum);
-        desired.clamp(minimum, maximum) as i32
+        desired
+            .clamp(minimum, maximum)
+            .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
     }
 
     let [tray_x, tray_y, tray_width, tray_height] = tray.map(i64::from);
@@ -159,10 +161,10 @@ pub(super) fn overlaps_monitor(window: [i32; 4], monitor: [i32; 4]) -> bool {
     let [monitor_x, monitor_y, monitor_width, monitor_height] = monitor;
     let overlap_width = (window_x.saturating_add(window_width))
         .min(monitor_x.saturating_add(monitor_width))
-        - window_x.max(monitor_x);
+        .saturating_sub(window_x.max(monitor_x));
     let overlap_height = (window_y.saturating_add(window_height))
         .min(monitor_y.saturating_add(monitor_height))
-        - window_y.max(monitor_y);
+        .saturating_sub(window_y.max(monitor_y));
     overlap_width >= 80 && overlap_height >= 40
 }
 
@@ -207,10 +209,12 @@ pub(super) fn ensure_window_is_visible(app: &tauri::App) {
     if let Some(monitor) = target {
         let monitor_position = monitor.position();
         let monitor_size = monitor.size();
-        let centered_x = monitor_position.x
-            + (i32::try_from(monitor_size.width).unwrap_or(width) - width).max(0) / 2;
-        let centered_y = monitor_position.y
-            + (i32::try_from(monitor_size.height).unwrap_or(height) - height).max(0) / 2;
+        let centered_x = monitor_position.x.saturating_add(
+            (i32::try_from(monitor_size.width).unwrap_or(width) - width).max(0) / 2,
+        );
+        let centered_y = monitor_position.y.saturating_add(
+            (i32::try_from(monitor_size.height).unwrap_or(height) - height).max(0) / 2,
+        );
         let _ = window.set_position(tauri::PhysicalPosition::new(centered_x, centered_y));
     }
 }

@@ -25,6 +25,16 @@ fn parses_bounded_playlist_summaries_and_details() {
     assert_eq!(playlists[0].name, "Night drives");
     assert_eq!(playlists[0].public, Some(false));
 
+    let malformed_date = playlist_summary_from_value(&serde_json::json!({
+        "id": "playlist-2",
+        "name": "Still usable",
+        "created": "not-a-date",
+        "changed": "2026-02-29T00:00:00Z"
+    }))
+    .unwrap();
+    assert!(malformed_date.created_at.is_none());
+    assert!(malformed_date.changed_at.is_none());
+
     let detail = playlist_detail_from_value(&serde_json::json!({
         "id": "playlist-1",
         "name": "Night drives",

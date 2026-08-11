@@ -1,11 +1,7 @@
-use crate::system_media;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::{BTreeMap, VecDeque};
-use std::sync::{atomic::AtomicU64, Mutex};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ConnectionInput {
     pub(crate) username: String,
     pub(crate) password: String,
@@ -28,26 +24,6 @@ pub(crate) struct SystemMediaMetadataInput {
 pub(crate) struct SystemMediaControlEvent {
     pub(crate) action: String,
     pub(crate) position_seconds: Option<f64>,
-}
-
-pub(crate) struct SystemMediaState {
-    pub(crate) session: Mutex<Option<system_media::NativeMediaSession>>,
-    pub(crate) artwork_cache: Mutex<VecDeque<(String, system_media::SystemMediaArtwork)>>,
-    pub(crate) metadata_generation: AtomicU64,
-    pub(crate) playback_generation: AtomicU64,
-    pub(crate) timeline_generation: AtomicU64,
-}
-
-impl SystemMediaState {
-    pub(crate) fn new() -> Self {
-        Self {
-            session: Mutex::new(None),
-            artwork_cache: Mutex::new(VecDeque::new()),
-            metadata_generation: AtomicU64::new(0),
-            playback_generation: AtomicU64::new(0),
-            timeline_generation: AtomicU64::new(0),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -241,7 +217,7 @@ pub(crate) struct PlayerStateCheckpoint {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct LastFmSession {
     pub(crate) username: String,
     pub(crate) key: String,
@@ -263,7 +239,7 @@ pub(crate) struct LastFmAuthorization {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct LastFmTrackInput {
     pub(crate) artist: String,
     pub(crate) title: String,
@@ -276,14 +252,14 @@ pub(crate) struct LastFmTrackInput {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct LastFmScrobbleInput {
     pub(crate) track: LastFmTrackInput,
     pub(crate) timestamp: u64,
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct DiscoverInput {
     pub(crate) tag: String,
     pub(crate) sort: String,
@@ -319,44 +295,6 @@ pub(crate) struct DiscoverTrack {
     pub(crate) title: String,
     pub(crate) duration: u64,
     pub(crate) stream_url: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct RawDiscoverPage {
-    #[serde(default)]
-    pub(crate) results: Vec<RawDiscoverRelease>,
-    #[serde(default)]
-    pub(crate) result_count: u64,
-    pub(crate) cursor: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct RawDiscoverRelease {
-    pub(crate) item_id: Value,
-    #[serde(default)]
-    pub(crate) title: String,
-    #[serde(default)]
-    pub(crate) item_url: String,
-    pub(crate) album_artist: Option<String>,
-    pub(crate) band_name: Option<String>,
-    pub(crate) band_location: Option<String>,
-    pub(crate) genre: Option<String>,
-    pub(crate) primary_image: Option<RawDiscoverImage>,
-    pub(crate) featured_track: Option<RawDiscoverTrack>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct RawDiscoverImage {
-    pub(crate) image_id: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct RawDiscoverTrack {
-    pub(crate) id: Value,
-    #[serde(default)]
-    pub(crate) title: String,
-    pub(crate) stream_url: Option<String>,
-    pub(crate) duration: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -412,107 +350,4 @@ pub(crate) struct RadioChapter {
     pub(crate) artist_url: Option<String>,
     pub(crate) album_url: Option<String>,
     pub(crate) artwork_url: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct RawRadioList {
-    #[serde(default)]
-    pub(crate) results: Vec<RawRadioSummary>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct RawRadioShowsPage {
-    #[serde(default)]
-    pub(crate) items: Vec<RawRadioSeriesShow>,
-    pub(crate) next_cursor: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct RawRadioSeriesShow {
-    pub(crate) item_id: u64,
-    #[serde(default)]
-    pub(crate) title: String,
-    #[serde(default)]
-    pub(crate) description: String,
-    #[serde(default)]
-    pub(crate) date: String,
-    pub(crate) image_id: Option<u64>,
-    pub(crate) franchise_name: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub(crate) struct RadioShowsRequest {
-    pub(crate) page_size: u64,
-    pub(crate) next_cursor: Option<String>,
-    pub(crate) radio_franchise_id: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct RawRadioSummary {
-    pub(crate) id: u64,
-    #[serde(default)]
-    pub(crate) subtitle: String,
-    #[serde(default)]
-    pub(crate) desc: String,
-    #[serde(default)]
-    pub(crate) published_date: String,
-    pub(crate) v2_image_id: Option<u64>,
-    pub(crate) screen_image_id: Option<u64>,
-    pub(crate) image_id: Option<u64>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct RawRadioShow {
-    pub(crate) show_id: u64,
-    #[serde(default)]
-    pub(crate) title: String,
-    #[serde(default)]
-    pub(crate) subtitle: String,
-    #[serde(default)]
-    pub(crate) desc: String,
-    #[serde(default)]
-    pub(crate) published_date: String,
-    pub(crate) show_v2_image_id: Option<u64>,
-    pub(crate) show_screen_image_id: Option<u64>,
-    pub(crate) show_image_id: Option<u64>,
-    pub(crate) audio_duration: Option<f64>,
-    #[serde(default)]
-    pub(crate) audio_stream: BTreeMap<String, String>,
-    #[serde(default)]
-    pub(crate) tracks: Vec<RawRadioChapter>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct RawRadioChapter {
-    #[serde(default)]
-    pub(crate) title: String,
-    #[serde(default)]
-    pub(crate) artist: String,
-    pub(crate) album_title: Option<String>,
-    pub(crate) timecode: Option<f64>,
-    pub(crate) track_url: Option<String>,
-    pub(crate) url: Option<String>,
-    pub(crate) album_url: Option<String>,
-    pub(crate) track_art_id: Option<u64>,
-    pub(crate) url_hints: Option<RawRadioUrlHints>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct RawRadioUrlHints {
-    pub(crate) subdomain: Option<String>,
-}
-
-#[derive(Serialize)]
-pub(crate) struct DiscoverRequest<'a> {
-    pub(crate) category_id: u8,
-    pub(crate) tag_norm_names: Vec<&'a str>,
-    pub(crate) geoname_id: u8,
-    pub(crate) slice: &'a str,
-    pub(crate) time_facet_id: Option<u8>,
-    pub(crate) cursor: &'a str,
-    pub(crate) size: usize,
-    pub(crate) include_result_types: [&'a str; 2],
-    pub(crate) followed_bands: bool,
 }

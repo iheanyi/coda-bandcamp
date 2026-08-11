@@ -1,23 +1,44 @@
 use crate::app_identity::{APP_ID, SUBSONIC_CLIENT_NAME};
 use crate::bandcamp_http::{
     http_client, read_bounded_response, send_bandcamp_request, BandcampRetryPolicy,
+    MAX_JSON_RESPONSE_BYTES,
 };
 use crate::models::{
     Album, ConnectionInput, ItemDate, PlaylistDetail, PlaylistSummary, PlaylistUpdateInput, Track,
 };
 use crate::storage::run_blocking;
-use crate::validation::{valid_bounded_text, valid_musicbrainz_id};
-use crate::{
-    API_VERSION, CREDENTIAL_KEY, MAX_CREDENTIAL_LENGTH, MAX_IDENTIFIER_LENGTH,
-    MAX_JSON_RESPONSE_BYTES, MAX_PLAYER_SECONDS, MAX_PLAYER_TRACK_NUMBER, MAX_PLAYLISTS,
-    MAX_PLAYLIST_COMMENT_LENGTH, MAX_PLAYLIST_MUTATION_ITEMS, MAX_PLAYLIST_NAME_LENGTH,
-    MAX_PLAYLIST_TRACKS, MAX_SUBSONIC_DURATION_SECONDS, MAX_SUBSONIC_TEXT_LENGTH, SERVER_BASE,
+use crate::validation::{
+    valid_bounded_text, valid_library_date, valid_musicbrainz_id, MAX_MEDIA_SECONDS,
+    MAX_METADATA_TEXT_LENGTH, MAX_TRACK_NUMBER,
 };
 use keyring::Entry;
 use rand::{distributions::Alphanumeric, Rng};
 use serde_json::Value;
 use std::collections::BTreeSet;
+use std::sync::atomic::{AtomicU64, Ordering};
 use url::Url;
+
+const CREDENTIAL_KEY: &str = "subsonic";
+const SERVER_BASE: &str = "https://bandcamp.com/api/subsonic";
+const API_VERSION: &str = "1.16.1";
+const MAX_CREDENTIAL_LENGTH: usize = 512;
+const MAX_IDENTIFIER_LENGTH: usize = 512;
+const MAX_PLAYLISTS: usize = 5_000;
+pub(super) const MAX_PLAYLIST_TRACKS: usize = 25_000;
+pub(super) const MAX_PLAYLIST_MUTATION_ITEMS: usize = 5_000;
+const MAX_PLAYLIST_NAME_LENGTH: usize = 256;
+const MAX_PLAYLIST_COMMENT_LENGTH: usize = 4_096;
+pub(super) const MAX_SUBSONIC_DURATION_SECONDS: u64 = 10 * 365 * 24 * 60 * 60;
+
+static CONNECTION_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+pub(super) fn current_connection_generation() -> u64 {
+    CONNECTION_GENERATION.load(Ordering::Acquire)
+}
+
+pub(super) fn advance_connection_generation() -> u64 {
+    CONNECTION_GENERATION.fetch_add(1, Ordering::AcqRel) + 1
+}
 
 pub(super) fn credential_entry() -> Result<Entry, String> {
     Entry::new(APP_ID, CREDENTIAL_KEY)
@@ -28,6 +49,9 @@ pub(super) fn validate_credentials(input: &ConnectionInput) -> Result<(), String
     let username = input.username.trim();
     if username.is_empty() || input.password.is_empty() {
         return Err("Both the generated username and password are required.".into());
+    }
+    if username != input.username {
+        return Err("The generated username cannot begin or end with whitespace.".into());
     }
     if username.len() > MAX_CREDENTIAL_LENGTH || input.password.len() > MAX_CREDENTIAL_LENGTH {
         return Err("The supplied credentials are unexpectedly long.".into());
@@ -40,6 +64,7 @@ pub(super) fn validate_credentials(input: &ConnectionInput) -> Result<(), String
 
 pub(super) fn validate_identifier(value: &str) -> Result<(), String> {
     if value.is_empty()
+        || value.trim() != value
         || value.len() > MAX_IDENTIFIER_LENGTH
         || value.chars().any(|character| character.is_control())
     {
@@ -130,8 +155,11 @@ pub(super) fn load_credentials() -> Result<ConnectionInput, String> {
     let serialized = credential_entry()?
         .get_password()
         .map_err(|_| "Bandcamp is not connected yet.".to_string())?;
-    serde_json::from_str(&serialized)
-        .map_err(|_| "The stored Bandcamp credentials could not be read.".to_string())
+    let credentials: ConnectionInput = serde_json::from_str(&serialized)
+        .map_err(|_| "The stored Bandcamp credentials could not be read.".to_string())?;
+    validate_credentials(&credentials)
+        .map_err(|_| "The stored Bandcamp credentials could not be read.".to_string())?;
+    Ok(credentials)
 }
 
 pub(super) fn store_credentials(input: &ConnectionInput) -> Result<(), String> {
@@ -241,16 +269,24 @@ pub(super) async fn parse_subsonic_response(response: reqwest::Response) -> Resu
                 .get("subsonic-response")
                 .ok_or_else(|| "Bandcamp returned an unexpected response.".to_string())?;
             if envelope.get("status").and_then(Value::as_str) != Some("ok") {
-                let message = envelope
-                    .pointer("/error/message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("Bandcamp rejected the request.");
-                return Err(message.to_string());
+                return Err(subsonic_error_message(envelope));
             }
             Ok(body)
         },
     )
     .await
+}
+
+pub(super) fn subsonic_error_message(envelope: &Value) -> String {
+    let code = envelope.pointer("/error/code").and_then(number_value);
+    match code {
+        Some(40 | 50) => {
+            "Bandcamp rejected the generated credentials. Generate a new pair in Fan Settings and try again."
+                .into()
+        }
+        Some(code) => format!("Bandcamp rejected the request (error code {code})."),
+        None => "Bandcamp rejected the request.".into(),
+    }
 }
 
 pub(super) fn beta_feature_error(feature: &str, error: String) -> String {
@@ -264,6 +300,7 @@ pub(super) fn beta_feature_error(feature: &str, error: String) -> String {
         "http 404",
         "http 405",
         "http 500",
+        "error code 30",
         "error code 70",
     ]
     .iter()
@@ -342,6 +379,10 @@ pub(super) fn item_date_field(value: &Value, key: &str) -> Option<ItemDate> {
     valid_item_date(&date).then_some(date)
 }
 
+fn library_date_field(value: &Value, keys: &[&str]) -> Option<String> {
+    string_field(value, keys).filter(|date| valid_library_date(date))
+}
+
 pub(super) fn album_from_value(value: &Value) -> Option<Album> {
     let id = string_field(value, &["id"])?;
     let title = string_field(value, &["name", "album", "title"])
@@ -355,9 +396,9 @@ pub(super) fn album_from_value(value: &Value) -> Option<Album> {
         cover_art: string_field(value, &["coverArt"]),
         year: number_field(value, "year"),
         genre: string_field(value, &["genre"]),
-        added_at: string_field(value, &["created"]),
-        starred_at: string_field(value, &["starred"]),
-        played_at: string_field(value, &["played"]),
+        added_at: library_date_field(value, &["created"]),
+        starred_at: library_date_field(value, &["starred"]),
+        played_at: library_date_field(value, &["played"]),
         original_release_date: item_date_field(value, "originalReleaseDate"),
         release_date: item_date_field(value, "releaseDate"),
     })
@@ -365,8 +406,8 @@ pub(super) fn album_from_value(value: &Value) -> Option<Album> {
 
 pub(super) fn validate_album(album: &Album) -> Result<(), String> {
     validate_subsonic_id(&album.id, "album")?;
-    if !valid_bounded_text(&album.title, MAX_SUBSONIC_TEXT_LENGTH, true)
-        || !valid_bounded_text(&album.artist, MAX_SUBSONIC_TEXT_LENGTH, true)
+    if !valid_bounded_text(&album.title, MAX_METADATA_TEXT_LENGTH, true)
+        || !valid_bounded_text(&album.artist, MAX_METADATA_TEXT_LENGTH, true)
         || album.song_count > MAX_PLAYLIST_TRACKS as u64
         || album.duration > MAX_SUBSONIC_DURATION_SECONDS
         || album.year.is_some_and(|year| !(1..=9_999).contains(&year))
@@ -377,19 +418,19 @@ pub(super) fn validate_album(album: &Album) -> Result<(), String> {
         || album
             .genre
             .as_deref()
-            .is_some_and(|genre| !valid_bounded_text(genre, MAX_SUBSONIC_TEXT_LENGTH, false))
+            .is_some_and(|genre| !valid_bounded_text(genre, MAX_METADATA_TEXT_LENGTH, false))
         || album
             .added_at
             .as_deref()
-            .is_some_and(|date| !valid_bounded_text(date, MAX_SUBSONIC_TEXT_LENGTH, false))
+            .is_some_and(|date| !valid_library_date(date))
         || album
             .starred_at
             .as_deref()
-            .is_some_and(|date| !valid_bounded_text(date, MAX_SUBSONIC_TEXT_LENGTH, false))
+            .is_some_and(|date| !valid_library_date(date))
         || album
             .played_at
             .as_deref()
-            .is_some_and(|date| !valid_bounded_text(date, MAX_SUBSONIC_TEXT_LENGTH, false))
+            .is_some_and(|date| !valid_library_date(date))
         || album
             .original_release_date
             .as_ref()
@@ -422,7 +463,7 @@ pub(super) fn track_from_value(value: &Value, fallback_album_id: &str) -> Option
         track: number_field(value, "track").unwrap_or(0),
         disc: number_field(value, "discNumber"),
         album_artist: string_field(value, &["displayAlbumArtist", "albumArtist"])
-            .filter(|artist| valid_bounded_text(artist, MAX_SUBSONIC_TEXT_LENGTH, false))
+            .filter(|artist| valid_bounded_text(artist, MAX_METADATA_TEXT_LENGTH, false))
             .filter(|artist| !artist.trim().is_empty()),
         music_brainz_id: string_field(value, &["musicBrainzId"])
             .filter(|identifier| valid_musicbrainz_id(identifier)),
@@ -456,12 +497,14 @@ pub(super) fn playlist_summary_from_value(value: &Value) -> Option<PlaylistSumma
         id,
         name: name.trim().to_string(),
         comment: bounded_optional_field(value, &["comment"], MAX_PLAYLIST_COMMENT_LENGTH),
-        owner: bounded_optional_field(value, &["owner"], MAX_SUBSONIC_TEXT_LENGTH),
+        owner: bounded_optional_field(value, &["owner"], MAX_METADATA_TEXT_LENGTH),
         public: boolean_field(value, "public"),
         song_count,
         duration,
-        created_at: bounded_optional_field(value, &["created"], MAX_SUBSONIC_TEXT_LENGTH),
-        changed_at: bounded_optional_field(value, &["changed"], MAX_SUBSONIC_TEXT_LENGTH),
+        created_at: bounded_optional_field(value, &["created"], MAX_METADATA_TEXT_LENGTH)
+            .filter(|date| valid_library_date(date)),
+        changed_at: bounded_optional_field(value, &["changed"], MAX_METADATA_TEXT_LENGTH)
+            .filter(|date| valid_library_date(date)),
         cover_art: bounded_optional_field(value, &["coverArt"], MAX_IDENTIFIER_LENGTH),
     })
 }
@@ -470,18 +513,16 @@ pub(super) fn bounded_track_from_value(value: &Value, fallback_album_id: &str) -
     let track = track_from_value(value, fallback_album_id)?;
     validate_subsonic_id(&track.id, "song").ok()?;
     validate_subsonic_id(&track.album_id, "album").ok()?;
-    if !valid_bounded_text(&track.title, MAX_SUBSONIC_TEXT_LENGTH, true)
-        || !valid_bounded_text(&track.artist, MAX_SUBSONIC_TEXT_LENGTH, true)
-        || !valid_bounded_text(&track.album, MAX_SUBSONIC_TEXT_LENGTH, false)
-        || track.duration as f64 > MAX_PLAYER_SECONDS
-        || track.track > MAX_PLAYER_TRACK_NUMBER
-        || track
-            .disc
-            .is_some_and(|disc| disc > MAX_PLAYER_TRACK_NUMBER)
+    if !valid_bounded_text(&track.title, MAX_METADATA_TEXT_LENGTH, true)
+        || !valid_bounded_text(&track.artist, MAX_METADATA_TEXT_LENGTH, true)
+        || !valid_bounded_text(&track.album, MAX_METADATA_TEXT_LENGTH, false)
+        || track.duration as f64 > MAX_MEDIA_SECONDS
+        || track.track > MAX_TRACK_NUMBER
+        || track.disc.is_some_and(|disc| disc > MAX_TRACK_NUMBER)
         || track
             .album_artist
             .as_deref()
-            .is_some_and(|artist| !valid_bounded_text(artist, MAX_SUBSONIC_TEXT_LENGTH, false))
+            .is_some_and(|artist| !valid_bounded_text(artist, MAX_METADATA_TEXT_LENGTH, false))
         || track
             .music_brainz_id
             .as_deref()

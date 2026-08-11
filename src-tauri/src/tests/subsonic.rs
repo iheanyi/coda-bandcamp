@@ -7,6 +7,21 @@ fn rejects_control_characters_in_credentials() {
         password: "secret".into(),
     };
     assert!(validate_credentials(&input).is_err());
+    assert!(validate_credentials(&ConnectionInput {
+        username: " generated-user ".into(),
+        password: "secret".into(),
+    })
+    .is_err());
+    assert!(validate_identifier(" album-1").is_err());
+
+    assert!(
+        serde_json::from_value::<ConnectionInput>(serde_json::json!({
+            "username": "generated-user",
+            "password": "secret",
+            "unexpected": true
+        }))
+        .is_err()
+    );
 }
 
 #[test]
@@ -25,6 +40,22 @@ fn constructs_only_bandcamp_https_urls() {
         Some("1.16.1".into())
     );
     assert!(!url.as_str().contains("secret"));
+}
+
+#[test]
+fn remote_service_errors_expose_only_safe_numeric_codes() {
+    assert_eq!(
+        subsonic_error_message(&serde_json::json!({
+            "error": { "code": 70, "message": "secret\nserver detail" }
+        })),
+        "Bandcamp rejected the request (error code 70)."
+    );
+    assert_eq!(
+        subsonic_error_message(&serde_json::json!({
+            "error": { "message": "generated-auth-token" }
+        })),
+        "Bandcamp rejected the request."
+    );
 }
 
 #[test]
@@ -89,6 +120,18 @@ fn rejects_invalid_or_unbounded_album_metadata() {
     .unwrap();
     assert!(zero_date_components.original_release_date.is_none());
     assert!(zero_date_components.release_date.is_none());
+    let invalid_text_dates = bounded_album_from_value(&serde_json::json!({
+        "id": "album-with-invalid-text-dates",
+        "name": "Still Playable",
+        "artist": "Night Archive",
+        "created": "2025-02-29T12:00:00Z",
+        "starred": "not-a-date",
+        "played": "2025-01-01T00:00:00+15:00"
+    }))
+    .unwrap();
+    assert!(invalid_text_dates.added_at.is_none());
+    assert!(invalid_text_dates.starred_at.is_none());
+    assert!(invalid_text_dates.played_at.is_none());
     assert!(bounded_album_from_value(&serde_json::json!({
         "id": "bad\nid",
         "name": "Soft Focus",

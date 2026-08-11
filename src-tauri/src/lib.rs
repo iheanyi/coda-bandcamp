@@ -1,9 +1,3 @@
-use governor::DefaultDirectRateLimiter;
-use redb::{Database, TableDefinition};
-use reqwest::Client;
-use std::collections::BTreeMap;
-use std::sync::{atomic::AtomicU64, Mutex, OnceLock};
-use std::time::Duration;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -44,13 +38,11 @@ use lastfm::{
 use library::{
     connect, disconnect, fetch_album, fetch_library, has_connection, load_library_cache,
 };
+#[cfg(desktop)]
+use media_session::SystemMediaState;
 use media_session::{
     update_system_media_metadata, update_system_media_playback, update_system_media_timeline,
 };
-#[cfg(target_os = "windows")]
-use models::SystemMediaControlEvent;
-#[cfg(desktop)]
-use models::SystemMediaState;
 use player_state::{
     checkpoint_player_state, clear_player_state, load_player_state, player_state_contract_version,
     record_player_state_diagnostic, save_player_state,
@@ -64,107 +56,9 @@ use radio::{radio_show, radio_shows};
 #[cfg(desktop)]
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 
-const CREDENTIAL_KEY: &str = "subsonic";
-const SERVER_BASE: &str = "https://bandcamp.com/api/subsonic";
-const DISCOVER_ENDPOINT: &str = "https://bandcamp.com/api/discover/1/discover_web";
-const RADIO_LIST_ENDPOINT: &str = "https://bandcamp.com/api/bcweekly/2/list";
-const RADIO_SHOWS_ENDPOINT: &str = "https://bandcamp.com/api/radio_api/1/get_radio_shows";
-const RADIO_SHOW_ENDPOINT: &str = "https://bandcamp.com/api/bcweekly/2/get";
-const API_VERSION: &str = "1.16.1";
-const MAX_CREDENTIAL_LENGTH: usize = 512;
-const MAX_IDENTIFIER_LENGTH: usize = 512;
-const MAX_JSON_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
-const BANDCAMP_REQUESTS_PER_SECOND: u32 = 2;
-const BANDCAMP_MAX_READ_RETRIES: u32 = 2;
-const BANDCAMP_RETRY_BASE_MS: u64 = 400;
-const BANDCAMP_RETRY_JITTER_MS: u64 = 180;
-const BANDCAMP_MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
-const BANDCAMP_RATE_LIMIT_JITTER: Duration = Duration::from_millis(80);
-const MAX_PLAYLISTS: usize = 5_000;
-const MAX_PLAYLIST_TRACKS: usize = 25_000;
-const MAX_PLAYLIST_MUTATION_ITEMS: usize = 5_000;
-const MAX_PLAYLIST_NAME_LENGTH: usize = 256;
-const MAX_PLAYLIST_COMMENT_LENGTH: usize = 4_096;
-const MAX_SUBSONIC_TEXT_LENGTH: usize = 1_024;
-const MAX_SUBSONIC_DURATION_SECONDS: u64 = 10 * 365 * 24 * 60 * 60;
-const DISCOVER_PAGE_SIZE: usize = 40;
-const MAX_DISCOVER_TAG_LENGTH: usize = 64;
-const MAX_DISCOVER_CURSOR_LENGTH: usize = 2_048;
-const MAX_RADIO_SHOWS: usize = 1_000;
-const RADIO_SHOW_PAGE_SIZE: u64 = 24;
-const MAX_RADIO_CURSOR_LENGTH: usize = 128;
-const MAX_RADIO_CHAPTERS: usize = 256;
-const MAX_RADIO_TEXT_LENGTH: usize = 4_096;
-const MAX_RADIO_DURATION_SECONDS: f64 = 24.0 * 60.0 * 60.0;
-const RADIO_SERIES_CATALOG: &[(u64, &str, &str)] = &[
-    (1, "Bandcamp Electronic", "bandcamp-electronic"),
-    (2, "Bandcamp Selects", "bandcamp-selects"),
-    (4, "The Game Show", "the-game-show"),
-    (5, "The Hip Hop Show", "the-hip-hop-show"),
-    (6, "The Indie Show", "the-indie-show"),
-    (7, "The Metal Show", "the-metal-show"),
-];
-const LIBRARY_CACHE_VERSION: u8 = 1;
-const LIBRARY_CACHE_FILE: &str = "library-cache-v1.json";
-const LIBRARY_CACHE_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
-const LIBRARY_FULL_RECONCILE_INTERVAL_MS: u64 = 24 * 60 * 60 * 1_000;
-const MAX_LIBRARY_ALBUMS: usize = 5_000;
-const MAX_LIBRARY_CACHE_BYTES: usize = 32 * 1024 * 1024;
-const ALBUM_METADATA_CACHE_FILE: &str = "album-metadata-cache-v1.redb";
-const ALBUM_TRACK_CACHE_ENTRY_VERSION: u8 = 1;
-const PERSISTED_ALBUM_TRACK_CACHE_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
-const MAX_PERSISTED_ALBUM_TRACK_CACHE_ENTRIES: usize = 256;
-const MAX_PERSISTED_ALBUM_TRACK_CACHE_WEIGHT: usize = 4_096;
-const MAX_PERSISTED_ALBUM_TRACK_CACHE_BYTES: usize = 32 * 1024 * 1024;
-const MAX_PERSISTED_ALBUM_TRACK_ENTRY_BYTES: usize = 8 * 1024 * 1024;
-const MAX_PERSISTED_ALBUM_TRACK_CACHE_FILE_BYTES: u64 = 128 * 1024 * 1024;
-const REDB_ALBUM_METADATA_MEMORY_CACHE_BYTES: usize = 8 * 1024 * 1024;
-const LASTFM_SERVICE_NAME: &str = "com.coda.lastfm";
-const LASTFM_SESSION_KEY: &str = "session";
-const LASTFM_API_ENDPOINT: &str = "https://ws.audioscrobbler.com/2.0/";
-const LASTFM_AUTH_ENDPOINT: &str = "https://www.last.fm/api/auth/";
-// Last.fm's desktop protocol embeds these application credentials in the
-// compiled client. Reading them from the build environment keeps the public
-// source tree clean without adding a runtime configuration dependency.
-const LASTFM_API_KEY: &str = match option_env!("CODA_LASTFM_API_KEY") {
-    Some(value) => value,
-    None => "",
-};
-const LASTFM_SHARED_SECRET: &str = match option_env!("CODA_LASTFM_SHARED_SECRET") {
-    Some(value) => value,
-    None => "",
-};
-const MAX_LASTFM_METADATA_LENGTH: usize = 1_024;
-const MAX_LASTFM_RESPONSE_BYTES: usize = 1024 * 1024;
-const PLAYER_STATE_VERSION: u8 = 1;
-const PLAYER_STATE_CONTRACT_VERSION: u8 = 2;
-const PLAYER_STATE_FILE: &str = "player-state.json";
-const PLAYER_CHECKPOINT_FILE: &str = "player-state-checkpoint.json";
-const PLAYER_DIAGNOSTIC_FILE: &str = "player-state-diagnostic.log";
-const MAX_PLAYER_DIAGNOSTIC_BYTES: u64 = 64 * 1024;
-const MAX_PLAYER_STATE_BYTES: usize = 32 * 1024 * 1024;
-const MAX_PLAYER_CHECKPOINT_BYTES: usize = 16 * 1024;
-const MAX_SYSTEM_MEDIA_ARTWORK_BYTES: usize = 5 * 1024 * 1024;
-const MAX_SYSTEM_MEDIA_ARTWORK_CACHE: usize = 32;
-const MAX_PLAYER_QUEUE_LENGTH: usize = 25_000;
-const MAX_PLAYER_TEXT_LENGTH: usize = 1_024;
-const MAX_PLAYER_SECONDS: f64 = 7.0 * 24.0 * 60.0 * 60.0;
-const MAX_PLAYER_TRACK_NUMBER: u64 = 100_000;
-const MAX_PLAYER_TIMESTAMP_MS: u64 = 8_640_000_000_000_000;
-const MAX_RADIO_CHAPTER_KEY_LENGTH: usize = 128;
-
-static HTTP_CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
-static LASTFM_HTTP_CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
-static BANDCAMP_RATE_LIMITER: OnceLock<DefaultDirectRateLimiter> = OnceLock::new();
-static PLAYER_STATE_LOCK: Mutex<()> = Mutex::new(());
-static LIBRARY_CACHE_LOCK: Mutex<()> = Mutex::new(());
-static ALBUM_METADATA_CACHE_WRITE_LOCK: Mutex<()> = Mutex::new(());
-static ALBUM_METADATA_DATABASE_INIT_LOCK: Mutex<()> = Mutex::new(());
-static CONNECTION_GENERATION: AtomicU64 = AtomicU64::new(0);
-static LIBRARY_SYNC_GENERATION: AtomicU64 = AtomicU64::new(0);
-static ALBUM_METADATA_DATABASE: OnceLock<Database> = OnceLock::new();
-static ALBUM_REFRESH_GENERATIONS: OnceLock<Mutex<BTreeMap<String, u64>>> = OnceLock::new();
-const ALBUM_TRACKS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("album_tracks_v1");
+fn updater_enabled_for_app_identifier(identifier: &str) -> bool {
+    identifier == app_identity::APP_ID
+}
 
 #[cfg(desktop)]
 fn with_window_state_plugin<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
@@ -207,8 +101,10 @@ pub fn run() {
         .setup(|app| {
             #[cfg(desktop)]
             {
-                app.handle()
-                    .plugin(tauri_plugin_updater::Builder::new().build())?;
+                if updater_enabled_for_app_identifier(&app.config().identifier) {
+                    app.handle()
+                        .plugin(tauri_plugin_updater::Builder::new().build())?;
+                }
                 let should_maximize_main_window = app
                     .path()
                     .app_config_dir()
@@ -248,13 +144,8 @@ pub fn run() {
                 let previous =
                     MenuItem::with_id(app, "previous", "Previous Track", true, None::<&str>)?;
                 let next = MenuItem::with_id(app, "next", "Next Track", true, None::<&str>)?;
-                let shuffle = MenuItem::with_id(
-                    app,
-                    "shuffle-library",
-                    "Shuffle Entire Library",
-                    true,
-                    None::<&str>,
-                )?;
+                let shuffle =
+                    MenuItem::with_id(app, "shuffle-library", "Surprise Me", true, None::<&str>)?;
                 let separator = PredefinedMenuItem::separator(app)?;
                 let quit = MenuItem::with_id(
                     app,

@@ -2,18 +2,42 @@ use crate::models::{
     LastFmPlaybackProgress, PlayerStateCheckpoint, PlayerStateSnapshot, RadioScrobbleProgress,
 };
 use crate::storage::{run_blocking, timestamp_ms, write_bytes_atomically};
-use crate::{
-    MAX_PLAYER_CHECKPOINT_BYTES, MAX_PLAYER_DIAGNOSTIC_BYTES, MAX_PLAYER_QUEUE_LENGTH,
-    MAX_PLAYER_SECONDS, MAX_PLAYER_STATE_BYTES, MAX_PLAYER_TEXT_LENGTH, MAX_PLAYER_TIMESTAMP_MS,
-    MAX_PLAYER_TRACK_NUMBER, MAX_RADIO_CHAPTERS, MAX_RADIO_CHAPTER_KEY_LENGTH,
-    PLAYER_CHECKPOINT_FILE, PLAYER_DIAGNOSTIC_FILE, PLAYER_STATE_CONTRACT_VERSION,
-    PLAYER_STATE_FILE, PLAYER_STATE_LOCK, PLAYER_STATE_VERSION,
-};
+use crate::validation::{MAX_MEDIA_SECONDS, MAX_RADIO_CHAPTERS, MAX_TRACK_NUMBER};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
+
+pub(super) const PLAYER_STATE_VERSION: u8 = 1;
+pub(super) const PLAYER_STATE_CONTRACT_VERSION: u8 = 2;
+pub(super) const PLAYER_STATE_FILE: &str = "player-state.json";
+const PLAYER_CHECKPOINT_FILE: &str = "player-state-checkpoint.json";
+const PLAYER_DIAGNOSTIC_FILE: &str = "player-state-diagnostic.log";
+const MAX_PLAYER_DIAGNOSTIC_BYTES: u64 = 64 * 1024;
+const MAX_PLAYER_STATE_BYTES: usize = 32 * 1024 * 1024;
+const MAX_PLAYER_CHECKPOINT_BYTES: usize = 16 * 1024;
+pub(super) const MAX_PLAYER_QUEUE_LENGTH: usize = 25_000;
+const MAX_PLAYER_TEXT_LENGTH: usize = 1_024;
+const MAX_PLAYER_TIMESTAMP_MS: u64 = 8_640_000_000_000_000;
+const MAX_RADIO_CHAPTER_KEY_LENGTH: usize = 128;
+
+static PLAYER_STATE_LOCK: Mutex<()> = Mutex::new(());
+
+enum PersistedPlayerReadError {
+    Discardable(String),
+    Operational(String),
+}
+
+impl PersistedPlayerReadError {
+    #[cfg(test)]
+    fn into_message(self) -> String {
+        match self {
+            Self::Discardable(message) | Self::Operational(message) => message,
+        }
+    }
+}
 
 pub(super) fn player_state_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
@@ -120,11 +144,11 @@ pub(super) fn append_player_state_snapshot_diagnostic(
 pub(super) fn valid_player_text(value: &str, required: bool) -> bool {
     value.len() <= MAX_PLAYER_TEXT_LENGTH
         && !value.chars().any(char::is_control)
-        && (!required || !value.is_empty())
+        && (!required || !value.trim().is_empty())
 }
 
 pub(super) fn valid_player_seconds(value: f64) -> bool {
-    value.is_finite() && (0.0..=MAX_PLAYER_SECONDS).contains(&value)
+    value.is_finite() && (0.0..=MAX_MEDIA_SECONDS).contains(&value)
 }
 
 pub(super) fn valid_radio_track_id(value: &str) -> bool {
@@ -205,11 +229,9 @@ pub(super) fn validate_player_state(state: &PlayerStateSnapshot) -> Result<(), S
             || !valid_player_text(&track.artist, true)
             || !valid_player_text(&track.album, false)
             || !valid_player_text(&track.album_id, true)
-            || track.duration as f64 > MAX_PLAYER_SECONDS
-            || track.track > MAX_PLAYER_TRACK_NUMBER
-            || track
-                .disc
-                .is_some_and(|disc| disc > MAX_PLAYER_TRACK_NUMBER)
+            || track.duration as f64 > MAX_MEDIA_SECONDS
+            || track.track > MAX_TRACK_NUMBER
+            || track.disc.is_some_and(|disc| disc > MAX_TRACK_NUMBER)
             || track
                 .cover_art
                 .as_deref()
@@ -341,30 +363,54 @@ pub(super) fn apply_player_checkpoint(
     true
 }
 
+#[cfg(test)]
 pub(super) fn read_player_state(path: &Path) -> Result<Option<PlayerStateSnapshot>, String> {
+    read_player_state_classified(path).map_err(PersistedPlayerReadError::into_message)
+}
+
+fn read_player_state_classified(
+    path: &Path,
+) -> Result<Option<PlayerStateSnapshot>, PersistedPlayerReadError> {
     let file = match fs::File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("Could not open the saved player state: {error}")),
+        Err(error) => {
+            return Err(PersistedPlayerReadError::Operational(format!(
+                "Could not open the saved player state: {error}"
+            )))
+        }
     };
     if file
         .metadata()
-        .map_err(|error| format!("Could not inspect the saved player state: {error}"))?
+        .map_err(|error| {
+            PersistedPlayerReadError::Operational(format!(
+                "Could not inspect the saved player state: {error}"
+            ))
+        })?
         .len()
         > MAX_PLAYER_STATE_BYTES as u64
     {
-        return Err("The saved player state is unexpectedly large.".into());
+        return Err(PersistedPlayerReadError::Discardable(
+            "The saved player state is unexpectedly large.".into(),
+        ));
     }
     let mut bytes = Vec::new();
     file.take((MAX_PLAYER_STATE_BYTES + 1) as u64)
         .read_to_end(&mut bytes)
-        .map_err(|error| format!("Could not read the saved player state: {error}"))?;
+        .map_err(|error| {
+            PersistedPlayerReadError::Operational(format!(
+                "Could not read the saved player state: {error}"
+            ))
+        })?;
     if bytes.len() > MAX_PLAYER_STATE_BYTES {
-        return Err("The saved player state is unexpectedly large.".into());
+        return Err(PersistedPlayerReadError::Discardable(
+            "The saved player state is unexpectedly large.".into(),
+        ));
     }
-    let state: PlayerStateSnapshot = serde_json::from_slice(&bytes)
-        .map_err(|_| "The saved player state is malformed.".to_string())?;
-    validate_player_state(&state)?;
+    let state: PlayerStateSnapshot = serde_json::from_slice(&bytes).map_err(|_| {
+        PersistedPlayerReadError::Discardable("The saved player state is malformed.".into())
+    })?;
+    validate_player_state(&state).map_err(PersistedPlayerReadError::Discardable)?;
     Ok(Some(state))
 }
 
@@ -378,30 +424,66 @@ pub(super) fn write_player_state(path: &Path, state: &PlayerStateSnapshot) -> Re
     write_bytes_atomically(path, &serialized, "player state")
 }
 
-pub(super) fn read_player_checkpoint(path: &Path) -> Result<Option<PlayerStateCheckpoint>, String> {
+pub(super) fn write_player_state_without_stale_checkpoint(
+    state_path: &Path,
+    checkpoint_path: &Path,
+    state: &PlayerStateSnapshot,
+) -> Result<(), String> {
+    match fs::remove_file(checkpoint_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "Could not clear the prior player checkpoint: {error}"
+            ))
+        }
+    }
+    write_player_state(state_path, state)
+}
+
+fn read_player_checkpoint_classified(
+    path: &Path,
+) -> Result<Option<PlayerStateCheckpoint>, PersistedPlayerReadError> {
     let file = match fs::File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("Could not open the player checkpoint: {error}")),
+        Err(error) => {
+            return Err(PersistedPlayerReadError::Operational(format!(
+                "Could not open the player checkpoint: {error}"
+            )))
+        }
     };
     if file
         .metadata()
-        .map_err(|error| format!("Could not inspect the player checkpoint: {error}"))?
+        .map_err(|error| {
+            PersistedPlayerReadError::Operational(format!(
+                "Could not inspect the player checkpoint: {error}"
+            ))
+        })?
         .len()
         > MAX_PLAYER_CHECKPOINT_BYTES as u64
     {
-        return Err("The player checkpoint is unexpectedly large.".into());
+        return Err(PersistedPlayerReadError::Discardable(
+            "The player checkpoint is unexpectedly large.".into(),
+        ));
     }
     let mut bytes = Vec::new();
     file.take((MAX_PLAYER_CHECKPOINT_BYTES + 1) as u64)
         .read_to_end(&mut bytes)
-        .map_err(|error| format!("Could not read the player checkpoint: {error}"))?;
+        .map_err(|error| {
+            PersistedPlayerReadError::Operational(format!(
+                "Could not read the player checkpoint: {error}"
+            ))
+        })?;
     if bytes.len() > MAX_PLAYER_CHECKPOINT_BYTES {
-        return Err("The player checkpoint is unexpectedly large.".into());
+        return Err(PersistedPlayerReadError::Discardable(
+            "The player checkpoint is unexpectedly large.".into(),
+        ));
     }
-    let checkpoint: PlayerStateCheckpoint = serde_json::from_slice(&bytes)
-        .map_err(|_| "The player checkpoint is malformed.".to_string())?;
-    validate_player_checkpoint(&checkpoint)?;
+    let checkpoint: PlayerStateCheckpoint = serde_json::from_slice(&bytes).map_err(|_| {
+        PersistedPlayerReadError::Discardable("The player checkpoint is malformed.".into())
+    })?;
+    validate_player_checkpoint(&checkpoint).map_err(PersistedPlayerReadError::Discardable)?;
     Ok(Some(checkpoint))
 }
 
@@ -421,19 +503,9 @@ pub(super) fn write_player_checkpoint(
 pub(super) fn load_player_state_or_clear_invalid(
     path: &Path,
 ) -> Result<Option<PlayerStateSnapshot>, String> {
-    match read_player_state(path) {
+    match read_player_state_classified(path) {
         Ok(state) => Ok(state),
-        Err(error)
-            if error.contains("malformed")
-                || error.contains("unsupported version")
-                || error.contains("unexpectedly large")
-                || error.contains("saved queue")
-                || error.contains("saved playback")
-                || error.contains("saved current")
-                || error.contains("saved empty")
-                || error.contains("saved Last.fm")
-                || error.contains("saved player timestamp") =>
-        {
+        Err(PersistedPlayerReadError::Discardable(error)) => {
             fs::remove_file(path)
                 .or_else(|remove_error| {
                     if remove_error.kind() == std::io::ErrorKind::NotFound {
@@ -447,7 +519,7 @@ pub(super) fn load_player_state_or_clear_invalid(
                 })?;
             Ok(None)
         }
-        Err(error) => Err(error),
+        Err(PersistedPlayerReadError::Operational(error)) => Err(error),
     }
 }
 
@@ -517,7 +589,7 @@ pub(super) async fn load_player_state(
                 return Ok(None);
             };
 
-            match read_player_checkpoint(&checkpoint_path) {
+            match read_player_checkpoint_classified(&checkpoint_path) {
                 Ok(Some(checkpoint)) => {
                     if !apply_player_checkpoint(&mut state, checkpoint) {
                         let _ = fs::remove_file(&checkpoint_path);
@@ -537,11 +609,7 @@ pub(super) async fn load_player_state(
                     }
                 }
                 Ok(None) => {}
-                Err(error)
-                    if error.contains("malformed")
-                        || error.contains("invalid")
-                        || error.contains("unexpectedly large") =>
-                {
+                Err(PersistedPlayerReadError::Discardable(_)) => {
                     let _ = fs::remove_file(&checkpoint_path);
                     append_player_state_snapshot_diagnostic(
                         &app,
@@ -549,7 +617,7 @@ pub(super) async fn load_player_state(
                         &state,
                     );
                 }
-                Err(error) => return Err(error),
+                Err(PersistedPlayerReadError::Operational(error)) => return Err(error),
             }
             normalize_restored_player_progress(&mut state);
             validate_player_state(&state)?;
@@ -580,17 +648,8 @@ pub(super) async fn save_player_state(
             normalize_restored_player_progress(&mut state);
             validate_player_state(&state)?;
             let state_path = player_state_path(&app)?;
-            write_player_state(&state_path, &state)?;
             let checkpoint_path = player_checkpoint_path(&app)?;
-            match fs::remove_file(checkpoint_path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    return Err(format!(
-                        "Could not clear the prior player checkpoint: {error}"
-                    ));
-                }
-            }
+            write_player_state_without_stale_checkpoint(&state_path, &checkpoint_path, &state)?;
             append_player_state_snapshot_diagnostic(&app, "native.save.ok", &state);
             Ok(())
         })();

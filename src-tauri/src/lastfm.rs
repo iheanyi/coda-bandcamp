@@ -1,20 +1,36 @@
-use crate::bandcamp_http::read_bounded_response;
+use crate::bandcamp_http::{read_bounded_response, redacted_request_error};
 use crate::models::{
     LastFmAuthorization, LastFmScrobbleInput, LastFmSession, LastFmStatus, LastFmTrackInput,
 };
 use crate::storage::run_blocking;
-use crate::validation::valid_musicbrainz_id;
-use crate::{
-    LASTFM_API_ENDPOINT, LASTFM_API_KEY, LASTFM_AUTH_ENDPOINT, LASTFM_HTTP_CLIENT,
-    LASTFM_SERVICE_NAME, LASTFM_SESSION_KEY, LASTFM_SHARED_SECRET, MAX_LASTFM_METADATA_LENGTH,
-    MAX_LASTFM_RESPONSE_BYTES,
-};
+use crate::validation::{valid_musicbrainz_id, MAX_MEDIA_SECONDS, MAX_TRACK_NUMBER};
 use keyring::Entry;
 use reqwest::{redirect::Policy, Client};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::Url;
+
+const LASTFM_SERVICE_NAME: &str = "com.coda.lastfm";
+const LASTFM_SESSION_KEY: &str = "session";
+const LASTFM_API_ENDPOINT: &str = "https://ws.audioscrobbler.com/2.0/";
+const LASTFM_AUTH_ENDPOINT: &str = "https://www.last.fm/api/auth/";
+// Last.fm's desktop protocol embeds these application credentials in the
+// compiled client. Reading them from the build environment keeps the public
+// source tree clean without adding a runtime configuration dependency.
+const LASTFM_API_KEY: &str = match option_env!("CODA_LASTFM_API_KEY") {
+    Some(value) => value,
+    None => "",
+};
+pub(super) const LASTFM_SHARED_SECRET: &str = match option_env!("CODA_LASTFM_SHARED_SECRET") {
+    Some(value) => value,
+    None => "",
+};
+const MAX_LASTFM_METADATA_LENGTH: usize = 1_024;
+const MAX_LASTFM_RESPONSE_BYTES: usize = 1024 * 1024;
+
+static LASTFM_HTTP_CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
 
 pub(super) fn lastfm_session_entry() -> Result<Entry, String> {
     Entry::new(LASTFM_SERVICE_NAME, LASTFM_SESSION_KEY)
@@ -57,8 +73,15 @@ pub(super) fn load_lastfm_session() -> Result<Option<LastFmSession>, String> {
     };
     let session: LastFmSession = serde_json::from_str(&serialized)
         .map_err(|_| "The saved Last.fm session is invalid. Reconnect Last.fm.".to_string())?;
+    validate_lastfm_session(&session)?;
+    Ok(Some(session))
+}
+
+pub(super) fn validate_lastfm_session(session: &LastFmSession) -> Result<(), String> {
     if session.username.is_empty()
         || session.key.is_empty()
+        || session.username.trim() != session.username
+        || session.key.trim() != session.key
         || session.username.len() > MAX_LASTFM_METADATA_LENGTH
         || session.key.len() > MAX_LASTFM_METADATA_LENGTH
         || session.username.chars().any(char::is_control)
@@ -66,10 +89,11 @@ pub(super) fn load_lastfm_session() -> Result<Option<LastFmSession>, String> {
     {
         return Err("The saved Last.fm session is invalid. Reconnect Last.fm.".into());
     }
-    Ok(Some(session))
+    Ok(())
 }
 
 pub(super) fn store_lastfm_session(session: &LastFmSession) -> Result<(), String> {
+    validate_lastfm_session(session)?;
     let serialized = serde_json::to_string(session)
         .map_err(|error| format!("Could not prepare the Last.fm session: {error}"))?;
     lastfm_session_entry()?
@@ -100,6 +124,7 @@ pub(super) async fn require_lastfm_session_async() -> Result<LastFmSession, Stri
 
 pub(super) fn validate_lastfm_token(token: &str) -> Result<(), String> {
     if token.is_empty()
+        || token.trim() != token
         || token.len() > MAX_LASTFM_METADATA_LENGTH
         || token.chars().any(char::is_control)
     {
@@ -134,6 +159,12 @@ pub(super) fn validate_lastfm_track(input: &LastFmTrackInput) -> Result<(), Stri
         .is_some_and(|value| !valid_musicbrainz_id(value))
     {
         return Err("The Last.fm MusicBrainz identifier is invalid.".into());
+    }
+    if input.duration > MAX_MEDIA_SECONDS as u64 {
+        return Err("The Last.fm track duration is invalid.".into());
+    }
+    if input.track_number > MAX_TRACK_NUMBER {
+        return Err("The Last.fm track number is invalid.".into());
     }
     Ok(())
 }
@@ -182,7 +213,7 @@ pub(super) async fn lastfm_request(
         .form(&parameters)
         .send()
         .await
-        .map_err(|error| format!("Could not reach Last.fm: {error}"))?;
+        .map_err(|error| redacted_request_error("Last.fm", error))?;
 
     if !response.status().is_success() {
         return Err(format!(
@@ -195,15 +226,23 @@ pub(super) async fn lastfm_request(
         let body: Value = serde_json::from_slice(&bytes)
             .map_err(|_| "Last.fm returned an unreadable response.".to_string())?;
         if body.get("error").is_some() {
-            return Err(body
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("Last.fm rejected the request.")
-                .to_string());
+            return Err(lastfm_error_message(&body));
         }
         Ok(body)
     })
     .await
+}
+
+pub(super) fn lastfm_error_message(body: &Value) -> String {
+    let code = body.get("error").and_then(|value| {
+        value
+            .as_u64()
+            .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
+    });
+    match code {
+        Some(code) => format!("Last.fm rejected the request (error code {code})."),
+        None => "Last.fm rejected the request.".into(),
+    }
 }
 
 pub(super) fn lastfm_track_parameters(input: &LastFmTrackInput) -> BTreeMap<String, String> {

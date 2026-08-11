@@ -69,6 +69,65 @@ fn validates_lastfm_track_metadata() {
         ..valid.clone()
     })
     .is_err());
+    assert!(validate_lastfm_track(&LastFmTrackInput {
+        duration: MAX_MEDIA_SECONDS as u64 + 1,
+        ..valid.clone()
+    })
+    .is_err());
+    assert!(validate_lastfm_track(&LastFmTrackInput {
+        track_number: MAX_TRACK_NUMBER + 1,
+        ..valid.clone()
+    })
+    .is_err());
+
+    let serialized = serde_json::json!({
+        "artist": valid.artist,
+        "title": valid.title,
+        "album": valid.album,
+        "albumArtist": valid.album_artist,
+        "musicBrainzId": valid.music_brainz_id,
+        "duration": valid.duration,
+        "trackNumber": valid.track_number,
+        "chosenByUser": valid.chosen_by_user,
+        "unexpected": true
+    });
+    assert!(serde_json::from_value::<LastFmTrackInput>(serialized).is_err());
+}
+
+#[test]
+fn validates_lastfm_sessions_before_secure_storage() {
+    assert!(validate_lastfm_session(&LastFmSession {
+        username: "listener".into(),
+        key: "session-key".into(),
+    })
+    .is_ok());
+    assert!(validate_lastfm_session(&LastFmSession {
+        username: "listener\nname".into(),
+        key: "session-key".into(),
+    })
+    .is_err());
+    assert!(validate_lastfm_session(&LastFmSession {
+        username: " listener".into(),
+        key: "session-key".into(),
+    })
+    .is_err());
+    assert!(validate_lastfm_token(" token").is_err());
+    assert!(serde_json::from_value::<LastFmSession>(serde_json::json!({
+        "username": "listener",
+        "key": "session-key",
+        "unexpected": true
+    }))
+    .is_err());
+}
+
+#[test]
+fn lastfm_errors_never_echo_remote_messages_or_session_material() {
+    let message = lastfm_error_message(&serde_json::json!({
+        "error": 9,
+        "message": "Invalid session key: private-session-material"
+    }));
+    assert_eq!(message, "Last.fm rejected the request (error code 9).");
+    assert!(!message.contains("private-session-material"));
 }
 
 #[test]

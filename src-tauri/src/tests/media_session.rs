@@ -37,6 +37,16 @@ fn system_media_artwork_accepts_only_bounded_supported_images() {
 }
 
 #[test]
+fn system_media_timeline_rejects_nonfinite_negative_and_unbounded_values() {
+    assert!(valid_system_media_timeline(42.0, 210.0));
+    // Native adapters clamp a small metadata mismatch to the actual duration.
+    assert!(valid_system_media_timeline(211.0, 210.0));
+    assert!(!valid_system_media_timeline(MAX_MEDIA_SECONDS + 1.0, 210.0,));
+    assert!(!valid_system_media_timeline(-1.0, 210.0));
+    assert!(!valid_system_media_timeline(0.0, f64::NAN));
+}
+
+#[test]
 fn playback_blocking_commands_are_dispatched_off_the_window_thread() {
     let media_source = include_str!("../media_session.rs").replace("\r\n", "\n");
     assert!(media_source

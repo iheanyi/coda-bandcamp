@@ -1,9 +1,4 @@
 use crate::storage::run_blocking;
-use crate::{
-    BANDCAMP_MAX_READ_RETRIES, BANDCAMP_MAX_RETRY_DELAY, BANDCAMP_RATE_LIMITER,
-    BANDCAMP_RATE_LIMIT_JITTER, BANDCAMP_REQUESTS_PER_SECOND, BANDCAMP_RETRY_BASE_MS,
-    BANDCAMP_RETRY_JITTER_MS, HTTP_CLIENT, MAX_JSON_RESPONSE_BYTES,
-};
 use governor::{DefaultDirectRateLimiter, Jitter, Quota, RateLimiter};
 use rand::Rng;
 use reqwest::{
@@ -13,8 +8,22 @@ use reqwest::{
 };
 use serde::de::DeserializeOwned;
 use std::num::NonZeroU32;
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime};
 use url::Url;
+
+use crate::url_policy::{allowed_url, UrlKind};
+
+pub(super) const MAX_JSON_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+const BANDCAMP_REQUESTS_PER_SECOND: u32 = 2;
+const BANDCAMP_MAX_READ_RETRIES: u32 = 2;
+pub(super) const BANDCAMP_RETRY_BASE_MS: u64 = 400;
+const BANDCAMP_RETRY_JITTER_MS: u64 = 180;
+pub(super) const BANDCAMP_MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
+const BANDCAMP_RATE_LIMIT_JITTER: Duration = Duration::from_millis(80);
+
+static HTTP_CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
+static BANDCAMP_RATE_LIMITER: OnceLock<DefaultDirectRateLimiter> = OnceLock::new();
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum BandcampRetryPolicy {
@@ -112,9 +121,13 @@ pub(super) async fn send_bandcamp_request(
                 retry_number += 1;
                 tokio::time::sleep(delay).await;
             }
-            Err(error) => return Err(format!("Could not reach {context}: {error}")),
+            Err(error) => return Err(redacted_request_error(context, error)),
         }
     }
+}
+
+pub(super) fn redacted_request_error(context: &str, error: reqwest::Error) -> String {
+    format!("Could not reach {context}: {}", error.without_url())
 }
 
 pub(super) async fn fetch_bounded_json_request<T>(
@@ -203,11 +216,9 @@ pub(super) fn http_client() -> Result<&'static Client, String> {
                 .timeout(Duration::from_secs(25))
                 .user_agent("Coda/0.1 (+https://bandcamp.com)")
                 .redirect(Policy::custom(|attempt| {
-                    let allowed = attempt
-                        .url()
-                        .host_str()
-                        .map(|host| host == "bandcamp.com" || host.ends_with(".bcbits.com"))
-                        .unwrap_or(false);
+                    let url = attempt.url().as_str();
+                    let allowed = allowed_url(url, UrlKind::BandcampPage).is_some()
+                        || allowed_url(url, UrlKind::BandcampMedia).is_some();
                     if allowed && attempt.previous().len() < 3 {
                         attempt.follow()
                     } else {

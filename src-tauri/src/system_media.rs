@@ -1,6 +1,6 @@
 #[cfg(target_os = "windows")]
 mod platform {
-    use crate::{app_identity::APP_ID, SystemMediaControlEvent};
+    use crate::{app_identity::APP_ID, models::SystemMediaControlEvent};
     use tauri::{AppHandle, Emitter, WebviewWindow};
     use windows::{
         core::{w, GUID, HSTRING},

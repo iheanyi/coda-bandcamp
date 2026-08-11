@@ -6,6 +6,54 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const FALLBACK_TEMP_FILE_NAME: &str = "coda-state.json";
 
+#[cfg(target_os = "windows")]
+fn replace_existing_file(
+    temporary: &Path,
+    path: &Path,
+    label: &str,
+    first_error: std::io::Error,
+) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::{ReplaceFileW, REPLACEFILE_WRITE_THROUGH};
+
+    let replaced = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let replacement = temporary
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    // SAFETY: Both UTF-16 buffers are NUL-terminated and remain alive for the
+    // duration of the call. No optional backup/exclusion buffers are supplied.
+    unsafe {
+        ReplaceFileW(
+            PCWSTR(replaced.as_ptr()),
+            PCWSTR(replacement.as_ptr()),
+            PCWSTR::null(),
+            REPLACEFILE_WRITE_THROUGH,
+            None,
+            None,
+        )
+    }
+    .map_err(|error| format!("Could not atomically replace the {label} ({first_error}; {error})"))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn replace_existing_file(
+    _temporary: &Path,
+    _path: &Path,
+    label: &str,
+    first_error: std::io::Error,
+) -> Result<(), String> {
+    Err(format!(
+        "Could not atomically replace the {label}: {first_error}"
+    ))
+}
+
 pub(crate) async fn run_blocking<T, F>(context: &'static str, task: F) -> Result<T, String>
 where
     T: Send + 'static,
@@ -59,11 +107,7 @@ pub(crate) fn write_bytes_atomically(
         match fs::rename(&temporary, path) {
             Ok(()) => Ok(()),
             Err(first_error) if path.exists() => {
-                fs::remove_file(path)
-                    .map_err(|error| format!("Could not replace the prior {label}: {error}"))?;
-                fs::rename(&temporary, path).map_err(|error| {
-                    format!("Could not finish replacing the {label} ({first_error}; {error})")
-                })
+                replace_existing_file(&temporary, path, label, first_error)
             }
             Err(error) => Err(format!("Could not finalize the {label}: {error}")),
         }

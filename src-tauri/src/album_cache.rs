@@ -1,23 +1,37 @@
 use crate::models::{ConnectionInput, PersistedAlbumTracks, Track};
-use crate::subsonic::{load_credentials, validate_identifier, validate_subsonic_id};
-use crate::validation::{valid_bounded_text, valid_musicbrainz_id};
-use crate::{
-    ALBUM_METADATA_CACHE_FILE, ALBUM_METADATA_CACHE_WRITE_LOCK, ALBUM_METADATA_DATABASE,
-    ALBUM_METADATA_DATABASE_INIT_LOCK, ALBUM_REFRESH_GENERATIONS, ALBUM_TRACKS_TABLE,
-    ALBUM_TRACK_CACHE_ENTRY_VERSION, CONNECTION_GENERATION, MAX_PERSISTED_ALBUM_TRACK_CACHE_BYTES,
-    MAX_PERSISTED_ALBUM_TRACK_CACHE_ENTRIES, MAX_PERSISTED_ALBUM_TRACK_CACHE_FILE_BYTES,
-    MAX_PERSISTED_ALBUM_TRACK_CACHE_WEIGHT, MAX_PERSISTED_ALBUM_TRACK_ENTRY_BYTES,
-    MAX_PLAYER_TRACK_NUMBER, MAX_SUBSONIC_DURATION_SECONDS, MAX_SUBSONIC_TEXT_LENGTH,
-    PERSISTED_ALBUM_TRACK_CACHE_TTL_MS, REDB_ALBUM_METADATA_MEMORY_CACHE_BYTES,
+use crate::subsonic::{
+    current_connection_generation, load_credentials, validate_identifier, validate_subsonic_id,
+    MAX_SUBSONIC_DURATION_SECONDS,
+};
+use crate::validation::{
+    valid_bounded_text, valid_musicbrainz_id, MAX_METADATA_TEXT_LENGTH, MAX_TRACK_NUMBER,
 };
 use redb::{
     Database, DatabaseError, ReadableDatabase, ReadableTable, ReadableTableMetadata, StorageError,
+    TableDefinition,
 };
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{atomic::Ordering, Mutex};
+use std::sync::{Mutex, OnceLock};
 use tauri::Manager;
+
+pub(super) const ALBUM_METADATA_CACHE_FILE: &str = "album-metadata-cache-v1.redb";
+pub(super) const ALBUM_TRACK_CACHE_ENTRY_VERSION: u8 = 1;
+pub(super) const PERSISTED_ALBUM_TRACK_CACHE_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
+const MAX_PERSISTED_ALBUM_TRACK_CACHE_ENTRIES: usize = 256;
+const MAX_PERSISTED_ALBUM_TRACK_CACHE_WEIGHT: usize = 4_096;
+const MAX_PERSISTED_ALBUM_TRACK_CACHE_BYTES: usize = 32 * 1024 * 1024;
+const MAX_PERSISTED_ALBUM_TRACK_ENTRY_BYTES: usize = 8 * 1024 * 1024;
+const MAX_PERSISTED_ALBUM_TRACK_CACHE_FILE_BYTES: u64 = 128 * 1024 * 1024;
+const REDB_ALBUM_METADATA_MEMORY_CACHE_BYTES: usize = 8 * 1024 * 1024;
+
+static ALBUM_METADATA_CACHE_WRITE_LOCK: Mutex<()> = Mutex::new(());
+static ALBUM_METADATA_DATABASE_INIT_LOCK: Mutex<()> = Mutex::new(());
+static ALBUM_METADATA_DATABASE: OnceLock<Database> = OnceLock::new();
+static ALBUM_REFRESH_GENERATIONS: OnceLock<Mutex<BTreeMap<String, u64>>> = OnceLock::new();
+pub(super) const ALBUM_TRACKS_TABLE: TableDefinition<&str, &[u8]> =
+    TableDefinition::new("album_tracks_v1");
 
 pub(super) fn album_refresh_generations() -> &'static Mutex<BTreeMap<String, u64>> {
     ALBUM_REFRESH_GENERATIONS.get_or_init(|| Mutex::new(BTreeMap::new()))
@@ -174,18 +188,16 @@ pub(super) fn validate_persisted_album_tracks(
         track.album_id != album_id
             || validate_subsonic_id(&track.id, "song").is_err()
             || validate_subsonic_id(&track.album_id, "album").is_err()
-            || !valid_bounded_text(&track.title, MAX_SUBSONIC_TEXT_LENGTH, true)
-            || !valid_bounded_text(&track.artist, MAX_SUBSONIC_TEXT_LENGTH, true)
-            || !valid_bounded_text(&track.album, MAX_SUBSONIC_TEXT_LENGTH, false)
+            || !valid_bounded_text(&track.title, MAX_METADATA_TEXT_LENGTH, true)
+            || !valid_bounded_text(&track.artist, MAX_METADATA_TEXT_LENGTH, true)
+            || !valid_bounded_text(&track.album, MAX_METADATA_TEXT_LENGTH, false)
             || track.duration > MAX_SUBSONIC_DURATION_SECONDS
-            || track.track > MAX_PLAYER_TRACK_NUMBER
-            || track
-                .disc
-                .is_some_and(|disc| disc > MAX_PLAYER_TRACK_NUMBER)
+            || track.track > MAX_TRACK_NUMBER
+            || track.disc.is_some_and(|disc| disc > MAX_TRACK_NUMBER)
             || track
                 .album_artist
                 .as_deref()
-                .is_some_and(|artist| !valid_bounded_text(artist, MAX_SUBSONIC_TEXT_LENGTH, false))
+                .is_some_and(|artist| !valid_bounded_text(artist, MAX_METADATA_TEXT_LENGTH, false))
             || track
                 .music_brainz_id
                 .as_deref()
@@ -280,7 +292,7 @@ pub(super) fn write_persisted_album_tracks(
         .lock()
         .map_err(|_| "The album metadata cache lock is unavailable.".to_string())?;
     if expected_connection.is_some_and(|(expected_generation, expected_credentials)| {
-        CONNECTION_GENERATION.load(Ordering::Acquire) != expected_generation
+        current_connection_generation() != expected_generation
             || load_credentials().ok().as_ref() != Some(expected_credentials)
     }) || expected_refresh.is_some_and(|(expected_album_id, expected_generation)| {
         album_refresh_generation(expected_album_id).ok() != Some(expected_generation)
