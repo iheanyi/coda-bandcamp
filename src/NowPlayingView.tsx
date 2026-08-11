@@ -66,6 +66,7 @@ type NowPlayingViewProps = {
   radioTimeline: readonly RadioChapter[];
   queue: Track[];
   currentIndex: number;
+  hasDeferredTracks?: boolean;
   playing: boolean;
   playbackClock: PlaybackClock;
   duration: number;
@@ -497,6 +498,7 @@ function NowPlayingViewComponent({
   radioTimeline,
   queue,
   currentIndex,
+  hasDeferredTracks = false,
   playing,
   playbackClock,
   duration,
@@ -820,10 +822,18 @@ function NowPlayingViewComponent({
         <div className="mb-3 flex items-end justify-between gap-5 max-lg:flex-col max-lg:items-start max-lg:gap-2">
           <div>
             <Badge variant="artwork" className="mb-1 h-auto border-0 bg-transparent p-0 text-xs tracking-widest uppercase">
-              {upcoming.length ? "In this session" : "Queue complete"}
+              {upcoming.length
+                ? "In this session"
+                : hasDeferredTracks
+                  ? "Shuffle loading"
+                  : "Queue complete"}
             </Badge>
             <h2 id="up-next-heading" className="m-0 text-base/tight font-semibold tracking-tight text-[#dfddd7]">
-              {upcoming.length ? "Up next" : "Keep listening"}
+              {upcoming.length
+                ? "Up next"
+                : hasDeferredTracks
+                  ? "Filling your queue"
+                  : "Keep listening"}
             </h2>
           </div>
         </div>
@@ -859,6 +869,14 @@ function NowPlayingViewComponent({
                     </Button>
                   );
                 })}
+              </PresencePanel>
+            ) : hasDeferredTracks ? (
+              <PresencePanel
+                key="deferred"
+                className="flex min-h-20 items-center gap-3 rounded-lg border border-white/7 bg-white/2.5 p-4 text-xs text-[#747873]"
+              >
+                <Spinner aria-hidden="true" className="size-4" />
+                <span>Coda is loading the next part of this shuffle.</span>
               </PresencePanel>
             ) : recommendation ? (
               <PresencePanel

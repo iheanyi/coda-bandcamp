@@ -31,8 +31,8 @@ vi.mock("./updater", async (importOriginal) => {
 import {
   AppUpdatePrompt,
   AppUpdateSettings,
-  useAppUpdater,
 } from "./AppUpdater";
+import { useAppUpdater } from "./appUpdaterController";
 
 function UpdaterHarness() {
   const updater = useAppUpdater();

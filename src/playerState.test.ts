@@ -6,6 +6,7 @@ import {
   MAX_PERSISTED_QUEUE_LENGTH,
   parsePlayerState,
   parsePlayerStateAsync,
+  persistedQueueIndex,
   PLAYER_STATE_CONTRACT_VERSION,
   yieldPlayerStateValidation,
 } from "./playerState";
@@ -48,6 +49,16 @@ const input: PlayerStateInput = {
 };
 
 describe("player state persistence", () => {
+  it("maps the active queue item to its persisted index once ephemeral previews are omitted", () => {
+    const laterTrack = { ...track, id: "track-2" };
+    const preview = { ...track, id: "discover:preview-track" };
+
+    expect(persistedQueueIndex([track, preview, laterTrack], 0)).toBe(0);
+    expect(persistedQueueIndex([track, preview, laterTrack], 1)).toBe(0);
+    expect(persistedQueueIndex([track, preview, laterTrack], 2)).toBe(1);
+    expect(persistedQueueIndex([], 0)).toBe(-1);
+  });
+
   it("matches the shared native Radio persistence contract", () => {
     expect(radioContract.contractVersion).toBe(PLAYER_STATE_CONTRACT_VERSION);
     const snapshot = parsePlayerState(radioContract.snapshot);

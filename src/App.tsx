@@ -56,9 +56,11 @@ import {
 import {
   AppUpdatePrompt,
   AppUpdateSettings,
+} from "./AppUpdater";
+import {
   type AppUpdaterController,
   useAppUpdater,
-} from "./AppUpdater";
+} from "./appUpdaterController";
 import { AppSidebar, type AppSidebarView } from "./AppSidebar";
 import { DiscoverReleaseDetail } from "./DiscoverReleaseDetail";
 import { Alert } from "./components/ui/alert";
@@ -202,7 +204,9 @@ import {
 } from "./RadioChapterMetadata";
 import {
   isEphemeralTrackId,
+  MAX_PERSISTED_QUEUE_LENGTH,
   normalizedReleaseTitle,
+  persistedQueueIndex,
 } from "./playerState";
 import {
   createPlaybackClock,
@@ -215,6 +219,10 @@ import {
   moveItem,
   shuffled,
 } from "./queue";
+import {
+  createProgressiveShufflePlan,
+  shuffleProgressiveAlbumTracks,
+} from "./progressiveShuffle";
 import {
   recommendQueueAlbum,
   type QueueRecommendation,
@@ -285,6 +293,30 @@ type ArtistNavigationHandler = (
   sourceTrack?: Track,
   sourceTrigger?: HTMLElement,
 ) => void;
+type LibraryShuffleSession = {
+  connectionGeneration: number;
+  scopeName: string;
+  artistScope?: ArtistGroup;
+  planSeed: number;
+  slots: Album[];
+  cursor: number;
+  albumTracks: Map<string, Track[]>;
+  albumTrackIndexes: Map<string, number>;
+  remainingAlbumSlots: Map<string, number>;
+  albumLoads: Map<string, Promise<void>>;
+  recoveredCovers: Map<string, Album>;
+  knownTrackIds: Set<string>;
+  totalAlbums: number;
+  exhausted: boolean;
+  cancelled: boolean;
+  started: boolean;
+  loading?: Promise<void>;
+};
+type PendingLibraryShuffleAdvance = {
+  currentIndex: number;
+  trackId: string;
+  reason: "ended" | "next";
+};
 
 function usePlaybackPosition(playbackClock: PlaybackClock): number {
   return useSyncExternalStore(
@@ -353,6 +385,8 @@ function useCurrentRadioChapter(
 const ARTWORK_REFRESH_CONCURRENCY = 4;
 const MAX_ARTWORK_DETAILS_PER_REFRESH = 200;
 const SEARCH_QUEUE_CONCURRENCY = 6;
+const LIBRARY_SHUFFLE_REFILL_CONCURRENCY = 4;
+const LIBRARY_SHUFFLE_APPEND_BATCH_TRACKS = 64;
 const RANDOM_PICK_YIELD_INTERVAL = 16;
 const PLAYER_STATE_SAVE_DEBOUNCE_MS = 450;
 const PLAYER_STATE_CHECKPOINT_MS = 5_000;
@@ -447,19 +481,6 @@ function persistedRadioScrobbleProgress(
     ...progress,
     scrobbledChapterKeys: [...progress.scrobbledChapterKeys],
   };
-}
-
-export function persistedQueueIndex(
-  queue: readonly Track[],
-  currentIndex: number,
-): number {
-  const lastIndex = Math.min(currentIndex, queue.length - 1);
-  let persistedIndex = -1;
-  for (let index = 0; index <= lastIndex; index += 1) {
-    const item = queue[index];
-    if (item && !isEphemeralTrackId(item.id)) persistedIndex += 1;
-  }
-  return persistedIndex;
 }
 
 function CoverArt({
@@ -1051,6 +1072,7 @@ const QueuePanel = memo(function QueuePanel({
   queue,
   currentIndex,
   currentTrack,
+  hasDeferredTracks,
   radioTimeline,
   playbackClock,
   playing,
@@ -1078,6 +1100,7 @@ const QueuePanel = memo(function QueuePanel({
   queue: Track[];
   currentIndex: number;
   currentTrack?: Track;
+  hasDeferredTracks: boolean;
   radioTimeline: readonly RadioChapter[];
   playbackClock: PlaybackClock;
   playing: boolean;
@@ -1129,18 +1152,24 @@ const QueuePanel = memo(function QueuePanel({
         <Music2 className="box-content shrink-0 rounded-full border border-white/[0.07] bg-coda-radio p-2 text-[#777b76]" size={25} />
         <div className="flex max-w-64 flex-col items-center gap-1 text-balance">
           <p className="text-coda-compact font-semibold text-[#b9bbb5]">
-            {currentTrack ? "End of the queue" : "Your queue is empty"}
+            {currentTrack
+              ? hasDeferredTracks
+                ? "Loading more tracks…"
+                : "End of the queue"
+              : "Your queue is empty"}
           </p>
           <p className="text-coda-meta text-[#777b76]">
-            {recommendation
-              ? "Not sure what comes next? Let Coda pick from your collection."
-              : currentTrack
+            {currentTrack && hasDeferredTracks
+                ? "Coda is filling the next part of this shuffle."
+                : recommendation
+                  ? "Not sure what comes next? Let Coda pick from your collection."
+                : currentTrack
                 ? "Add another album or track to keep listening."
                 : "Use the + button on any release to line up music."}
           </p>
         </div>
       </div>
-      {recommendation ? (
+      {recommendation && !hasDeferredTracks ? (
         <div className="grid w-full min-w-0 grid-cols-[3rem_minmax(0,1fr)] gap-x-3 gap-y-2.5 overflow-hidden rounded-lg border border-white/9 bg-[radial-gradient(circle_at_0_0,rgba(221,101,73,0.09),transparent_58%),#1a1d1f] p-3 text-left shadow-[inset_0_1px_rgba(255,255,255,0.025)] *:data-[slot=cover]:self-center">
           <CoverArt size="small" album={recommendation.album} />
           <div className="flex min-w-0 flex-col justify-center">
@@ -1231,7 +1260,7 @@ const QueuePanel = memo(function QueuePanel({
           <Button
             className="h-8 px-2 text-(length:--text-coda-meta) font-semibold text-[#858984] hover:bg-transparent hover:text-[#e1dfd9]"
             onClick={onClear}
-            disabled={queue.length <= currentIndex + 1}
+            disabled={!hasDeferredTracks && queue.length <= currentIndex + 1}
             title="Clear upcoming tracks"
             size="compact"
             variant="text"
@@ -1454,9 +1483,17 @@ const QueuePanel = memo(function QueuePanel({
             transition: codaMotion.componentEnter,
           }}
         >
-          {countLabel(upcoming.length, "track")} next
+          {hasDeferredTracks && !upcoming.length
+            ? "More tracks pending"
+            : `${countLabel(upcoming.length, "track")} next`}
         </m.span>
-        <span>{upcoming.length ? `${formatTime(remaining)} remaining` : "Queue ready"}</span>
+        <span>
+          {hasDeferredTracks
+            ? "Loading remaining tracks…"
+            : upcoming.length
+              ? `${formatTime(remaining)} remaining`
+              : "Queue ready"}
+        </span>
       </DrawerFooter>
     </DrawerContent>
   );
@@ -2574,6 +2611,7 @@ function EmptyState({
   );
 }
 
+// Keep non-component exports in focused modules so Fast Refresh preserves App state.
 export default function App() {
   const queryClient = useQueryClient();
   const { data: albums } = useQuery(libraryStateQueryOptions);
@@ -2645,6 +2683,7 @@ export default function App() {
   const [artistAction, setArtistAction] = useState<"play" | "shuffle" | "queue">();
   const [queueSearchProgress, setQueueSearchProgress] = useState<{ done: number; total: number }>();
   const [libraryShuffleProgress, setLibraryShuffleProgress] = useState<{ done: number; total: number }>();
+  const [libraryShuffleHasMore, setLibraryShuffleHasMore] = useState(false);
   const [randomPickLoading, setRandomPickLoading] = useState(false);
   const [queueRecommendationNonce, setQueueRecommendationNonce] = useState(0);
   const [connectionOpen, setConnectionOpen] = useState(false);
@@ -2681,8 +2720,14 @@ export default function App() {
   const detailNavigationRef = useRef(createNavigationTransactionState());
   const detailReturnFocusRequestedRef = useRef(false);
   const visitedViewsRef = useRef<Set<LibraryView>>(new Set(["library"]));
-  const libraryShuffleActiveRef = useRef(false);
+  const libraryShuffleSessionRef = useRef<LibraryShuffleSession | undefined>(
+    undefined,
+  );
   const libraryShuffleQueueRef = useRef<Track[] | undefined>(undefined);
+  const libraryShuffleRefillRef = useRef<() => void>(() => undefined);
+  const pendingLibraryShuffleAdvanceRef = useRef<
+    PendingLibraryShuffleAdvance | undefined
+  >(undefined);
   const randomPickActiveRef = useRef(false);
   const restoreGenerationRef = useRef(0);
   const librarySyncGenerationRef = useRef(0);
@@ -2696,12 +2741,60 @@ export default function App() {
     undefined,
   );
 
+  const cancelLibraryShuffle = useCallback(() => {
+    const session = libraryShuffleSessionRef.current;
+    if (session) session.cancelled = true;
+    libraryShuffleSessionRef.current = undefined;
+    libraryShuffleQueueRef.current = undefined;
+    pendingLibraryShuffleAdvanceRef.current = undefined;
+    setLibraryShuffleProgress(undefined);
+    setLibraryShuffleHasMore(false);
+  }, []);
+
+  useEffect(() => () => {
+    const session = libraryShuffleSessionRef.current;
+    if (session) session.cancelled = true;
+    libraryShuffleSessionRef.current = undefined;
+    libraryShuffleQueueRef.current = undefined;
+    pendingLibraryShuffleAdvanceRef.current = undefined;
+  }, []);
+
   useEffect(() => {
+    const session = libraryShuffleSessionRef.current;
     const ownedQueue = libraryShuffleQueueRef.current;
-    if (ownedQueue && queue !== ownedQueue) {
-      libraryShuffleQueueRef.current = undefined;
+    if (session?.started && ownedQueue && queue !== ownedQueue) {
+      cancelLibraryShuffle();
+      return;
     }
-  }, [queue]);
+    const pendingAdvance = pendingLibraryShuffleAdvanceRef.current;
+    if (
+      pendingAdvance &&
+      (
+        pendingAdvance.currentIndex !== currentIndex ||
+        pendingAdvance.trackId !== queue[currentIndex]?.id
+      )
+    ) {
+      pendingLibraryShuffleAdvanceRef.current = undefined;
+    }
+    if (
+      session?.started &&
+      ownedQueue === queue
+    ) {
+      const timer = window.setTimeout(() => {
+        if (
+          libraryShuffleSessionRef.current === session &&
+          libraryShuffleQueueRef.current === queue
+        ) {
+          libraryShuffleRefillRef.current();
+        }
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+  }, [cancelLibraryShuffle, currentIndex, queue]);
+
+  useEffect(() => {
+    if (!playing) pendingLibraryShuffleAdvanceRef.current = undefined;
+  }, [playing]);
 
   useEffect(() => {
     if (!queueOpen || !queueFocusRequestedRef.current) return;
@@ -3874,7 +3967,37 @@ export default function App() {
     setPlaying(false);
   }, []);
 
+  const waitForLibraryShuffleAdvance = useCallback((reason: "ended" | "next") => {
+    const session = libraryShuffleSessionRef.current;
+    const latest = latestPlayerStateRef.current;
+    const current = latest.queue[latest.currentIndex];
+    if (
+      !session ||
+      session.cancelled ||
+      !current ||
+      libraryShuffleQueueRef.current !== latest.queue ||
+      session.exhausted
+    ) {
+      return false;
+    }
+    pendingLibraryShuffleAdvanceRef.current = {
+      currentIndex: latest.currentIndex,
+      trackId: current.id,
+      reason,
+    };
+    libraryShuffleRefillRef.current();
+    return true;
+  }, []);
+
   const advanceQueue = useCallback(() => {
+    const activeIndex = playbackIndexRef.current;
+    if (
+      repeat !== "one" &&
+      activeIndex + 1 >= queue.length &&
+      waitForLibraryShuffleAdvance("ended")
+    ) {
+      return;
+    }
     playbackClock.reset();
     setCurrentIndex((index) => {
       if (repeat === "one") return index;
@@ -3883,7 +4006,7 @@ export default function App() {
       setPlaying(false);
       return index;
     });
-  }, [playbackClock, queue.length, repeat]);
+  }, [playbackClock, queue.length, repeat, waitForLibraryShuffleAdvance]);
 
   const next = useCallback(() => {
     if (!currentTrack) return;
@@ -3899,6 +4022,12 @@ export default function App() {
       return;
     }
     const activeIndex = playbackIndexRef.current;
+    if (
+      activeIndex + 1 >= queue.length &&
+      waitForLibraryShuffleAdvance("next")
+    ) {
+      return;
+    }
     const nextIndex = activeIndex + 1 < queue.length
       ? activeIndex + 1
       : repeat === "all" && queue.length > 1
@@ -3914,6 +4043,7 @@ export default function App() {
     playbackClock,
     queue.length,
     repeat,
+    waitForLibraryShuffleAdvance,
   ]);
 
   const handleAudioEnded = useCallback((event: SyntheticEvent<HTMLAudioElement>) => {
@@ -4292,6 +4422,7 @@ export default function App() {
   );
   const canNext = Boolean(currentTrack) && (
     currentIndex + 1 < queue.length ||
+    libraryShuffleHasMore ||
     (repeat === "all" && queue.length > 1)
   );
   const currentSystemMediaChapterIndex = currentSystemMediaChapter
@@ -4597,6 +4728,7 @@ export default function App() {
   }, [albums, discoverDetail, notify, nowPlayingOpen, openAlbum, view]);
 
   const playAlbum = useCallback(async (album: Album) => {
+    cancelLibraryShuffle();
     const sessionGeneration = bandcampSessionGenerationRef.current;
     try {
       const ready = await ensureTracks(album, sessionGeneration);
@@ -4612,9 +4744,10 @@ export default function App() {
       if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
       notify(String(cause), "bad");
     }
-  }, [ensureTracks, notify, playbackClock]);
+  }, [cancelLibraryShuffle, ensureTracks, notify, playbackClock]);
 
   const queueAlbum = useCallback(async (album: Album) => {
+    cancelLibraryShuffle();
     const sessionGeneration = bandcampSessionGenerationRef.current;
     try {
       const ready = await ensureTracks(album, sessionGeneration);
@@ -4628,13 +4761,14 @@ export default function App() {
       if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
       notify(String(cause), "bad");
     }
-  }, [ensureTracks, notify]);
+  }, [cancelLibraryShuffle, ensureTracks, notify]);
 
   const loadArtistTracks = useCallback(async (
     group: ArtistGroup,
-    action: "play" | "shuffle" | "queue",
+    action: "play" | "queue",
   ) => {
     if (artistAction || !connected) return;
+    cancelLibraryShuffle();
     const sessionGeneration = bandcampSessionGenerationRef.current;
     setArtistAction(action);
     const tracksByAlbum: Track[][] = Array.from({ length: group.albums.length }, () => []);
@@ -4682,17 +4816,12 @@ export default function App() {
       setAlbums((items) =>
         items.map((album) => recoveredCovers.get(album.id) ?? album),
       );
-      if (action === "play" || action === "shuffle") {
-        setQueue(action === "shuffle" ? shuffled(tracks) : tracks);
+      if (action === "play") {
+        setQueue(tracks);
         setCurrentIndex(0);
         playbackClock.reset();
         setPlaying(true);
-        notify(
-          action === "shuffle"
-            ? `Shuffling ${countLabel(tracks.length, "track")} by ${group.name}`
-            : `Playing ${group.name}`,
-          "good",
-        );
+        notify(`Playing ${group.name}`, "good");
       } else {
         setQueue((items) => appendUnique(items, tracks));
         notify(`${countLabel(tracks.length, `${group.name} track`)} added to queue`, "good");
@@ -4702,10 +4831,19 @@ export default function App() {
         setArtistAction(undefined);
       }
     }
-  }, [artistAction, connected, notify, playbackClock, queryClient, setAlbums]);
+  }, [
+    artistAction,
+    cancelLibraryShuffle,
+    connected,
+    notify,
+    playbackClock,
+    queryClient,
+    setAlbums,
+  ]);
 
   const queueSearchResults = useCallback(async () => {
     if (!connected || queueSearchProgress || !visibleAlbums.length) return;
+    cancelLibraryShuffle();
     const sessionGeneration = bandcampSessionGenerationRef.current;
     const targets = [...visibleAlbums];
     const recoveredCovers = new Map<string, Album>();
@@ -4768,134 +4906,314 @@ export default function App() {
         setQueueSearchProgress(undefined);
       }
     }
-  }, [connected, notify, queryClient, queueSearchProgress, setAlbums, visibleAlbums]);
+  }, [
+    cancelLibraryShuffle,
+    connected,
+    notify,
+    queryClient,
+    queueSearchProgress,
+    setAlbums,
+    visibleAlbums,
+  ]);
 
-  const shuffleLibrary = useCallback(async (
+  const refillLibraryShuffle = useCallback((session: LibraryShuffleSession) => {
+    if (session.loading || session.cancelled) return;
+
+    const isCurrentSession = () =>
+      !session.cancelled &&
+      libraryShuffleSessionRef.current === session &&
+      bandcampSessionGenerationRef.current === session.connectionGeneration;
+
+    const flushRecoveredCovers = () => {
+      if (!session.recoveredCovers.size || !isCurrentSession()) return;
+      const recovered = new Map(session.recoveredCovers);
+      session.recoveredCovers.clear();
+      setAlbums((items) =>
+        items.map((album) => recovered.get(album.id) ?? album),
+      );
+    };
+
+    const startAlbumLoad = (album: Album): Promise<void> => {
+      if (session.albumTracks.has(album.id)) return Promise.resolve();
+      const existing = session.albumLoads.get(album.id);
+      if (existing) return existing;
+
+      let load!: Promise<void>;
+      const cachedTracks = cachedAlbumTracks(queryClient, album);
+      load = Promise.resolve(
+        cachedTracks ?? ensureAlbumQueryData(queryClient, album),
+      )
+        .then((tracks) => {
+          if (!isCurrentSession()) return;
+          const recoveredAlbum = albumWithRecoveredCover(album, tracks);
+          if (recoveredAlbum !== album) {
+            session.recoveredCovers.set(album.id, recoveredAlbum);
+          }
+          const scopedTracks = session.artistScope
+            ? tracksForArtistGroupAlbum(
+                session.artistScope,
+                album.id,
+                tracks,
+              )
+            : tracks;
+          session.albumTracks.set(
+            album.id,
+            shuffleProgressiveAlbumTracks(
+              scopedTracks,
+              session.planSeed,
+              album.id,
+            ),
+          );
+          session.albumTrackIndexes.set(album.id, 0);
+        })
+        .catch(() => {
+          if (!isCurrentSession()) return;
+          session.albumTracks.set(album.id, []);
+          session.albumTrackIndexes.set(album.id, 0);
+        })
+        .finally(() => {
+          if (session.albumLoads.get(album.id) === load) {
+            session.albumLoads.delete(album.id);
+          }
+          if (isCurrentSession() && !session.started) {
+            setLibraryShuffleProgress({
+              done: Math.min(session.albumTracks.size, session.totalAlbums),
+              total: session.totalAlbums,
+            });
+          }
+        });
+      session.albumLoads.set(album.id, load);
+      return load;
+    };
+
+    const prefetchLookaheadAlbums = () => {
+      let available = Math.max(
+        0,
+        LIBRARY_SHUFFLE_REFILL_CONCURRENCY - session.albumLoads.size,
+      );
+      if (!available) return;
+      const scheduled = new Set<string>();
+      for (let index = session.cursor; index < session.slots.length; index += 1) {
+        const album = session.slots[index];
+        if (
+          scheduled.has(album.id) ||
+          session.albumTracks.has(album.id) ||
+          session.albumLoads.has(album.id)
+        ) {
+          continue;
+        }
+        scheduled.add(album.id);
+        void startAlbumLoad(album);
+        available -= 1;
+        if (!available) return;
+      }
+    };
+
+    const materializeTracks = async (count: number): Promise<Track[]> => {
+      const tracks: Track[] = [];
+      prefetchLookaheadAlbums();
+      const firstAlbum = session.slots[session.cursor];
+      if (firstAlbum && !session.albumTracks.has(firstAlbum.id)) {
+        await startAlbumLoad(firstAlbum);
+        if (!isCurrentSession()) return [];
+      }
+      while (
+        tracks.length < count &&
+        session.cursor < session.slots.length &&
+        session.knownTrackIds.size < MAX_PERSISTED_QUEUE_LENGTH &&
+        isCurrentSession()
+      ) {
+        prefetchLookaheadAlbums();
+        const album = session.slots[session.cursor];
+        if (!session.albumTracks.has(album.id)) break;
+        session.cursor += 1;
+        const albumTracks = session.albumTracks.get(album.id) ?? [];
+        const trackIndex = session.albumTrackIndexes.get(album.id) ?? 0;
+        session.albumTrackIndexes.set(album.id, trackIndex + 1);
+        const remainingSlots = (session.remainingAlbumSlots.get(album.id) ?? 1) - 1;
+        if (remainingSlots > 0) {
+          session.remainingAlbumSlots.set(album.id, remainingSlots);
+        } else {
+          session.remainingAlbumSlots.delete(album.id);
+          session.albumTracks.delete(album.id);
+          session.albumTrackIndexes.delete(album.id);
+        }
+        const track = albumTracks[trackIndex];
+        if (!track || session.knownTrackIds.has(track.id)) continue;
+        session.knownTrackIds.add(track.id);
+        tracks.push(track);
+      }
+      session.exhausted =
+        session.cursor >= session.slots.length ||
+        session.knownTrackIds.size >= MAX_PERSISTED_QUEUE_LENGTH;
+      flushRecoveredCovers();
+      return tracks;
+    };
+
+    const settleExhaustedSession = () => {
+      if (!isCurrentSession() || !session.exhausted) return false;
+      const pendingAdvance = pendingLibraryShuffleAdvanceRef.current;
+      pendingLibraryShuffleAdvanceRef.current = undefined;
+      libraryShuffleSessionRef.current = undefined;
+      libraryShuffleQueueRef.current = undefined;
+      setLibraryShuffleProgress(undefined);
+      setLibraryShuffleHasMore(false);
+      if (!session.started) {
+        notify("Bandcamp did not return any playable tracks.", "bad");
+      } else if (pendingAdvance?.reason === "ended") {
+        const latest = latestPlayerStateRef.current;
+        if (latest.repeatMode === "all" && latest.queue.length > 1) {
+          playbackIndexRef.current = 0;
+          latestPlayerStateRef.current = {
+            ...latest,
+            currentIndex: 0,
+            persistedCurrentIndex: 0,
+          };
+          setCurrentIndex(0);
+          playbackClock.reset();
+          setPlaying(true);
+        } else {
+          setPlaying(false);
+        }
+      }
+      return true;
+    };
+
+    let committedQueueUpdate = false;
+    let request!: Promise<void>;
+    request = (async () => {
+      const tracks = await materializeTracks(
+        LIBRARY_SHUFFLE_APPEND_BATCH_TRACKS,
+      );
+      if (!isCurrentSession()) return;
+      if (tracks.length) {
+        if (!session.started) {
+          session.started = true;
+          setLibraryShuffleHasMore(!session.exhausted);
+          libraryShuffleQueueRef.current = tracks;
+          latestPlayerStateRef.current = {
+            ...latestPlayerStateRef.current,
+            queue: tracks,
+            currentIndex: 0,
+            persistedCurrentIndex: 0,
+          };
+          playbackIndexRef.current = 0;
+          setQueue(tracks);
+          committedQueueUpdate = true;
+          setCurrentIndex(0);
+          playbackClock.reset();
+          setPlaying(true);
+          setLibraryShuffleProgress(undefined);
+          notify(`Shuffling ${session.scopeName}`, "good");
+        } else {
+          const current = latestPlayerStateRef.current;
+          if (libraryShuffleQueueRef.current !== current.queue) {
+            session.cancelled = true;
+            return;
+          }
+          const nextQueue = appendUnique(current.queue, tracks);
+          const pendingAdvance = pendingLibraryShuffleAdvanceRef.current;
+          let nextIndex = current.currentIndex;
+          if (
+            pendingAdvance &&
+            pendingAdvance.currentIndex === current.currentIndex &&
+            pendingAdvance.trackId === current.queue[current.currentIndex]?.id &&
+            current.currentIndex + 1 < nextQueue.length
+          ) {
+            nextIndex = current.currentIndex + 1;
+            pendingLibraryShuffleAdvanceRef.current = undefined;
+          }
+          libraryShuffleQueueRef.current = nextQueue;
+          latestPlayerStateRef.current = {
+            ...current,
+            queue: nextQueue,
+            currentIndex: nextIndex,
+            persistedCurrentIndex: persistedQueueIndex(nextQueue, nextIndex),
+          };
+          setQueue(nextQueue);
+          committedQueueUpdate = true;
+          if (nextIndex !== current.currentIndex) {
+            playbackIndexRef.current = nextIndex;
+            setCurrentIndex(nextIndex);
+            playbackClock.reset();
+            setPlaying(true);
+          }
+        }
+      }
+      settleExhaustedSession();
+    })()
+      .catch(() => {
+        if (isCurrentSession() && !session.started) {
+          notify("Bandcamp did not return any playable tracks.", "bad");
+          cancelLibraryShuffle();
+        }
+      })
+      .finally(() => {
+        if (session.loading === request) session.loading = undefined;
+        if (!isCurrentSession() || settleExhaustedSession()) return;
+        if (session.started && committedQueueUpdate) return;
+        window.setTimeout(() => {
+          if (isCurrentSession()) libraryShuffleRefillRef.current();
+        }, 0);
+      });
+    session.loading = request;
+  }, [
+    cancelLibraryShuffle,
+    notify,
+    playbackClock,
+    queryClient,
+    setAlbums,
+  ]);
+  libraryShuffleRefillRef.current = () => {
+    const session = libraryShuffleSessionRef.current;
+    if (session) refillLibraryShuffle(session);
+  };
+
+  const shuffleLibrary = useCallback((
     scopeAlbums: readonly Album[] = albums,
     scopeName = "entire library",
     artistScope?: ArtistGroup,
   ) => {
-    if (libraryShuffleActiveRef.current || !connected || !scopeAlbums.length) return;
-    const sessionGeneration = bandcampSessionGenerationRef.current;
-    libraryShuffleActiveRef.current = true;
-    const targets = shuffled([...scopeAlbums]);
-    const recoveredCovers = new Map<string, Album>();
-    const loadedTracks: Track[][] = Array.from({ length: targets.length }, () => []);
-    let cursor = 0;
-    let completed = 0;
-    let lastProgressPublishedAt = 0;
-    let initialQueueReference: Track[] | undefined;
-    setLibraryShuffleProgress({ done: 0, total: targets.length });
-
-    const startShufflePlayback = (tracks: readonly Track[]) => {
-      if (initialQueueReference || !tracks.length) return;
-      const initialQueue = shuffled([...tracks]);
-      const firstTrack = initialQueue[0];
-      if (!firstTrack) return;
-      initialQueueReference = initialQueue;
-      libraryShuffleQueueRef.current = initialQueue;
-      latestPlayerStateRef.current = {
-        ...latestPlayerStateRef.current,
-        queue: initialQueue,
-        currentIndex: 0,
-        persistedCurrentIndex: 0,
-      };
-      setQueue(initialQueue);
-      setCurrentIndex(0);
-      playbackClock.reset();
-      setPlaying(true);
-    };
-
-    const publishProgress = () => {
-      const now = performance.now();
-      if (
-        completed !== targets.length &&
-        now - lastProgressPublishedAt < 250
-      ) return;
-      lastProgressPublishedAt = now;
-      setLibraryShuffleProgress({ done: completed, total: targets.length });
-    };
-
-    const worker = async () => {
-      while (
-        bandcampSessionGenerationRef.current === sessionGeneration &&
-        cursor < targets.length
-      ) {
-        const index = cursor;
-        cursor += 1;
-        const album = targets[index];
-        try {
-          if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
-          const tracks = await ensureAlbumQueryData(queryClient, album);
-          if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
-          const recoveredAlbum = albumWithRecoveredCover(album, tracks);
-          if (recoveredAlbum !== album) {
-            recoveredCovers.set(album.id, recoveredAlbum);
-          }
-          const scopedTracks = artistScope
-            ? tracksForArtistGroupAlbum(artistScope, album.id, tracks)
-            : tracks;
-          loadedTracks[index] = scopedTracks;
-          startShufflePlayback(scopedTracks);
-        } catch {
-          if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
-          // A removed or unavailable release should not block the rest of the shuffle.
-        } finally {
-          if (bandcampSessionGenerationRef.current === sessionGeneration) {
-            completed += 1;
-            publishProgress();
-          }
-        }
-      }
-    };
-
-    try {
-      await Promise.all(
-        Array.from(
-          { length: Math.min(SEARCH_QUEUE_CONCURRENCY, targets.length) },
-          () => worker(),
-        ),
+    if (!connected || !scopeAlbums.length) return;
+    cancelLibraryShuffle();
+    const plan = createProgressiveShufflePlan(
+      scopeAlbums,
+      MAX_PERSISTED_QUEUE_LENGTH,
+    );
+    const remainingAlbumSlots = new Map<string, number>();
+    for (const album of plan.slots) {
+      remainingAlbumSlots.set(
+        album.id,
+        (remainingAlbumSlots.get(album.id) ?? 0) + 1,
       );
-      if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
-      const tracks = shuffled(loadedTracks.flat());
-      if (!tracks.length) {
-        notify("Bandcamp did not return any playable tracks.", "bad");
-        return;
-      }
-      if (recoveredCovers.size) {
-        setAlbums((items) =>
-          items.map((album) => recoveredCovers.get(album.id) ?? album),
-        );
-      }
-      if (!initialQueueReference) {
-        startShufflePlayback(tracks);
-      } else {
-        const latest = latestPlayerStateRef.current;
-        if (libraryShuffleQueueRef.current !== initialQueueReference) return;
-        const completeQueue = appendUnique(latest.queue, tracks);
-        libraryShuffleQueueRef.current = completeQueue;
-        latestPlayerStateRef.current = {
-          ...latest,
-          queue: completeQueue,
-          persistedCurrentIndex: persistedQueueIndex(
-            completeQueue,
-            latest.currentIndex,
-          ),
-        };
-        setQueue(completeQueue);
-      }
-      notify(
-        `${countLabel(tracks.length, "track")} from ${scopeName} shuffled`,
-        "good",
-      );
-    } finally {
-      if (bandcampSessionGenerationRef.current === sessionGeneration) {
-        libraryShuffleActiveRef.current = false;
-        libraryShuffleQueueRef.current = undefined;
-        setLibraryShuffleProgress(undefined);
-      }
     }
-  }, [albums, connected, notify, playbackClock, queryClient, setAlbums]);
+    const session: LibraryShuffleSession = {
+      connectionGeneration: bandcampSessionGenerationRef.current,
+      scopeName,
+      artistScope,
+      planSeed: plan.seed,
+      slots: plan.slots,
+      cursor: 0,
+      albumTracks: new Map(),
+      albumTrackIndexes: new Map(),
+      remainingAlbumSlots,
+      albumLoads: new Map(),
+      recoveredCovers: new Map(),
+      knownTrackIds: new Set(),
+      totalAlbums: new Set(scopeAlbums.map((album) => album.id)).size,
+      exhausted: plan.slots.length === 0,
+      cancelled: false,
+      started: false,
+    };
+    libraryShuffleSessionRef.current = session;
+    setLibraryShuffleProgress({ done: 0, total: session.totalAlbums });
+    refillLibraryShuffle(session);
+  }, [
+    albums,
+    cancelLibraryShuffle,
+    connected,
+    refillLibraryShuffle,
+  ]);
 
   const playTrack = useCallback((track: Track) => {
     recordPlaybackDiagnostic("renderer.play.request");
@@ -4905,6 +5223,7 @@ export default function App() {
       latest.currentIndex,
       track,
     );
+    if (activated.queue !== latest.queue) cancelLibraryShuffle();
     latestPlayerStateRef.current = {
       ...latest,
       queue: activated.queue,
@@ -4914,7 +5233,7 @@ export default function App() {
     setCurrentIndex(activated.currentIndex);
     playbackClock.reset();
     setPlaying(true);
-  }, [playbackClock]);
+  }, [cancelLibraryShuffle, playbackClock]);
 
   const playTrackAt = useCallback((track: Track, position: number) => {
     const safePosition = Number.isFinite(position) ? Math.max(0, position) : 0;
@@ -4931,19 +5250,21 @@ export default function App() {
 
   const playTracks = useCallback((tracks: Track[]) => {
     if (!tracks.length) return;
+    cancelLibraryShuffle();
     recordPlaybackDiagnostic("renderer.play.request");
     setQueue(tracks);
     setCurrentIndex(0);
     playbackClock.reset();
     setPlaying(true);
     notify(`Playing ${countLabel(tracks.length, "track")}`, "good");
-  }, [notify, playbackClock]);
+  }, [cancelLibraryShuffle, notify, playbackClock]);
 
   const queueTracks = useCallback((tracks: Track[]) => {
     if (!tracks.length) return;
+    cancelLibraryShuffle();
     setQueue((items) => appendUnique(items, tracks));
     notify(`${countLabel(tracks.length, "track")} added to queue`, "good");
-  }, [notify]);
+  }, [cancelLibraryShuffle, notify]);
 
   const playRandomTrack = useCallback(async (
     scopeAlbums: readonly Album[],
@@ -4951,6 +5272,7 @@ export default function App() {
     artistScope?: ArtistGroup,
   ) => {
     if (randomPickActiveRef.current || !connected || !scopeAlbums.length) return;
+    cancelLibraryShuffle();
     const sessionGeneration = bandcampSessionGenerationRef.current;
     randomPickActiveRef.current = true;
     setRandomPickLoading(true);
@@ -5004,9 +5326,10 @@ export default function App() {
         setRandomPickLoading(false);
       }
     }
-  }, [connected, ensureTracks, notify, playTrack]);
+  }, [cancelLibraryShuffle, connected, ensureTracks, notify, playTrack]);
 
   const removeQueueItem = useCallback((index: number) => {
+    cancelLibraryShuffle();
     setQueue((items) => {
       const nextQueue = items.filter((_, itemIndex) => itemIndex !== index);
       setCurrentIndex((activeIndex) => {
@@ -5020,9 +5343,10 @@ export default function App() {
       }
       return nextQueue;
     });
-  }, [playbackClock]);
+  }, [cancelLibraryShuffle, playbackClock]);
 
   const clearQueue = useCallback(() => {
+    cancelLibraryShuffle();
     if (currentTrack) {
       setQueue((items) => keepCurrentTrack(items, currentIndex));
       setCurrentIndex(0);
@@ -5034,7 +5358,7 @@ export default function App() {
     setPlaying(false);
     setStreamUrl(undefined);
     setSelectedAlbum(undefined);
-  }, [currentIndex, currentTrack, playbackClock]);
+  }, [cancelLibraryShuffle, currentIndex, currentTrack, playbackClock]);
 
   const seek = useCallback((value: number) => {
     playbackClock.seek(value);
@@ -5123,11 +5447,11 @@ export default function App() {
   }, [albums, artworkRefreshing, connected, notify, queryClient, setAlbums]);
 
   const handleDisconnect = useCallback(async () => {
+    cancelLibraryShuffle();
     await disconnect();
     bandcampSessionGenerationRef.current += 1;
     librarySyncGenerationRef.current += 1;
     restoreGenerationRef.current += 1;
-    libraryShuffleActiveRef.current = false;
     randomPickActiveRef.current = false;
     setPlayerStateReady(false);
     clearRuntimeCaches();
@@ -5156,7 +5480,13 @@ export default function App() {
     });
     notify("Bandcamp credentials removed", "good");
     setConnectionOpen(false);
-  }, [enqueuePlayerStateWrite, notify, playbackClock, queryClient]);
+  }, [
+    cancelLibraryShuffle,
+    enqueuePlayerStateWrite,
+    notify,
+    playbackClock,
+    queryClient,
+  ]);
 
   const changeQueueOpen = useCallback((nextOpen: boolean) => {
     if (nextOpen) {
@@ -5180,16 +5510,18 @@ export default function App() {
   }, [playbackClock]);
 
   const shuffleQueue = useCallback(() => {
+    cancelLibraryShuffle();
     setQueue((items) => {
       const head = items[currentIndex] ? [items[currentIndex]] : [];
       setCurrentIndex(0);
       return [...head, ...shuffled(items.slice(currentIndex + 1))];
     });
-  }, [currentIndex]);
+  }, [cancelLibraryShuffle, currentIndex]);
 
   const moveQueueItem = useCallback((from: number, to: number) => {
+    cancelLibraryShuffle();
     setQueue((items) => moveItem(items, from, to));
-  }, []);
+  }, [cancelLibraryShuffle]);
 
   const openConnection = useCallback(() => setConnectionOpen(true), []);
   const closeConnection = useCallback(() => setConnectionOpen(false), []);
@@ -5241,14 +5573,14 @@ export default function App() {
     if (selectedAlbum) void queueAlbum(selectedAlbum);
   }, [queueAlbum, selectedAlbum]);
   const queueTrack = useCallback((track: Track) => {
+    cancelLibraryShuffle();
     setQueue((items) => appendUnique(items, [track]));
     notify(`${track.title} added to queue`, "good");
-  }, [notify]);
+  }, [cancelLibraryShuffle, notify]);
   const handleConnected = useCallback((library: Album[]) => {
+    cancelLibraryShuffle();
     bandcampSessionGenerationRef.current += 1;
     librarySyncGenerationRef.current += 1;
-    libraryShuffleActiveRef.current = false;
-    libraryShuffleQueueRef.current = undefined;
     randomPickActiveRef.current = false;
     setAlbums(library);
     setConnected(true);
@@ -5262,7 +5594,7 @@ export default function App() {
     setLibraryError("");
     setSyncState("idle");
     notify(`${countLabel(library.length, "album")} synced`, "good");
-  }, [notify]);
+  }, [cancelLibraryShuffle, notify]);
   const closeDiscoverRelease = useCallback((
     options: { restoreFocus?: boolean } = {},
   ) => {
@@ -5624,8 +5956,8 @@ export default function App() {
     void loadArtistTracks(group, "play");
   }, [loadArtistTracks]);
   const shuffleArtist = useCallback((group: ArtistGroup) => {
-    void loadArtistTracks(group, "shuffle");
-  }, [loadArtistTracks]);
+    shuffleLibrary(group.albums, group.name, group);
+  }, [shuffleLibrary]);
   const queueArtist = useCallback((group: ArtistGroup) => {
     void loadArtistTracks(group, "queue");
   }, [loadArtistTracks]);
@@ -5863,6 +6195,7 @@ export default function App() {
               track={currentTrack}
               queue={queue}
               currentIndex={currentIndex}
+              hasDeferredTracks={libraryShuffleHasMore}
               playing={playing}
               playbackClock={playbackClock}
               radioTimeline={currentRadioTimeline}
@@ -6328,7 +6661,13 @@ export default function App() {
                 {activeArtist ? (
                   <ArtistHero
                     group={activeArtist}
-                    loading={artistAction}
+                    loading={artistAction ?? (
+                      libraryShuffleProgress &&
+                      libraryShuffleSessionRef.current?.artistScope?.key ===
+                        activeArtist.key
+                        ? "shuffle"
+                        : undefined
+                    )}
                     onBack={backToArtists}
                     onPlay={playArtist}
                     onShuffle={shuffleArtist}
@@ -6417,6 +6756,7 @@ export default function App() {
             queue={queue}
             currentIndex={currentIndex}
             currentTrack={currentTrack}
+            hasDeferredTracks={libraryShuffleHasMore}
             radioTimeline={currentRadioTimeline}
             playbackClock={playbackClock}
             playing={playing}

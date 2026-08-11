@@ -96,7 +96,7 @@ vi.mock("./random", async (importOriginal) => {
   };
 });
 
-import App, { persistedQueueIndex } from "./App";
+import App from "./App";
 
 function renderApp(strict = false) {
   const queryClient = new QueryClient({
@@ -287,15 +287,6 @@ beforeEach(() => {
 });
 
 describe("Coda application flows", { timeout: 10_000 }, () => {
-  it("maps the active queue item to its persisted index once ephemeral previews are omitted", () => {
-    const preview = { ...tracks[0], id: "discover:preview-track" };
-
-    expect(persistedQueueIndex([tracks[0], preview, tracks[1]], 0)).toBe(0);
-    expect(persistedQueueIndex([tracks[0], preview, tracks[1]], 1)).toBe(0);
-    expect(persistedQueueIndex([tracks[0], preview, tracks[1]], 2)).toBe(1);
-    expect(persistedQueueIndex([], 0)).toBe(-1);
-  });
-
   it("announces a spinner while the initial collection view is loading", async () => {
     const request = deferred<Album[]>();
     mocks.hasConnection.mockResolvedValue(true);
@@ -1779,7 +1770,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(mocks.yieldToMacrotask).toHaveBeenCalledTimes(2);
   });
 
-  it("starts a contextual shuffle before every release finishes hydrating", async () => {
+  it("starts a contextual shuffle before progressively hydrating the next release", async () => {
     const shuffleAlbums: Album[] = ["one", "two"].map((suffix) => ({
       ...album,
       id: `shuffle-album-${suffix}`,
@@ -1816,6 +1807,12 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     const firstRelease = mocks.fetchAlbum.mock.calls[0][0] as Album;
     const secondRelease = mocks.fetchAlbum.mock.calls[1][0] as Album;
     await act(async () => {
+      requests.get(secondRelease.id)!.resolve(shuffleTracks.get(secondRelease.id)!);
+    });
+    expect(screen.queryByRole("button", { name: "Open Now Playing" }))
+      .not.toBeInTheDocument();
+
+    await act(async () => {
       requests.get(firstRelease.id)!.resolve(shuffleTracks.get(firstRelease.id)!);
     });
 
@@ -1823,16 +1820,190 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       .toBeInTheDocument();
     expect(screen.getAllByText(shuffleTracks.get(firstRelease.id)![0].title).length)
       .toBeGreaterThan(0);
-
-    await act(async () => {
-      requests.get(secondRelease.id)!.resolve(shuffleTracks.get(secondRelease.id)!);
-    });
     await waitFor(() => expect(screen.getByRole("button", {
       name: "Shuffle collection",
     })).toBeEnabled());
 
     fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
     expect(await screen.findByText("1 track next")).toBeInTheDocument();
+  });
+
+  it("advances into a progressively loaded shuffle tail without stopping playback", async () => {
+    const shuffleAlbums: Album[] = ["one", "two"].map((suffix) => ({
+      ...album,
+      id: `tail-shuffle-album-${suffix}`,
+      title: `Tail Shuffle Album ${suffix}`,
+      songCount: 1,
+      tracks: undefined,
+    }));
+    const requests = new Map(shuffleAlbums.map((release) => [
+      release.id,
+      deferred<Track[]>(),
+    ]));
+    const trackFor = (release: Album): Track => ({
+      ...tracks[0],
+      id: `tail-${release.id}`,
+      title: `Track for ${release.title}`,
+      album: release.title,
+      albumId: release.id,
+    });
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue(shuffleAlbums);
+    mocks.fetchAlbum.mockImplementation((release: Album) =>
+      requests.get(release.id)!.promise
+    );
+    renderApp();
+
+    await screen.findByText("Tail Shuffle Album one");
+    fireEvent.click(screen.getByRole("button", { name: "Shuffle collection" }));
+    await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledTimes(2));
+    const firstRelease = mocks.fetchAlbum.mock.calls[0][0] as Album;
+    await act(async () => {
+      requests.get(firstRelease.id)!.resolve([trackFor(firstRelease)]);
+    });
+    expect(await screen.findByRole("button", { name: "Pause" }))
+      .toBeInTheDocument();
+
+    const secondRelease = mocks.fetchAlbum.mock.calls[1][0] as Album;
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await act(async () => {
+      requests.get(secondRelease.id)!.resolve([trackFor(secondRelease)]);
+    });
+
+    await waitFor(() => {
+      expect(document.title).toContain(trackFor(secondRelease).title);
+    });
+    expect(screen.getByRole("button", { name: "Pause" })).toBeInTheDocument();
+  });
+
+  it("moves cached track metadata into shuffle without refetching or resolving future streams", async () => {
+    const cachedAlbum: Album = {
+      ...album,
+      id: "cached-shuffle-album",
+      title: "Cached Shuffle Album",
+      songCount: 13,
+      tracks: undefined,
+    };
+    const cachedTracks = Array.from({ length: 13 }, (_, index): Track => ({
+      ...tracks[0],
+      id: `cached-shuffle-track-${index}`,
+      title: `Cached Shuffle Track ${index}`,
+      album: cachedAlbum.title,
+      albumId: cachedAlbum.id,
+      streamUrl: undefined,
+    }));
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([cachedAlbum]);
+    const { queryClient } = renderApp();
+
+    await screen.findByText(cachedAlbum.title);
+    queryClient.setQueryData(albumQueryKey(cachedAlbum.id), cachedTracks);
+    mocks.fetchAlbum.mockClear();
+    mocks.fetchStreamUrl.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Shuffle collection" }));
+
+    expect(await screen.findByRole("button", { name: "Open Now Playing" }))
+      .toBeInTheDocument();
+    expect(mocks.fetchAlbum).not.toHaveBeenCalled();
+    await waitFor(() => expect(mocks.fetchStreamUrl).toHaveBeenCalledOnce());
+    expect(cachedTracks.map((track) => track.id)).toContain(
+      mocks.fetchStreamUrl.mock.calls[0][0],
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
+    expect(await screen.findByText("12 tracks next")).toBeInTheDocument();
+    expect(mocks.fetchStreamUrl).toHaveBeenCalledOnce();
+  });
+
+  it("keeps streaming shuffled metadata into the queue without advancing playback", async () => {
+    const shuffleAlbums: Album[] = Array.from({ length: 20 }, (_, index) => ({
+      ...album,
+      id: `streamed-shuffle-album-${index}`,
+      title: `Streamed Shuffle Album ${index}`,
+      songCount: 1,
+      tracks: undefined,
+    }));
+    const trackFor = (release: Album): Track => ({
+      ...tracks[0],
+      id: `streamed-${release.id}`,
+      title: `Track for ${release.title}`,
+      album: release.title,
+      albumId: release.id,
+      streamUrl: undefined,
+    });
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue(shuffleAlbums);
+    mocks.fetchAlbum.mockImplementation(async (release: Album) =>
+      [trackFor(release)]
+    );
+    renderApp();
+
+    await screen.findByText("Streamed Shuffle Album 0");
+    fireEvent.click(screen.getByRole("button", { name: "Shuffle collection" }));
+
+    await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledTimes(20));
+    fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
+    await waitFor(() => {
+      expect(screen.getByText(/tracks next/)).toHaveTextContent(
+        "19 tracks next",
+      );
+    });
+    await waitFor(() => expect(mocks.fetchStreamUrl).toHaveBeenCalledOnce());
+  });
+
+  it("bounds parallel shuffle hydration and ignores late results after Clear next", async () => {
+    const shuffleAlbums: Album[] = Array.from({ length: 9 }, (_, index) => ({
+      ...album,
+      id: `bounded-shuffle-album-${index}`,
+      title: `Bounded Shuffle Album ${index}`,
+      songCount: 1,
+      tracks: undefined,
+    }));
+    const requests = new Map(shuffleAlbums.map((release, index) => [
+      release.id,
+      deferred<Track[]>(),
+    ]));
+    const trackFor = (release: Album): Track => ({
+      ...tracks[0],
+      id: `bounded-${release.id}`,
+      title: `Track for ${release.title}`,
+      album: release.title,
+      albumId: release.id,
+    });
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue(shuffleAlbums);
+    mocks.fetchAlbum.mockImplementation((release: Album) =>
+      requests.get(release.id)!.promise
+    );
+    renderApp();
+
+    await screen.findByText("Bounded Shuffle Album 0");
+    fireEvent.click(screen.getByRole("button", { name: "Shuffle collection" }));
+    await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledTimes(4));
+    const firstRelease = mocks.fetchAlbum.mock.calls[0][0] as Album;
+    await act(async () => {
+      requests.get(firstRelease.id)!.resolve([trackFor(firstRelease)]);
+    });
+    expect(await screen.findByRole("button", { name: "Open Now Playing" }))
+      .toBeInTheDocument();
+
+    await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledTimes(5));
+    expect(mocks.fetchAlbum).toHaveBeenCalledTimes(5);
+    fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
+    expect(await screen.findByText("Loading more tracks…")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Clear next" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Clear next" }));
+
+    await act(async () => {
+      for (const [release] of mocks.fetchAlbum.mock.calls.slice(1)) {
+        const requestedAlbum = release as Album;
+        requests.get(requestedAlbum.id)!.resolve([trackFor(requestedAlbum)]);
+      }
+    });
+    await waitFor(() => {
+      expect(screen.getByText("End of the queue")).toBeInTheDocument();
+    });
+    expect(mocks.fetchAlbum).toHaveBeenCalledTimes(5);
   });
 
   it("restores the saved queue paused and applies its position after media metadata loads", async () => {

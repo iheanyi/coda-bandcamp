@@ -81,6 +81,19 @@ export function isEphemeralTrackId(id: string): boolean {
   return id.startsWith("discover:");
 }
 
+export function persistedQueueIndex(
+  queue: readonly Track[],
+  currentIndex: number,
+): number {
+  const lastIndex = Math.min(currentIndex, queue.length - 1);
+  let persistedIndex = -1;
+  for (let index = 0; index <= lastIndex; index += 1) {
+    const item = queue[index];
+    if (item && !isEphemeralTrackId(item.id)) persistedIndex += 1;
+  }
+  return persistedIndex;
+}
+
 export function normalizedReleaseTitle(title: string): string {
   return title === "Unknown release" ? "" : title;
 }
