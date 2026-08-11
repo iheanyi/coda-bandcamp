@@ -3,7 +3,7 @@ use crate::models::{RadioChapter, RadioSeries, RadioShow, RadioShowSummary, Radi
 use crate::url_policy::{allowed_url, UrlKind};
 use crate::validation::{valid_library_date, MAX_RADIO_CHAPTERS};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use url::Url;
 
 const RADIO_LIST_ENDPOINT: &str = "https://bandcamp.com/api/bcweekly/2/list";
@@ -23,6 +23,10 @@ const RADIO_SERIES_CATALOG: &[(u64, &str, &str)] = &[
     (6, "The Indie Show", "the-indie-show"),
     (7, "The Metal Show", "the-metal-show"),
 ];
+// Bandcamp occasionally publishes a stable episode ID without attaching its
+// Radio franchise in the archive payload. Keep these corrections narrow and
+// identity-based; never infer series membership from mutable display copy.
+const RADIO_SHOW_SERIES_OVERRIDES: &[(u64, u64)] = &[(981, 5)];
 
 #[derive(Debug, Deserialize)]
 pub(super) struct RawRadioList {
@@ -188,6 +192,37 @@ pub(super) fn radio_series_by_title(title: &str) -> Option<RadioSeries> {
         })
 }
 
+fn radio_series_override_for_show(show_id: u64) -> Option<RadioSeries> {
+    RADIO_SHOW_SERIES_OVERRIDES
+        .iter()
+        .find(|(candidate_show_id, _)| *candidate_show_id == show_id)
+        .and_then(|(_, series_id)| radio_series_by_id(*series_id))
+}
+
+fn radio_series_has_overrides(series_id: u64) -> bool {
+    RADIO_SHOW_SERIES_OVERRIDES
+        .iter()
+        .any(|(_, override_series_id)| *override_series_id == series_id)
+}
+
+pub(super) fn merge_radio_series_supplements(
+    requested_series: &RadioSeries,
+    current_shows: impl IntoIterator<Item = RadioShowSummary>,
+    series_shows: Vec<RadioShowSummary>,
+) -> Vec<RadioShowSummary> {
+    let mut seen = BTreeSet::new();
+    current_shows
+        .into_iter()
+        .filter(|show| {
+            show.series
+                .as_ref()
+                .is_some_and(|series| series.id == requested_series.id)
+        })
+        .chain(series_shows)
+        .filter(|show| seen.insert(show.id))
+        .collect()
+}
+
 pub(super) fn validate_radio_cursor(cursor: Option<String>) -> Result<Option<String>, String> {
     let Some(cursor) = cursor else {
         return Ok(None);
@@ -246,7 +281,7 @@ pub(super) fn radio_summary_from_raw(value: RawRadioSummary) -> Option<RadioShow
                 .or(value.screen_image_id)
                 .or(value.image_id),
         ),
-        series: None,
+        series: radio_series_override_for_show(value.id),
     })
 }
 
@@ -261,6 +296,7 @@ pub(super) fn radio_summary_from_series_raw(
         .franchise_name
         .as_deref()
         .and_then(radio_series_by_title)
+        .or_else(|| radio_series_override_for_show(value.item_id))
         .or_else(|| requested_series.cloned());
     Some(RadioShowSummary {
         id: value.item_id,
@@ -401,12 +437,31 @@ pub(super) async fn radio_shows(
         Err(error) => return Err(error),
     };
     let next_cursor = validate_radio_cursor(body.next_cursor).ok().flatten();
-    let results = body
+    let mut results = body
         .items
         .into_iter()
         .take(RADIO_SHOW_PAGE_SIZE as usize)
         .filter_map(|show| radio_summary_from_series_raw(show, requested_series.as_ref()))
         .collect::<Vec<_>>();
+    if cursor.is_none() {
+        if let Some(series) = requested_series
+            .as_ref()
+            .filter(|series| radio_series_has_overrides(series.id))
+        {
+            let fallback_url = Url::parse(RADIO_LIST_ENDPOINT)
+                .map_err(|_| "Coda's Bandcamp Radio endpoint is invalid.".to_string())?;
+            if let Ok(current) =
+                fetch_bounded_json::<RawRadioList>(fallback_url, "Bandcamp Radio").await
+            {
+                let current_shows = current
+                    .results
+                    .into_iter()
+                    .take(MAX_RADIO_SHOWS)
+                    .filter_map(radio_summary_from_raw);
+                results = merge_radio_series_supplements(series, current_shows, results);
+            }
+        }
+    }
     let has_more = next_cursor.is_some() && !results.is_empty();
     Ok(RadioShowsPage {
         results,

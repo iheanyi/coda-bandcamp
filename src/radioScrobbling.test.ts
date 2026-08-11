@@ -11,11 +11,11 @@ import {
 import type { Track } from "./types";
 
 const radioTrack: Track = {
-  id: "radio:979",
-  title: "The Hip-Hop Show",
+  id: "radio:981",
+  title: "MADLIFE",
   artist: "Bandcamp Radio",
-  album: "Bandcamp Weekly",
-  albumId: "radio:979",
+  album: "The Hip Hop Show",
+  albumId: "radio:981",
   duration: 720,
   track: 1,
   palette: ["#111", "#222"],
@@ -83,6 +83,7 @@ describe("Radio scrobbling", () => {
         track: expect.objectContaining({
           artist: "North Star",
           title: "First light",
+          album: "Daybreak",
           duration: 120,
           chosenByUser: false,
         }),
@@ -166,7 +167,8 @@ describe("Radio scrobbling", () => {
     expect(completed.action).toEqual({
       track: expect.objectContaining({
         artist: "Bandcamp Radio",
-        title: "The Hip-Hop Show",
+        title: "MADLIFE",
+        album: "The Hip Hop Show",
         chosenByUser: false,
       }),
       timestamp: 1_000,

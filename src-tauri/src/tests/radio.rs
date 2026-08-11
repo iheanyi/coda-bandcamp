@@ -93,7 +93,7 @@ fn parses_series_radio_pages_and_validates_opaque_cursors() {
         None,
     )
     .unwrap();
-    assert_eq!(summary.series, Some(series));
+    assert_eq!(summary.series, Some(series.clone()));
     assert_eq!(
         validate_radio_cursor(Some("1770336000:901".into())).unwrap(),
         Some("1770336000:901".into())
@@ -101,6 +101,40 @@ fn parses_series_radio_pages_and_validates_opaque_cursors() {
     assert!(validate_radio_cursor(Some("../not-a-cursor".into())).is_err());
     assert!(validate_radio_cursor(Some("".into())).is_err());
     assert!(radio_series_by_id(3).is_none());
+
+    let madlife = radio_summary_from_series_raw(
+        serde_json::from_value(serde_json::json!({
+            "itemId": 981,
+            "title": "MADLIFE",
+            "description": "12k Gotti joins The Hip Hop Show.",
+            "date": "07 Aug 2026 00:00:00 GMT",
+            "imageId": 46434438,
+            "franchiseName": null
+        }))
+        .unwrap(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(madlife.series, Some(series.clone()));
+
+    let series_anchor = radio_summary_from_series_raw(
+        serde_json::from_value(serde_json::json!({
+            "itemId": 979,
+            "title": "Kinrose",
+            "description": "A regular series episode.",
+            "date": "23 Jul 2026 00:00:00 GMT",
+            "imageId": 46434439,
+            "franchiseName": "The Hip Hop Show"
+        }))
+        .unwrap(),
+        Some(&series),
+    )
+    .unwrap();
+    let merged = merge_radio_series_supplements(&series, [madlife], vec![series_anchor]);
+    assert_eq!(
+        merged.into_iter().map(|show| show.id).collect::<Vec<_>>(),
+        vec![981, 979]
+    );
 
     assert!(radio_summary_from_raw(RawRadioSummary {
         id: MAX_RADIO_SHOW_ID + 1,
