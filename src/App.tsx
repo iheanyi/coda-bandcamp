@@ -5210,9 +5210,18 @@ export default function App() {
   const handleConnected = useCallback((library: Album[]) => {
     bandcampSessionGenerationRef.current += 1;
     librarySyncGenerationRef.current += 1;
+    libraryShuffleActiveRef.current = false;
+    libraryShuffleQueueRef.current = undefined;
+    randomPickActiveRef.current = false;
     setAlbums(library);
     setConnected(true);
     setPlayerStateReady(true);
+    setLoadingAlbumId(undefined);
+    setArtworkRefreshing(false);
+    setArtistAction(undefined);
+    setQueueSearchProgress(undefined);
+    setLibraryShuffleProgress(undefined);
+    setRandomPickLoading(false);
     setLibraryError("");
     setSyncState("idle");
     notify(`${countLabel(library.length, "album")} synced`, "good");

@@ -232,6 +232,48 @@ fn redb_round_trips_bounded_album_metadata_without_credentials_or_media_urls() {
 }
 
 #[test]
+fn redb_discards_empty_album_metadata_entries() {
+    let path = temporary_album_metadata_cache_path("empty-tracks");
+    let database = open_album_metadata_database(&path).unwrap();
+    let credentials = ConnectionInput {
+        username: "generated-user".into(),
+        password: "generated-password".into(),
+    };
+    let cache_key = persisted_album_track_cache_key(&credentials, "album-1");
+    let now = 1_800_000_000_000;
+    let empty_entry = serde_json::to_vec(&PersistedAlbumTracks {
+        version: ALBUM_TRACK_CACHE_ENTRY_VERSION,
+        saved_at: now,
+        album_id: "album-1".into(),
+        tracks: Vec::new(),
+    })
+    .unwrap();
+
+    let transaction = database.begin_write().unwrap();
+    {
+        let mut table = transaction.open_table(ALBUM_TRACKS_TABLE).unwrap();
+        table
+            .insert(cache_key.as_str(), empty_entry.as_slice())
+            .unwrap();
+    }
+    transaction.commit().unwrap();
+
+    assert!(
+        read_persisted_album_tracks(&database, &cache_key, "album-1", now + 1)
+            .unwrap()
+            .is_none()
+    );
+
+    let transaction = database.begin_read().unwrap();
+    let table = transaction.open_table(ALBUM_TRACKS_TABLE).unwrap();
+    assert!(table.get(cache_key.as_str()).unwrap().is_none());
+    drop(table);
+    drop(transaction);
+    drop(database);
+    fs::remove_dir_all(path.parent().unwrap()).unwrap();
+}
+
+#[test]
 fn redb_discards_expired_and_incompatible_album_metadata() {
     let path = temporary_album_metadata_cache_path("expiry");
     let database = open_album_metadata_database(&path).unwrap();

@@ -165,7 +165,8 @@ pub(super) fn validate_persisted_album_tracks(
         || entry.saved_at > now
         || now.saturating_sub(entry.saved_at) > PERSISTED_ALBUM_TRACK_CACHE_TTL_MS
         || entry.album_id != album_id
-        || entry.tracks.len().max(1) > MAX_PERSISTED_ALBUM_TRACK_CACHE_WEIGHT
+        || entry.tracks.is_empty()
+        || entry.tracks.len() > MAX_PERSISTED_ALBUM_TRACK_CACHE_WEIGHT
     {
         return Err("The saved album metadata is stale or incompatible.".into());
     }
