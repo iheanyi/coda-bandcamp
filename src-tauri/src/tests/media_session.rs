@@ -38,7 +38,7 @@ fn system_media_artwork_accepts_only_bounded_supported_images() {
 
 #[test]
 fn playback_blocking_commands_are_dispatched_off_the_window_thread() {
-    let media_source = include_str!("../media_session.rs");
+    let media_source = include_str!("../media_session.rs").replace("\r\n", "\n");
     assert!(media_source
         .contains("#[tauri::command]\npub(super) async fn update_system_media_playback"));
     assert!(media_source
@@ -46,7 +46,7 @@ fn playback_blocking_commands_are_dispatched_off_the_window_thread() {
     assert!(media_source.contains("pub(super) async fn spawn_system_media_blocking"));
     assert!(media_source.contains("tauri::async_runtime::spawn_blocking"));
 
-    let playlist_source = include_str!("../playlists.rs");
+    let playlist_source = include_str!("../playlists.rs").replace("\r\n", "\n");
     assert!(playlist_source.contains("#[tauri::command]\npub(super) async fn get_stream_url"));
     assert!(playlist_source.contains("#[tauri::command]\npub(super) async fn get_cover_url"));
 }
