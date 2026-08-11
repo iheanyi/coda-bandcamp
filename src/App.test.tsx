@@ -1949,6 +1949,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       name: "Glass Taxi",
     });
     expect(artistHeading).toBeInTheDocument();
+    expect(artistHeading.previousElementSibling).toHaveClass("block");
     expect(screen.getByRole("button", { name: "All artists" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Play all" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Shuffle artist" })).toBeInTheDocument();

@@ -836,7 +836,7 @@ const ArtistHero = memo(function ArtistHero({
           <ArrowLeft size={14} />
           All artists
         </Button>
-        <span className="mb-2.5 text-xs font-bold tracking-widest text-[#777b76] uppercase">Artist</span>
+        <span className="mb-2.5 block text-xs font-bold tracking-widest text-[#777b76] uppercase">Artist</span>
         <h2
           id="artist-detail-heading"
           className="mt-1 mb-2 truncate font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-2xl leading-none font-semibold tracking-tighter text-[#f2f0e9] outline-none xl:text-3xl"
