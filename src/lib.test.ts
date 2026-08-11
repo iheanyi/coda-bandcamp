@@ -81,6 +81,48 @@ describe("library metadata cache", () => {
     ]);
   });
 
+  it("preserves validated Subsonic and OpenSubsonic album dates", () => {
+    const album = hydrateAlbum({
+      id: "album-dates",
+      title: "Dated Release",
+      artist: "Test Artist",
+      songCount: 1,
+      duration: 180,
+      addedAt: "30 Jun 2025 12:00:00 GMT",
+      starredAt: "2025-07-01T12:00:00Z",
+      playedAt: "2025-07-02T12:00:00Z",
+      originalReleaseDate: { year: 2001 },
+      releaseDate: { year: 2025, month: 6, day: 30 },
+    });
+    installStorage(JSON.stringify({ savedAt: 1_000, albums: [album] }));
+
+    expect(readLibraryCache(1_001)).toEqual([album]);
+  });
+
+  it("drops malformed optional release dates without discarding the album", () => {
+    const album = hydrateAlbum({
+      id: "album-malformed-date",
+      title: "Still Playable",
+      artist: "Test Artist",
+      songCount: 1,
+      duration: 180,
+    });
+    installStorage(
+      JSON.stringify({
+        savedAt: 1_000,
+        albums: [
+          {
+            ...album,
+            originalReleaseDate: {},
+            releaseDate: { year: 2025, month: 2, day: 29 },
+          },
+        ],
+      }),
+    );
+
+    expect(readLibraryCache(1_001)).toEqual([album]);
+  });
+
   it("discards expired cache entries", () => {
     const wasRemoved = installStorage(JSON.stringify({ savedAt: 0, albums: [] }));
 

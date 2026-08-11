@@ -1,10 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createPlayerState,
+  createPlayerStateAsync,
   createPlayerStateCheckpoint,
   MAX_PERSISTED_QUEUE_LENGTH,
   parsePlayerState,
+  parsePlayerStateAsync,
   PLAYER_STATE_CONTRACT_VERSION,
+  yieldPlayerStateValidation,
 } from "./playerState";
 import radioContract from "../test/fixtures/player-state-radio-contract.json";
 import type {
@@ -243,6 +246,67 @@ describe("player state persistence", () => {
         queue: Array.from({ length: MAX_PERSISTED_QUEUE_LENGTH + 1 }, () => track),
       }),
     ).toThrow(/invalid/);
+  });
+
+  it("keeps async preparation byte-for-byte equivalent while yielding bounded chunks", async () => {
+    const queue = Array.from({ length: 513 }, (_, index) => ({
+      ...track,
+      id: index === 256 ? "discover:preview" : `track-${index}`,
+      albumId: `album-${index}`,
+    }));
+    const maximumInput: PlayerStateInput = {
+      ...input,
+      queue,
+      currentIndex: 256,
+      lastFmProgress: undefined,
+    };
+    const yieldControl = vi.fn(async () => undefined);
+
+    const asyncState = await createPlayerStateAsync(
+      maximumInput,
+      1_700_000_000_000,
+      yieldControl,
+    );
+
+    expect(asyncState).toEqual(
+      createPlayerState(maximumInput, 1_700_000_000_000),
+    );
+    expect(yieldControl).toHaveBeenCalledTimes(2);
+    expect(asyncState.queue).toHaveLength(512);
+    expect(asyncState.positionSeconds).toBe(0);
+  });
+
+  it("validates a maximum restored queue in cooperative chunks", async () => {
+    const queue = Array.from({ length: MAX_PERSISTED_QUEUE_LENGTH }, (_, index) => ({
+      ...track,
+      id: `track-${index}`,
+      albumId: `album-${index}`,
+    }));
+    const snapshot = createPlayerState({
+      ...input,
+      queue,
+      lastFmProgress: undefined,
+    }, 1_700_000_000_000);
+    const yieldControl = vi.fn(async () => undefined);
+
+    await expect(parsePlayerStateAsync(snapshot, yieldControl)).resolves.toEqual(snapshot);
+    expect(yieldControl).toHaveBeenCalledTimes(
+      Math.floor((MAX_PERSISTED_QUEUE_LENGTH - 1) / 256),
+    );
+  });
+
+  it("uses a real browser task boundary for cooperative validation", async () => {
+    const yielding = yieldPlayerStateValidation();
+    let settled = false;
+    void yielding.then(() => {
+      settled = true;
+    });
+
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    await yielding;
+    expect(settled).toBe(true);
   });
 
   it("validates lightweight checkpoints against their Last.fm track", () => {

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPlaybackClock } from "./playbackClock";
@@ -131,7 +131,10 @@ function renderRadio(
   }
   render(
     <QueryClientProvider client={client}>
-      <div data-coda-library-scroll>
+      <div
+        data-coda-library-scroll
+        style={{ height: 600, overflowY: "auto" }}
+      >
         <ControlledRadioView />
       </div>
     </QueryClientProvider>,
@@ -294,6 +297,87 @@ describe("Bandcamp Radio", () => {
       seriesId: undefined,
       cursor: "1770336000:901",
     });
+  });
+
+  it("keeps a large accumulated archive DOM bounded while retaining card actions", async () => {
+    const originalResizeObserver = globalThis.ResizeObserver;
+    class ResizeObserverMock implements ResizeObserver {
+      private readonly callback: ResizeObserverCallback;
+
+      constructor(callback: ResizeObserverCallback) {
+        this.callback = callback;
+      }
+
+      disconnect() {}
+
+      observe(target: Element) {
+        const bounds = target.getBoundingClientRect();
+        const size = {
+          blockSize: bounds.height,
+          inlineSize: bounds.width,
+        };
+        this.callback([{
+          borderBoxSize: [size],
+          contentBoxSize: [size],
+          contentRect: bounds,
+          devicePixelContentBoxSize: [size],
+          target,
+        } as unknown as ResizeObserverEntry], this);
+      }
+
+      unobserve() {}
+    }
+    globalThis.ResizeObserver = ResizeObserverMock;
+    const geometry = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function getBoundingClientRect(
+        this: HTMLElement,
+      ) {
+        const isScrollRoot = this.hasAttribute("data-coda-library-scroll");
+        const isArchiveGrid = this.hasAttribute(
+          "data-responsive-virtual-grid",
+        );
+        return new DOMRect(
+          0,
+          isArchiveGrid ? 100 : 0,
+          1_000,
+          isScrollRoot ? 600 : 20,
+        );
+      });
+    const largeArchive = Array.from({ length: 1_001 }, (_, index) => ({
+      ...shows[index === 0 ? 0 : 1],
+      id: 10_000 - index,
+      subtitle: index === 0 ? "Featured broadcast" : `Archive show ${index}`,
+    }));
+    mocks.fetchRadioShows.mockResolvedValueOnce({
+      results: largeArchive,
+      hasMore: false,
+    });
+    try {
+      const { onToggleFavorite } = renderRadio();
+
+      await screen.findByRole("heading", { name: "Featured broadcast" });
+      const archive = screen.getByRole("list", {
+        name: "Bandcamp Radio archive",
+      });
+      await waitFor(() => {
+        const renderedItems = within(archive).getAllByRole("listitem");
+        expect(renderedItems.length).toBeGreaterThan(0);
+        expect(renderedItems.length).toBeLessThan(30);
+      });
+      expect(archive).toHaveAttribute("data-virtualized", "true");
+      expect(screen.getByText("1,001 broadcasts loaded")).toBeInTheDocument();
+
+      const firstVisibleFavorite = within(archive).getAllByRole("button", {
+        name: /Add Archive show \d+ to favorites/,
+      })[0];
+      expect(firstVisibleFavorite).toBeDefined();
+      fireEvent.click(firstVisibleFavorite!);
+      expect(onToggleFavorite).toHaveBeenCalledOnce();
+    } finally {
+      geometry.mockRestore();
+      globalThis.ResizeObserver = originalResizeObserver;
+    }
   });
 
   it("favorites a Radio show without loading its signed stream", async () => {

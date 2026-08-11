@@ -22,6 +22,7 @@ import {
 } from "@tanstack/react-query";
 import {
   type FormEvent,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -91,6 +92,7 @@ import type {
 } from "./types";
 import { transitionCodaView } from "./viewTransitions";
 import { VirtualizedSavedTrackList } from "./VirtualizedSavedTrackList";
+import { ResponsiveVirtualGrid } from "./ResponsiveVirtualGrid";
 import { cn } from "@/lib/utils";
 
 export const PLAYLISTS_QUERY_KEY = ["bandcamp", "playlists"] as const;
@@ -142,6 +144,39 @@ const metadataLinkClassName =
   "h-auto min-w-0 max-w-[48%] cursor-pointer truncate rounded-none border-0 bg-transparent p-0 text-left text-xs font-normal text-[#777b76] hover:text-accent-foreground";
 const savedPageClassName =
   "mx-auto min-h-full w-full max-w-5xl pt-2 pb-12";
+const FAVORITE_RADIO_GRID_LAYOUTS = [
+  {
+    maxWidth: 780,
+    minColumnWidth: 304,
+    columnGap: 10,
+    rowGap: 10,
+    rowHeight: 148,
+  },
+  {
+    minColumnWidth: 304,
+    columnGap: 10,
+    rowGap: 10,
+    rowHeight: 104,
+  },
+] as const;
+const FAVORITE_ALBUM_GRID_LAYOUTS = [
+  {
+    minColumnWidth: 240,
+    columnGap: 10,
+    rowGap: 10,
+    rowHeight: 64,
+  },
+] as const;
+const PLAYLIST_GRID_LAYOUTS = [
+  {
+    minColumnWidth: 272,
+    columnGap: 12,
+    rowGap: 12,
+    rowHeight: 84,
+  },
+] as const;
+const playlistSummaryKey = (playlist: PlaylistSummary) => playlist.id;
+const parentScrollElement = (root: HTMLElement) => root.parentElement;
 
 type PlaylistListMutationContext = {
   optimisticId?: string;
@@ -414,6 +449,12 @@ function PlaylistList({
   returningPlaylistId?: string;
 }) {
   const [name, setName] = useState("");
+  const scrollElementRef = useRef<HTMLElement | null>(null);
+  const setPlaylistListRoot = useCallback((element: HTMLDivElement | null) => {
+    scrollElementRef.current = element?.closest<HTMLElement>(
+      "[data-coda-library-scroll]",
+    ) ?? element?.parentElement ?? null;
+  }, []);
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const nextName = name.trim();
@@ -423,7 +464,7 @@ function PlaylistList({
   };
 
   return (
-    <>
+    <div ref={setPlaylistListRoot}>
       <form
         className="mb-6 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-lg border border-border bg-[linear-gradient(110deg,rgba(221,101,73,0.075),transparent_46%),var(--panel)] p-5 lg:grid-cols-[minmax(14rem,1fr)_minmax(13rem,0.9fr)_auto]"
         onSubmit={submit}
@@ -457,17 +498,22 @@ function PlaylistList({
       </form>
 
       {playlists.length ? (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-3">
-          {playlists.map((playlist) => {
+        <ResponsiveVirtualGrid
+          aria-label="Playlists"
+          className="w-full"
+          getItemKey={playlistSummaryKey}
+          items={playlists}
+          layouts={PLAYLIST_GRID_LAYOUTS}
+          scrollElementRef={scrollElementRef}
+          renderItem={(playlist) => {
             const optimistic = isOptimisticPlaylist(playlist);
             const opening = openingPlaylistId === playlist.id;
             return (
               <Button
                 aria-busy={optimistic || opening || undefined}
-                className="grid h-auto min-h-20 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg border-border bg-white/2 p-3.5 text-left font-normal transition-[border-color,background-color,transform] duration-(--duration-coda-fast) hover:-translate-y-px hover:border-input hover:bg-white/3.5"
+                className="grid h-full w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg border-border bg-white/2 p-3.5 text-left font-normal transition-[border-color,background-color,transform] duration-(--duration-coda-fast) hover:-translate-y-px hover:border-input hover:bg-white/3.5"
                 disabled={optimistic || opening}
                 data-playlist-open={playlist.id}
-                key={playlist.id}
                 onClick={(event) => onOpen(playlist, event.currentTarget)}
               >
                 <span className="grid min-w-0 grid-cols-[3.25rem_minmax(0,1fr)] items-center gap-x-3 gap-y-1">
@@ -518,8 +564,8 @@ function PlaylistList({
                 </span>
               </Button>
             );
-          })}
-        </div>
+          }}
+        />
       ) : (
         <SavedEmpty
           icon={<ListMusic size={28} />}
@@ -527,7 +573,7 @@ function PlaylistList({
           detail="Name your first mix above, then add tracks from an album, Favorites, or Now Playing."
         />
       )}
-    </>
+    </div>
   );
 }
 
@@ -1147,7 +1193,10 @@ export function AddToPlaylistDialog({
             {createMutation.isPending ? "Creating…" : "Create"}
           </Button>
         </form>
-        <div className="flex max-h-84 scrollbar-thin [scrollbar-color:#3e4142_transparent] flex-col overflow-y-auto p-2">
+        <div
+          className="flex max-h-84 scrollbar-thin [scrollbar-color:#3e4142_transparent] flex-col overflow-y-auto p-2"
+          data-add-to-playlist-scroll
+        >
           {playlists.isLoading ? (
             <span className="flex min-h-28 items-center justify-center gap-2 text-xs text-[#858984]">
               <Skeleton className="grid size-8 place-items-center rounded-full bg-white/2.5">
@@ -1173,29 +1222,39 @@ export function AddToPlaylistDialog({
               </Button>
             </Alert>
           ) : playlists.data?.length ? (
-            playlists.data.map((playlist) => (
-              <Button
-                key={playlist.id}
-                className="grid h-auto min-h-14 grid-cols-[2.25rem_minmax(0,1fr)_auto] items-center gap-2 rounded-md border-0 bg-transparent px-2.5 py-1.5 text-left font-normal hover:bg-white/4.5"
-                disabled={pending}
-                onClick={() => addMutation.mutate(playlist)}
-              >
-                <span className="grid size-9 place-items-center rounded-md bg-muted text-[#a16c5f]">
-                  <ListMusic size={17} />
-                </span>
-                <span className="flex min-w-0 flex-col">
-                  <strong className="truncate text-xs text-[#d6d5cf]">
-                    {playlist.name}
-                  </strong>
-                  <small className="mt-1 text-xs text-[#757974]">
-                    {countLabel(playlist.songCount, "track")}
-                  </small>
-                </span>
-                {addMutation.isPending && addMutation.variables.id === playlist.id
-                  ? <Spinner aria-hidden="true" className="size-4 text-current" />
-                  : <Plus size={16} />}
-              </Button>
-            ))
+            <VirtualizedSavedTrackList
+              aria-label="Available playlists"
+              className="shrink-0"
+              getItemKey={playlistSummaryKey}
+              getScrollElement={parentScrollElement}
+              items={playlists.data}
+              rowHeight={56}
+              renderItem={(playlist, _context, rowProps) => (
+                <div {...rowProps}>
+                  <Button
+                    className="grid h-14 w-full grid-cols-[2.25rem_minmax(0,1fr)_auto] items-center gap-2 rounded-md border-0 bg-transparent px-2.5 py-1.5 text-left font-normal hover:bg-white/4.5"
+                    disabled={pending}
+                    onClick={() => addMutation.mutate(playlist)}
+                  >
+                    <span className="grid size-9 place-items-center rounded-md bg-muted text-[#a16c5f]">
+                      <ListMusic size={17} />
+                    </span>
+                    <span className="flex min-w-0 flex-col">
+                      <strong className="truncate text-xs text-[#d6d5cf]">
+                        {playlist.name}
+                      </strong>
+                      <small className="mt-1 text-xs text-[#757974]">
+                        {countLabel(playlist.songCount, "track")}
+                      </small>
+                    </span>
+                    {addMutation.isPending &&
+                      addMutation.variables.id === playlist.id
+                      ? <Spinner aria-hidden="true" className="size-4 text-current" />
+                      : <Plus size={16} />}
+                  </Button>
+                </div>
+              )}
+            />
           ) : (
             <span className="flex min-h-28 items-center justify-center gap-2 text-xs text-[#858984]">
               No playlists yet. Create one above.
@@ -1240,6 +1299,12 @@ export default function SavedLibraryView({
   const playlistNavigationRef = useRef(createNavigationTransactionState());
   const playlistReturnFocusRequestedRef = useRef(false);
   const playlistScrollTopRef = useRef<number | undefined>(undefined);
+  const favoriteScrollElementRef = useRef<HTMLElement | null>(null);
+  const setFavoritePageRoot = useCallback((element: HTMLElement | null) => {
+    favoriteScrollElementRef.current = element?.closest<HTMLElement>(
+      "[data-coda-library-scroll]",
+    ) ?? element?.parentElement ?? null;
+  }, []);
   const [radioAction, setRadioAction] = useState<{
     id: number;
     action: "play" | "queue";
@@ -1712,7 +1777,7 @@ export default function SavedLibraryView({
   const favoriteDisplayMetadataCount =
     favoriteTrackCount + favoriteAlbumCount + favoriteRadioShowCount;
   return (
-    <section className={savedPageClassName}>
+    <section className={savedPageClassName} ref={setFavoritePageRoot}>
       <header className="mb-8 flex items-start justify-between gap-6">
         <div className="flex min-w-0 flex-col gap-2.5">
           <Eyebrow className="mb-0 inline-flex items-center gap-1.5">
@@ -1989,8 +2054,14 @@ export default function SavedLibraryView({
                   {countLabel(favoriteRadioShowCount, "show")}
                 </span>
               </div>
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(19rem,1fr))] gap-2.5">
-                {favoriteRadioShows.map((show) => {
+              <ResponsiveVirtualGrid
+                aria-label="Favorite radio shows"
+                className="w-full"
+                getItemKey={(show) => show.id}
+                items={favoriteRadioShows}
+                layouts={FAVORITE_RADIO_GRID_LAYOUTS}
+                scrollElementRef={favoriteScrollElementRef}
+                renderItem={(show) => {
                   const activeShow = currentTrackId === `radio:${show.id}`;
                   const busyAction = radioAction?.id === show.id
                     ? radioAction.action
@@ -1998,10 +2069,9 @@ export default function SavedLibraryView({
                   return (
                     <article
                       className={cn(
-                        "grid min-w-0 grid-cols-[2.75rem_minmax(0,1fr)] items-center gap-3 rounded-lg border border-border bg-white/2 p-3 transition-[border-color,background-color,transform] duration-(--duration-coda-fast) hover:-translate-y-px hover:border-white/12 hover:bg-white/3 lg:grid-cols-[3rem_minmax(0,1fr)_auto]",
+                        "grid h-full min-w-0 grid-cols-[2.75rem_minmax(0,1fr)] items-center gap-3 rounded-lg border border-border bg-white/2 p-3 transition-[border-color,background-color,transform] duration-(--duration-coda-fast) hover:-translate-y-px hover:border-white/12 hover:bg-white/3 lg:grid-cols-[3rem_minmax(0,1fr)_auto]",
                         activeShow && "border-primary/30 bg-primary/7",
                       )}
-                      key={show.id}
                     >
                       <Button
                         className="size-11 overflow-hidden rounded-lg p-0 lg:size-12"
@@ -2101,8 +2171,8 @@ export default function SavedLibraryView({
                       </div>
                     </article>
                   );
-                })}
-              </div>
+                }}
+              />
             </section>
           ) : null}
           {favoriteAlbums.length ? (
@@ -2115,14 +2185,19 @@ export default function SavedLibraryView({
                   {countLabel(favoriteAlbumCount, "release")}
                 </span>
               </div>
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-2.5">
-                {favoriteAlbums.map((album) => {
+              <ResponsiveVirtualGrid
+                aria-label="Favorite releases"
+                className="w-full"
+                getItemKey={(album) => album.id}
+                items={favoriteAlbums}
+                layouts={FAVORITE_ALBUM_GRID_LAYOUTS}
+                scrollElementRef={favoriteScrollElementRef}
+                renderItem={(album) => {
                   const albumLoading = loadingAlbumId === album.id;
                   return (
                     <article
-                      className="grid grid-cols-[minmax(0,1fr)_2rem] items-center gap-1 rounded-lg border border-border bg-white/2 p-2"
+                      className="grid h-full grid-cols-[minmax(0,1fr)_2rem] items-center gap-1 rounded-lg border border-border bg-white/2 p-2"
                       data-album-card={album.id}
-                      key={album.id}
                     >
                       <div className="grid min-w-0 grid-cols-[3rem_minmax(0,1fr)] items-center gap-3">
                         <Button
@@ -2192,8 +2267,8 @@ export default function SavedLibraryView({
                       </Button>
                     </article>
                   );
-                })}
-              </div>
+                }}
+              />
             </section>
           ) : null}
         </>

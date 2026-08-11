@@ -1,11 +1,14 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { normalizeGenre } from "./genres";
 import {
-  createPlayerState,
   createPlayerStateCheckpoint,
-  parsePlayerState,
+  parsePlayerStateAsync,
   PLAYER_STATE_CONTRACT_VERSION,
 } from "./playerState";
+import {
+  preparePlayerStateSnapshot,
+  waitForPlayerStateIdle,
+} from "./playerStatePreparation";
 import type {
   Album,
   ConnectionInput,
@@ -24,6 +27,7 @@ import type {
   RadioShowsPage,
   Track,
 } from "./types";
+import { isItemDate } from "./libraryDates";
 
 export const isDesktop = () => "__TAURI_INTERNALS__" in window;
 const isWindowsDesktop = () =>
@@ -183,6 +187,8 @@ function isCachedAlbum(value: unknown): value is Album {
     typeof album.artist === "string" &&
     typeof album.songCount === "number" &&
     typeof album.duration === "number" &&
+    (album.year === undefined ||
+      (Number.isInteger(album.year) && album.year > 0 && album.year <= 9_999)) &&
     Array.isArray(album.palette) &&
     album.palette.length === 2 &&
     album.palette.every((color) => typeof color === "string")
@@ -190,6 +196,16 @@ function isCachedAlbum(value: unknown): value is Album {
 }
 
 function stripAlbumForCache(album: Album): Album {
+  const addedAt = typeof album.addedAt === "string" ? album.addedAt : undefined;
+  const starredAt =
+    typeof album.starredAt === "string" ? album.starredAt : undefined;
+  const playedAt = typeof album.playedAt === "string" ? album.playedAt : undefined;
+  const originalReleaseDate = isItemDate(album.originalReleaseDate)
+    ? album.originalReleaseDate
+    : undefined;
+  const releaseDate = isItemDate(album.releaseDate)
+    ? album.releaseDate
+    : undefined;
   return {
     id: album.id,
     title: album.title,
@@ -201,7 +217,35 @@ function stripAlbumForCache(album: Album): Album {
     ...(album.genre === undefined
       ? {}
       : { genre: normalizeGenre(album.genre) }),
-    ...(album.addedAt === undefined ? {} : { addedAt: album.addedAt }),
+    ...(addedAt === undefined ? {} : { addedAt }),
+    ...(starredAt === undefined ? {} : { starredAt }),
+    ...(playedAt === undefined ? {} : { playedAt }),
+    ...(originalReleaseDate === undefined
+      ? {}
+      : {
+          originalReleaseDate: {
+            year: originalReleaseDate.year,
+            ...(originalReleaseDate.month === undefined
+              ? {}
+              : { month: originalReleaseDate.month }),
+            ...(originalReleaseDate.day === undefined
+              ? {}
+              : { day: originalReleaseDate.day }),
+          },
+        }),
+    ...(releaseDate === undefined
+      ? {}
+      : {
+          releaseDate: {
+            year: releaseDate.year,
+            ...(releaseDate.month === undefined
+              ? {}
+              : { month: releaseDate.month }),
+            ...(releaseDate.day === undefined
+              ? {}
+              : { day: releaseDate.day }),
+          },
+        }),
     palette: [album.palette[0], album.palette[1]],
   };
 }
@@ -328,7 +372,7 @@ export async function loadPlayerState(): Promise<PlayerStateSnapshot | undefined
     }).catch(() => undefined);
     return undefined;
   }
-  const state = parsePlayerState(value);
+  const state = await parsePlayerStateAsync(value);
   if (!state) {
     void invoke("record_player_state_diagnostic", {
       event: "renderer.load.invalid",
@@ -341,11 +385,27 @@ export async function loadPlayerState(): Promise<PlayerStateSnapshot | undefined
   return state;
 }
 
+export type PlaybackDiagnosticEvent =
+  | "renderer.play.request"
+  | "renderer.stream.request"
+  | "renderer.stream.ready"
+  | "renderer.stream.error"
+  | "renderer.audio.play-request"
+  | "renderer.audio.play-ready"
+  | "renderer.audio.play-error"
+  | "renderer.audio.media-error";
+
+export function recordPlaybackDiagnostic(event: PlaybackDiagnosticEvent): void {
+  if (!isDesktop()) return;
+  void invoke("record_player_state_diagnostic", { event }).catch(() => undefined);
+}
+
 export async function savePlayerState(input: PlayerStateInput): Promise<void> {
   const [state, contractVersion] = await Promise.all([
-    Promise.resolve(createPlayerState(input)),
+    preparePlayerStateSnapshot(input),
     nativePlayerStateContractVersion(),
   ]);
+  await waitForPlayerStateIdle();
   return invoke("save_player_state", {
     state: forNativePlayerStateContract(state, contractVersion),
   });

@@ -45,15 +45,17 @@ function renderDiscover(
     onTogglePlayback,
     ...render(
       <QueryClientProvider client={client}>
-        <DiscoverView
-          onPlay={vi.fn()}
-          onQueue={onQueue}
-          currentTrackId={playback.currentTrackId}
-          playing={playback.playing ?? false}
-          onTogglePlayback={onTogglePlayback}
-          onOpenRelease={playback.onOpenRelease ?? vi.fn()}
-          onOpenArtist={playback.onOpenArtist ?? vi.fn()}
-        />
+        <div data-coda-library-scroll>
+          <DiscoverView
+            onPlay={vi.fn()}
+            onQueue={onQueue}
+            currentTrackId={playback.currentTrackId}
+            playing={playback.playing ?? false}
+            onTogglePlayback={onTogglePlayback}
+            onOpenRelease={playback.onOpenRelease ?? vi.fn()}
+            onOpenArtist={playback.onOpenArtist ?? vi.fn()}
+          />
+        </div>
       </QueryClientProvider>,
     ),
   };
@@ -294,6 +296,104 @@ describe("Discover", () => {
       expect.objectContaining({ tag: "", sort: "top" }),
       "next-page",
     );
+  });
+
+  it("keeps accumulated Discover releases bounded with working visible actions", async () => {
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    const originalResizeObserver = globalThis.ResizeObserver;
+    class ResizeObserverMock implements ResizeObserver {
+      private readonly observed = new WeakSet<Element>();
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      disconnect() {}
+      observe(target: Element) {
+        if (this.observed.has(target)) return;
+        this.observed.add(target);
+        const bounds = target.getBoundingClientRect();
+        this.callback([{
+          borderBoxSize: [{
+            blockSize: bounds.height,
+            inlineSize: bounds.width,
+          }],
+          contentRect: bounds,
+          target,
+        } as unknown as ResizeObserverEntry], this);
+      }
+      unobserve() {}
+    }
+    globalThis.ResizeObserver = ResizeObserverMock;
+    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+      const scrollElement = this.hasAttribute("data-coda-library-scroll");
+      const top = scrollElement ? 0 : 160;
+      const height = scrollElement ? 240 : 0;
+      return {
+        bottom: top + height,
+        height,
+        left: 0,
+        right: 900,
+        top,
+        width: 900,
+        x: 0,
+        y: top,
+        toJSON: () => undefined,
+      };
+    };
+
+    try {
+      const releases = Array.from({ length: 5_000 }, (_, index) => ({
+        id: `release-${index}`,
+        title: `Discover release ${index}`,
+        artist: `Discover artist ${index}`,
+        itemUrl: `https://artist-${index}.bandcamp.com/album/release-${index}`,
+        featuredTrack: {
+          id: `preview-${index}`,
+          title: `Preview track ${index}`,
+          duration: 180,
+          streamUrl: `https://t4.bcbits.com/stream/${index}`,
+        },
+      }));
+      const onOpenRelease = vi.fn();
+      const onTogglePlayback = vi.fn();
+      mocks.fetchDiscover.mockResolvedValueOnce({
+        results: releases,
+        resultCount: releases.length,
+        hasMore: false,
+      });
+      renderDiscover(vi.fn(), {
+        currentTrackId: "preview-0",
+        onOpenRelease,
+        onTogglePlayback,
+        playing: true,
+      });
+
+      const grid = await screen.findByRole("list", {
+        name: "Discover releases",
+      });
+      await waitFor(() => {
+        expect(grid).toHaveAttribute("data-virtualized", "true");
+        const cards = within(grid).getAllByRole("listitem");
+        expect(cards.length).toBeGreaterThan(0);
+        expect(cards.length).toBeLessThan(50);
+      });
+      expect(within(grid).getAllByRole("listitem")[0]).toHaveAttribute(
+        "aria-setsize",
+        "5000",
+      );
+
+      fireEvent.click(within(grid).getByRole("button", {
+        name: "Pause Preview track 0",
+      }));
+      expect(onTogglePlayback).toHaveBeenCalledOnce();
+      const openRelease = within(grid).getByRole("button", {
+        name: "Discover release 0",
+      });
+      openRelease.focus();
+      expect(openRelease).toHaveFocus();
+      fireEvent.click(openRelease);
+      expect(onOpenRelease).toHaveBeenCalledWith(releases[0], openRelease);
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = originalRect;
+      globalThis.ResizeObserver = originalResizeObserver;
+    }
   });
 
   it("keeps prior discoveries visible when their revalidation fails", async () => {

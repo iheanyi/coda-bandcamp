@@ -1,3 +1,9 @@
+export type ItemDate = {
+  year: number;
+  month?: number;
+  day?: number;
+};
+
 export type Album = {
   id: string;
   title: string;
@@ -9,6 +15,10 @@ export type Album = {
   year?: number;
   genre?: string;
   addedAt?: string;
+  starredAt?: string;
+  playedAt?: string;
+  originalReleaseDate?: ItemDate;
+  releaseDate?: ItemDate;
   tracks?: Track[];
   palette: [string, string];
 };

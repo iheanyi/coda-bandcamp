@@ -1,4 +1,8 @@
 import type { Album, Track } from "./types";
+import {
+  compareAlbumsByNewestRelease,
+  sortAlbumsByNewestAdded,
+} from "./libraryDates";
 
 export type LibraryBrowseMode = "releases" | "artists" | "albums" | "singles";
 
@@ -37,11 +41,9 @@ export function groupAlbumsByArtist(albums: readonly Album[]): ArtistGroup[] {
   }
 
   return Array.from(groups, ([key, releases]) => {
-    const sorted = [...releases].sort(
-      (a, b) =>
-        (b.addedAt ?? "").localeCompare(a.addedAt ?? "") ||
-        (b.year ?? 0) - (a.year ?? 0) ||
-        a.title.localeCompare(b.title),
+    const sorted = sortAlbumsByNewestAdded(
+      releases,
+      compareAlbumsByNewestRelease,
     );
     return {
       key,

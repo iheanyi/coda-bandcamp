@@ -45,6 +45,7 @@ import {
   openBandcampUrl,
   paletteFor,
 } from "./lib";
+import { ResponsiveVirtualGrid } from "./ResponsiveVirtualGrid";
 import type {
   DiscoverFilters,
   DiscoverRelease,
@@ -59,6 +60,15 @@ const DISCOVER_SORT_OPTIONS: ReadonlyArray<{
   { value: "top", label: "Best-selling" },
   { value: "new", label: "New arrivals" },
 ];
+
+const DISCOVER_GRID_LAYOUTS = [
+  {
+    minColumnWidth: 288,
+    columnGap: 10,
+    rowGap: 10,
+    rowHeight: 112,
+  },
+] as const;
 
 const DiscoverCard = memo(function DiscoverCard({
   release,
@@ -90,7 +100,7 @@ const DiscoverCard = memo(function DiscoverCard({
 
   return (
     <article
-      className="group/card grid min-w-0 grid-cols-[--spacing(28)_minmax(0,1fr)] overflow-hidden rounded-lg border border-(--line) bg-white/[0.018] [contain-intrinsic-size:--spacing(28)_--spacing(75)] [content-visibility:auto] hover:border-(--line-strong) hover:bg-white/3"
+      className="group/card grid h-full min-w-0 grid-cols-[--spacing(28)_minmax(0,1fr)] overflow-hidden rounded-lg border border-(--line) bg-white/[0.018] [contain-intrinsic-size:--spacing(28)_--spacing(75)] [content-visibility:auto] hover:border-(--line-strong) hover:bg-white/3"
       data-discover-release-card={release.id}
     >
       <div
@@ -241,10 +251,16 @@ export default function DiscoverView({
   const total = query.data?.pages[0]?.resultCount ?? 0;
   const selectedGenre = filters.tag.toLocaleLowerCase("en-US");
   const genreRailRef = useRef<HTMLElement>(null);
+  const discoverScrollElementRef = useRef<HTMLElement | null>(null);
   const [genreRailEdges, setGenreRailEdges] = useState({
     start: false,
     end: false,
   });
+  const setDiscoverRoot = useCallback((element: HTMLElement | null) => {
+    discoverScrollElementRef.current = element?.closest<HTMLElement>(
+      "[data-coda-library-scroll]",
+    ) ?? element?.parentElement ?? null;
+  }, []);
 
   const chooseGenre = (tag: string) => {
     const nextTag = tag === "all" ? "" : tag;
@@ -318,6 +334,7 @@ export default function DiscoverView({
       className="min-h-full"
       aria-live="polite"
       aria-busy={query.isFetching}
+      ref={setDiscoverRoot}
     >
       <div className="relative -mx-4 -mt-6 mb-6 flex items-end justify-between gap-9 overflow-hidden border-b border-(--line) bg-[radial-gradient(circle_at_92%_0%,rgba(221,101,73,0.17),transparent_39%),linear-gradient(135deg,#181b1d_0%,#141719_70%)] px-4 pt-12 pb-8 after:pointer-events-none after:absolute after:-top-28 after:right-[18%] after:size-56 after:rounded-full after:border after:border-white/[0.035] after:shadow-[0_0_0_42px_rgba(255,255,255,0.012),0_0_0_84px_rgba(255,255,255,0.008)] after:content-[''] lg:-mx-6 lg:-mt-8 lg:px-6 xl:-mx-8 xl:flex-row xl:items-end xl:px-8 max-xl:flex-col max-xl:items-stretch">
         <div className="relative z-1">
@@ -497,10 +514,15 @@ export default function DiscoverView({
             <h2 className="m-0 font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-base leading-none font-semibold tracking-tight">{filters.tag ? `Sounds tagged “${filters.tag}”` : "Across Bandcamp"}</h2>
             <span className="text-xs text-[#6f736e]">{countLabel(total, "result")}</span>
           </div>
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(18rem,1fr))] gap-2.5">
-            {releases.map((release) => (
+          <ResponsiveVirtualGrid
+            aria-label="Discover releases"
+            className="w-full"
+            getItemKey={(release) => release.id}
+            items={releases}
+            layouts={DISCOVER_GRID_LAYOUTS}
+            scrollElementRef={discoverScrollElementRef}
+            renderItem={(release) => (
               <DiscoverCard
-                key={release.id}
                 release={release}
                 fallbackGenre={filters.tag || undefined}
                 currentTrackId={currentTrackId}
@@ -511,8 +533,8 @@ export default function DiscoverView({
                 onOpenRelease={onOpenRelease}
                 onOpenArtist={onOpenArtist}
               />
-            ))}
-          </div>
+            )}
+          />
           {query.hasNextPage ? (
             <Button
               variant="outline"

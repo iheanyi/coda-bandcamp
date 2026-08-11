@@ -135,6 +135,61 @@ function deferred<Value>() {
   return { promise, reject, resolve };
 }
 
+function mockVirtualizedViewport({
+  contentTop,
+  height,
+  isScrollElement,
+  width,
+}: {
+  contentTop: number;
+  height: number;
+  isScrollElement: (element: HTMLElement) => boolean;
+  width: number;
+}) {
+  const originalRect = HTMLElement.prototype.getBoundingClientRect;
+  const originalResizeObserver = globalThis.ResizeObserver;
+  class ResizeObserverMock implements ResizeObserver {
+    private readonly observed = new WeakSet<Element>();
+    constructor(private readonly callback: ResizeObserverCallback) {}
+    disconnect() {}
+    observe(target: Element) {
+      if (this.observed.has(target)) return;
+      this.observed.add(target);
+      const bounds = target.getBoundingClientRect();
+      this.callback([{
+        borderBoxSize: [{
+          blockSize: bounds.height,
+          inlineSize: bounds.width,
+        }],
+        contentRect: bounds,
+        target,
+      } as unknown as ResizeObserverEntry], this);
+    }
+    unobserve() {}
+  }
+  globalThis.ResizeObserver = ResizeObserverMock;
+  HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+    const scrollElement = isScrollElement(this);
+    const top = scrollElement ? 0 : contentTop;
+    const elementHeight = scrollElement ? height : 0;
+    return {
+      bottom: top + elementHeight,
+      height: elementHeight,
+      left: 0,
+      right: width,
+      top,
+      width,
+      x: 0,
+      y: top,
+      toJSON: () => undefined,
+    };
+  };
+  return () => {
+    HTMLElement.prototype.getBoundingClientRect = originalRect;
+    globalThis.ResizeObserver = originalResizeObserver;
+  };
+}
+
 function AddDialogHarness({
   onNotify = vi.fn(),
 }: {
@@ -1394,6 +1449,276 @@ describe("saved Bandcamp library views", () => {
     } finally {
       HTMLElement.prototype.getBoundingClientRect = originalRect;
       globalThis.ResizeObserver = originalResizeObserver;
+    }
+  });
+
+  it("keeps large favorite release and Radio grids bounded with working visible actions", async () => {
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    const originalResizeObserver = globalThis.ResizeObserver;
+    class ResizeObserverMock implements ResizeObserver {
+      private readonly observed = new WeakSet<Element>();
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      disconnect() {}
+      observe(target: Element) {
+        if (this.observed.has(target)) return;
+        this.observed.add(target);
+        const bounds = target.getBoundingClientRect();
+        this.callback([{
+          borderBoxSize: [{
+            blockSize: bounds.height,
+            inlineSize: bounds.width,
+          }],
+          contentRect: bounds,
+          target,
+        } as unknown as ResizeObserverEntry], this);
+      }
+      unobserve() {}
+    }
+    globalThis.ResizeObserver = ResizeObserverMock;
+    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+      const scrollElement = this.hasAttribute("data-coda-library-scroll");
+      const top = scrollElement ? 0 : 90;
+      const height = scrollElement ? 240 : 0;
+      return {
+        bottom: top + height,
+        height,
+        left: 0,
+        right: 800,
+        top,
+        width: 800,
+        x: 0,
+        y: top,
+        toJSON: () => undefined,
+      };
+    };
+
+    try {
+      const albums = Array.from({ length: 5_000 }, (_, index) => ({
+        ...favorites.albums[0],
+        id: `favorite-album-${index}`,
+        title: `Favorite release ${index}`,
+      }));
+      const radioShows = Array.from({ length: 5_000 }, (_, index) => ({
+        ...favorites.radioShows[0],
+        id: 10_000 + index,
+        subtitle: `Favorite Radio show ${index}`,
+      }));
+      const largeFavorites: LocalFavoriteCollection = {
+        albumIds: albums.map((album) => album.id),
+        albums,
+        radioShowIds: radioShows.map((show) => show.id),
+        radioShows,
+        songIds: [],
+        tracks: [],
+      };
+      const onTogglePlayback = vi.fn();
+      const onToggleFavorite = vi.fn();
+      const onToggleRadioFavorite = vi.fn();
+      const onOpenAlbum = vi.fn();
+      withQueryClient(
+        <div data-coda-library-scroll>
+          <SavedLibraryView
+            mode="favorites"
+            {...commonProps}
+            currentTrackId={`radio:${radioShows[0].id}`}
+            favorites={largeFavorites}
+            onOpenAlbum={onOpenAlbum}
+            onToggleFavorite={onToggleFavorite}
+            onTogglePlayback={onTogglePlayback}
+            onToggleRadioFavorite={onToggleRadioFavorite}
+            playing
+          />
+        </div>,
+      );
+
+      const radioGrid = screen.getByRole("list", {
+        name: "Favorite radio shows",
+      });
+      const releaseGrid = screen.getByRole("list", {
+        name: "Favorite releases",
+      });
+      await waitFor(() => {
+        expect(radioGrid).toHaveAttribute("data-virtualized", "true");
+        expect(releaseGrid).toHaveAttribute("data-virtualized", "true");
+        expect(within(radioGrid).getAllByRole("listitem").length).toBeLessThan(50);
+        expect(within(releaseGrid).getAllByRole("listitem").length).toBeLessThan(50);
+      });
+      expect(within(radioGrid).getAllByRole("listitem")[0]).toHaveAttribute(
+        "aria-setsize",
+        "5000",
+      );
+      expect(within(releaseGrid).getAllByRole("listitem")[0]).toHaveAttribute(
+        "aria-setsize",
+        "5000",
+      );
+
+      fireEvent.click(within(radioGrid).getByRole("button", {
+        name: "Pause Favorite Radio show 0",
+      }));
+      expect(onTogglePlayback).toHaveBeenCalledOnce();
+      fireEvent.click(within(radioGrid).getByRole("button", {
+        name: "Remove Favorite Radio show 0 from favorites",
+      }));
+      expect(onToggleRadioFavorite).toHaveBeenCalledWith(radioShows[0], false);
+
+      const openRelease = within(releaseGrid).getByRole("button", {
+        name: "Open Favorite release 0",
+      });
+      fireEvent.click(openRelease);
+      expect(onOpenAlbum).toHaveBeenCalledWith(albums[0], openRelease);
+      fireEvent.click(within(releaseGrid).getByRole("button", {
+        name: "Remove Favorite release 0 from favorites",
+      }));
+      expect(onToggleFavorite).toHaveBeenCalledWith(
+        albums[0].id,
+        "album",
+        false,
+      );
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = originalRect;
+      globalThis.ResizeObserver = originalResizeObserver;
+    }
+  });
+
+  it("keeps 5,000 playlist cards bounded while preserving optimistic create and open", async () => {
+    const restoreViewport = mockVirtualizedViewport({
+      contentTop: 90,
+      height: 240,
+      isScrollElement: (element) =>
+        element.hasAttribute("data-coda-library-scroll"),
+      width: 800,
+    });
+    const playlists = Array.from({ length: 5_000 }, (_, index) => ({
+      duration: 0,
+      id: `playlist-${index}`,
+      name: `Playlist ${index}`,
+      songCount: 0,
+    }));
+    const pendingCreate = deferred<PlaylistDetail>();
+    const pendingOpen = deferred<PlaylistDetail>();
+    mocks.fetchPlaylists.mockResolvedValueOnce(playlists);
+    mocks.createPlaylist.mockReturnValueOnce(pendingCreate.promise);
+    mocks.fetchPlaylist.mockReturnValueOnce(pendingOpen.promise);
+
+    try {
+      withQueryClient(
+        <div data-coda-library-scroll>
+          <SavedLibraryView mode="playlists" {...commonProps} />
+        </div>,
+      );
+
+      const list = await screen.findByRole("list", { name: "Playlists" });
+      await waitFor(() => {
+        expect(list).toHaveAttribute("data-virtualized", "true");
+        const cards = within(list).getAllByRole("listitem");
+        expect(cards.length).toBeGreaterThan(0);
+        expect(cards.length).toBeLessThan(40);
+      });
+      expect(within(list).getAllByRole("listitem")[0]).toHaveAttribute(
+        "aria-setsize",
+        "5000",
+      );
+
+      fireEvent.change(screen.getByPlaceholderText("Late-night rotation"), {
+        target: { value: "Fresh finds" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Create" }));
+      const optimistic = await within(list).findByRole("button", {
+        name: /Fresh finds/,
+      });
+      expect(optimistic).toBeDisabled();
+      expect(within(optimistic).getByText("Creating…")).toBeInTheDocument();
+      expect(within(list).getAllByRole("listitem").length).toBeLessThan(40);
+
+      pendingCreate.reject(new Error("Create failed"));
+      await waitFor(() =>
+        expect(within(list).queryByRole("button", { name: /Fresh finds/ }))
+          .not.toBeInTheDocument()
+      );
+
+      fireEvent.click(within(
+        within(list).getAllByRole("listitem")[0],
+      ).getByRole("button"));
+      expect(await screen.findByText("Loading playlist")).toBeInTheDocument();
+      expect(mocks.fetchPlaylist).toHaveBeenCalledWith("playlist-0");
+    } finally {
+      await act(async () => {
+        pendingOpen.resolve({
+          ...detail,
+          id: "playlist-0",
+          name: "Playlist 0",
+        });
+        await Promise.resolve();
+      });
+      restoreViewport();
+    }
+  });
+
+  it("keeps 5,000 Add-to-playlist rows bounded with a focused pending add", async () => {
+    const restoreViewport = mockVirtualizedViewport({
+      contentTop: 0,
+      height: 280,
+      isScrollElement: (element) =>
+        element.hasAttribute("data-add-to-playlist-scroll"),
+      width: 464,
+    });
+    const playlists = Array.from({ length: 5_000 }, (_, index) => ({
+      duration: 0,
+      id: `dialog-playlist-${index}`,
+      name: `Dialog playlist ${index}`,
+      songCount: 0,
+    }));
+    const pendingAdd = deferred<PlaylistDetail>();
+    const onClose = vi.fn();
+    const onNotify = vi.fn();
+    mocks.fetchPlaylists.mockResolvedValueOnce(playlists);
+    mocks.updatePlaylist.mockReturnValueOnce(pendingAdd.promise);
+
+    try {
+      withQueryClient(
+        <AddToPlaylistDialog
+          tracks={[track]}
+          onClose={onClose}
+          onNotify={onNotify}
+        />,
+      );
+
+      const list = await screen.findByRole("list", {
+        name: "Available playlists",
+      });
+      await waitFor(() => {
+        expect(list).toHaveAttribute("data-virtualized", "true");
+        const rows = within(list).getAllByRole("listitem");
+        expect(rows.length).toBeGreaterThan(0);
+        expect(rows.length).toBeLessThan(40);
+      });
+      expect(within(list).getAllByRole("listitem")[0]).toHaveAttribute(
+        "aria-setsize",
+        "5000",
+      );
+
+      const target = within(
+        within(list).getAllByRole("listitem")[0],
+      ).getByRole("button");
+      target.focus();
+      expect(target).toHaveFocus();
+      fireEvent.click(target);
+      await waitFor(() => expect(target).toBeDisabled());
+      expect(target).toHaveFocus();
+      expect(target.querySelector('[data-slot="spinner"]')).toBeInTheDocument();
+      expect(await within(target).findByText("1 track")).toBeInTheDocument();
+      expect(within(list).getAllByRole("listitem").length).toBeLessThan(40);
+      expect(mocks.updatePlaylist).toHaveBeenCalledWith({
+        playlistId: playlists[0].id,
+        songIdsToAdd: [track.id],
+      });
+
+      pendingAdd.reject(new Error("Add failed"));
+      expect(await within(target).findByText("0 tracks")).toBeInTheDocument();
+      expect(onNotify).toHaveBeenCalledWith("Add failed", "bad");
+      expect(onClose).not.toHaveBeenCalled();
+    } finally {
+      restoreViewport();
     }
   });
 });

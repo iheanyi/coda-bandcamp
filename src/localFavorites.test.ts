@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   emptyLocalFavorites,
   LOCAL_FAVORITES_KEY,
   readLocalFavorites,
   repairLocalFavoriteMetadata,
+  sanitizeLocalFavorites,
   updateLocalFavorites,
   updateLocalRadioFavorite,
   writeLocalFavorites,
@@ -189,5 +190,49 @@ describe("local favorites", () => {
     ]);
     expect(updateLocalRadioFavorite(favorites, radioShow, false).radioShowIds)
       .toEqual([]);
+  });
+
+  it("filters large favorite metadata with indexed ID membership", () => {
+    const favoriteCount = 2_000;
+    const songIds = Array.from(
+      { length: favoriteCount },
+      (_value, index) => `song-linear-${index}`,
+    );
+    const tracks = songIds.map((id, index): Track => ({
+      ...track,
+      id,
+      track: index + 1,
+    }));
+    const originalIncludes = Array.prototype.includes;
+    let linearCollectionIncludes = 0;
+    const includesSpy = vi.spyOn(Array.prototype, "includes").mockImplementation(
+      function (this: unknown[], searchElement: unknown, fromIndex?: number) {
+        if (
+          this.length === favoriteCount &&
+          typeof searchElement === "string" &&
+          searchElement.startsWith("song-linear-")
+        ) {
+          linearCollectionIncludes += 1;
+        }
+        return originalIncludes.call(this, searchElement, fromIndex);
+      },
+    );
+
+    let sanitized: ReturnType<typeof sanitizeLocalFavorites>;
+    try {
+      sanitized = sanitizeLocalFavorites({
+        albumIds: [],
+        songIds,
+        albums: [],
+        tracks,
+        radioShowIds: [],
+        radioShows: [],
+      });
+    } finally {
+      includesSpy.mockRestore();
+    }
+
+    expect(sanitized?.tracks).toHaveLength(favoriteCount);
+    expect(linearCollectionIncludes).toBe(0);
   });
 });

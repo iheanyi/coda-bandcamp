@@ -66,9 +66,26 @@ import {
   BANDCAMP_RADIO_SERIES,
   radioEpisodeUrl,
 } from "./radioSeries";
+import { ResponsiveVirtualGrid } from "./ResponsiveVirtualGrid";
 import { transitionCodaView } from "./viewTransitions";
 
 const RADIO_STALE_TIME_MS = 10 * 60 * 1_000;
+const RADIO_ARCHIVE_GRID_LAYOUTS = [
+  {
+    maxWidth: 780,
+    minColumnWidth: 176,
+    columnGap: 14,
+    rowGap: 14,
+    rowHeight: (columnWidth: number) => columnWidth + 176,
+  },
+  {
+    minColumnWidth: 224,
+    columnGap: 14,
+    rowGap: 14,
+    rowHeight: (columnWidth: number) => columnWidth + 176,
+  },
+] as const;
+const radioShowKey = (show: RadioShowSummary) => show.id;
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
   month: "short",
   day: "numeric",
@@ -674,6 +691,13 @@ export default function RadioView({
   const queryClient = useQueryClient();
   const [seriesPending, startSeriesTransition] = useTransition();
   const paginationRef = useRef<HTMLDivElement>(null);
+  const archiveScrollElementRef = useRef<HTMLElement | null>(null);
+  const setArchivePageRoot = useCallback((element: HTMLElement | null) => {
+    archiveScrollElementRef.current =
+      element?.closest<HTMLElement>("[data-coda-library-scroll]") ??
+      element?.parentElement ??
+      null;
+  }, []);
   const radioNavigationRef = useRef(createNavigationTransactionState());
   const radioReturnFocusRequestedRef = useRef(false);
   const radioScrollTopRef = useRef<number | undefined>(undefined);
@@ -710,7 +734,7 @@ export default function RadioView({
     return [...uniqueShows.values()];
   }, [showsQuery.data?.pages]);
   const featured = shows[0];
-  const visibleShows = shows.slice(1);
+  const visibleShows = useMemo(() => shows.slice(1), [shows]);
 
   useLayoutEffect(() => {
     const scrollRoot = document.querySelector<HTMLElement>(
@@ -861,6 +885,22 @@ export default function RadioView({
 
   const actionFor = (show: RadioShowSummary) =>
     busy?.id === show.id ? busy.action : undefined;
+
+  const playShow = useCallback(
+    (show: RadioShowSummary) => void actOnShow(show, "play"),
+    [actOnShow],
+  );
+
+  const queueShow = useCallback(
+    (show: RadioShowSummary) => void actOnShow(show, "queue"),
+    [actOnShow],
+  );
+
+  const viewShowDetails = useCallback(
+    (show: RadioShowSummary, trigger: HTMLButtonElement) =>
+      void viewShow(show, trigger),
+    [viewShow],
+  );
 
   const selectSeries = useCallback((seriesId?: number) => {
     startSeriesTransition(() => {
@@ -1078,6 +1118,7 @@ export default function RadioView({
       className="min-h-full pb-2.5"
       aria-live="polite"
       aria-busy={Boolean(busy)}
+      ref={setArchivePageRoot}
     >
       {seriesNavigation}
       <article className="relative mb-9 grid grid-cols-[minmax(13rem,20rem)_minmax(0,1fr)] items-center gap-16 overflow-hidden rounded-xl border border-(--line) bg-[radial-gradient(circle_at_88%_7%,rgba(221,101,73,0.2),transparent_34%),radial-gradient(circle_at_5%_100%,rgba(115,77,151,0.11),transparent_38%),linear-gradient(135deg,#202325_0%,#17191b_72%)] p-12 shadow-[0_22px_58px_rgba(0,0,0,0.16)] before:pointer-events-none before:absolute before:-top-36 before:-right-24 before:size-90 before:rounded-full before:border before:border-white/4 before:shadow-[0_0_0_46px_rgba(255,255,255,0.012),0_0_0_92px_rgba(255,255,255,0.008)] before:content-[''] max-xl:grid-cols-[12rem_minmax(0,1fr)] max-xl:gap-6 max-xl:p-6 max-lg:grid-cols-[8rem_minmax(0,1fr)] max-lg:items-start max-lg:gap-4 max-lg:p-5">
@@ -1234,26 +1275,34 @@ export default function RadioView({
         </div>
         <span className="text-xs text-[#6f736e]">{countLabel(shows.length, "broadcast")} loaded</span>
       </div>
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] gap-3.5 max-lg:grid-cols-[repeat(auto-fill,minmax(11rem,1fr))]">
-        {visibleShows.map((show) => (
-          <RadioCard
-            key={show.id}
-            show={show}
-            busyAction={actionFor(show)}
-            active={currentTrackId === `radio:${show.id}`}
-            playing={playing}
-            onPlay={(item) => void actOnShow(item, "play")}
-            onTogglePlayback={onTogglePlayback}
-            onQueue={(item) => void actOnShow(item, "queue")}
-            onDetails={(item, trigger) => void viewShow(item, trigger)}
-            favorite={favoriteShowIds.has(show.id)}
-            onToggleFavorite={onToggleFavorite}
-            onOpenItem={openItem}
-            onBrowseSeries={selectSeries}
-            returningArtwork={returningRadioArtworkId === show.id}
-          />
-        ))}
-      </div>
+      <ResponsiveVirtualGrid
+        aria-label="Bandcamp Radio archive"
+        className="w-full"
+        getItemKey={radioShowKey}
+        items={visibleShows}
+        layouts={RADIO_ARCHIVE_GRID_LAYOUTS}
+        scrollElementRef={archiveScrollElementRef}
+        renderItem={(show) => {
+          const active = currentTrackId === `radio:${show.id}`;
+          return (
+            <RadioCard
+              show={show}
+              busyAction={actionFor(show)}
+              active={active}
+              playing={active && playing}
+              onPlay={playShow}
+              onTogglePlayback={onTogglePlayback}
+              onQueue={queueShow}
+              onDetails={viewShowDetails}
+              favorite={favoriteShowIds.has(show.id)}
+              onToggleFavorite={onToggleFavorite}
+              onOpenItem={openItem}
+              onBrowseSeries={selectSeries}
+              returningArtwork={returningRadioArtworkId === show.id}
+            />
+          );
+        }}
+      />
       {showsQuery.hasNextPage ? (
         <div className="grid min-h-20 place-items-center" ref={paginationRef}>
           <Button

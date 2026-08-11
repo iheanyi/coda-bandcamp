@@ -8,16 +8,16 @@ import type {
 
 export const LOCAL_FAVORITES_KEY = "coda.local-favorites.v1";
 
-const LOCAL_FAVORITES_VERSION = 2;
+export const LOCAL_FAVORITES_VERSION = 2;
 const MAX_FAVORITE_ALBUMS = 5_000;
 const MAX_FAVORITE_TRACKS = 25_000;
 const MAX_FAVORITE_RADIO_SHOWS = 5_000;
 const MAX_TRACKS_PER_ALBUM = 5_000;
-const MAX_LOCAL_FAVORITES_BYTES = 4 * 1024 * 1024;
+export const MAX_LOCAL_FAVORITES_BYTES = 4 * 1024 * 1024;
 const MAX_TEXT_LENGTH = 1_024;
 const MAX_DURATION_SECONDS = 7 * 24 * 60 * 60;
 
-type LocalFavoritesSnapshot = LocalFavoriteCollection & {
+export type LocalFavoritesSnapshot = LocalFavoriteCollection & {
   version: typeof LOCAL_FAVORITES_VERSION;
 };
 
@@ -259,6 +259,9 @@ export function sanitizeLocalFavorites(value: unknown): LocalFavoriteCollection 
   ) {
     return undefined;
   }
+  const wantedAlbumIds = new Set(albumIds);
+  const wantedSongIds = new Set(songIds);
+  const wantedRadioShowIds = new Set(radioShowIds);
   const albums = value.albums.map(sanitizeAlbum);
   const tracks = value.tracks.map(sanitizeTrack);
   const radioShows = rawRadioShows.map(sanitizeRadioShow);
@@ -273,10 +276,10 @@ export function sanitizeLocalFavorites(value: unknown): LocalFavoriteCollection 
     albumIds,
     songIds,
     radioShowIds,
-    albums: uniqueById(albums as Album[]).filter((album) => albumIds.includes(album.id)),
-    tracks: uniqueById(tracks as Track[]).filter((track) => songIds.includes(track.id)),
+    albums: uniqueById(albums as Album[]).filter((album) => wantedAlbumIds.has(album.id)),
+    tracks: uniqueById(tracks as Track[]).filter((track) => wantedSongIds.has(track.id)),
     radioShows: uniqueRadioShows(radioShows as RadioShowSummary[])
-      .filter((show) => radioShowIds.includes(show.id)),
+      .filter((show) => wantedRadioShowIds.has(show.id)),
   };
 }
 
@@ -290,15 +293,12 @@ export function readLocalFavorites(): LocalFavoriteCollection {
       return emptyLocalFavorites();
     }
     const value: unknown = JSON.parse(serialized);
-    if (
-      !isRecord(value) ||
-      (value.version !== 1 && value.version !== LOCAL_FAVORITES_VERSION)
-    ) {
+    const favorites = parseLocalFavoritesSnapshot(value);
+    if (!favorites) {
       window.localStorage.removeItem(LOCAL_FAVORITES_KEY);
       return emptyLocalFavorites();
     }
-    const favorites = sanitizeLocalFavorites(value);
-    if (favorites) return favorites;
+    return favorites;
   } catch {
     // Treat inaccessible or malformed local state as empty.
   }
@@ -310,20 +310,39 @@ export function readLocalFavorites(): LocalFavoriteCollection {
   return emptyLocalFavorites();
 }
 
-export function writeLocalFavorites(
+export function parseLocalFavoritesSnapshot(
+  value: unknown,
+): LocalFavoriteCollection | undefined {
+  if (
+    !isRecord(value) ||
+    (value.version !== 1 && value.version !== LOCAL_FAVORITES_VERSION)
+  ) {
+    return undefined;
+  }
+  return sanitizeLocalFavorites(value);
+}
+
+export function createLocalFavoritesSnapshot(
   favorites: LocalFavoriteCollection,
-): LocalFavoriteCollection {
+): LocalFavoritesSnapshot {
   const sanitized = sanitizeLocalFavorites(favorites);
   if (!sanitized) throw new Error("Local favorites contain invalid music metadata.");
-  const snapshot: LocalFavoritesSnapshot = {
+  return {
     version: LOCAL_FAVORITES_VERSION,
     ...sanitized,
   };
+}
+
+export function writeLocalFavorites(
+  favorites: LocalFavoriteCollection,
+): LocalFavoriteCollection {
+  const snapshot = createLocalFavoritesSnapshot(favorites);
   const serialized = JSON.stringify(snapshot);
   if (serialized.length > MAX_LOCAL_FAVORITES_BYTES) {
     throw new Error("Local favorites are too large to save safely.");
   }
   window.localStorage.setItem(LOCAL_FAVORITES_KEY, serialized);
+  const { version: _version, ...sanitized } = snapshot;
   return sanitized;
 }
 
@@ -333,6 +352,13 @@ export function updateLocalFavorites(
   candidate?: Album | Track,
 ): LocalFavoriteCollection {
   if (input.kind === "song") {
+    if (
+      input.favorite &&
+      !current.songIds.includes(input.id) &&
+      current.songIds.length >= MAX_FAVORITE_TRACKS
+    ) {
+      throw new Error(`Coda can save at most ${MAX_FAVORITE_TRACKS.toLocaleString()} favorite tracks.`);
+    }
     const songIds = current.songIds.filter((id) => id !== input.id);
     const tracks = current.tracks.filter((track) => track.id !== input.id);
     if (!input.favorite) return { ...current, songIds, tracks };
@@ -344,6 +370,13 @@ export function updateLocalFavorites(
     };
   }
 
+  if (
+    input.favorite &&
+    !current.albumIds.includes(input.id) &&
+    current.albumIds.length >= MAX_FAVORITE_ALBUMS
+  ) {
+    throw new Error(`Coda can save at most ${MAX_FAVORITE_ALBUMS.toLocaleString()} favorite albums.`);
+  }
   const albumIds = current.albumIds.filter((id) => id !== input.id);
   const albums = current.albums.filter((album) => album.id !== input.id);
   if (!input.favorite) return { ...current, albumIds, albums };
@@ -360,6 +393,15 @@ export function updateLocalRadioFavorite(
   show: RadioShowSummary,
   favorite: boolean,
 ): LocalFavoriteCollection {
+  if (
+    favorite &&
+    !current.radioShowIds.includes(show.id) &&
+    current.radioShowIds.length >= MAX_FAVORITE_RADIO_SHOWS
+  ) {
+    throw new Error(
+      `Coda can save at most ${MAX_FAVORITE_RADIO_SHOWS.toLocaleString()} favorite radio shows.`,
+    );
+  }
   const radioShowIds = current.radioShowIds.filter((id) => id !== show.id);
   const radioShows = current.radioShows.filter((item) => item.id !== show.id);
   if (!favorite) return { ...current, radioShowIds, radioShows };

@@ -1,8 +1,13 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup } from "@testing-library/react";
+import { cleanup, configure } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
 
 afterEach(() => cleanup());
+
+// Coverage instrumentation can push otherwise immediate React effects beyond
+// Testing Library's one-second default on the 25,000-item stress fixtures.
+// This is only a ceiling; successful queries still resolve as soon as they render.
+configure({ asyncUtilTimeout: 5_000 });
 
 Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
   configurable: true,

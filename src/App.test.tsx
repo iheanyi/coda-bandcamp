@@ -5,7 +5,12 @@ import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CodaMotionProvider } from "./MotionProvider";
 import { albumQueryKey } from "./libraryQueries";
-import type { Album, Track } from "./types";
+import {
+  emptyLocalFavorites,
+  readLocalFavorites,
+  writeLocalFavorites,
+} from "./localFavorites";
+import type { Album, LocalFavoriteCollection, Track } from "./types";
 
 const mocks = vi.hoisted(() => ({
   beginLastFmAuthorization: vi.fn(),
@@ -31,10 +36,13 @@ const mocks = vi.hoisted(() => ({
   openLastFmAuthorization: vi.fn(),
   openBandcampUrl: vi.fn(),
   readLibraryCache: vi.fn(),
+  readLocalFavoritesAsync: vi.fn(),
   scrobbleLastFm: vi.fn(),
   savePlayerState: vi.fn(),
   setFavorite: vi.fn(),
   updateLastFmNowPlaying: vi.fn(),
+  writeLocalFavoritesAsync: vi.fn(),
+  yieldToMacrotask: vi.fn(),
 }));
 
 vi.mock("./systemArtwork", () => ({
@@ -75,7 +83,20 @@ vi.mock("./lib", async (importOriginal) => {
   };
 });
 
-import App from "./App";
+vi.mock("./localFavoritesStore", () => ({
+  readLocalFavoritesAsync: mocks.readLocalFavoritesAsync,
+  writeLocalFavoritesAsync: mocks.writeLocalFavoritesAsync,
+}));
+
+vi.mock("./random", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./random")>();
+  return {
+    ...actual,
+    yieldToMacrotask: mocks.yieldToMacrotask,
+  };
+});
+
+import App, { persistedQueueIndex } from "./App";
 
 function renderApp(strict = false) {
   const queryClient = new QueryClient({
@@ -250,14 +271,31 @@ beforeEach(() => {
   mocks.openLastFmAuthorization.mockReset().mockResolvedValue(undefined);
   mocks.openBandcampUrl.mockReset().mockResolvedValue(undefined);
   mocks.readLibraryCache.mockReset().mockReturnValue([]);
+  mocks.readLocalFavoritesAsync
+    .mockReset()
+    .mockImplementation(async () => readLocalFavorites());
   mocks.scrobbleLastFm.mockReset().mockResolvedValue(undefined);
   mocks.savePlayerState.mockReset().mockResolvedValue(undefined);
   mocks.setFavorite.mockReset().mockResolvedValue(undefined);
   mocks.updateLastFmNowPlaying.mockReset().mockResolvedValue(undefined);
+  mocks.writeLocalFavoritesAsync
+    .mockReset()
+    .mockImplementation(async (favorites: LocalFavoriteCollection) =>
+      writeLocalFavorites(favorites));
+  mocks.yieldToMacrotask.mockReset().mockResolvedValue(undefined);
   mocks.hasConnection.mockResolvedValue(false);
 });
 
 describe("Coda application flows", { timeout: 10_000 }, () => {
+  it("maps the active queue item to its persisted index once ephemeral previews are omitted", () => {
+    const preview = { ...tracks[0], id: "discover:preview-track" };
+
+    expect(persistedQueueIndex([tracks[0], preview, tracks[1]], 0)).toBe(0);
+    expect(persistedQueueIndex([tracks[0], preview, tracks[1]], 1)).toBe(0);
+    expect(persistedQueueIndex([tracks[0], preview, tracks[1]], 2)).toBe(1);
+    expect(persistedQueueIndex([], 0)).toBe(-1);
+  });
+
   it("announces a spinner while the initial collection view is loading", async () => {
     const request = deferred<Album[]>();
     mocks.hasConnection.mockResolvedValue(true);
@@ -503,6 +541,58 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(screen.queryByRole("button", {
       name: "Open Zulu Ambient",
     })).not.toBeInTheDocument();
+  });
+
+  it("keeps Recently added newest-first after the Collection sort changes", async () => {
+    const user = userEvent.setup();
+    const addedDates = [
+      "31 Dec 2024 23:59:59 GMT",
+      "02 Jan 2025 12:00:00 GMT",
+      "30 Jan 2025 12:00:00 GMT",
+      "02 Feb 2025 12:00:00 GMT",
+      "28 Feb 2025 12:00:00 GMT",
+      "01 Mar 2025 12:00:00 GMT",
+      "30 Jun 2025 12:00:00 GMT",
+      "02 Jul 2025 12:00:00 GMT",
+      "31 Jul 2025 12:00:00 GMT",
+      "01 Aug 2025 12:00:00 GMT",
+      "30 Sep 2025 12:00:00 GMT",
+      "01 Oct 2025 12:00:00 GMT",
+      "31 Dec 2025 12:00:00 GMT",
+    ];
+    const collection = addedDates.map((addedAt, index): Album => ({
+      ...album,
+      id: `recent-${index + 1}`,
+      title: `Release ${String(index + 1).padStart(2, "0")}`,
+      artist: `Artist ${String(index + 1).padStart(2, "0")}`,
+      addedAt,
+    }));
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue(collection);
+    renderApp();
+
+    await screen.findByText("Release 01");
+    const sort = screen.getByRole("combobox", { name: "Sort collection" });
+    await user.click(sort);
+    await user.click(await screen.findByRole("option", { name: "Artist A–Z" }));
+    await user.click(screen.getByRole("button", { name: "Recently added" }));
+
+    expect(await screen.findByText("Newest first")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("combobox", { name: "Sort collection" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen
+        .getAllByRole("button", { name: /^Open Release/ })
+        .map((button) => button.getAttribute("aria-label")),
+    ).toEqual(
+      Array.from({ length: 12 }, (_, index) =>
+        `Open Release ${String(13 - index).padStart(2, "0")}`,
+      ),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Open Release 01" }),
+    ).not.toBeInTheDocument();
   });
 
   it("uses a fresh native library cache without revalidating", async () => {
@@ -768,13 +858,17 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
-    const { container } = renderApp(true);
+    const { container, queryClient } = renderApp(true);
 
     await screen.findByText("Soft Focus");
+    const setQueryData = vi.spyOn(queryClient, "setQueryData");
     fireEvent.click(screen.getByRole("button", { name: "Play Soft Focus" }));
 
     expect(await screen.findByRole("button", { name: "Open Now Playing" }))
       .toBeInTheDocument();
+    expect(setQueryData.mock.calls.filter(([queryKey]) =>
+      Array.isArray(queryKey) && queryKey.join("/") === "bandcamp/library"
+    )).toHaveLength(0);
     expect(screen.getAllByText("First Light").length).toBeGreaterThan(0);
     const player = screen.getByRole("contentinfo");
     const favorite = screen.getByRole("button", {
@@ -1278,6 +1372,121 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     }
   });
 
+  it("generates fallback system artwork only after the browser is idle", async () => {
+    let scheduledArtwork: (() => void) | undefined;
+    const requestIdleCallback = vi.fn((callback: () => void) => {
+      scheduledArtwork = callback;
+      return 17;
+    });
+    const cancelIdleCallback = vi.fn();
+    const mediaSession = {
+      metadata: null as MediaMetadata | null,
+      playbackState: "none" as MediaSessionPlaybackState,
+      setActionHandler: vi.fn(),
+      setPositionState: vi.fn(),
+    };
+    class MockMediaMetadata {
+      constructor(readonly init: MediaMetadataInit) {}
+    }
+    const requestIdleDescriptor = Object.getOwnPropertyDescriptor(
+      window,
+      "requestIdleCallback",
+    );
+    const cancelIdleDescriptor = Object.getOwnPropertyDescriptor(
+      window,
+      "cancelIdleCallback",
+    );
+    const mediaSessionDescriptor = Object.getOwnPropertyDescriptor(
+      navigator,
+      "mediaSession",
+    );
+    const metadataDescriptor = Object.getOwnPropertyDescriptor(
+      globalThis,
+      "MediaMetadata",
+    );
+    Object.defineProperty(window, "requestIdleCallback", {
+      configurable: true,
+      value: requestIdleCallback,
+    });
+    Object.defineProperty(window, "cancelIdleCallback", {
+      configurable: true,
+      value: cancelIdleCallback,
+    });
+    Object.defineProperty(navigator, "mediaSession", {
+      configurable: true,
+      value: mediaSession,
+    });
+    Object.defineProperty(globalThis, "MediaMetadata", {
+      configurable: true,
+      value: MockMediaMetadata,
+    });
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    let unmount: (() => void) | undefined;
+
+    try {
+      const view = renderApp();
+      unmount = view.unmount;
+      await screen.findByText("Soft Focus");
+      fireEvent.click(screen.getByRole("button", { name: "Play Soft Focus" }));
+
+      await waitFor(() => expect(requestIdleCallback).toHaveBeenCalledOnce());
+      expect(requestIdleCallback).toHaveBeenCalledWith(
+        expect.any(Function),
+        { timeout: 250 },
+      );
+      expect(mocks.createSystemArtworkDataUrl).not.toHaveBeenCalled();
+
+      act(() => scheduledArtwork?.());
+
+      expect(mocks.createSystemArtworkDataUrl).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          title: "First Light",
+          artist: "Night Archive",
+        }),
+      );
+      await waitFor(() =>
+        expect(
+          (mediaSession.metadata as unknown as MockMediaMetadata | null)?.init,
+        ).toEqual(expect.objectContaining({
+          artwork: [{
+            src: "data:image/png;base64,Y29kYS1jb3Zlcg==",
+            sizes: "600x600",
+            type: "image/png",
+          }],
+        })),
+      );
+
+      unmount();
+      unmount = undefined;
+      expect(cancelIdleCallback).toHaveBeenCalledWith(17);
+      act(() => scheduledArtwork?.());
+      expect(mocks.createSystemArtworkDataUrl).toHaveBeenCalledOnce();
+    } finally {
+      unmount?.();
+      if (requestIdleDescriptor) {
+        Object.defineProperty(window, "requestIdleCallback", requestIdleDescriptor);
+      } else {
+        Reflect.deleteProperty(window, "requestIdleCallback");
+      }
+      if (cancelIdleDescriptor) {
+        Object.defineProperty(window, "cancelIdleCallback", cancelIdleDescriptor);
+      } else {
+        Reflect.deleteProperty(window, "cancelIdleCallback");
+      }
+      if (mediaSessionDescriptor) {
+        Object.defineProperty(navigator, "mediaSession", mediaSessionDescriptor);
+      } else {
+        Reflect.deleteProperty(navigator, "mediaSession");
+      }
+      if (metadataDescriptor) {
+        Object.defineProperty(globalThis, "MediaMetadata", metadataDescriptor);
+      } else {
+        Reflect.deleteProperty(globalThis, "MediaMetadata");
+      }
+    }
+  });
+
   it("durably saves a changed queue after the structural debounce", async () => {
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
@@ -1542,6 +1751,88 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(await screen.findByRole("button", { name: "Open Now Playing" }))
       .toBeInTheDocument();
     expect(screen.getAllByText("Streetlight").length).toBeGreaterThan(0);
+  });
+
+  it("yields between batches of unavailable random releases", async () => {
+    const unavailableAlbums: Album[] = Array.from(
+      { length: 33 },
+      (_, index) => ({
+        id: `unavailable-${index}`,
+        title: `Unavailable ${index}`,
+        artist: "Offline Archive",
+        songCount: 1,
+        duration: 0,
+        palette: ["#777", "#222"],
+      }),
+    );
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue(unavailableAlbums);
+    mocks.fetchAlbum.mockResolvedValue([]);
+    renderApp();
+
+    await screen.findByText("Unavailable 0");
+    fireEvent.click(screen.getByRole("button", {
+      name: "Play a random track from the collection",
+    }));
+
+    await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledTimes(33));
+    expect(mocks.yieldToMacrotask).toHaveBeenCalledTimes(2);
+  });
+
+  it("starts a contextual shuffle before every release finishes hydrating", async () => {
+    const shuffleAlbums: Album[] = ["one", "two"].map((suffix) => ({
+      ...album,
+      id: `shuffle-album-${suffix}`,
+      title: `Shuffle Album ${suffix}`,
+      songCount: 1,
+      duration: 180,
+      tracks: undefined,
+    }));
+    const shuffleTracks = new Map(shuffleAlbums.map((release, index) => [
+      release.id,
+      [{
+        ...tracks[0],
+        id: `shuffle-track-${index + 1}`,
+        title: `Shuffle Track ${index + 1}`,
+        album: release.title,
+        albumId: release.id,
+      }],
+    ]));
+    const requests = new Map(shuffleAlbums.map((release) => [
+      release.id,
+      deferred<Track[]>(),
+    ]));
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue(shuffleAlbums);
+    mocks.fetchAlbum.mockImplementation((release: Album) =>
+      requests.get(release.id)!.promise
+    );
+    renderApp();
+
+    await screen.findByText("Shuffle Album one");
+    fireEvent.click(screen.getByRole("button", { name: "Shuffle collection" }));
+    await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledTimes(2));
+
+    const firstRelease = mocks.fetchAlbum.mock.calls[0][0] as Album;
+    const secondRelease = mocks.fetchAlbum.mock.calls[1][0] as Album;
+    await act(async () => {
+      requests.get(firstRelease.id)!.resolve(shuffleTracks.get(firstRelease.id)!);
+    });
+
+    expect(await screen.findByRole("button", { name: "Open Now Playing" }))
+      .toBeInTheDocument();
+    expect(screen.getAllByText(shuffleTracks.get(firstRelease.id)![0].title).length)
+      .toBeGreaterThan(0);
+
+    await act(async () => {
+      requests.get(secondRelease.id)!.resolve(shuffleTracks.get(secondRelease.id)!);
+    });
+    await waitFor(() => expect(screen.getByRole("button", {
+      name: "Shuffle collection",
+    })).toBeEnabled());
+
+    fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
+    expect(await screen.findByText("1 track next")).toBeInTheDocument();
   });
 
   it("restores the saved queue paused and applies its position after media metadata loads", async () => {
@@ -2665,6 +2956,92 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       .toHaveAttribute("aria-pressed", "false");
   });
 
+  it("bounds a 25,000-track album while keeping visible track controls accessible", async () => {
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    const originalResizeObserver = globalThis.ResizeObserver;
+    class ResizeObserverMock implements ResizeObserver {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      disconnect() {}
+      observe(target: Element) {
+        const bounds = target.getBoundingClientRect();
+        this.callback([{
+          borderBoxSize: [{
+            blockSize: bounds.height,
+            inlineSize: bounds.width,
+          }],
+          contentRect: bounds,
+          target,
+        } as unknown as ResizeObserverEntry], this);
+      }
+      unobserve() {}
+    }
+    globalThis.ResizeObserver = ResizeObserverMock;
+    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+      if (this.hasAttribute("data-coda-library-scroll")) {
+        return new DOMRect(0, 0, 360, 240);
+      }
+      if (this.getAttribute("aria-label") === "Album tracks") {
+        return new DOMRect(0, 90, 360, 0);
+      }
+      return originalRect.call(this);
+    };
+    const largeTracks: Track[] = Array.from({ length: 25_000 }, (_, index) => ({
+      ...tracks[0],
+      id: `large-track-${index + 1}`,
+      title: `Album track ${index + 1}`,
+      track: index + 1,
+    }));
+    const largeAlbum: Album = {
+      ...album,
+      duration: largeTracks.reduce((total, track) => total + track.duration, 0),
+      songCount: largeTracks.length,
+      tracks: undefined,
+    };
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([largeAlbum]);
+    mocks.fetchAlbum.mockResolvedValue(largeTracks);
+    try {
+      renderApp();
+
+      await screen.findByText("Soft Focus");
+      fireEvent.click(screen.getByRole("button", { name: "Open Soft Focus" }));
+      const albumPage = await screen.findByRole("article", {
+        name: "Soft Focus release details",
+      });
+      const trackList = await within(albumPage).findByRole("list", {
+        name: "Album tracks",
+      });
+
+      await waitFor(() => {
+        const visibleRows = within(trackList).getAllByRole("listitem");
+        expect(visibleRows.length).toBeGreaterThan(0);
+        expect(visibleRows.length).toBeLessThan(30);
+      }, { timeout: 5_000 });
+      const firstRow = within(trackList).getAllByRole("listitem")[0];
+      expect(firstRow).toHaveAttribute("aria-posinset", "1");
+      expect(firstRow).toHaveAttribute("aria-setsize", "25000");
+      expect(within(trackList).queryByText("Album track 25000"))
+        .not.toBeInTheDocument();
+
+      fireEvent.click(within(trackList).getByRole("button", {
+        name: "Play Album track 1",
+      }));
+      expect(await within(trackList).findByRole("button", {
+        name: "Pause Album track 1",
+      })).toHaveAttribute("aria-pressed", "true");
+
+      fireEvent.click(within(trackList).getByRole("button", {
+        name: "Add Album track 1 to favorites",
+      }));
+      expect(await within(trackList).findByRole("button", {
+        name: "Remove Album track 1 from favorites",
+      })).toHaveAttribute("aria-pressed", "true");
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = originalRect;
+      globalThis.ResizeObserver = originalResizeObserver;
+    }
+  });
+
   it("uses a shared-element view transition when the WebView supports it", async () => {
     const originalDescriptor = Object.getOwnPropertyDescriptor(
       document,
@@ -3342,6 +3719,38 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(mocks.fetchAlbum).not.toHaveBeenCalled();
   });
 
+  it("does not overwrite durable Favorites when a mutation beats hydration", async () => {
+    const favoritesRequest = deferred<LocalFavoriteCollection>();
+    mocks.readLocalFavoritesAsync.mockReturnValueOnce(favoritesRequest.promise);
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    fireEvent.click(screen.getByRole("button", { name: "Open Soft Focus" }));
+    const albumPage = await screen.findByRole("article", {
+      name: "Soft Focus release details",
+    });
+    fireEvent.click(within(albumPage).getByRole("button", { name: "Favorite" }));
+
+    expect(mocks.writeLocalFavoritesAsync).not.toHaveBeenCalled();
+    expect((await screen.findAllByText(
+      "Favorites are still loading. Try again in a moment.",
+    )).length).toBeGreaterThan(0);
+
+    const storedFavorites: LocalFavoriteCollection = {
+      ...emptyLocalFavorites(),
+      albumIds: [album.id],
+      albums: [{ ...album, tracks: undefined }],
+    };
+    await act(async () => favoritesRequest.resolve(storedFavorites));
+
+    expect(await within(albumPage).findByRole("button", {
+      name: "Favorited",
+    })).toHaveAttribute("aria-pressed", "true");
+    expect(mocks.writeLocalFavoritesAsync).not.toHaveBeenCalled();
+  });
+
   it("saves favorites locally and opens their internal release page", async () => {
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
@@ -3354,7 +3763,10 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
     fireEvent.click(within(albumPage).getByRole("button", { name: "Favorite" }));
 
-    expect(window.localStorage.getItem("coda.local-favorites.v1")).toContain("album-1");
+    await waitFor(() =>
+      expect(window.localStorage.getItem("coda.local-favorites.v1"))
+        .toContain("album-1"),
+    );
     expect(mocks.setFavorite).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Favorites" }));

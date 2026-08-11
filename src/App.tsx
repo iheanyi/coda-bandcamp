@@ -128,6 +128,7 @@ import {
   openLastFmAuthorization,
   openBandcampUrl,
   loadPlayerState,
+  recordPlaybackDiagnostic,
   savePlayerState,
   scrobbleLastFm,
   updateLastFmNowPlaying,
@@ -145,6 +146,11 @@ import {
   type LibraryBrowseMode,
 } from "./libraryBrowse";
 import {
+  formatAlbumReleaseDate,
+  sortAlbumsByNewestAdded,
+  sortAlbumsByNewestRelease,
+} from "./libraryDates";
+import {
   cachedAlbumTracks,
   clearBandcampQueryData,
   ensureAlbumQueryData,
@@ -160,14 +166,18 @@ import {
   updateLibraryData,
 } from "./libraryQueries";
 import {
-  readLocalFavorites,
+  emptyLocalFavorites,
   repairLocalFavoriteMetadata,
   updateLocalFavorites,
   updateLocalRadioFavorite,
-  writeLocalFavorites,
 } from "./localFavorites";
+import {
+  readLocalFavoritesAsync,
+  writeLocalFavoritesAsync,
+} from "./localFavoritesStore";
 import { countLabel } from "./countLabel";
 import { discoverArtistUrl } from "./discover";
+import { VirtualizedSavedTrackList } from "./VirtualizedSavedTrackList";
 import {
   installMediaSessionTrackHandlers,
   showAirPlayPicker,
@@ -209,7 +219,11 @@ import {
   recommendQueueAlbum,
   type QueueRecommendation,
 } from "./queueRecommendation";
-import { pickRandomItem, pickWeightedItem } from "./random";
+import {
+  pickRandomItem,
+  weightedRandomOrder,
+  yieldToMacrotask,
+} from "./random";
 import {
   boundRadioChapters,
   nextRadioChapterTimeInTimeline,
@@ -333,6 +347,7 @@ function useCurrentRadioChapter(
 const ARTWORK_REFRESH_CONCURRENCY = 4;
 const MAX_ARTWORK_DETAILS_PER_REFRESH = 200;
 const SEARCH_QUEUE_CONCURRENCY = 6;
+const RANDOM_PICK_YIELD_INTERVAL = 16;
 const PLAYER_STATE_SAVE_DEBOUNCE_MS = 450;
 const PLAYER_STATE_CHECKPOINT_MS = 5_000;
 const SYSTEM_MEDIA_TIMELINE_UPDATE_MS = 5_000;
@@ -359,7 +374,7 @@ const COLLECTION_SORT_OPTIONS: ReadonlyArray<{
   { value: "recent", label: "Recently added" },
   { value: "artist", label: "Artist A–Z" },
   { value: "title", label: "Album A–Z" },
-  { value: "year", label: "Release year" },
+  { value: "year", label: "Release date" },
 ];
 const DiscoverView = lazy(() => import("./DiscoverView"));
 const RadioView = lazy(() => import("./RadioView"));
@@ -426,6 +441,19 @@ function persistedRadioScrobbleProgress(
     ...progress,
     scrobbledChapterKeys: [...progress.scrobbledChapterKeys],
   };
+}
+
+export function persistedQueueIndex(
+  queue: readonly Track[],
+  currentIndex: number,
+): number {
+  const lastIndex = Math.min(currentIndex, queue.length - 1);
+  let persistedIndex = -1;
+  for (let index = 0; index <= lastIndex; index += 1) {
+    const item = queue[index];
+    if (item && !isEphemeralTrackId(item.id)) persistedIndex += 1;
+  }
+  return persistedIndex;
 }
 
 function CoverArt({
@@ -1059,8 +1087,14 @@ const QueuePanel = memo(function QueuePanel({
   loadingAlbumId?: string;
   playerVisible: boolean;
 }) {
-  const upcoming = queue.slice(currentIndex + 1);
-  const remaining = upcoming.reduce((total, item) => total + item.duration, 0);
+  const upcoming = useMemo(
+    () => open ? queue.slice(currentIndex + 1) : [],
+    [currentIndex, open, queue],
+  );
+  const remaining = useMemo(
+    () => upcoming.reduce((total, item) => total + item.duration, 0),
+    [upcoming],
+  );
   const {
     current: currentRadioChapter,
     next: nextRadioChapter,
@@ -1837,6 +1871,10 @@ function Player({
   );
 }
 
+function albumTrackKey(track: Track) {
+  return track.id;
+}
+
 function AlbumDetailPage({
   album,
   loading,
@@ -1922,7 +1960,8 @@ function AlbumDetailPage({
               {album.artist}
             </Button>
             <span className="text-xs text-[#7f837e]">
-              {album.year ?? "Year unknown"} · {countLabel(album.songCount, "track")} · {formatTime(album.duration)}
+              {formatAlbumReleaseDate(album) ?? "Release date unknown"} ·{" "}
+              {countLabel(album.songCount, "track")} · {formatTime(album.duration)}
             </span>
             <div className="mt-6 flex gap-2">
               <Button
@@ -2000,73 +2039,84 @@ function AlbumDetailPage({
                     <strong className="mt-1 text-xs text-[#c7c8c2]">No playable tracks returned</strong>
                     <span className="max-w-80 text-xs/normal text-[#777b76]">This release may not be streamable through Bandcamp’s Subsonic beta yet.</span>
                   </div>
-                ) : album.tracks.map((track) => {
-                  const activeTrack = currentTrackId === track.id;
-                  return (
-                  <div className={`group grid h-14 grid-cols-[2.5rem_minmax(0,1fr)_3.5rem_7rem] items-center rounded-sm border-b border-white/4.5 hover:bg-white/[0.035] ${activeTrack ? "bg-primary/[0.075]" : ""}`} key={track.id}>
-                <Button
-                  className={`h-full rounded-none p-0 text-xs text-[#777a76] hover:bg-transparent ${activeTrack ? "text-[#e88c75]" : ""}`}
-                  onClick={activeTrack ? onTogglePlayback : () => onPlayTrack(track)}
-                  aria-label={
-                    activeTrack
-                      ? `${playing ? "Pause" : "Resume"} ${track.title}`
-                      : `Play ${track.title}`
-                  }
-                  aria-pressed={activeTrack && playing}
-                  variant="ghost"
-                >
-                  <span className={activeTrack ? "hidden" : "group-hover:hidden"}>
-                    {track.track}
-                  </span>
-                  <PlaybackIcon
-                    className={`size-3.5 ${activeTrack ? "" : "hidden group-hover:inline-grid"}`}
-                    playing={activeTrack && playing}
+                ) : (
+                  <VirtualizedSavedTrackList
+                    aria-label="Album tracks"
+                    getItemKey={albumTrackKey}
+                    items={album.tracks}
+                    renderItem={(track, _context, rowProps) => {
+                      const activeTrack = currentTrackId === track.id;
+                      const favoriteTrack = favoriteTrackIds.has(track.id);
+                      return (
+                        <div
+                          {...rowProps}
+                          className={`group grid h-14 grid-cols-[2.5rem_minmax(0,1fr)_3.5rem_7rem] items-center rounded-sm border-b border-white/4.5 hover:bg-white/[0.035] ${activeTrack ? "bg-primary/[0.075]" : ""}`}
+                        >
+                          <Button
+                            className={`h-full rounded-none p-0 text-xs text-[#777a76] hover:bg-transparent ${activeTrack ? "text-[#e88c75]" : ""}`}
+                            onClick={activeTrack ? onTogglePlayback : () => onPlayTrack(track)}
+                            aria-label={
+                              activeTrack
+                                ? `${playing ? "Pause" : "Resume"} ${track.title}`
+                                : `Play ${track.title}`
+                            }
+                            aria-pressed={activeTrack && playing}
+                            variant="ghost"
+                          >
+                            <span className={activeTrack ? "hidden" : "group-hover:hidden"}>
+                              {track.track}
+                            </span>
+                            <PlaybackIcon
+                              className={`size-3.5 ${activeTrack ? "" : "hidden group-hover:inline-grid"}`}
+                              playing={activeTrack && playing}
+                            />
+                          </Button>
+                          <div className="flex min-w-0 flex-col gap-0.5 overflow-hidden">
+                            <Button
+                              className="h-auto w-fit max-w-full min-w-0 justify-start overflow-hidden p-0 text-left focus-visible:-outline-offset-2 focus-visible:outline-primary"
+                              onClick={activeTrack ? onTogglePlayback : () => onPlayTrack(track)}
+                              size="compact"
+                              variant="text"
+                            >
+                              <OverflowMarquee
+                                className={`max-w-full text-xs ${activeTrack ? "text-[#f0d7cf]" : "text-[#d9d8d2]"}`}
+                                text={track.title}
+                              />
+                            </Button>
+                            <Button
+                              className="h-auto w-fit max-w-full justify-start truncate p-0 text-xs text-[#777b76] hover:bg-transparent hover:text-[#e28a73] focus-visible:-outline-offset-2"
+                              onClick={() => onArtist(track.artist, track.albumId, track)}
+                              size="compact"
+                              variant="text"
+                            >
+                              {track.artist}
+                            </Button>
+                          </div>
+                          <span className="grid place-items-center justify-self-stretch text-center text-xs text-[#777b76] tabular-nums">{formatTime(track.duration)}</span>
+                          <div className="grid grid-cols-[repeat(3,2rem)] justify-end">
+                            <Button onClick={() => onQueueTrack(track)} size="icon" variant="ghost" title="Add to queue" aria-label={`Add ${track.title} to queue`}>
+                              <Plus size={16} />
+                            </Button>
+                            <Button onClick={() => onAddToPlaylist([track])} size="icon" variant="ghost" title="Add to playlist" aria-label={`Add ${track.title} to playlist`}>
+                              <ListPlus size={16} />
+                            </Button>
+                            <Button
+                              className={favoriteTrack ? "text-[#ef8066]" : ""}
+                              onClick={() => onToggleFavoriteTrack(track)}
+                              size="icon"
+                              title={favoriteTrack ? "Remove from favorites" : "Add to favorites"}
+                              aria-label={favoriteTrack ? `Remove ${track.title} from favorites` : `Add ${track.title} to favorites`}
+                              aria-pressed={favoriteTrack}
+                              variant="ghost"
+                            >
+                              <Heart size={16} fill={favoriteTrack ? "currentColor" : "none"} />
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    }}
                   />
-                </Button>
-                <div className="flex min-w-0 flex-col gap-0.5 overflow-hidden">
-                  <Button
-                    className="h-auto w-fit max-w-full min-w-0 justify-start overflow-hidden p-0 text-left focus-visible:-outline-offset-2 focus-visible:outline-primary"
-                    onClick={activeTrack ? onTogglePlayback : () => onPlayTrack(track)}
-                    size="compact"
-                    variant="text"
-                  >
-                    <OverflowMarquee
-                      className={`max-w-full text-xs ${activeTrack ? "text-[#f0d7cf]" : "text-[#d9d8d2]"}`}
-                      text={track.title}
-                    />
-                  </Button>
-                  <Button
-                    className="h-auto w-fit max-w-full justify-start truncate p-0 text-xs text-[#777b76] hover:bg-transparent hover:text-[#e28a73] focus-visible:-outline-offset-2"
-                    onClick={() => onArtist(track.artist, track.albumId, track)}
-                    size="compact"
-                    variant="text"
-                  >
-                    {track.artist}
-                  </Button>
-                </div>
-                <span className="grid place-items-center justify-self-stretch text-center text-xs text-[#777b76] tabular-nums">{formatTime(track.duration)}</span>
-                <div className="grid grid-cols-[repeat(3,2rem)] justify-end">
-                  <Button onClick={() => onQueueTrack(track)} size="icon" variant="ghost" title="Add to queue" aria-label={`Add ${track.title} to queue`}>
-                    <Plus size={16} />
-                  </Button>
-                  <Button onClick={() => onAddToPlaylist([track])} size="icon" variant="ghost" title="Add to playlist" aria-label={`Add ${track.title} to playlist`}>
-                    <ListPlus size={16} />
-                  </Button>
-                  <Button
-                    className={favoriteTrackIds.has(track.id) ? "text-[#ef8066]" : ""}
-                    onClick={() => onToggleFavoriteTrack(track)}
-                    size="icon"
-                    title={favoriteTrackIds.has(track.id) ? "Remove from favorites" : "Add to favorites"}
-                    aria-label={favoriteTrackIds.has(track.id) ? `Remove ${track.title} from favorites` : `Add ${track.title} to favorites`}
-                    aria-pressed={favoriteTrackIds.has(track.id)}
-                    variant="ghost"
-                  >
-                    <Heart size={16} fill={favoriteTrackIds.has(track.id) ? "currentColor" : "none"} />
-                  </Button>
-                </div>
-                  </div>
-                  );
-                })}
+                )}
               </AlbumTracklistPresence>
             </AnimatePresence>
           </div>
@@ -2497,8 +2547,23 @@ export default function App() {
     [queryClient],
   );
   const [localFavorites, setLocalFavorites] = useState<LocalFavoriteCollection>(
-    () => readLocalFavorites(),
+    emptyLocalFavorites,
   );
+  const [localFavoritesReady, setLocalFavoritesReady] = useState(false);
+  const localFavoritesGenerationRef = useRef(0);
+  const refreshLocalFavorites = useCallback(() => {
+    const generation = localFavoritesGenerationRef.current + 1;
+    localFavoritesGenerationRef.current = generation;
+    setLocalFavoritesReady(false);
+    void readLocalFavoritesAsync().then((favorites) => {
+      if (localFavoritesGenerationRef.current !== generation) return;
+      setLocalFavorites(favorites);
+      setLocalFavoritesReady(true);
+    });
+  }, []);
+  useEffect(() => {
+    refreshLocalFavorites();
+  }, [refreshLocalFavorites]);
   const [connected, setConnected] = useState(false);
   const [lastFmStatus, setLastFmStatus] = useState<LastFmStatus>({
     configured: false,
@@ -2565,6 +2630,7 @@ export default function App() {
   const discoverDetailReturnPlayerAlbumFocusRef = useRef(false);
   const discoverDetailFocusRequestedRef = useRef(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const artistQueryResetPendingRef = useRef(false);
   const genreRailRef = useRef<HTMLElement>(null);
   const libraryPaneRef = useRef<HTMLElement>(null);
   const discoverListScrollTopRef = useRef(0);
@@ -2579,6 +2645,7 @@ export default function App() {
   const detailReturnFocusRequestedRef = useRef(false);
   const visitedViewsRef = useRef<Set<LibraryView>>(new Set(["library"]));
   const libraryShuffleActiveRef = useRef(false);
+  const libraryShuffleQueueRef = useRef<Track[] | undefined>(undefined);
   const randomPickActiveRef = useRef(false);
   const restoreGenerationRef = useRef(0);
   const librarySyncGenerationRef = useRef(0);
@@ -2591,6 +2658,13 @@ export default function App() {
   const pendingRestorePositionRef = useRef<{ trackId: string; position: number } | undefined>(
     undefined,
   );
+
+  useEffect(() => {
+    const ownedQueue = libraryShuffleQueueRef.current;
+    if (ownedQueue && queue !== ownedQueue) {
+      libraryShuffleQueueRef.current = undefined;
+    }
+  }, [queue]);
 
   useEffect(() => {
     if (!queueOpen || !queueFocusRequestedRef.current) return;
@@ -2619,7 +2693,14 @@ export default function App() {
     undefined,
   );
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
+  useEffect(() => {
+    if (!deferredQuery) artistQueryResetPendingRef.current = false;
+  }, [deferredQuery]);
   const currentTrack = queue[currentIndex];
+  const currentPersistedQueueIndex = useMemo(
+    () => persistedQueueIndex(queue, currentIndex),
+    [currentIndex, queue],
+  );
   const currentAlbum = useMemo(
     () =>
       currentTrack
@@ -2697,26 +2778,64 @@ export default function App() {
       : undefined,
     [currentSystemMediaChapter, currentTrack, directSystemMediaArtworkUrl],
   );
-  const systemMediaArtworkUrl = useMemo(
-    () =>
-      systemMediaDisplay?.artworkUrl ??
-      (resolvedSystemMediaArtwork?.identity === systemMediaArtworkIdentity
-        ? resolvedSystemMediaArtwork.url
-        : undefined) ??
-      (systemMediaDisplay
-        ? createSystemArtworkDataUrl(systemMediaDisplay)
-        : undefined),
-    [
-      resolvedSystemMediaArtwork,
-      systemMediaArtworkIdentity,
-      systemMediaDisplay,
-    ],
-  );
-  const nativeSystemMediaArtworkUrl =
+  const resolvedSystemMediaArtworkUrl =
     directSystemMediaArtworkUrl ??
     (resolvedSystemMediaArtwork?.identity === systemMediaArtworkIdentity
       ? resolvedSystemMediaArtwork.url
       : undefined);
+  const [generatedSystemMediaArtwork, setGeneratedSystemMediaArtwork] =
+    useState<{ identity: string; url: string }>();
+  useEffect(() => {
+    if (
+      !systemMediaDisplay ||
+      !systemMediaArtworkIdentity ||
+      resolvedSystemMediaArtworkUrl
+    ) {
+      return;
+    }
+    let active = true;
+    const generateArtwork = () => {
+      if (!active) return;
+      const url = createSystemArtworkDataUrl(systemMediaDisplay);
+      if (active && url) {
+        setGeneratedSystemMediaArtwork({
+          identity: systemMediaArtworkIdentity,
+          url,
+        });
+      }
+    };
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (
+        callback: () => void,
+        options?: { timeout: number },
+      ) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    if (typeof idleWindow.requestIdleCallback === "function") {
+      const handle = idleWindow.requestIdleCallback(generateArtwork, {
+        timeout: 250,
+      });
+      return () => {
+        active = false;
+        idleWindow.cancelIdleCallback?.(handle);
+      };
+    }
+    const timer = window.setTimeout(generateArtwork, 0);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [
+    resolvedSystemMediaArtworkUrl,
+    systemMediaArtworkIdentity,
+    systemMediaDisplay,
+  ]);
+  const systemMediaArtworkUrl =
+    resolvedSystemMediaArtworkUrl ??
+    (generatedSystemMediaArtwork?.identity === systemMediaArtworkIdentity
+      ? generatedSystemMediaArtwork.url
+      : undefined);
+  const nativeSystemMediaArtworkUrl = resolvedSystemMediaArtworkUrl;
   const currentRadioScrobbleTimeline = useMemo(
     () =>
       currentTrack?.id.startsWith("radio:")
@@ -2749,6 +2868,7 @@ export default function App() {
   const latestPlayerStateRef = useRef({
     queue,
     currentIndex,
+    persistedCurrentIndex: currentPersistedQueueIndex,
     volume,
     repeatMode: repeat,
     queueOpen,
@@ -2756,6 +2876,7 @@ export default function App() {
   latestPlayerStateRef.current = {
     queue,
     currentIndex,
+    persistedCurrentIndex: currentPersistedQueueIndex,
     volume,
     repeatMode: repeat,
     queueOpen,
@@ -2883,6 +3004,24 @@ export default function App() {
   }, []);
 
   const notify = notifyToast;
+  const localFavoritesAvailable = useCallback(() => {
+    if (localFavoritesReady) return true;
+    notify("Favorites are still loading. Try again in a moment.", "bad");
+    return false;
+  }, [localFavoritesReady, notify]);
+  const persistLocalFavorites = useCallback((
+    favorites: LocalFavoriteCollection,
+    reportFailure = true,
+  ) => {
+    localFavoritesGenerationRef.current += 1;
+    setLocalFavorites(favorites);
+    setLocalFavoritesReady(true);
+    void writeLocalFavoritesAsync(favorites).catch((cause) => {
+      if (reportFailure) {
+        notify(String(cause).replace(/^Error:\s*/, ""), "bad");
+      }
+    });
+  }, [notify]);
   const openAddToPlaylist = useCallback((tracks: Track[]) => {
     if (!tracks.length) return;
     setPlaylistDialog({ open: true, tracks });
@@ -2921,13 +3060,21 @@ export default function App() {
   );
   const queueRecommendation = useMemo(
     () =>
-      recommendQueueAlbum(
-        albums,
-        currentTrack ?? lastPlayedTrackRef.current,
-        favoriteAlbumIds,
-        queueRecommendationNonce,
-      ),
-    [albums, currentTrack, favoriteAlbumIds, queueRecommendationNonce],
+      queueOpen
+        ? recommendQueueAlbum(
+            albums,
+            currentTrack ?? lastPlayedTrackRef.current,
+            favoriteAlbumIds,
+            queueRecommendationNonce,
+          )
+        : undefined,
+    [
+      albums,
+      currentTrack,
+      favoriteAlbumIds,
+      queueOpen,
+      queueRecommendationNonce,
+    ],
   );
   const localFavoriteTrackCandidates = useMemo(() => {
     const existing = new Set(localFavorites.tracks.map((track) => track.id));
@@ -2958,24 +3105,28 @@ export default function App() {
   ]);
 
   useEffect(() => {
+    if (!localFavoritesReady) return;
     const repaired = repairLocalFavoriteMetadata(
       localFavorites,
       albums,
       localFavoriteTrackCandidates,
     );
     if (repaired === localFavorites) return;
-    try {
-      setLocalFavorites(writeLocalFavorites(repaired));
-    } catch {
-      // A disabled/full local store should not interrupt collection loading.
-    }
-  }, [albums, localFavoriteTrackCandidates, localFavorites]);
+    persistLocalFavorites(repaired, false);
+  }, [
+    albums,
+    localFavoriteTrackCandidates,
+    localFavorites,
+    localFavoritesReady,
+    persistLocalFavorites,
+  ]);
 
   const toggleFavorite = useCallback((
     id: string,
     kind: "song" | "album",
     favorite?: boolean,
   ) => {
+    if (!localFavoritesAvailable()) return;
     const active =
       kind === "song" ? favoriteTrackIds.has(id) : favoriteAlbumIds.has(id);
     const input = { id, kind, favorite: favorite ?? !active };
@@ -2985,10 +3136,8 @@ export default function App() {
       : (selectedAlbum?.id === id ? selectedAlbum : undefined) ??
         albums.find((album) => album.id === id);
     try {
-      const next = writeLocalFavorites(
-        updateLocalFavorites(localFavorites, input, candidate),
-      );
-      setLocalFavorites(next);
+      const next = updateLocalFavorites(localFavorites, input, candidate);
+      persistLocalFavorites(next);
       notify(
         input.favorite ? "Saved to Favorites on this device" : "Removed from local Favorites",
         "good",
@@ -3001,7 +3150,9 @@ export default function App() {
     favoriteAlbumIds,
     favoriteTrackIds,
     localFavorites,
+    localFavoritesAvailable,
     notify,
+    persistLocalFavorites,
     queue,
     selectedAlbum,
   ]);
@@ -3010,12 +3161,11 @@ export default function App() {
     show: RadioShowSummary,
     favorite?: boolean,
   ) => {
+    if (!localFavoritesAvailable()) return;
     const nextFavorite = favorite ?? !favoriteRadioShowIds.has(show.id);
     try {
-      const next = writeLocalFavorites(
-        updateLocalRadioFavorite(localFavorites, show, nextFavorite),
-      );
-      setLocalFavorites(next);
+      const next = updateLocalRadioFavorite(localFavorites, show, nextFavorite);
+      persistLocalFavorites(next);
       notify(
         nextFavorite
           ? "Radio show saved to Favorites on this device"
@@ -3025,10 +3175,17 @@ export default function App() {
     } catch (cause) {
       notify(String(cause).replace(/^Error:\s*/, ""), "bad");
     }
-  }, [favoriteRadioShowIds, localFavorites, notify]);
+  }, [
+    favoriteRadioShowIds,
+    localFavorites,
+    localFavoritesAvailable,
+    notify,
+    persistLocalFavorites,
+  ]);
 
   const toggleCurrentFavorite = useCallback(() => {
     if (!currentTrack) return;
+    if (!localFavoritesAvailable()) return;
     const radioShowId = radioShowIdFromTrackId(currentTrack.id);
     if (radioShowId === undefined) {
       toggleFavorite(currentTrack.id, "song");
@@ -3044,6 +3201,7 @@ export default function App() {
     );
   }, [
     currentTrack,
+    localFavoritesAvailable,
     notify,
     queryClient,
     toggleFavorite,
@@ -3245,14 +3403,9 @@ export default function App() {
     const track = state.queue[state.currentIndex];
     if (!track || isEphemeralTrackId(track.id)) return Promise.resolve(false);
     const positionSeconds = playbackClock.readExact();
-    const persistedIndex =
-      state.queue
-        .slice(0, state.currentIndex + 1)
-        .filter((item) => !isEphemeralTrackId(item.id))
-        .length - 1;
     return enqueuePlayerStateWrite(() =>
       checkpointPlayerState({
-        currentIndex: persistedIndex,
+        currentIndex: state.persistedCurrentIndex,
         currentTrackId: track.id,
         positionSeconds,
         lastFmProgress: persistedLastFmProgress(track, playbackSessionRef.current),
@@ -3396,12 +3549,17 @@ export default function App() {
 
     let active = true;
     setStreamUrl(undefined);
+    recordPlaybackDiagnostic("renderer.stream.request");
     fetchStreamUrl(currentTrack.id)
       .then((url) => {
-        if (active) setStreamUrl(url);
+        if (active) {
+          recordPlaybackDiagnostic("renderer.stream.ready");
+          setStreamUrl(url);
+        }
       })
       .catch((cause) => {
         if (active) {
+          recordPlaybackDiagnostic("renderer.stream.error");
           setPlaying(false);
           notify(String(cause), "bad");
         }
@@ -3479,6 +3637,7 @@ export default function App() {
 
   const handleAudioPlaying = useCallback(() => {
     if (!currentTrack) return;
+    recordPlaybackDiagnostic("renderer.audio.play-ready");
     const positionSeconds =
       audioRef.current?.currentTime ?? playbackClock.readExact();
     if (currentTrack.id.startsWith("radio:")) {
@@ -3646,18 +3805,27 @@ export default function App() {
     if (!audio || !streamUrl) return;
     let active = true;
     if (playing) {
-      audio.play().catch((cause: unknown) => {
-        const interrupted =
-          cause instanceof DOMException && cause.name === "AbortError";
-        if (active && !interrupted) setPlaying(false);
-      });
+      recordPlaybackDiagnostic("renderer.audio.play-request");
+      audio.play()
+        .catch((cause: unknown) => {
+          const interrupted =
+            cause instanceof DOMException && cause.name === "AbortError";
+          if (active && !interrupted) {
+            recordPlaybackDiagnostic("renderer.audio.play-error");
+            setPlaying(false);
+            notify(
+              `Coda could not start playback: ${String(cause).replace(/^Error:\s*/, "")}`,
+              "bad",
+            );
+          }
+        });
     } else {
       audio.pause();
     }
     return () => {
       active = false;
     };
-  }, [playing, streamUrl]);
+  }, [notify, playing, streamUrl]);
 
   const togglePlayback = useCallback(() => {
     if (currentTrack) setPlaying((value) => !value);
@@ -3960,30 +4128,34 @@ export default function App() {
     [albums],
   );
   const matchingAlbums = useMemo(() => {
+    const ignoreDeferredArtistQuery = Boolean(selectedArtist) && (
+      deferredQuery === "" || artistQueryResetPendingRef.current
+    );
     const list = albums.filter((album) => {
       if (genre !== "All" && genreKey(album.genre) !== genreKey(genre)) return false;
       if (
         deferredQuery &&
-        !(selectedArtist && query === "") &&
+        !ignoreDeferredArtistQuery &&
         !albumSearchIndex.get(album.id)?.includes(deferredQuery)
       ) return false;
       if (!matchesBrowseMode(album, effectiveBrowseMode)) return false;
       return true;
     });
-    const sorted = [...list].sort((a, b) => {
+    if (view === "recent") {
+      return sortAlbumsByNewestAdded(list).slice(0, 12);
+    }
+    if (sort === "year") return sortAlbumsByNewestRelease(list);
+    if (sort === "recent") return sortAlbumsByNewestAdded(list);
+    return [...list].sort((a, b) => {
       if (sort === "artist") return LIBRARY_COLLATOR.compare(a.artist, b.artist);
-      if (sort === "title") return LIBRARY_COLLATOR.compare(a.title, b.title);
-      if (sort === "year") return (b.year ?? 0) - (a.year ?? 0);
-      return (b.addedAt ?? "").localeCompare(a.addedAt ?? "");
+      return LIBRARY_COLLATOR.compare(a.title, b.title);
     });
-    return view === "recent" ? sorted.slice(0, 12) : sorted;
   }, [
     albumSearchIndex,
     albums,
     deferredQuery,
     effectiveBrowseMode,
     genre,
-    query,
     selectedArtist,
     sort,
     view,
@@ -4166,11 +4338,13 @@ export default function App() {
       const tracks = await ensureAlbumQueryData(queryClient, album);
       if (bandcampSessionGenerationRef.current !== sessionGeneration) return undefined;
       const hydrated = albumWithTracks(album, tracks);
-      setAlbums((items) =>
-        items.map((item) =>
-          item.id === album.id ? albumWithRecoveredCover(item, tracks) : item
-        ),
-      );
+      if (albumWithRecoveredCover(album, tracks) !== album) {
+        setAlbums((items) =>
+          items.map((item) =>
+            item.id === album.id ? albumWithRecoveredCover(item, tracks) : item
+          ),
+        );
+      }
       setSelectedAlbum((item) => item?.id === album.id ? hydrated : item);
       return hydrated;
     } catch (cause) {
@@ -4572,7 +4746,38 @@ export default function App() {
     const loadedTracks: Track[][] = Array.from({ length: targets.length }, () => []);
     let cursor = 0;
     let completed = 0;
+    let lastProgressPublishedAt = 0;
+    let initialQueueReference: Track[] | undefined;
     setLibraryShuffleProgress({ done: 0, total: targets.length });
+
+    const startShufflePlayback = (tracks: readonly Track[]) => {
+      if (initialQueueReference || !tracks.length) return;
+      const initialQueue = shuffled([...tracks]);
+      const firstTrack = initialQueue[0];
+      if (!firstTrack) return;
+      initialQueueReference = initialQueue;
+      libraryShuffleQueueRef.current = initialQueue;
+      latestPlayerStateRef.current = {
+        ...latestPlayerStateRef.current,
+        queue: initialQueue,
+        currentIndex: 0,
+        persistedCurrentIndex: 0,
+      };
+      setQueue(initialQueue);
+      setCurrentIndex(0);
+      playbackClock.reset();
+      setPlaying(true);
+    };
+
+    const publishProgress = () => {
+      const now = performance.now();
+      if (
+        completed !== targets.length &&
+        now - lastProgressPublishedAt < 250
+      ) return;
+      lastProgressPublishedAt = now;
+      setLibraryShuffleProgress({ done: completed, total: targets.length });
+    };
 
     const worker = async () => {
       while (
@@ -4586,19 +4791,22 @@ export default function App() {
           if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
           const tracks = await ensureAlbumQueryData(queryClient, album);
           if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
-          recoveredCovers.set(album.id, albumWithRecoveredCover(album, tracks));
-          loadedTracks[index] = artistScope
+          const recoveredAlbum = albumWithRecoveredCover(album, tracks);
+          if (recoveredAlbum !== album) {
+            recoveredCovers.set(album.id, recoveredAlbum);
+          }
+          const scopedTracks = artistScope
             ? tracksForArtistGroupAlbum(artistScope, album.id, tracks)
             : tracks;
+          loadedTracks[index] = scopedTracks;
+          startShufflePlayback(scopedTracks);
         } catch {
           if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
           // A removed or unavailable release should not block the rest of the shuffle.
         } finally {
           if (bandcampSessionGenerationRef.current === sessionGeneration) {
             completed += 1;
-            if (completed === targets.length || completed % 5 === 0) {
-              setLibraryShuffleProgress({ done: completed, total: targets.length });
-            }
+            publishProgress();
           }
         }
       }
@@ -4617,13 +4825,28 @@ export default function App() {
         notify("Bandcamp did not return any playable tracks.", "bad");
         return;
       }
-      setAlbums((items) =>
-        items.map((album) => recoveredCovers.get(album.id) ?? album),
-      );
-      setQueue(tracks);
-      setCurrentIndex(0);
-      playbackClock.reset();
-      setPlaying(true);
+      if (recoveredCovers.size) {
+        setAlbums((items) =>
+          items.map((album) => recoveredCovers.get(album.id) ?? album),
+        );
+      }
+      if (!initialQueueReference) {
+        startShufflePlayback(tracks);
+      } else {
+        const latest = latestPlayerStateRef.current;
+        if (libraryShuffleQueueRef.current !== initialQueueReference) return;
+        const completeQueue = appendUnique(latest.queue, tracks);
+        libraryShuffleQueueRef.current = completeQueue;
+        latestPlayerStateRef.current = {
+          ...latest,
+          queue: completeQueue,
+          persistedCurrentIndex: persistedQueueIndex(
+            completeQueue,
+            latest.currentIndex,
+          ),
+        };
+        setQueue(completeQueue);
+      }
       notify(
         `${countLabel(tracks.length, "track")} from ${scopeName} shuffled`,
         "good",
@@ -4631,12 +4854,14 @@ export default function App() {
     } finally {
       if (bandcampSessionGenerationRef.current === sessionGeneration) {
         libraryShuffleActiveRef.current = false;
+        libraryShuffleQueueRef.current = undefined;
         setLibraryShuffleProgress(undefined);
       }
     }
   }, [albums, connected, notify, playbackClock, queryClient, setAlbums]);
 
   const playTrack = useCallback((track: Track) => {
+    recordPlaybackDiagnostic("renderer.play.request");
     const latest = latestPlayerStateRef.current;
     const activated = activateTrack(
       latest.queue,
@@ -4669,6 +4894,7 @@ export default function App() {
 
   const playTracks = useCallback((tracks: Track[]) => {
     if (!tracks.length) return;
+    recordPlaybackDiagnostic("renderer.play.request");
     setQueue(tracks);
     setCurrentIndex(0);
     playbackClock.reset();
@@ -4691,22 +4917,16 @@ export default function App() {
     const sessionGeneration = bandcampSessionGenerationRef.current;
     randomPickActiveRef.current = true;
     setRandomPickLoading(true);
-    const remaining = [...scopeAlbums];
+    const candidates = weightedRandomOrder(
+      scopeAlbums,
+      (album) => Math.max(1, album.songCount),
+    );
+    let misses = 0;
 
     try {
-      while (
-        bandcampSessionGenerationRef.current === sessionGeneration &&
-        remaining.length
-      ) {
-        const album = pickWeightedItem(
-          remaining,
-          (item) => Math.max(1, item.songCount),
-        );
-        if (!album) break;
-        remaining.splice(remaining.findIndex((item) => item.id === album.id), 1);
-
+      for (const album of candidates) {
+        if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
         try {
-          if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
           const ready = await ensureTracks(album, sessionGeneration);
           if (
             !ready ||
@@ -4720,13 +4940,23 @@ export default function App() {
               )
             : ready.tracks ?? [];
           const track = pickRandomItem(scopedTracks);
-          if (!track) continue;
+          if (!track) {
+            misses += 1;
+            if (misses % RANDOM_PICK_YIELD_INTERVAL === 0) {
+              await yieldToMacrotask();
+            }
+            continue;
+          }
           playTrack(track);
           notify(`Playing ${track.title} by ${track.artist}.`, "good");
           return;
         } catch {
           if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
           // Keep trying when a purchased release is no longer playable.
+          misses += 1;
+          if (misses % RANDOM_PICK_YIELD_INTERVAL === 0) {
+            await yieldToMacrotask();
+          }
         }
       }
       if (bandcampSessionGenerationRef.current !== sessionGeneration) return;
@@ -5183,6 +5413,7 @@ export default function App() {
       notify(`Could not find a saved release for ${artist}.`, "bad");
       return;
     }
+    artistQueryResetPendingRef.current = true;
     void transitionCodaView(() => {
       setNowPlayingOpen(false);
       setView("library");
@@ -5625,9 +5856,9 @@ export default function App() {
                 mode={view}
                 connected={connected}
                 favorites={localFavorites}
-                favoritesLoading={false}
+                favoritesLoading={!localFavoritesReady}
                 favoritesLocal
-                onRefreshFavorites={() => setLocalFavorites(readLocalFavorites())}
+                onRefreshFavorites={refreshLocalFavorites}
                 onToggleFavorite={(id, kind, favorite) => toggleFavorite(id, kind, favorite)}
                 onToggleRadioFavorite={(show, favorite) =>
                   toggleRadioFavorite(show, favorite)}
@@ -5688,7 +5919,10 @@ export default function App() {
                 <label className="flex h-10 w-full flex-[1_1_100%] items-center rounded-md border border-(--line-strong) bg-coda-field px-2.5 text-[#737772] focus-within:border-primary/55 focus-within:ring-3 focus-within:ring-primary/8 lg:w-[clamp(12.5rem,22vw,18.75rem)] lg:flex-none">
                   <Search size={17} />
                   <span className="sr-only">Search collection</span>
-                  <Input className="h-full flex-1 border-0 bg-transparent px-2 focus-visible:border-0 focus-visible:ring-0" ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your collection" />
+                  <Input className="h-full flex-1 border-0 bg-transparent px-2 focus-visible:border-0 focus-visible:ring-0" ref={searchRef} value={query} onChange={(event) => {
+                    artistQueryResetPendingRef.current = false;
+                    setQuery(event.target.value);
+                  }} placeholder="Search your collection" />
                   <kbd className="grid size-5 place-items-center rounded-sm border border-(--line-strong) font-['Segoe_UI_Variable','Segoe_UI',sans-serif] text-xs leading-none text-[#777a76]">/</kbd>
                 </label>
               ) : null}
@@ -5856,7 +6090,11 @@ export default function App() {
                   </>
                 ) : null}
               </div>
-              {effectiveBrowseMode === "artists" && !selectedArtist ? (
+              {view === "recent" ? (
+                <span className="flex shrink-0 items-center gap-1.5 text-xs font-semibold text-[#777b76]">
+                  <ArrowDownUp size={14} /> Newest first
+                </span>
+              ) : effectiveBrowseMode === "artists" && !selectedArtist ? (
                 <span className="flex shrink-0 items-center gap-1.5 text-xs font-semibold text-[#777b76] [&>svg]:max-lg:hidden"><ArrowDownUp size={14} /> Artist A–Z</span>
               ) : (
                 <Select
@@ -6178,6 +6416,21 @@ export default function App() {
         onSeeking={handleAudioSeeking}
         onLoadedMetadata={handleAudioLoadedMetadata}
         onTimeUpdate={handleAudioTimeUpdate}
+        onError={(event) => {
+          const mediaError = event.currentTarget.error;
+          recordPlaybackDiagnostic("renderer.audio.media-error");
+          setPlaying(false);
+          notify(
+            mediaError?.code === 4
+              ? "Coda could not play this stream format."
+              : mediaError?.code === 2
+                ? "Coda lost the Bandcamp stream connection."
+                : mediaError?.code === 3
+                  ? "Coda could not decode this track."
+                  : "Coda could not load this track.",
+            "bad",
+          );
+        }}
         onDurationChange={(event) => {
           if (Number.isFinite(event.currentTarget.duration)) {
             playbackClock.updateFromMedia(event.currentTarget.currentTime);
