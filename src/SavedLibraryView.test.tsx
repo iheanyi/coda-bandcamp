@@ -676,6 +676,7 @@ describe("saved Bandcamp library views", () => {
       "Sweeps",
       "album-1",
       track,
+      expect.any(HTMLElement),
     );
     const playlistAlbumButton = within(playlistTracks).getByRole("button", {
       name: "Open Mirage album",
@@ -1142,6 +1143,7 @@ describe("saved Bandcamp library views", () => {
       "Sweeps",
       "album-1",
       track,
+      expect.any(HTMLElement),
     );
     const favoriteAlbumButton = within(favoriteTracks).getByRole("button", {
       name: "Open Mirage album",

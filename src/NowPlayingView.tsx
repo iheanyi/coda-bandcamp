@@ -85,7 +85,12 @@ type NowPlayingViewProps = {
   onVolume: (value: number) => void;
   onRepeat: () => void;
   onAirPlay: () => void;
-  onArtist: (artist: string, albumId?: string, sourceTrack?: Track) => void;
+  onArtist: (
+    artist: string,
+    albumId?: string,
+    sourceTrack?: Track,
+    sourceTrigger?: HTMLElement,
+  ) => void;
   onAlbum: (track: Track, trigger?: HTMLButtonElement) => void;
   albumLoading?: boolean;
   onPlayQueueIndex: (index: number) => void;
@@ -657,7 +662,13 @@ function NowPlayingViewComponent({
                   variant="text"
                   size="compact"
                   className="h-auto min-w-0 max-w-[46%] overflow-hidden p-0 text-sm font-medium text-[#c1c2bc] hover:bg-transparent hover:text-primary"
-                  onClick={() => onArtist(track.artist, track.albumId, track)}
+                  onClick={(event) =>
+                    onArtist(
+                      track.artist,
+                      track.albumId,
+                      track,
+                      event.currentTarget,
+                    )}
                 >
                   <OverflowMarquee text={track.artist} />
                 </Button>

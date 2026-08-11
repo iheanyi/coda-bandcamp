@@ -123,6 +123,7 @@ type SavedLibraryViewProps = {
     artist: string,
     albumId?: string,
     sourceTrack?: Track,
+    sourceTrigger?: HTMLElement,
   ) => void;
   onOpenRadioShow: (show: RadioShowSummary) => void;
   onOpenRadioSeries: (seriesId?: number) => void;
@@ -613,6 +614,7 @@ function PlaylistDetailView({
     artist: string,
     albumId?: string,
     sourceTrack?: Track,
+    sourceTrigger?: HTMLElement,
   ) => void;
   onRename: (name: string) => void;
   onRemove: (index: number) => void;
@@ -879,8 +881,13 @@ function PlaylistDetailView({
                 <span className="flex min-w-0 items-center gap-1">
                   <Button
                     className={metadataLinkClassName}
-                    onClick={() =>
-                      onOpenArtist(track.artist, track.albumId, track)}
+                    onClick={(event) =>
+                      onOpenArtist(
+                        track.artist,
+                        track.albumId,
+                        track,
+                        event.currentTarget,
+                      )}
                     variant="ghost"
                   >
                     {track.artist}
@@ -1972,8 +1979,13 @@ export default function SavedLibraryView({
                       <div className="flex min-w-0 items-center gap-1">
                         <Button
                           className={metadataLinkClassName}
-                          onClick={() =>
-                            onOpenArtist(track.artist, track.albumId, track)}
+                          onClick={(event) =>
+                            onOpenArtist(
+                              track.artist,
+                              track.albumId,
+                              track,
+                              event.currentTarget,
+                            )}
                           variant="ghost"
                         >
                           {track.artist}
@@ -2248,8 +2260,13 @@ export default function SavedLibraryView({
                           </Button>
                           <Button
                             className={cn(metadataLinkClassName, "mt-1 max-w-full")}
-                            onClick={() =>
-                              onOpenArtist(album.artist, album.id)}
+                            onClick={(event) =>
+                              onOpenArtist(
+                                album.artist,
+                                album.id,
+                                undefined,
+                                event.currentTarget,
+                              )}
                             variant="ghost"
                           >
                             {album.artist}

@@ -279,6 +279,12 @@ type PlaybackSession = {
   nowPlayingSent: boolean;
   scrobbleState: "idle" | "pending" | "sent" | "failed";
 };
+type ArtistNavigationHandler = (
+  artist: string,
+  albumId?: string,
+  sourceTrack?: Track,
+  sourceTrigger?: HTMLElement,
+) => void;
 
 function usePlaybackPosition(playbackClock: PlaybackClock): number {
   return useSyncExternalStore(
@@ -680,7 +686,7 @@ const AlbumCard = memo(function AlbumCard({
   onPrefetch: (album: Album) => void;
   onPlay: (album: Album) => void;
   onQueue: (album: Album) => void;
-  onArtist: (artist: string, albumId?: string, sourceTrack?: Track) => void;
+  onArtist: ArtistNavigationHandler;
   active: boolean;
   loading: boolean;
   playing: boolean;
@@ -767,7 +773,13 @@ const AlbumCard = memo(function AlbumCard({
         </Button>
         <Button
           className="mt-1 h-auto w-full min-w-0 justify-start overflow-hidden p-0 text-left text-xs font-medium text-[#868984] hover:bg-transparent hover:text-[#dc8973]"
-          onClick={() => onArtist(album.artist, album.id)}
+          onClick={(event) =>
+            onArtist(
+              album.artist,
+              album.id,
+              undefined,
+              event.currentTarget,
+            )}
           size="compact"
           title={`Browse ${album.artist}`}
           variant="text"
@@ -1074,7 +1086,7 @@ const QueuePanel = memo(function QueuePanel({
   onClear: () => void;
   onShuffle: () => void;
   onMove: (from: number, to: number) => void;
-  onArtist: (artist: string, albumId?: string, sourceTrack?: Track) => void;
+  onArtist: ArtistNavigationHandler;
   onAlbum: (track: Track, trigger?: HTMLButtonElement) => void;
   onNowPlaying: () => void;
   onOpenRadioItem: (url: string) => void;
@@ -1283,11 +1295,12 @@ const QueuePanel = memo(function QueuePanel({
                   </Button>
                   <Button
                     className="h-auto justify-start truncate p-0 text-(length:--text-coda-meta) font-normal text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73]"
-                    onClick={() =>
+                    onClick={(event) =>
                       onArtist(
                         currentTrack.artist,
                         currentTrack.albumId,
                         currentTrack,
+                        event.currentTarget,
                       )}
                     size="compact"
                     variant="text"
@@ -1393,7 +1406,13 @@ const QueuePanel = memo(function QueuePanel({
                 </Button>
                 <Button
                   className="h-auto justify-start truncate p-0 text-(length:--text-coda-meta) font-normal text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73]"
-                  onClick={() => onArtist(track.artist, track.albumId, track)}
+                  onClick={(event) =>
+                    onArtist(
+                      track.artist,
+                      track.albumId,
+                      track,
+                      event.currentTarget,
+                    )}
                   size="compact"
                   variant="text"
                 >
@@ -1461,7 +1480,7 @@ const PlayerTrack = memo(function PlayerTrack({
   playbackClock: PlaybackClock;
   favorite: boolean;
   onToggleFavorite: () => void;
-  onArtist: (artist: string, albumId?: string, sourceTrack?: Track) => void;
+  onArtist: ArtistNavigationHandler;
   onAlbum: (track: Track, trigger?: HTMLButtonElement) => void;
   albumLoading: boolean;
   onNowPlaying: () => void;
@@ -1556,7 +1575,13 @@ const PlayerTrack = memo(function PlayerTrack({
               <span className="flex min-w-0 items-center gap-1 text-xs text-[#7f827e]">
                 <Button
                   className="h-auto min-w-0 max-w-[46%] overflow-hidden p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73]"
-                  onClick={() => onArtist(track.artist, track.albumId, track)}
+                  onClick={(event) =>
+                    onArtist(
+                      track.artist,
+                      track.albumId,
+                      track,
+                      event.currentTarget,
+                    )}
                   size="compact"
                   variant="text"
                 >
@@ -1738,7 +1763,7 @@ function Player({
   onRepeat: () => void;
   airPlayAvailable: boolean;
   onAirPlay: () => void;
-  onArtist: (artist: string, albumId?: string, sourceTrack?: Track) => void;
+  onArtist: ArtistNavigationHandler;
   onAlbum: (track: Track, trigger?: HTMLButtonElement) => void;
   albumLoading: boolean;
   onNowPlaying: () => void;
@@ -1901,7 +1926,7 @@ function AlbumDetailPage({
   onQueueAlbum: () => void;
   onPlayTrack: (track: Track) => void;
   onQueueTrack: (track: Track) => void;
-  onArtist: (artist: string, albumId?: string, sourceTrack?: Track) => void;
+  onArtist: ArtistNavigationHandler;
   favoriteAlbum: boolean;
   favoriteTrackIds: ReadonlySet<string>;
   onToggleFavoriteAlbum: () => void;
@@ -1952,7 +1977,13 @@ function AlbumDetailPage({
             </h2>
             <Button
               className="mx-0 my-2 block h-auto max-w-full justify-start truncate p-0 text-sm font-semibold text-[#d98771] hover:bg-transparent hover:text-[#e28a73] hover:underline hover:underline-offset-2"
-              onClick={() => onArtist(album.artist, album.id)}
+              onClick={(event) =>
+                onArtist(
+                  album.artist,
+                  album.id,
+                  undefined,
+                  event.currentTarget,
+                )}
               size="compact"
               title={album.artist}
               variant="text"
@@ -2085,7 +2116,13 @@ function AlbumDetailPage({
                             </Button>
                             <Button
                               className="h-auto w-fit max-w-full justify-start truncate p-0 text-xs text-[#777b76] hover:bg-transparent hover:text-[#e28a73] focus-visible:-outline-offset-2"
-                              onClick={() => onArtist(track.artist, track.albumId, track)}
+                              onClick={(event) =>
+                                onArtist(
+                                  track.artist,
+                                  track.albumId,
+                                  track,
+                                  event.currentTarget,
+                                )}
                               size="compact"
                               variant="text"
                             >
@@ -5318,11 +5355,66 @@ export default function App() {
     setSelectedArtist(undefined);
     setSelectedAlbum(undefined);
   }, []);
+  const transitionToArtist = useCallback((
+    key: string,
+    update: () => void,
+    sourceTrigger = currentNavigationTrigger(),
+    sourceArtwork?: HTMLElement,
+    sourceName?: HTMLElement,
+  ) => {
+    const returnScrollTop = libraryPaneRef.current?.scrollTop ?? 0;
+    const sourceControl = sourceTrigger?.closest<HTMLElement>(
+      "button, a[href], [role=button]",
+    );
+    const matchingSourceArtwork =
+      sourceControl && sourceArtwork && sourceControl.contains(sourceArtwork)
+        ? sourceArtwork
+        : undefined;
+    const matchingSourceName =
+      sourceControl && sourceName && sourceControl.contains(sourceName)
+        ? sourceName
+        : undefined;
+    const hasSharedArtistIdentity = Boolean(
+      matchingSourceArtwork || matchingSourceName,
+    );
+    sourceControl?.setAttribute("data-artist-open", key);
+    detailReturnFocusRequestedRef.current = false;
+    detailNavigationRef.current = replaceNavigationTransaction(
+      detailNavigationRef.current,
+      {
+        routeKey: "artist-detail",
+        intent: "forward",
+        entrance: hasSharedArtistIdentity ? "shared-element" : "page-forward",
+        sourceTrigger: sourceControl,
+        returnScrollTop,
+        destinationHeadingId: "artist-detail-heading",
+        sharedElementOwner: matchingSourceArtwork
+          ? "coda-artist-artwork"
+          : matchingSourceName
+            ? "coda-artist-name"
+            : undefined,
+      },
+    );
+    pendingLibraryScrollTopRef.current = 0;
+    matchingSourceArtwork?.setAttribute(
+      "data-coda-artist-artwork-source",
+      "",
+    );
+    matchingSourceName?.setAttribute("data-coda-artist-name-source", "");
+    void transitionCodaView(
+      update,
+      "artist-detail",
+    ).finally(() => {
+      matchingSourceArtwork?.removeAttribute(
+        "data-coda-artist-artwork-source",
+      );
+      matchingSourceName?.removeAttribute("data-coda-artist-name-source");
+    });
+  }, []);
   const openArtist = useCallback((
     group: ArtistGroup,
     sourceTrigger: HTMLElement,
   ) => {
-    const returnScrollTop = libraryPaneRef.current?.scrollTop ?? 0;
     const sourceArtwork =
       sourceTrigger.querySelector<HTMLElement>("[data-slot=cover]") ??
       undefined;
@@ -5330,36 +5422,17 @@ export default function App() {
       "[data-coda-artist-name-target]",
     );
     const sourceName =
-      sourceArtwork &&
       artistNameTarget?.dataset.codaArtistNameTarget === group.key
         ? artistNameTarget
         : undefined;
-    detailReturnFocusRequestedRef.current = false;
-    detailNavigationRef.current = replaceNavigationTransaction(
-      detailNavigationRef.current,
-      {
-        routeKey: "artist-detail",
-        intent: "forward",
-        entrance: sourceArtwork ? "shared-element" : "page-forward",
-        sourceTrigger,
-        returnScrollTop,
-        destinationHeadingId: "artist-detail-heading",
-        sharedElementOwner: sourceArtwork
-          ? "coda-artist-artwork"
-          : undefined,
-      },
-    );
-    pendingLibraryScrollTopRef.current = 0;
-    sourceArtwork?.setAttribute("data-coda-artist-artwork-source", "");
-    sourceName?.setAttribute("data-coda-artist-name-source", "");
-    void transitionCodaView(
+    transitionToArtist(
+      group.key,
       () => setSelectedArtist(group.key),
-      sourceArtwork ? "artist-detail" : "page-forward",
-    ).finally(() => {
-      sourceArtwork?.removeAttribute("data-coda-artist-artwork-source");
-      sourceName?.removeAttribute("data-coda-artist-name-source");
-    });
-  }, []);
+      sourceTrigger,
+      sourceArtwork,
+      sourceName,
+    );
+  }, [transitionToArtist]);
   const backToArtists = useCallback(() => {
     const transaction = detailNavigationRef.current.active;
     detailReturnFocusRequestedRef.current = Boolean(transaction);
@@ -5385,6 +5458,7 @@ export default function App() {
     artist: string,
     albumId?: string,
     sourceTrack?: Track,
+    sourceTrigger = currentNavigationTrigger(),
   ) => {
     if (sourceTrack?.id.startsWith("discover:")) {
       const release = sourceTrack.discoverRelease;
@@ -5423,28 +5497,34 @@ export default function App() {
       return;
     }
     artistQueryResetPendingRef.current = true;
-    void transitionCodaView(() => {
-      setNowPlayingOpen(false);
-      setView("library");
-      setBrowseMode("artists");
-      setSelectedArtist(key);
-      setSelectedArtistFallback(
-        fallbackAlbum
-          ? {
-              albumId: fallbackAlbum.id,
-              key,
-              name: artist,
-              knownTrack: sourceTrack
-                ? { duration: sourceTrack.duration, id: sourceTrack.id }
-                : undefined,
-            }
-          : undefined,
-      );
-      setQuery("");
-      setGenre("All");
-      setSelectedAlbum(undefined);
-    }, "page-forward");
-  }, [albums, notify, openDiscoverArtist]);
+    transitionToArtist(
+      key,
+      () => {
+        setNowPlayingOpen(false);
+        setView("library");
+        setBrowseMode("artists");
+        setSelectedArtist(key);
+        setSelectedArtistFallback(
+          fallbackAlbum
+            ? {
+                albumId: fallbackAlbum.id,
+                key,
+                name: artist,
+                knownTrack: sourceTrack
+                  ? { duration: sourceTrack.duration, id: sourceTrack.id }
+                  : undefined,
+              }
+            : undefined,
+        );
+        setQuery("");
+        setGenre("All");
+        setSelectedAlbum(undefined);
+      },
+      sourceTrigger,
+      undefined,
+      sourceTrigger,
+    );
+  }, [albums, notify, openDiscoverArtist, transitionToArtist]);
   const openDiscoverRelease = useCallback((
     release: DiscoverRelease,
     trigger: HTMLButtonElement,

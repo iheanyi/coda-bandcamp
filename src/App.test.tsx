@@ -2901,6 +2901,90 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     }
   });
 
+  it("uses the targeted artist transition when an artist name opens the artist page", async () => {
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    const snapshots: Array<{
+      className: string;
+      nameSourceBeforeUpdate: number;
+      nameDetailAfterUpdate: number;
+      detailSurfaceAfterUpdate: number;
+      releaseGridAfterUpdate: number;
+    }> = [];
+    const originalDescriptor = Object.getOwnPropertyDescriptor(
+      document,
+      "startViewTransition",
+    );
+    const startViewTransition = vi.fn((update: () => void) => {
+      const nameSourceBeforeUpdate = document.querySelectorAll(
+        "[data-coda-artist-name-source]",
+      ).length;
+      update();
+      snapshots.push({
+        className: document.documentElement.className,
+        nameSourceBeforeUpdate,
+        nameDetailAfterUpdate: document.querySelectorAll(
+          "[data-coda-artist-name-detail]",
+        ).length,
+        detailSurfaceAfterUpdate: document.querySelectorAll(
+          "[data-coda-artist-detail-surface]",
+        ).length,
+        releaseGridAfterUpdate: document.querySelectorAll(
+          '[aria-label="Releases"]',
+        ).length,
+      });
+      return { finished: Promise.resolve() };
+    });
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: startViewTransition,
+    });
+
+    try {
+      const { queryClient } = renderApp();
+
+      await screen.findByText("Soft Focus");
+      queryClient.setQueryData(albumQueryKey(album.id), tracks);
+      fireEvent.click(screen.getByRole("button", { name: "Open Soft Focus" }));
+      const albumPage = await screen.findByRole("article", {
+        name: "Soft Focus release details",
+      });
+      const artistLink = within(albumPage).getByTitle("Night Archive");
+      artistLink.focus();
+      startViewTransition.mockClear();
+      snapshots.length = 0;
+
+      fireEvent.click(artistLink);
+
+      expect(startViewTransition).toHaveBeenCalledOnce();
+      expect(snapshots).toEqual([{
+        className: expect.stringContaining(
+          "coda-transition--artist-detail",
+        ),
+        nameSourceBeforeUpdate: 1,
+        nameDetailAfterUpdate: 1,
+        detailSurfaceAfterUpdate: 1,
+        releaseGridAfterUpdate: 1,
+      }]);
+      expect(document.documentElement).not.toHaveClass(
+        "coda-transition--page-forward",
+      );
+      expect(await screen.findByRole("heading", {
+        name: "Night Archive",
+      })).toHaveFocus();
+    } finally {
+      document.documentElement.classList.remove(
+        "coda-transition--artist-detail",
+        "coda-transition--page-forward",
+      );
+      if (originalDescriptor) {
+        Object.defineProperty(document, "startViewTransition", originalDescriptor);
+      } else {
+        Reflect.deleteProperty(document, "startViewTransition");
+      }
+    }
+  });
+
   it("opens Now Playing from the player artwork and returns to the exact prior view", async () => {
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
