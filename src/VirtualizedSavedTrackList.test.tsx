@@ -161,4 +161,29 @@ describe("VirtualizedSavedTrackList", () => {
     expect(document.body.contains(first)).toBe(true);
     expect(first).toHaveFocus();
   });
+
+  it("drops an out-of-range focused row when a virtualized list shrinks", async () => {
+    const items = Array.from({ length: 1_000 }, (_, index) => track(index));
+    const { rerender } = render(<List items={items} />);
+
+    const scroll = screen.getByTestId("saved-scroll");
+    scroll.scrollTop = 100_000;
+    fireEvent.scroll(scroll);
+    const last = await screen.findByRole("button", { name: "Saved track 999" });
+    last.focus();
+    expect(last).toHaveFocus();
+
+    const retained = Array.from({ length: 10 }, (_, index) => track(index));
+    rerender(<List items={retained} />);
+
+    const list = screen.getByRole("list", { name: "Saved tracks" });
+    await waitFor(() => {
+      expect(
+        within(list)
+          .getAllByRole("listitem")
+          .every((row) => Number(row.dataset.savedTrackIndex) < retained.length),
+      ).toBe(true);
+    });
+    expect(screen.queryByText("Saved track 999")).not.toBeInTheDocument();
+  });
 });

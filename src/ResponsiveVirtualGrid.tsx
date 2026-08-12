@@ -197,14 +197,18 @@ export function ResponsiveVirtualGrid<Item>({
   const rangeExtractor = useCallback(
     (range: Range) => {
       const indexes = defaultRangeExtractor(range);
-      if (focusedIndex === undefined) {
+      if (
+        focusedIndex === undefined ||
+        focusedIndex < 0 ||
+        focusedIndex >= items.length
+      ) {
         return indexes;
       }
       const focusedRow = Math.floor(focusedIndex / metrics.columns);
       if (indexes.includes(focusedRow)) return indexes;
       return [...indexes, focusedRow].sort((left, right) => left - right);
     },
-    [focusedIndex, metrics.columns],
+    [focusedIndex, items.length, metrics.columns],
   );
 
   const virtualizer = useVirtualizer({

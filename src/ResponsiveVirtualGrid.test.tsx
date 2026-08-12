@@ -220,4 +220,31 @@ describe("ResponsiveVirtualGrid", () => {
     expect(document.body.contains(first)).toBe(true);
     expect(first).toHaveFocus();
   });
+
+  it("drops an out-of-range focused row when a virtualized grid shrinks", async () => {
+    const cards = Array.from({ length: 1_000 }, (_, index) => card(index));
+    const { rerender } = render(<Grid cards={cards} />);
+
+    const scroll = screen.getByTestId("grid-scroll");
+    scroll.scrollTop = 100_000;
+    fireEvent.scroll(scroll);
+    const last = await screen.findByRole("button", {
+      name: "Card 999 row 249 column 3",
+    });
+    last.focus();
+    expect(last).toHaveFocus();
+
+    const retained = Array.from({ length: 20 }, (_, index) => card(index));
+    rerender(<Grid cards={retained} />);
+
+    const grid = screen.getByRole("list", { name: "Collection" });
+    await waitFor(() => {
+      expect(
+        within(grid)
+          .getAllByRole("listitem")
+          .every((row) => Number(row.dataset.gridIndex) < retained.length),
+      ).toBe(true);
+    });
+    expect(screen.queryByText(/Card 999 row/)).not.toBeInTheDocument();
+  });
 });

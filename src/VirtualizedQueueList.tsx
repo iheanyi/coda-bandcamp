@@ -106,12 +106,17 @@ export function VirtualizedQueueList<Item>({
   const rangeExtractor = useCallback(
     (range: Range) => {
       const indexes = defaultRangeExtractor(range);
-      if (focusedIndex === undefined || indexes.includes(focusedIndex)) {
+      if (
+        focusedIndex === undefined ||
+        focusedIndex < 0 ||
+        focusedIndex >= items.length ||
+        indexes.includes(focusedIndex)
+      ) {
         return indexes;
       }
       return [...indexes, focusedIndex].sort((left, right) => left - right);
     },
-    [focusedIndex],
+    [focusedIndex, items.length],
   );
 
   const virtualizer = useVirtualizer({

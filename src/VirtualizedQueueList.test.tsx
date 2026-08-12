@@ -160,6 +160,34 @@ describe("VirtualizedQueueList", () => {
     expect(first).toHaveFocus();
   });
 
+  it("drops an out-of-range focused row when a virtualized queue shrinks", async () => {
+    const items = Array.from({ length: 1_000 }, (_, index) => item(index));
+    const { rerender } = render(<Queue items={items} />);
+
+    const region = screen.getByRole("region", { name: "Upcoming tracks" });
+    region.scrollTop = (items.length - 1) * ROW_HEIGHT;
+    fireEvent.scroll(region);
+    const last = await screen.findByRole("button", {
+      name: "Queue track 999 at 999",
+    });
+    last.focus();
+    expect(last).toHaveFocus();
+
+    const retained = Array.from({ length: 10 }, (_, index) => item(index));
+    rerender(<Queue items={retained} />);
+
+    await waitFor(() => {
+      const rendered = within(region).getAllByRole("listitem");
+      expect(rendered.length).toBeGreaterThan(0);
+      expect(
+        rendered.every(
+          (row) => Number(row.dataset.queueRelativeIndex) < retained.length,
+        ),
+      ).toBe(true);
+    });
+    expect(screen.queryByText("Queue track 999 at 999")).not.toBeInTheDocument();
+  });
+
   it("reports absolute indexes when duplicate tracks are reordered", () => {
     const onMove = vi.fn();
     render(
