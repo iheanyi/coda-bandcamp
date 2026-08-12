@@ -1,6 +1,6 @@
 #[cfg(target_os = "windows")]
 mod platform {
-    use crate::{SystemMediaControlEvent, SERVICE_NAME};
+    use crate::{app_identity::APP_ID, models::SystemMediaControlEvent};
     use tauri::{AppHandle, Emitter, WebviewWindow};
     use windows::{
         core::{w, GUID, HSTRING},
@@ -38,7 +38,7 @@ mod platform {
         let store: IPropertyStore =
             unsafe { SHGetPropertyStoreForWindow(window.hwnd().map_err(media_error)?) }
                 .map_err(media_error)?;
-        let app_id = PROPVARIANT::from(SERVICE_NAME);
+        let app_id = PROPVARIANT::from(APP_ID);
         unsafe {
             store
                 .SetValue(&PKEY_APP_USER_MODEL_ID, &app_id)
@@ -165,7 +165,7 @@ mod platform {
                 .SetType(MediaPlaybackType::Music)
                 .map_err(media_error)?;
             updater
-                .SetAppMediaId(&HSTRING::from(SERVICE_NAME))
+                .SetAppMediaId(&HSTRING::from(APP_ID))
                 .map_err(media_error)?;
             let music = updater.MusicProperties().map_err(media_error)?;
             music.SetTitle(&HSTRING::from(title)).map_err(media_error)?;

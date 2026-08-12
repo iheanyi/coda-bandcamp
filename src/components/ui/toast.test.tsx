@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from "vitest"
 
 import { CodaMotionProvider } from "@/MotionProvider"
 
-import { createToastManager, Toaster } from "./toast"
+import { Toaster } from "./toast"
+import { createToastManager } from "./toastManager"
 
 function renderToaster() {
   const toastManager = createToastManager()

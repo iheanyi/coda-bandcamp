@@ -5,6 +5,7 @@ import type {
   ScrobbleState,
   Track,
 } from "./types";
+import { BANDCAMP_RADIO_PROVIDER } from "./radioIdentity";
 
 const MAX_LISTEN_DELTA_SECONDS = 10;
 const MAX_SCROBBLED_CHAPTER_KEYS = 256;
@@ -129,7 +130,7 @@ export function radioChapterTrackInput(
 
 export function radioShowTrackInput(track: Track): LastFmTrackInput {
   return {
-    artist: "Bandcamp Radio",
+    artist: BANDCAMP_RADIO_PROVIDER,
     title: track.title,
     album: track.album,
     duration: Math.max(0, Math.floor(track.duration)),

@@ -1,10 +1,13 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import App from "./App";
+import { RouterProvider } from "@tanstack/react-router";
+import { notifyToast } from "@/components/ui/toastManager";
+import { createLibrarySessionController } from "@/features/library-session";
 import { CodaMotionProvider } from "./MotionProvider";
 import MiniPlayerWindow from "./MiniPlayerWindow";
 import { TooltipProvider } from "./components/ui/tooltip";
+import { createCodaRouter } from "./router";
 import "./styles.css";
 
 const root = createRoot(document.getElementById("root")!);
@@ -32,13 +35,18 @@ if (windowView === "mini-player") {
       },
     },
   });
+  const librarySession = createLibrarySessionController({
+    notify: notifyToast,
+    queryClient,
+  });
+  const router = createCodaRouter(queryClient, librarySession);
 
   root.render(
     <StrictMode>
       <CodaMotionProvider>
         <TooltipProvider>
           <QueryClientProvider client={queryClient}>
-            <App />
+            <RouterProvider router={router} />
           </QueryClientProvider>
         </TooltipProvider>
       </CodaMotionProvider>

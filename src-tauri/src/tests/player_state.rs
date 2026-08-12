@@ -1,0 +1,269 @@
+use super::*;
+
+#[test]
+fn validates_bounded_player_state_and_rejects_unrestorable_tracks() {
+    let valid = sample_player_state();
+    assert!(validate_player_state(&valid).is_ok());
+
+    let mut control_character = valid.clone();
+    control_character.queue[0].title = "Bad\nTitle".into();
+    assert!(validate_player_state(&control_character).is_err());
+
+    let mut bad_palette = valid.clone();
+    bad_palette.queue[0].palette[0] = "#fff\u{7f}".into();
+    assert!(validate_player_state(&bad_palette).is_err());
+
+    let mut discover = valid.clone();
+    discover.queue[0].id = "discover:featured".into();
+    assert!(validate_player_state(&discover).is_err());
+
+    let mut radio = valid.clone();
+    radio.queue[0].id = "radio:979".into();
+    radio.last_fm_progress = None;
+    radio.radio_scrobble_progress = Some(RadioScrobbleProgress {
+        show_track_id: "radio:979".into(),
+        active_chapter_key: Some("60:chapter".into()),
+        chapter_started_at: 1_700_000_000,
+        chapter_listened_seconds: 61.0,
+        last_position: 121.0,
+        chapter_now_playing_sent: true,
+        chapter_scrobble_state: "pending".into(),
+        show_started_at: 1_700_000_000,
+        show_listened_seconds: 121.0,
+        show_scrobble_state: "idle".into(),
+        scrobbled_chapter_keys: Vec::new(),
+    });
+    assert!(validate_player_state(&radio).is_ok());
+    normalize_restored_player_progress(&mut radio);
+    let radio_progress = radio.radio_scrobble_progress.unwrap();
+    assert_eq!(radio_progress.chapter_started_at, 0);
+    assert!(!radio_progress.chapter_now_playing_sent);
+    assert_eq!(radio_progress.chapter_scrobble_state, "sent");
+    assert_eq!(radio_progress.scrobbled_chapter_keys, ["60:chapter"]);
+
+    let mut implausible_track_number = valid.clone();
+    implausible_track_number.queue[0].track = MAX_TRACK_NUMBER + 1;
+    assert!(validate_player_state(&implausible_track_number).is_err());
+
+    let mut oversized = valid;
+    oversized.queue = vec![sample_player_track("track"); MAX_PLAYER_QUEUE_LENGTH.saturating_add(1)];
+    assert!(validate_player_state(&oversized).is_err());
+}
+
+#[test]
+fn matches_the_shared_renderer_radio_persistence_contract() {
+    let contract: Value = serde_json::from_str(include_str!(
+        "../../../test/fixtures/player-state-radio-contract.json"
+    ))
+    .unwrap();
+    assert_eq!(
+        contract["contractVersion"].as_u64(),
+        Some(u64::from(PLAYER_STATE_CONTRACT_VERSION))
+    );
+
+    let mut state: PlayerStateSnapshot =
+        serde_json::from_value(contract["snapshot"].clone()).unwrap();
+    let checkpoint: PlayerStateCheckpoint =
+        serde_json::from_value(contract["checkpoint"].clone()).unwrap();
+    assert_eq!(state.persistence_generation, 0);
+    assert_eq!(checkpoint.persistence_generation, 0);
+    assert!(validate_player_state(&state).is_ok());
+    assert!(validate_player_checkpoint(&checkpoint).is_ok());
+    assert!(apply_player_checkpoint(&mut state, checkpoint));
+    normalize_restored_player_progress(&mut state);
+
+    assert_eq!(state.position_seconds, 125.0);
+    let progress = state.radio_scrobble_progress.unwrap();
+    assert_eq!(progress.show_track_id, "radio:979");
+    assert_eq!(progress.chapter_scrobble_state, "sent");
+    assert_eq!(progress.scrobbled_chapter_keys, ["60:chapter"]);
+}
+
+#[test]
+fn persisted_player_shape_rejects_urls_and_unknown_fields() {
+    let state = sample_player_state();
+    let serialized = serde_json::to_string(&state).unwrap();
+    assert!(!serialized.contains("streamUrl"));
+    assert!(!serialized.contains("artworkUrl"));
+
+    let mut value = serde_json::to_value(state).unwrap();
+    value["queue"][0]["streamUrl"] =
+        Value::String("https://bandcamp.com/api/subsonic/rest/stream.view?t=signed".into());
+    assert!(serde_json::from_value::<PlayerStateSnapshot>(value).is_err());
+
+    let mut blank_track = sample_player_state();
+    blank_track.queue[0].title = "   ".into();
+    assert!(validate_player_state(&blank_track).is_err());
+}
+
+#[test]
+fn atomically_round_trips_player_state_and_discards_corruption() {
+    let path = temporary_player_state_path("roundtrip");
+    let directory = path.parent().unwrap().to_path_buf();
+    let state = sample_player_state();
+
+    write_player_state(&path, &state).unwrap();
+    let restored = read_player_state(&path).unwrap().unwrap();
+    assert_eq!(restored.queue[0].id, "track-1");
+    assert_eq!(restored.position_seconds, 42.0);
+
+    fs::write(&path, b"{ definitely not valid json").unwrap();
+    assert!(load_player_state_or_clear_invalid(&path).unwrap().is_none());
+    assert!(!path.exists());
+
+    let mut invalid_radio_state = sample_player_state();
+    invalid_radio_state.queue[0].id = "radio:979".into();
+    invalid_radio_state.last_fm_progress = None;
+    invalid_radio_state.radio_scrobble_progress = Some(RadioScrobbleProgress {
+        show_track_id: "radio:980".into(),
+        active_chapter_key: None,
+        chapter_started_at: 0,
+        chapter_listened_seconds: 0.0,
+        last_position: 0.0,
+        chapter_now_playing_sent: false,
+        chapter_scrobble_state: "idle".into(),
+        show_started_at: 0,
+        show_listened_seconds: 0.0,
+        show_scrobble_state: "idle".into(),
+        scrobbled_chapter_keys: Vec::new(),
+    });
+    fs::write(&path, serde_json::to_vec(&invalid_radio_state).unwrap()).unwrap();
+    assert!(load_player_state_or_clear_invalid(&path).unwrap().is_none());
+    assert!(!path.exists());
+    fs::remove_dir(directory).unwrap();
+}
+
+#[test]
+fn a_checkpoint_cleanup_failure_retains_a_generation_safe_committed_snapshot() {
+    let state_path = temporary_player_state_path("checkpoint-cleanup-failure");
+    let directory = state_path.parent().unwrap().to_path_buf();
+    let checkpoint_path = directory.join("checkpoint-that-cannot-be-removed");
+    fs::create_dir_all(&checkpoint_path).unwrap();
+
+    let original = sample_player_state();
+    write_player_state(&state_path, &original).unwrap();
+    let mut replacement = original.clone();
+    replacement.persistence_generation = original.persistence_generation + 1;
+    replacement.queue[0].id = "replacement-track".into();
+    replacement.last_fm_progress.as_mut().unwrap().track_id = "replacement-track".into();
+
+    assert!(write_player_state_without_stale_checkpoint_for_test(
+        &state_path,
+        &checkpoint_path,
+        &replacement
+    )
+    .unwrap());
+    let restored = read_player_state(&state_path).unwrap().unwrap();
+    assert_eq!(restored.queue[0].id, replacement.queue[0].id);
+    assert_eq!(
+        restored.persistence_generation,
+        replacement.persistence_generation
+    );
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn a_player_state_write_failure_preserves_the_checkpoint() {
+    let state_path = temporary_player_state_path("state-write-failure");
+    let directory = state_path.parent().unwrap().to_path_buf();
+    let checkpoint_path = directory.join("player-state-checkpoint.json");
+    fs::create_dir_all(&state_path).unwrap();
+    let checkpoint = PlayerStateCheckpoint {
+        persistence_generation: 0,
+        current_index: 0,
+        current_track_id: "track-1".into(),
+        position_seconds: 90.0,
+        last_fm_progress: None,
+        radio_scrobble_progress: None,
+    };
+    write_player_checkpoint(&checkpoint_path, &checkpoint).unwrap();
+    let checkpoint_bytes = fs::read(&checkpoint_path).unwrap();
+
+    assert!(write_player_state_without_stale_checkpoint_for_test(
+        &state_path,
+        &checkpoint_path,
+        &sample_player_state(),
+    )
+    .is_err());
+    assert_eq!(fs::read(&checkpoint_path).unwrap(), checkpoint_bytes);
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn lightweight_checkpoint_applies_only_to_the_matching_track() {
+    let mut state = sample_player_state();
+    state.persistence_generation = 7;
+    let checkpoint = PlayerStateCheckpoint {
+        persistence_generation: 7,
+        current_index: 0,
+        current_track_id: "track-1".into(),
+        position_seconds: 90.0,
+        last_fm_progress: Some(LastFmPlaybackProgress {
+            track_id: "track-1".into(),
+            started_at: 1_700_000_000,
+            listened_seconds: 85.0,
+            last_position: 90.0,
+            now_playing_sent: true,
+            scrobble_state: "pending".into(),
+        }),
+        radio_scrobble_progress: None,
+    };
+    assert!(apply_player_checkpoint(&mut state, checkpoint));
+    normalize_restored_player_progress(&mut state);
+    assert_eq!(state.position_seconds, 90.0);
+    let progress = state.last_fm_progress.unwrap();
+    assert_eq!(progress.started_at, 0);
+    assert!(!progress.now_playing_sent);
+    assert_eq!(progress.scrobble_state, "sent");
+
+    let mut another_state = sample_player_state();
+    let stale = PlayerStateCheckpoint {
+        persistence_generation: 0,
+        current_index: 0,
+        current_track_id: "another-track".into(),
+        position_seconds: 120.0,
+        last_fm_progress: None,
+        radio_scrobble_progress: None,
+    };
+    assert!(!apply_player_checkpoint(&mut another_state, stale));
+    assert_eq!(another_state.position_seconds, 42.0);
+}
+
+#[test]
+fn an_older_same_track_checkpoint_cannot_override_a_committed_snapshot() {
+    let mut state = sample_player_state();
+    state.persistence_generation = 2;
+    let checkpoint = PlayerStateCheckpoint {
+        persistence_generation: 1,
+        current_index: 0,
+        current_track_id: "track-1".into(),
+        position_seconds: 90.0,
+        last_fm_progress: None,
+        radio_scrobble_progress: None,
+    };
+
+    assert!(!apply_player_checkpoint(&mut state, checkpoint));
+    assert_eq!(state.position_seconds, 42.0);
+}
+
+#[test]
+fn persistence_generations_advance_from_the_last_committed_snapshot() {
+    let state_path = temporary_player_state_path("generation");
+    let directory = state_path.parent().unwrap().to_path_buf();
+    let mut state = sample_player_state();
+    state.persistence_generation = 4;
+    write_player_state(&state_path, &state).unwrap();
+
+    assert_eq!(next_player_persistence_generation(&state_path).unwrap(), 5);
+
+    state.persistence_generation = u64::MAX;
+    write_player_state(&state_path, &state).unwrap();
+    assert_eq!(
+        next_player_persistence_generation(&state_path).unwrap_err(),
+        "The player persistence generation is exhausted."
+    );
+
+    fs::remove_dir_all(directory).unwrap();
+}

@@ -1,4 +1,5 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import {
   ArrowDownUp,
   ArrowUpRight,
@@ -12,21 +13,24 @@ import {
 } from "lucide-react";
 import {
   type FormEvent,
+  type MouseEvent,
   memo,
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { LayoutGroup } from "motion/react";
+import * as m from "motion/react-m";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { OverflowMarquee } from "@/components/ui/overflow-marquee";
 import { PlaybackIcon } from "@/components/ui/playback-icon";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
   SelectContent,
@@ -35,22 +39,32 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { countLabel } from "./countLabel";
-import { discoverPreviewTrack } from "./discover";
-import { DISCOVER_GENRES, normalizeGenre } from "./genres";
+import { countLabel } from "@/countLabel";
+import { discoverPreviewTrack } from "@/discover";
+import { DISCOVER_GENRES, normalizeGenre } from "@/genres";
 import {
-  fetchDiscover,
   formatTime,
   initials,
   openBandcampUrl,
   paletteFor,
-} from "./lib";
+} from "@/lib";
+import { cn } from "@/lib/utils";
+import { discoverInfiniteQueryOptions } from "@/queries/discoverQueries";
+import { ResponsiveVirtualGrid } from "@/ResponsiveVirtualGrid";
+import {
+  isDiscoverReleaseId,
+  parseDiscoverReleaseIdParam,
+  type DiscoverRouteSearch,
+  validateDiscoverSearch,
+} from "@/routing/routeContracts";
+import { handleCodaLinkActivation } from "@/routing/linkActivation";
+import { useDistanceAwareSelectionPill } from "@/selectionMotion";
 import type {
   DiscoverFilters,
   DiscoverRelease,
   DiscoverSort,
   Track,
-} from "./types";
+} from "@/types";
 
 const DISCOVER_SORT_OPTIONS: ReadonlyArray<{
   value: DiscoverSort;
@@ -60,8 +74,18 @@ const DISCOVER_SORT_OPTIONS: ReadonlyArray<{
   { value: "new", label: "New arrivals" },
 ];
 
+const DISCOVER_GRID_LAYOUTS = [
+  {
+    minColumnWidth: 288,
+    columnGap: 10,
+    rowGap: 10,
+    rowHeight: 112,
+  },
+] as const;
+
 const DiscoverCard = memo(function DiscoverCard({
   release,
+  releaseSearch,
   fallbackGenre,
   currentTrackId,
   playing,
@@ -72,6 +96,7 @@ const DiscoverCard = memo(function DiscoverCard({
   onOpenArtist,
 }: {
   release: DiscoverRelease;
+  releaseSearch: DiscoverRouteSearch;
   fallbackGenre?: string;
   currentTrackId?: string;
   playing: boolean;
@@ -80,17 +105,35 @@ const DiscoverCard = memo(function DiscoverCard({
   onQueue: (track: Track) => void;
   onOpenRelease: (
     release: DiscoverRelease,
-    trigger: HTMLButtonElement,
+    trigger: HTMLElement,
   ) => void;
   onOpenArtist: (release: DiscoverRelease) => void;
 }) {
   const track = discoverPreviewTrack(release);
   const palette = paletteFor(release.id);
   const active = Boolean(track && currentTrackId === track.id);
+  const releaseId = isDiscoverReleaseId(release.id) ? release.id : undefined;
+  const artworkUrl = release.artworkUrl;
+  const [failedArtworkUrl, setFailedArtworkUrl] = useState<string>();
+  const [loadedArtworkUrl, setLoadedArtworkUrl] = useState<string>();
+  const artworkEligible = Boolean(
+    artworkUrl && failedArtworkUrl !== artworkUrl,
+  );
+  const artworkLoaded = Boolean(
+    artworkEligible && loadedArtworkUrl === artworkUrl,
+  );
+  const openRelease = (event: MouseEvent<HTMLAnchorElement>) => {
+    handleCodaLinkActivation(event, (trigger) => {
+      onOpenRelease(release, trigger);
+    });
+  };
+  const openInvalidRelease = (event: MouseEvent<HTMLButtonElement>) => {
+    onOpenRelease(release, event.currentTarget);
+  };
 
   return (
     <article
-      className="group/card grid min-w-0 grid-cols-[--spacing(28)_minmax(0,1fr)] overflow-hidden rounded-lg border border-(--line) bg-white/[0.018] [contain-intrinsic-size:--spacing(28)_--spacing(75)] [content-visibility:auto] hover:border-(--line-strong) hover:bg-white/3"
+      className="group/card grid h-full min-w-0 grid-cols-[--spacing(28)_minmax(0,1fr)] overflow-hidden rounded-lg border border-(--line) bg-white/[0.018] [contain-intrinsic-size:--spacing(28)_--spacing(75)] [content-visibility:auto] hover:border-(--line-strong) hover:bg-white/3"
       data-discover-release-card={release.id}
     >
       <div
@@ -103,26 +146,56 @@ const DiscoverCard = memo(function DiscoverCard({
           } as React.CSSProperties
         }
       >
-        {release.artworkUrl ? (
+        {artworkEligible && artworkUrl ? (
           <img
-            className="size-full object-cover"
-            src={release.artworkUrl}
+            key={artworkUrl}
+            className={cn(
+              "col-start-1 row-start-1 size-full object-cover",
+              !artworkLoaded && "invisible",
+            )}
+            data-discover-artwork-image={artworkUrl}
+            src={artworkUrl}
             alt=""
             loading="lazy"
             decoding="async"
             draggable={false}
+            onError={() => setFailedArtworkUrl(artworkUrl)}
+            onLoad={() => {
+              setLoadedArtworkUrl(artworkUrl);
+              setFailedArtworkUrl((current) =>
+                current === artworkUrl ? undefined : current,
+              );
+            }}
+          />
+        ) : null}
+        {!artworkLoaded ? (
+          <span
+            className="col-start-1 row-start-1"
+            data-discover-artwork-fallback={artworkUrl ?? "missing"}
+          >
+            {initials(release.title)}
+          </span>
+        ) : null}
+        {releaseId ? (
+          <Link
+            className="absolute inset-0 z-1 size-full rounded-none p-0 outline-none hover:bg-white/4 focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-ring"
+            onClick={openRelease}
+            params={{ releaseId }}
+            search={releaseSearch}
+            to="/discover/releases/$releaseId"
+            aria-label={`Open ${release.title} Discover details`}
+            title={`Open ${release.title}`}
           />
         ) : (
-          <span>{initials(release.title)}</span>
+          <Button
+            variant="text"
+            size="icon"
+            className="absolute inset-0 z-1 size-full rounded-none p-0 outline-none hover:bg-white/4 focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-ring"
+            onClick={openInvalidRelease}
+            aria-label={`Open ${release.title} Discover details`}
+            title={`Open ${release.title}`}
+          />
         )}
-        <Button
-          variant="ghost"
-          size="compact"
-          className="absolute inset-0 z-1 size-full rounded-none p-0 hover:bg-white/4 focus-visible:-outline-offset-2"
-          onClick={(event) => onOpenRelease(release, event.currentTarget)}
-          aria-label={`Open ${release.title} Discover details`}
-          title={`Open ${release.title}`}
-        />
         {track ? (
           <Button
             variant="primary"
@@ -142,21 +215,42 @@ const DiscoverCard = memo(function DiscoverCard({
       </div>
       <div className="flex min-w-0 flex-col px-3 pt-3 pb-2">
         <div className="flex min-w-0 flex-col gap-1">
-          <Button
-            variant="text"
-            size="compact"
-            className="h-auto min-w-0 justify-start overflow-hidden p-0 text-xs font-bold text-[#e8e5de] hover:bg-transparent hover:text-primary"
-            onClick={(event) => onOpenRelease(release, event.currentTarget)}
-            title={release.title}
-          >
-            <OverflowMarquee
-              className="w-full text-left"
-              staticTextProps={{
-                "data-coda-discover-title": release.id,
-              }}
-              text={release.title}
-            />
-          </Button>
+          {releaseId ? (
+            <Link
+              className="flex h-auto w-full min-w-0 items-center justify-start overflow-hidden p-0 text-xs font-bold text-[#e8e5de] outline-none hover:text-primary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+              onClick={openRelease}
+              params={{ releaseId }}
+              search={releaseSearch}
+              to="/discover/releases/$releaseId"
+              title={release.title}
+            >
+              <OverflowMarquee
+                className="w-full text-left"
+                staticTextProps={{
+                  "data-coda-discover-title": release.id,
+                }}
+                text={release.title}
+              />
+            </Link>
+          ) : (
+            <Button
+              variant="text"
+              size="compact"
+              className="flex h-auto w-full min-w-0 items-center justify-start overflow-hidden p-0 text-xs font-bold text-[#e8e5de] outline-none hover:bg-transparent hover:text-primary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+              onClick={openInvalidRelease}
+              title={release.title}
+            >
+              <OverflowMarquee
+                className="w-full text-left"
+                staticTextProps={{
+                  "data-coda-discover-title": release.id,
+                }}
+                text={release.title}
+              />
+            </Button>
+          )}
+          {/* The runtime decides between a local artist route and the native,
+              allowlisted external opener, so this remains an action button. */}
           <Button
             variant="text"
             size="compact"
@@ -189,6 +283,8 @@ const DiscoverCard = memo(function DiscoverCard({
           ) : (
             <span className="text-xs text-[#666a65]">No preview available</span>
           )}
+          {/* Keep this imperative: the native opener validates the external
+              Bandcamp URL instead of exposing it to in-app routing. */}
           <Button
             variant="ghost"
             size="icon-compact"
@@ -205,15 +301,10 @@ const DiscoverCard = memo(function DiscoverCard({
   );
 });
 
-export default function DiscoverView({
-  onPlay,
-  onQueue,
-  currentTrackId,
-  playing,
-  onTogglePlayback,
-  onOpenRelease,
-  onOpenArtist,
-}: {
+export type DiscoverScreenProps = {
+  className?: string;
+  filters: DiscoverFilters;
+  onFiltersChange: (filters: DiscoverFilters) => void;
   onPlay: (track: Track) => void;
   onQueue: (track: Track) => void;
   currentTrackId?: string;
@@ -221,42 +312,84 @@ export default function DiscoverView({
   onTogglePlayback: () => void;
   onOpenRelease: (
     release: DiscoverRelease,
-    trigger: HTMLButtonElement,
+    trigger: HTMLElement,
   ) => void;
   onOpenArtist: (release: DiscoverRelease) => void;
-}) {
-  const [draftTag, setDraftTag] = useState("");
-  const [filters, setFilters] = useState<DiscoverFilters>({ tag: "", sort: "top" });
-  const query = useInfiniteQuery({
-    queryKey: ["discover", filters],
-    queryFn: ({ pageParam }) => fetchDiscover(filters, pageParam),
-    initialPageParam: "*",
-    getNextPageParam: (lastPage) =>
-      lastPage.hasMore && lastPage.cursor ? lastPage.cursor : undefined,
-  });
+};
+
+type DiscoverViewProps = Omit<
+  DiscoverScreenProps,
+  "filters" | "onFiltersChange"
+>;
+
+export function DiscoverScreen({
+  className,
+  filters,
+  onFiltersChange,
+  onPlay,
+  onQueue,
+  currentTrackId,
+  playing,
+  onTogglePlayback,
+  onOpenRelease,
+  onOpenArtist,
+}: DiscoverScreenProps) {
+  const [draftTagState, setDraftTagState] = useState(() => ({
+    committedTag: filters.tag,
+    value: filters.tag,
+  }));
+  const draftTag =
+    draftTagState.committedTag === filters.tag
+      ? draftTagState.value
+      : filters.tag;
+  const setDraftTag = (value: string) => {
+    setDraftTagState({ committedTag: filters.tag, value });
+  };
+  const query = useInfiniteQuery(discoverInfiniteQueryOptions(filters));
   const releases = useMemo(
     () => query.data?.pages.flatMap((page) => page.results) ?? [],
     [query.data],
   );
+  const releaseSearch = useMemo(
+    () => validateDiscoverSearch(filters),
+    [filters],
+  );
   const total = query.data?.pages[0]?.resultCount ?? 0;
   const selectedGenre = filters.tag.toLocaleLowerCase("en-US");
+  const genreLayoutGroupId = `discover-genres-${useId()}`;
+  const genreIndicatorLayoutId = `${genreLayoutGroupId}-selected`;
+  const genreSelectedIndex = Math.max(
+    0,
+    ["", ...DISCOVER_GENRES].findIndex(
+      (tag) => tag.toLocaleLowerCase("en-US") === selectedGenre,
+    ),
+  );
+  const genreIndicatorMotion = useDistanceAwareSelectionPill(
+    genreSelectedIndex,
+  );
   const genreRailRef = useRef<HTMLElement>(null);
+  const discoverScrollElementRef = useRef<HTMLElement | null>(null);
   const [genreRailEdges, setGenreRailEdges] = useState({
     start: false,
     end: false,
   });
+  const setDiscoverRoot = useCallback((element: HTMLElement | null) => {
+    discoverScrollElementRef.current = element?.closest<HTMLElement>(
+      "[data-coda-library-scroll]",
+    ) ?? element?.parentElement ?? null;
+  }, []);
 
   const chooseGenre = (tag: string) => {
     const nextTag = tag === "all" ? "" : tag;
     setDraftTag(nextTag);
-    setFilters((value) => ({ ...value, tag: nextTag }));
+    onFiltersChange({ ...filters, tag: nextTag });
   };
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    setFilters((value) => ({ ...value, tag: draftTag.trim() }));
+    onFiltersChange({ ...filters, tag: draftTag.trim() });
   };
   const chooseSort = (sort: DiscoverSort) =>
-    setFilters((value) => ({ ...value, sort }));
+    onFiltersChange({ ...filters, sort });
   const updateGenreRailEdges = useCallback((rail: HTMLElement | null) => {
     if (!rail) return;
     const maxScrollLeft = Math.max(0, rail.scrollWidth - rail.clientWidth);
@@ -315,9 +448,10 @@ export default function DiscoverView({
 
   return (
     <section
-      className="min-h-full"
+      className={cn("min-h-full", className)}
       aria-live="polite"
       aria-busy={query.isFetching}
+      ref={setDiscoverRoot}
     >
       <div className="relative -mx-4 -mt-6 mb-6 flex items-end justify-between gap-9 overflow-hidden border-b border-(--line) bg-[radial-gradient(circle_at_92%_0%,rgba(221,101,73,0.17),transparent_39%),linear-gradient(135deg,#181b1d_0%,#141719_70%)] px-4 pt-12 pb-8 after:pointer-events-none after:absolute after:-top-28 after:right-[18%] after:size-56 after:rounded-full after:border after:border-white/[0.035] after:shadow-[0_0_0_42px_rgba(255,255,255,0.012),0_0_0_84px_rgba(255,255,255,0.008)] after:content-[''] lg:-mx-6 lg:-mt-8 lg:px-6 xl:-mx-8 xl:flex-row xl:items-end xl:px-8 max-xl:flex-col max-xl:items-stretch">
         <div className="relative z-1">
@@ -346,38 +480,63 @@ export default function DiscoverView({
 
       <div className="flex items-center gap-2 border-b border-(--line) pb-3 lg:gap-4">
         <div className="relative min-w-0 flex-1">
-          <nav
-            ref={genreRailRef}
-            aria-label="Filter Discover by genre"
-            className="flex items-center gap-1 overflow-x-auto overscroll-x-contain pr-10 scroll-px-10 scrollbar-none [&::-webkit-scrollbar]:hidden"
-            onScroll={(event) => updateGenreRailEdges(event.currentTarget)}
-          >
-            <Button
-              type="button"
-              className="h-8 shrink-0 px-3 text-xs font-semibold text-[#888b86] hover:bg-transparent hover:text-[#dddcd7] aria-pressed:bg-coda-active aria-pressed:text-[#f0eee8]"
-              onClick={() => chooseGenre("all")}
-              aria-pressed={!selectedGenre}
-              disabled={query.isPending}
-              size="compact"
-              variant="ghost"
+          <LayoutGroup id={genreLayoutGroupId}>
+            <nav
+              ref={genreRailRef}
+              aria-label="Filter Discover by genre"
+              className="flex items-center gap-1 overflow-x-auto overscroll-x-contain pr-10 scroll-px-10 scrollbar-none [&::-webkit-scrollbar]:hidden"
+              onScroll={(event) => updateGenreRailEdges(event.currentTarget)}
             >
-              All genres
-            </Button>
-            {DISCOVER_GENRES.map((tag) => (
               <Button
                 type="button"
-                key={tag}
-                className="h-8 shrink-0 px-3 text-xs font-semibold text-[#888b86] hover:bg-transparent hover:text-[#dddcd7] aria-pressed:bg-coda-active aria-pressed:text-[#f0eee8]"
-                onClick={() => chooseGenre(tag)}
-                aria-pressed={selectedGenre === tag}
+                className="relative isolate h-8 shrink-0 overflow-hidden px-3 text-xs font-semibold text-[#888b86] hover:bg-transparent hover:text-[#dddcd7] aria-pressed:text-[#f0eee8]"
+                onClick={() => chooseGenre("all")}
+                aria-pressed={!selectedGenre}
                 disabled={query.isPending}
                 size="compact"
                 variant="ghost"
               >
-                {normalizeGenre(tag)}
+                {!selectedGenre ? (
+                  <m.div
+                    aria-hidden="true"
+                    className="pointer-events-none absolute inset-0 z-0 bg-coda-active"
+                    data-discover-genre-indicator=""
+                    data-selection-travel-steps={genreIndicatorMotion.travelSteps}
+                    layoutId={genreIndicatorLayoutId}
+                    transition={genreIndicatorMotion.transition}
+                  />
+                ) : null}
+                <span className="relative z-10">All genres</span>
               </Button>
-            ))}
-          </nav>
+              {DISCOVER_GENRES.map((tag) => {
+                const selected = selectedGenre === tag;
+                return (
+                  <Button
+                    type="button"
+                    key={tag}
+                    className="relative isolate h-8 shrink-0 overflow-hidden px-3 text-xs font-semibold text-[#888b86] hover:bg-transparent hover:text-[#dddcd7] aria-pressed:text-[#f0eee8]"
+                    onClick={() => chooseGenre(tag)}
+                    aria-pressed={selected}
+                    disabled={query.isPending}
+                    size="compact"
+                    variant="ghost"
+                  >
+                    {selected ? (
+                      <m.div
+                        aria-hidden="true"
+                        className="pointer-events-none absolute inset-0 z-0 bg-coda-active"
+                        data-discover-genre-indicator=""
+                        data-selection-travel-steps={genreIndicatorMotion.travelSteps}
+                        layoutId={genreIndicatorLayoutId}
+                        transition={genreIndicatorMotion.transition}
+                      />
+                    ) : null}
+                    <span className="relative z-10">{normalizeGenre(tag)}</span>
+                  </Button>
+                );
+              })}
+            </nav>
+          </LayoutGroup>
           {genreRailEdges.start ? (
             <>
               <span
@@ -452,10 +611,10 @@ export default function DiscoverView({
 
       {query.isPending ? (
         <div className="flex min-h-80 flex-col items-center justify-center text-center text-[#6e726d]">
-          <div className="relative grid size-7 place-items-center">
-            <Skeleton aria-hidden="true" className="absolute inset-0 rounded-full bg-[#6e726d]/20 motion-reduce:animate-none" />
-            <Spinner aria-hidden="true" className="relative size-7 text-current motion-reduce:animate-none" />
-          </div>
+          <Spinner
+            aria-hidden="true"
+            className="size-7 text-current motion-reduce:animate-none"
+          />
           <strong className="mt-3 text-sm text-[#c8c7c1]">Scanning Bandcamp…</strong>
           <span className="mt-1 max-w-sm text-xs text-[#747873]">Finding releases with playable previews.</span>
         </div>
@@ -497,11 +656,17 @@ export default function DiscoverView({
             <h2 className="m-0 font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-base leading-none font-semibold tracking-tight">{filters.tag ? `Sounds tagged “${filters.tag}”` : "Across Bandcamp"}</h2>
             <span className="text-xs text-[#6f736e]">{countLabel(total, "result")}</span>
           </div>
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(18rem,1fr))] gap-2.5">
-            {releases.map((release) => (
+          <ResponsiveVirtualGrid
+            aria-label="Discover releases"
+            className="w-full"
+            getItemKey={(release) => release.id}
+            items={releases}
+            layouts={DISCOVER_GRID_LAYOUTS}
+            scrollElementRef={discoverScrollElementRef}
+            renderItem={(release) => (
               <DiscoverCard
-                key={release.id}
                 release={release}
+                releaseSearch={releaseSearch}
                 fallbackGenre={filters.tag || undefined}
                 currentTrackId={currentTrackId}
                 playing={playing}
@@ -511,8 +676,8 @@ export default function DiscoverView({
                 onOpenRelease={onOpenRelease}
                 onOpenArtist={onOpenArtist}
               />
-            ))}
-          </div>
+            )}
+          />
           {query.hasNextPage ? (
             <Button
               variant="outline"
@@ -538,5 +703,19 @@ export default function DiscoverView({
         </div>
       )}
     </section>
+  );
+}
+
+export default function DiscoverView(props: DiscoverViewProps) {
+  const [filters, setFilters] = useState<DiscoverFilters>({
+    tag: "",
+    sort: "top",
+  });
+  return (
+    <DiscoverScreen
+      {...props}
+      filters={filters}
+      onFiltersChange={setFilters}
+    />
   );
 }

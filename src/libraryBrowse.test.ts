@@ -31,8 +31,8 @@ describe("library browsing", () => {
 
   it("groups artist names case-insensitively and collapses whitespace", () => {
     const groups = groupAlbumsByArtist([
-      album("older", "Night  Archive", 2, "2025-01-01"),
-      album("newer", " night archive ", 1, "2026-01-01"),
+      album("older", "Night  Archive", 2, "30 Jun 2025 12:00:00 GMT"),
+      album("newer", " night archive ", 1, "02 Jul 2025 12:00:00 GMT"),
     ]);
 
     expect(groups).toHaveLength(1);

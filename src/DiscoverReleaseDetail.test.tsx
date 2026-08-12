@@ -1,6 +1,9 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { DiscoverReleaseDetail } from "./DiscoverReleaseDetail";
+import {
+  DiscoverReleaseDetail,
+  DiscoverReleaseScreen,
+} from "./DiscoverReleaseDetail";
 import type { DiscoverRelease } from "./types";
 
 const release: DiscoverRelease = {
@@ -20,6 +23,26 @@ const release: DiscoverRelease = {
 };
 
 describe("DiscoverReleaseDetail", () => {
+  it("exposes a semantic route screen without changing detail focus", () => {
+    render(
+      <DiscoverReleaseScreen
+        className="route-detail"
+        release={release}
+        playing={false}
+        onBack={vi.fn()}
+        onPlay={vi.fn()}
+        onQueue={vi.fn()}
+        onTogglePlayback={vi.fn()}
+        onArtist={vi.fn()}
+        onOpenBandcamp={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("article", { name: "Blue Hours" }))
+      .toHaveClass("route-detail");
+    expect(screen.getByRole("heading", { name: "Blue Hours" })).toHaveFocus();
+  });
+
   it("routes release actions and switches the active preview to pause", () => {
     const onPlay = vi.fn();
     const onQueue = vi.fn();
@@ -100,5 +123,63 @@ describe("DiscoverReleaseDetail", () => {
     })[0]);
 
     expect(onTogglePlayback).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers from a failed artwork URL when release metadata supplies a new one", () => {
+    const props = {
+      playing: false,
+      onBack: vi.fn(),
+      onPlay: vi.fn(),
+      onQueue: vi.fn(),
+      onTogglePlayback: vi.fn(),
+      onArtist: vi.fn(),
+      onOpenBandcamp: vi.fn(),
+    };
+    const nextArtworkUrl = "https://f4.bcbits.com/img/blue-hours-fixed.jpg";
+    const { container, rerender } = render(
+      <DiscoverReleaseScreen {...props} release={release} />,
+    );
+    const artwork = container.querySelector(
+      "[data-coda-discover-artwork-detail]",
+    );
+    const failedImage = artwork?.querySelector("img");
+    if (!failedImage) throw new Error("Expected initial release artwork.");
+
+    fireEvent.error(failedImage);
+    expect(artwork?.querySelector("img")).not.toBeInTheDocument();
+    expect(
+      artwork?.querySelector("[data-discover-detail-artwork-fallback]"),
+    ).toHaveTextContent("BH");
+
+    rerender(
+      <DiscoverReleaseScreen
+        {...props}
+        release={{ ...release, artworkUrl: nextArtworkUrl }}
+      />,
+    );
+    const refreshedArtwork = container.querySelector(
+      "[data-coda-discover-artwork-detail]",
+    );
+    const refreshedImage = refreshedArtwork?.querySelector("img");
+    expect(refreshedImage).toHaveAttribute("src", nextArtworkUrl);
+    expect(refreshedImage).toHaveClass("invisible");
+    expect(
+      refreshedArtwork?.querySelector(
+        "[data-discover-detail-artwork-fallback]",
+      ),
+    ).toHaveTextContent("BH");
+
+    if (!refreshedImage) throw new Error("Expected refreshed release artwork.");
+    fireEvent.load(refreshedImage);
+    expect(refreshedImage).not.toHaveClass("invisible");
+    expect(
+      refreshedArtwork?.querySelector(
+        "[data-discover-detail-artwork-fallback]",
+      ),
+    ).not.toBeInTheDocument();
+    expect(refreshedArtwork).toHaveAttribute(
+      "data-coda-discover-artwork-detail",
+      release.id,
+    );
   });
 });

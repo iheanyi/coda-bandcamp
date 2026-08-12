@@ -60,6 +60,8 @@ function SelectTrigger({
 }: SelectPrimitive.Trigger.Props & {
   size?: "sm" | "default"
 }) {
+  const open = React.useContext(SelectPresenceContext)
+
   return (
     <SelectPrimitive.Trigger
       data-slot="select-trigger"
@@ -72,11 +74,22 @@ function SelectTrigger({
     >
       {children}
       <SelectPrimitive.Icon
+        className="grid size-4 shrink-0 place-items-center self-center leading-none"
         data-slot="select-icon"
-        render={
-          <ChevronDownIcon className="pointer-events-none size-4 text-muted-foreground" />
-        }
-      />
+      >
+        <m.span
+          aria-hidden="true"
+          className="pointer-events-none grid size-full place-items-center text-muted-foreground"
+          data-slot="select-chevron-motion"
+          initial={false}
+          animate={{
+            transform: open ? "rotate(180deg)" : "rotate(0deg)"
+          }}
+          transition={codaMotion.feedback}
+        >
+          <ChevronDownIcon className="size-4" />
+        </m.span>
+      </SelectPrimitive.Icon>
     </SelectPrimitive.Trigger>
   )
 }
@@ -112,22 +125,25 @@ function SelectContent({
           data-slot="select-content"
           data-align-trigger={alignItemWithTrigger}
           className={cn(
-            "relative isolate z-50 max-h-(--available-height) w-(--anchor-width) min-w-36 origin-(--transform-origin) overflow-x-hidden overflow-y-auto rounded-lg bg-popover text-popover-foreground opacity-100 shadow-md ring-1 ring-foreground/10 transition-opacity duration-(--duration-coda-fast) ease-coda-enter data-closed:opacity-0",
+            "relative isolate z-50 max-h-(--available-height) w-(--anchor-width) min-w-36 origin-(--transform-origin) overflow-x-hidden overflow-y-auto rounded-lg bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10",
             className
           )}
           {...props}
           render={
             <m.div
-              initial={false}
-              animate={{
-                transform:
-                  open || !animatePopup ? "scale(1)" : "scale(0.96)",
-                transition: open
-                  ? codaMotion.feedback
-                  : codaMotion.componentExit,
+              initial={{
+                opacity: 0,
+                transform: animatePopup ? "scale(0.98)" : "scale(1)"
               }}
+              animate={{
+                opacity: open ? 1 : 0,
+                transform: open || !animatePopup ? "scale(1)" : "scale(0.98)"
+              }}
+              transition={
+                open ? codaMotion.componentEnter : codaMotion.componentExit
+              }
               style={{
-                pointerEvents: open ? "auto" : "none",
+                pointerEvents: open ? "auto" : "none"
               }}
             />
           }

@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { RouterContextProvider } from "@tanstack/react-router";
 import {
   fireEvent,
   render,
@@ -8,14 +9,16 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createCodaMemoryRouter } from "@/router";
+import type { DiscoverFilters, Track } from "@/types";
 
 const mocks = vi.hoisted(() => ({
   fetchDiscover: vi.fn(),
   openBandcampUrl: vi.fn(),
 }));
 
-vi.mock("./lib", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./lib")>();
+vi.mock("@/lib", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib")>();
   return {
     ...actual,
     fetchDiscover: mocks.fetchDiscover,
@@ -23,13 +26,14 @@ vi.mock("./lib", async (importOriginal) => {
   };
 });
 
-import DiscoverView from "./DiscoverView";
+import DiscoverView, { DiscoverScreen } from "./DiscoverView";
 
 function renderDiscover(
   onQueue = vi.fn(),
   playback: {
     currentTrackId?: string;
     playing?: boolean;
+    onPlay?: (track: Track) => void;
     onTogglePlayback?: () => void;
     onOpenRelease?: () => void;
     onOpenArtist?: () => void;
@@ -38,22 +42,32 @@ function renderDiscover(
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  const router = createCodaMemoryRouter(client, [
+    "/discover?tag=&sort=top",
+  ]);
   const onTogglePlayback = playback.onTogglePlayback ?? vi.fn();
+  const onPlay = playback.onPlay ?? vi.fn();
   return {
     client,
     onQueue,
+    onPlay,
     onTogglePlayback,
+    router,
     ...render(
       <QueryClientProvider client={client}>
-        <DiscoverView
-          onPlay={vi.fn()}
-          onQueue={onQueue}
-          currentTrackId={playback.currentTrackId}
-          playing={playback.playing ?? false}
-          onTogglePlayback={onTogglePlayback}
-          onOpenRelease={playback.onOpenRelease ?? vi.fn()}
-          onOpenArtist={playback.onOpenArtist ?? vi.fn()}
-        />
+        <RouterContextProvider router={router}>
+          <div data-coda-library-scroll>
+            <DiscoverView
+              onPlay={onPlay}
+              onQueue={onQueue}
+              currentTrackId={playback.currentTrackId}
+              playing={playback.playing ?? false}
+              onTogglePlayback={onTogglePlayback}
+              onOpenRelease={playback.onOpenRelease ?? vi.fn()}
+              onOpenArtist={playback.onOpenArtist ?? vi.fn()}
+            />
+          </div>
+        </RouterContextProvider>
       </QueryClientProvider>,
     ),
   };
@@ -64,7 +78,7 @@ beforeEach(() => {
   mocks.fetchDiscover.mockReset().mockResolvedValue({
     results: [
       {
-        id: "release-1",
+        id: "discover:release-1",
         title: "Blue Hours",
         artist: "Signal Garden",
         location: "Chicago, Illinois",
@@ -83,6 +97,71 @@ beforeEach(() => {
 });
 
 describe("Discover", () => {
+  it("keeps committed route filters controlled while synchronizing the local draft", async () => {
+    const user = userEvent.setup();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const router = createCodaMemoryRouter(client, [
+      "/discover?tag=&sort=top",
+    ]);
+    const onFiltersChange = vi.fn();
+    const renderScreen = (filters: DiscoverFilters) => (
+      <QueryClientProvider client={client}>
+        <RouterContextProvider router={router}>
+          <div data-coda-library-scroll>
+            <DiscoverScreen
+              filters={filters}
+              onFiltersChange={onFiltersChange}
+              onPlay={vi.fn()}
+              onQueue={vi.fn()}
+              playing={false}
+              onTogglePlayback={vi.fn()}
+              onOpenRelease={vi.fn()}
+              onOpenArtist={vi.fn()}
+            />
+          </div>
+        </RouterContextProvider>
+      </QueryClientProvider>
+    );
+    const view = render(renderScreen({ tag: "", sort: "top" }));
+
+    await screen.findByText("Blue Hours");
+    const sort = screen.getByRole("combobox", {
+      name: "Sort Discover results",
+    });
+    await user.click(sort);
+    await user.click(await screen.findByRole("option", {
+      name: "New arrivals",
+    }));
+    expect(onFiltersChange).toHaveBeenLastCalledWith({ tag: "", sort: "new" });
+    expect(sort).toHaveTextContent("Best-selling");
+
+    view.rerender(renderScreen({ tag: "", sort: "new" }));
+    expect(sort).toHaveTextContent("New arrivals");
+
+    await user.click(screen.getByRole("button", { name: "Jazz" }));
+    expect(onFiltersChange).toHaveBeenLastCalledWith({
+      tag: "jazz",
+      sort: "new",
+    });
+    expect(screen.getByRole("button", { name: "All genres" }))
+      .toHaveAttribute("aria-pressed", "true");
+
+    view.rerender(renderScreen({ tag: "rock", sort: "new" }));
+    const input = screen.getByRole("textbox", {
+      name: "Search Discover by tag",
+    });
+    await waitFor(() => expect(input).toHaveValue("rock"));
+    await user.clear(input);
+    await user.type(input, "  shoegaze  ");
+    await user.click(screen.getByRole("button", { name: "Explore" }));
+    expect(onFiltersChange).toHaveBeenLastCalledWith({
+      tag: "shoegaze",
+      sort: "new",
+    });
+  });
+
   it("disables Discover controls while the initiating request is pending", async () => {
     let resolveDiscover!: (value: {
       results: [];
@@ -94,7 +173,16 @@ describe("Discover", () => {
     }));
     renderDiscover();
 
-    expect(await screen.findByRole("button", { name: "Exploring…" })).toBeDisabled();
+    expect(
+      await screen.findByRole("button", { name: "Exploring…" }),
+    ).toBeDisabled();
+    const pendingSurface = screen.getByText("Scanning Bandcamp…").parentElement;
+    expect(
+      pendingSurface?.querySelectorAll('[data-slot="spinner"]'),
+    ).toHaveLength(1);
+    expect(
+      pendingSurface?.querySelector('[data-slot="skeleton"]'),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "All genres" })).toBeDisabled();
     expect(screen.getByRole("combobox", {
       name: "Sort Discover results",
@@ -127,6 +215,87 @@ describe("Discover", () => {
         expect.objectContaining({ tag: "jazz" }),
         "*",
       ),
+    );
+  });
+
+  it("keeps card fallback artwork until a replacement URL loads", async () => {
+    const firstArtworkUrl = "https://f4.bcbits.com/img/blue-hours-broken.jpg";
+    const nextArtworkUrl = "https://f4.bcbits.com/img/blue-hours-fixed.jpg";
+    mocks.fetchDiscover.mockImplementation(async ({ tag }) => ({
+      results: [
+        {
+          id: "discover:release-1",
+          title: "Blue Hours",
+          artist: "Signal Garden",
+          itemUrl: "https://signal-garden.bandcamp.com/album/blue-hours",
+          artworkUrl: tag ? nextArtworkUrl : firstArtworkUrl,
+        },
+      ],
+      resultCount: 1,
+      hasMore: false,
+    }));
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const router = createCodaMemoryRouter(client, [
+      "/discover?tag=&sort=top",
+    ]);
+    const screenFor = (filters: DiscoverFilters) => (
+      <QueryClientProvider client={client}>
+        <RouterContextProvider router={router}>
+          <div data-coda-library-scroll>
+            <DiscoverScreen
+              filters={filters}
+              onFiltersChange={vi.fn()}
+              onPlay={vi.fn()}
+              onQueue={vi.fn()}
+              playing={false}
+              onTogglePlayback={vi.fn()}
+              onOpenRelease={vi.fn()}
+              onOpenArtist={vi.fn()}
+            />
+          </div>
+        </RouterContextProvider>
+      </QueryClientProvider>
+    );
+    const view = render(screenFor({ tag: "", sort: "top" }));
+
+    await screen.findByText("Blue Hours");
+    let artwork = view.container.querySelector(
+      "[data-coda-discover-artwork]",
+    );
+    const failedImage = artwork?.querySelector("img");
+    expect(failedImage).toHaveAttribute("src", firstArtworkUrl);
+    if (!failedImage) throw new Error("Expected initial Discover artwork.");
+    fireEvent.error(failedImage);
+    expect(artwork?.querySelector("img")).not.toBeInTheDocument();
+    expect(
+      artwork?.querySelector("[data-discover-artwork-fallback]"),
+    ).toHaveTextContent("BH");
+
+    view.rerender(screenFor({ tag: "rock", sort: "top" }));
+    await waitFor(() => {
+      artwork = view.container.querySelector("[data-coda-discover-artwork]");
+      expect(artwork?.querySelector("img")).toHaveAttribute(
+        "src",
+        nextArtworkUrl,
+      );
+    });
+    const refreshedImage = artwork?.querySelector("img");
+    expect(refreshedImage).toHaveClass("invisible");
+    expect(
+      artwork?.querySelector("[data-discover-artwork-fallback]"),
+    ).toHaveTextContent("BH");
+    if (!refreshedImage) throw new Error("Expected replacement artwork.");
+
+    fireEvent.load(refreshedImage);
+    expect(refreshedImage).not.toHaveClass("invisible");
+    expect(
+      artwork?.querySelector("[data-discover-artwork-fallback]"),
+    ).not.toBeInTheDocument();
+    expect(artwork).toHaveAttribute(
+      "data-coda-discover-artwork",
+      "discover:release-1",
     );
   });
 
@@ -172,40 +341,48 @@ describe("Discover", () => {
   it("routes release and artist destinations through their explicit handlers", async () => {
     const onOpenArtist = vi.fn();
     const onOpenRelease = vi.fn();
-    renderDiscover(vi.fn(), { onOpenArtist, onOpenRelease });
+    const onPlay = vi.fn();
+    renderDiscover(vi.fn(), { onOpenArtist, onOpenRelease, onPlay });
 
-    const title = await screen.findByRole("button", { name: "Blue Hours" });
+    const title = await screen.findByRole("link", { name: "Blue Hours" });
+    expect(title).toHaveAttribute(
+      "href",
+      "/discover/releases/discover%3Arelease-1?tag=&sort=top",
+    );
     const card = title.closest("article");
     expect(card).toHaveAttribute(
       "data-discover-release-card",
-      "release-1",
+      "discover:release-1",
     );
     expect(card?.querySelector("[data-coda-discover-artwork]")).toHaveAttribute(
       "data-coda-discover-artwork",
-      "release-1",
+      "discover:release-1",
     );
+    expect(
+      card?.querySelector("a a, a button, button a"),
+    ).not.toBeInTheDocument();
     expect(within(title).getByText("Blue Hours")).toHaveAttribute(
       "data-coda-discover-title",
-      "release-1",
+      "discover:release-1",
     );
     fireEvent.click(title);
     expect(onOpenRelease).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
-        id: "release-1",
+        id: "discover:release-1",
         title: "Blue Hours",
       }),
       title,
     );
 
-    const artwork = screen.getByRole("button", {
+    const artwork = screen.getByRole("link", {
       name: "Open Blue Hours Discover details",
     });
     fireEvent.click(artwork);
     expect(onOpenRelease).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
-        id: "release-1",
+        id: "discover:release-1",
         title: "Blue Hours",
       }),
       artwork,
@@ -215,10 +392,40 @@ describe("Discover", () => {
     fireEvent.click(screen.getByRole("button", { name: "Signal Garden" }));
 
     expect(onOpenArtist).toHaveBeenCalledWith(expect.objectContaining({
-      id: "release-1",
+      id: "discover:release-1",
       artist: "Signal Garden",
     }));
+    expect(onPlay).not.toHaveBeenCalled();
     expect(mocks.openBandcampUrl).not.toHaveBeenCalled();
+  });
+
+  it("keeps an invalid release identity as a safe action instead of an unsafe link", async () => {
+    const invalidRelease = {
+      id: "release-without-discover-provenance",
+      title: "Untrusted Release",
+      artist: "Signal Garden",
+      itemUrl: "https://signal-garden.bandcamp.com/album/untrusted-release",
+    };
+    const onOpenRelease = vi.fn();
+    mocks.fetchDiscover.mockResolvedValueOnce({
+      results: [invalidRelease],
+      resultCount: 1,
+      hasMore: false,
+    });
+
+    renderDiscover(vi.fn(), { onOpenRelease });
+
+    const title = await screen.findByRole("button", {
+      name: "Untrusted Release",
+    });
+    expect(screen.queryByRole("link", {
+      name: "Untrusted Release",
+    })).not.toBeInTheDocument();
+    fireEvent.click(title);
+    expect(onOpenRelease).toHaveBeenCalledWith(invalidRelease, title);
+    expect(title.closest("article")?.querySelector(
+      "a a, a button, button a",
+    )).not.toBeInTheDocument();
   });
 
   it("exposes the active genre and sort as pressed controls", async () => {
@@ -228,12 +435,20 @@ describe("Discover", () => {
     await screen.findByText("Blue Hours");
     const allGenres = screen.getByRole("button", { name: "All genres" });
     expect(allGenres).toHaveAttribute("aria-pressed", "true");
+    expect(
+      allGenres.querySelector("[data-discover-genre-indicator]"),
+    ).toHaveClass("pointer-events-none");
 
     fireEvent.click(screen.getByRole("button", { name: "Rock" }));
     expect(screen.getByRole("button", { name: "Rock" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
+    expect(
+      screen
+        .getByRole("button", { name: "Rock" })
+        .querySelector("[data-discover-genre-indicator]"),
+    ).toHaveAttribute("data-selection-travel-steps", "2");
     expect(allGenres).toHaveAttribute("aria-pressed", "false");
 
     await waitFor(() =>
@@ -263,7 +478,7 @@ describe("Discover", () => {
     mocks.fetchDiscover
       .mockResolvedValueOnce({
         results: [{
-          id: "release-1",
+          id: "discover:release-1",
           title: "Blue Hours",
           artist: "Signal Garden",
           location: "Chicago, Illinois",
@@ -275,7 +490,7 @@ describe("Discover", () => {
       })
       .mockResolvedValueOnce({
         results: [{
-          id: "release-2",
+          id: "discover:release-2",
           title: "Amber Transit",
           artist: "Signal Garden",
           location: "Chicago, Illinois",
@@ -296,10 +511,108 @@ describe("Discover", () => {
     );
   });
 
+  it("keeps accumulated Discover releases bounded with working visible actions", async () => {
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    const originalResizeObserver = globalThis.ResizeObserver;
+    class ResizeObserverMock implements ResizeObserver {
+      private readonly observed = new WeakSet<Element>();
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      disconnect() {}
+      observe(target: Element) {
+        if (this.observed.has(target)) return;
+        this.observed.add(target);
+        const bounds = target.getBoundingClientRect();
+        this.callback([{
+          borderBoxSize: [{
+            blockSize: bounds.height,
+            inlineSize: bounds.width,
+          }],
+          contentRect: bounds,
+          target,
+        } as unknown as ResizeObserverEntry], this);
+      }
+      unobserve() {}
+    }
+    globalThis.ResizeObserver = ResizeObserverMock;
+    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+      const scrollElement = this.hasAttribute("data-coda-library-scroll");
+      const top = scrollElement ? 0 : 160;
+      const height = scrollElement ? 240 : 0;
+      return {
+        bottom: top + height,
+        height,
+        left: 0,
+        right: 900,
+        top,
+        width: 900,
+        x: 0,
+        y: top,
+        toJSON: () => undefined,
+      };
+    };
+
+    try {
+      const releases = Array.from({ length: 5_000 }, (_, index) => ({
+        id: `discover:release-${index}`,
+        title: `Discover release ${index}`,
+        artist: `Discover artist ${index}`,
+        itemUrl: `https://artist-${index}.bandcamp.com/album/release-${index}`,
+        featuredTrack: {
+          id: `preview-${index}`,
+          title: `Preview track ${index}`,
+          duration: 180,
+          streamUrl: `https://t4.bcbits.com/stream/${index}`,
+        },
+      }));
+      const onOpenRelease = vi.fn();
+      const onTogglePlayback = vi.fn();
+      mocks.fetchDiscover.mockResolvedValueOnce({
+        results: releases,
+        resultCount: releases.length,
+        hasMore: false,
+      });
+      renderDiscover(vi.fn(), {
+        currentTrackId: "preview-0",
+        onOpenRelease,
+        onTogglePlayback,
+        playing: true,
+      });
+
+      const grid = await screen.findByRole("list", {
+        name: "Discover releases",
+      });
+      await waitFor(() => {
+        expect(grid).toHaveAttribute("data-virtualized", "true");
+        const cards = within(grid).getAllByRole("listitem");
+        expect(cards.length).toBeGreaterThan(0);
+        expect(cards.length).toBeLessThan(50);
+      });
+      expect(within(grid).getAllByRole("listitem")[0]).toHaveAttribute(
+        "aria-setsize",
+        "5000",
+      );
+
+      fireEvent.click(within(grid).getByRole("button", {
+        name: "Pause Preview track 0",
+      }));
+      expect(onTogglePlayback).toHaveBeenCalledOnce();
+      const openRelease = within(grid).getByRole("link", {
+        name: "Discover release 0",
+      });
+      openRelease.focus();
+      expect(openRelease).toHaveFocus();
+      fireEvent.click(openRelease);
+      expect(onOpenRelease).toHaveBeenCalledWith(releases[0], openRelease);
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = originalRect;
+      globalThis.ResizeObserver = originalResizeObserver;
+    }
+  });
+
   it("keeps prior discoveries visible when their revalidation fails", async () => {
     mocks.fetchDiscover.mockResolvedValueOnce({
       results: [{
-        id: "release-1",
+        id: "discover:release-1",
         title: "Blue Hours",
         artist: "Signal Garden",
         location: "Chicago, Illinois",

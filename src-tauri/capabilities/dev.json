@@ -1,0 +1,32 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "dev",
+  "description": "Capabilities for local Coda Dev builds without release updating.",
+  "windows": ["main", "mini-player"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-hide",
+    "core:window:allow-unminimize",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
+    "core:window:allow-set-title",
+    "process:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        {
+          "url": "https://bandcamp.com/settings?pane=fan"
+        },
+        {
+          "url": "https://bandcamp.com/**"
+        },
+        {
+          "url": "https://*.bandcamp.com/**"
+        },
+        {
+          "url": "https://www.last.fm/api/auth/**"
+        }
+      ]
+    }
+  ]
+}

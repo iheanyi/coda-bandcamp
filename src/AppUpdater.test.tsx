@@ -8,8 +8,17 @@ import type { AppUpdate } from "./updater";
 const updaterMocks = vi.hoisted(() => ({
   checkForAppUpdate: vi.fn(),
   desktop: true,
+  enabled: true,
   restartAfterUpdate: vi.fn(),
 }));
+
+vi.mock("./appFlavor", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./appFlavor")>();
+  return {
+    ...actual,
+    isAppUpdaterEnabled: () => updaterMocks.enabled,
+  };
+});
 
 vi.mock("./lib", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./lib")>();
@@ -31,8 +40,8 @@ vi.mock("./updater", async (importOriginal) => {
 import {
   AppUpdatePrompt,
   AppUpdateSettings,
-  useAppUpdater,
 } from "./AppUpdater";
+import { useAppUpdater } from "./appUpdaterController";
 
 function UpdaterHarness() {
   const updater = useAppUpdater();
@@ -85,6 +94,7 @@ function deferred<T>() {
 describe("app updater experience", () => {
   beforeEach(() => {
     updaterMocks.desktop = true;
+    updaterMocks.enabled = true;
     updaterMocks.checkForAppUpdate.mockReset();
     updaterMocks.restartAfterUpdate.mockReset();
     updaterMocks.restartAfterUpdate.mockResolvedValue(undefined);
@@ -304,6 +314,22 @@ describe("app updater experience", () => {
 
   it("does not check or render update controls in a browser", async () => {
     updaterMocks.desktop = false;
+    updaterMocks.checkForAppUpdate.mockResolvedValue(createUpdate());
+
+    renderUpdater();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(updaterMocks.checkForAppUpdate).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("button", { name: "Check for updates" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("does not call updater APIs in the development and automation flavor", async () => {
+    updaterMocks.enabled = false;
     updaterMocks.checkForAppUpdate.mockResolvedValue(createUpdate());
 
     renderUpdater();

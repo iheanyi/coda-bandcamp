@@ -24,8 +24,11 @@ export function recommendQueueAlbum(
   seedTrack: Track | undefined,
   favoriteAlbumIds: ReadonlySet<string>,
   nonce = 0,
+  excludedAlbumIds?: ReadonlySet<string>,
 ): QueueRecommendation | undefined {
-  const playable = albums.filter((album) => album.songCount > 0);
+  const playable = albums.filter(
+    (album) => album.songCount > 0 && !excludedAlbumIds?.has(album.id),
+  );
   if (!playable.length) return undefined;
 
   const seedAlbum = seedTrack

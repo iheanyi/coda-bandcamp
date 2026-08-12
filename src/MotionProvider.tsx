@@ -1,10 +1,10 @@
 import type { ReactNode } from "react";
-import { domAnimation, LazyMotion, MotionConfig } from "motion/react";
+import { domMax, LazyMotion, MotionConfig } from "motion/react";
 
 function CodaMotionProvider({ children }: { children: ReactNode }) {
   return (
     <MotionConfig reducedMotion="user">
-      <LazyMotion features={domAnimation} strict>
+      <LazyMotion features={domMax} strict>
         {children}
       </LazyMotion>
     </MotionConfig>
