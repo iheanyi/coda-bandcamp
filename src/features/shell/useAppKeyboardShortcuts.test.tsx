@@ -1,4 +1,5 @@
 import { act, renderHook } from "@testing-library/react";
+import { StrictMode, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { useAppKeyboardShortcuts } from "./useAppKeyboardShortcuts";
@@ -49,5 +50,45 @@ describe("useAppKeyboardShortcuts", () => {
     unmount();
     window.dispatchEvent(new KeyboardEvent("keydown", { code: "Space" }));
     expect(onTogglePlayback).toHaveBeenCalledOnce();
+  });
+
+  it("keeps exactly one current listener through Strict Mode remounts", () => {
+    const searchRef = { current: document.createElement("input") };
+    const firstToggle = vi.fn();
+    const nextToggle = vi.fn();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <StrictMode>{children}</StrictMode>
+    );
+    const { rerender, unmount } = renderHook(
+      ({ onTogglePlayback }) =>
+        useAppKeyboardShortcuts({
+          onNext: vi.fn(),
+          onPrevious: vi.fn(),
+          onTogglePlayback,
+          searchRef,
+        }),
+      {
+        initialProps: { onTogglePlayback: firstToggle },
+        wrapper,
+      },
+    );
+
+    act(() => {
+      for (let event = 0; event < 100; event += 1) {
+        window.dispatchEvent(new KeyboardEvent("keydown", { code: "Space" }));
+      }
+    });
+    expect(firstToggle).toHaveBeenCalledTimes(100);
+
+    rerender({ onTogglePlayback: nextToggle });
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { code: "Space" }));
+    });
+    expect(firstToggle).toHaveBeenCalledTimes(100);
+    expect(nextToggle).toHaveBeenCalledOnce();
+
+    unmount();
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "Space" }));
+    expect(nextToggle).toHaveBeenCalledOnce();
   });
 });

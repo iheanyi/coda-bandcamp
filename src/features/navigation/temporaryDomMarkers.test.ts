@@ -200,4 +200,79 @@ describe("temporary DOM marker leases", () => {
       first.mock.invocationCallOrder[0]!,
     );
   });
+
+  it("restores the latest surviving lease across adversarial release orders", () => {
+    let randomState = 0x5eed1234;
+    const random = () => {
+      randomState = (randomState * 1_664_525 + 1_013_904_223) >>> 0;
+      return randomState / 0x1_0000_0000;
+    };
+
+    for (let run = 0; run < 64; run += 1) {
+      const element = document.createElement("span");
+      element.setAttribute("data-coda-artist-name-source", "baseline");
+      element.style.setProperty("view-transition-name", "baseline-name");
+      const attributeReleases: Array<() => void> = [];
+      const classReleases: Array<() => void> = [];
+      const styleReleases: Array<() => void> = [];
+      const remaining = new Set<number>();
+
+      for (let index = 0; index < 32; index += 1) {
+        const value = `entity-${run}-${index}`;
+        remaining.add(index);
+        attributeReleases.push(
+          acquireTemporaryAttribute(
+            element,
+            "data-coda-artist-name-source",
+            value,
+          ),
+        );
+        classReleases.push(
+          acquireTemporaryClass(element, "coda-album-artwork-source"),
+        );
+        styleReleases.push(
+          acquireTemporaryStyleProperty(
+            element,
+            "view-transition-name",
+            value,
+          ),
+        );
+      }
+
+      const releaseOrder = [...remaining];
+      for (let index = releaseOrder.length - 1; index > 0; index -= 1) {
+        const swapIndex = Math.floor(random() * (index + 1));
+        [releaseOrder[index], releaseOrder[swapIndex]] = [
+          releaseOrder[swapIndex]!,
+          releaseOrder[index]!,
+        ];
+      }
+
+      for (const releasedIndex of releaseOrder) {
+        attributeReleases[releasedIndex]?.();
+        classReleases[releasedIndex]?.();
+        styleReleases[releasedIndex]?.();
+        remaining.delete(releasedIndex);
+        const activeIndex = remaining.size
+          ? Math.max(...remaining)
+          : undefined;
+        const expected =
+          activeIndex === undefined
+            ? "baseline"
+            : `entity-${run}-${activeIndex}`;
+
+        expect(
+          element.getAttribute("data-coda-artist-name-source"),
+        ).toBe(expected);
+        expect(element.style.viewTransitionName).toBe(
+          activeIndex === undefined ? "baseline-name" : expected,
+        );
+        if (remaining.size > 0) {
+          expect(element).toHaveClass("coda-album-artwork-source");
+        } else {
+          expect(element).not.toHaveClass("coda-album-artwork-source");
+        }
+      }
+    }
+  });
 });

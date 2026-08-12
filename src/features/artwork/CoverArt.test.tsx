@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -95,5 +96,30 @@ describe("CoverArt", () => {
     );
     expect(mocks.invalidateCoverUrl).toHaveBeenCalledTimes(2);
     expect(mocks.fetchCoverUrl).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps one artwork-refresh listener through Strict Mode remounts", async () => {
+    mocks.fetchCoverUrl.mockResolvedValue(resolvedB);
+    const { unmount } = render(
+      <StrictMode>
+        <CoverArt album={album("")} />
+      </StrictMode>,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("img", { name: "Test Album cover" }),
+      ).toHaveAttribute("src", resolvedB),
+    );
+    mocks.fetchCoverUrl.mockClear();
+
+    window.dispatchEvent(new CustomEvent("coda:refresh-artwork"));
+    await waitFor(() => expect(mocks.fetchCoverUrl).toHaveBeenCalledOnce());
+
+    unmount();
+    mocks.fetchCoverUrl.mockClear();
+    window.dispatchEvent(new CustomEvent("coda:refresh-artwork"));
+    await Promise.resolve();
+    expect(mocks.fetchCoverUrl).not.toHaveBeenCalled();
   });
 });

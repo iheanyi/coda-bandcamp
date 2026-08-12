@@ -306,6 +306,59 @@ describe("player state persistence", () => {
     );
   });
 
+  it("keeps the active persisted index stable around randomized ephemeral previews", () => {
+    let randomState = 0x0400c0da;
+    const random = () => {
+      randomState = (randomState * 1_664_525 + 1_013_904_223) >>> 0;
+      return randomState / 0x1_0000_0000;
+    };
+
+    for (let run = 0; run < 500; run += 1) {
+      const length = 1 + Math.floor(random() * 160);
+      const queue = Array.from({ length }, (_, index) => ({
+        ...track,
+        albumId: `album-${run}-${index}`,
+        id:
+          random() < 0.35
+            ? `discover:preview-${run}-${index}`
+            : `track-${run}-${index}`,
+      }));
+      const currentIndex = Math.floor(random() * length);
+      const currentIsEphemeral = queue[currentIndex]!.id.startsWith(
+        "discover:",
+      );
+      const persisted = queue.filter(
+        (candidate) => !candidate.id.startsWith("discover:"),
+      );
+      const retainedThroughCurrent = queue
+        .slice(0, currentIndex + 1)
+        .filter((candidate) => !candidate.id.startsWith("discover:")).length;
+      const expectedIndex =
+        persisted.length === 0
+          ? 0
+          : currentIsEphemeral
+            ? Math.min(retainedThroughCurrent, persisted.length - 1)
+            : retainedThroughCurrent - 1;
+
+      const state = createPlayerState({
+        ...input,
+        currentIndex,
+        lastFmProgress: undefined,
+        positionSeconds: 37,
+        queue,
+      });
+
+      expect(state.queue.map((candidate) => candidate.id)).toEqual(
+        persisted.map((candidate) => candidate.id),
+      );
+      expect(state.currentIndex).toBe(expectedIndex);
+      expect(state.positionSeconds).toBe(
+        currentIsEphemeral || persisted.length === 0 ? 0 : 37,
+      );
+      expect(parsePlayerState(state)).toEqual(state);
+    }
+  });
+
   it("uses a real browser task boundary for cooperative validation", async () => {
     const yielding = yieldPlayerStateValidation();
     let settled = false;

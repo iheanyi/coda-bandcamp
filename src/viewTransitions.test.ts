@@ -329,6 +329,58 @@ describe("transitionCodaView", () => {
     );
   });
 
+  it("restores a persistent shared source after repeated supersession", async () => {
+    const source = document.createElement("a");
+    source.className = "player__art-link";
+    source.style.setProperty("view-transition-name", "player-artwork");
+    document.body.append(source);
+    const transitions = Array.from({ length: 50 }, () => deferred());
+    const skipTransitions = transitions.map(() => vi.fn());
+    let transitionIndex = 0;
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: vi.fn((update: () => void | Promise<void>) => {
+        const index = transitionIndex;
+        transitionIndex += 1;
+        const updateCallbackDone = Promise.resolve(update());
+        return {
+          finished: Promise.all([
+            updateCallbackDone,
+            transitions[index]!.promise,
+          ]).then(() => undefined),
+          skipTransition: skipTransitions[index],
+          updateCallbackDone,
+        };
+      }),
+    });
+
+    const updates = transitions.map(() => vi.fn());
+    const activeTransitions: Promise<void>[] = [];
+    for (let index = 0; index < transitions.length; index += 1) {
+      activeTransitions.push(
+        transitionCodaView(updates[index]!, "now-playing-open"),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(updates[index]).toHaveBeenCalledOnce();
+      expect(source.style.viewTransitionName).toBe("none");
+    }
+
+    transitions.forEach((transition) => transition.resolve());
+    await Promise.all(activeTransitions);
+
+    skipTransitions
+      .slice(0, -1)
+      .forEach((skipTransition) =>
+        expect(skipTransition).toHaveBeenCalledOnce(),
+      );
+    expect(skipTransitions.at(-1)).not.toHaveBeenCalled();
+    expect(source.style.viewTransitionName).toBe("player-artwork");
+    expect(document.documentElement).not.toHaveClass(
+      "coda-view-transitioning",
+    );
+  });
+
   it("commits once and clears support when browser lifecycle promises reject", async () => {
     const cases = [
       {
