@@ -47,7 +47,6 @@ export default defineConfig(({ mode }) => {
         ignored: ["**/src-tauri/target/**"],
       },
     },
-    envPrefix: ["VITE_", "TAURI_"],
     test: {
       environment: "jsdom",
       exclude: [...configDefaults.exclude, "**/.worktrees/**"],
