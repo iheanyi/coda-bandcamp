@@ -18,6 +18,8 @@ Discover, and Last.fm scrobbling in a focused native app.
 ## Highlights
 
 - Browse your collection by release, artist, album, single, genre, or recency.
+- Use Surprise Me for one weighted track or a complete album without loading
+  every release in the collection.
 - Queue, reorder, shuffle, search, and resume playback across app restarts.
 - Keep device-local favorites and manage Bandcamp-synced playlists.
 - Explore Bandcamp Discover and complete Bandcamp Radio show archives.
@@ -53,6 +55,35 @@ installed production build while Vite and Tauri continue to provide hot
 reloading. No local signing certificate is required: Coda uses the optional
 `Coda Local Development` identity when it exists and otherwise signs the app
 ad hoc.
+
+### Unattended macOS native testing
+
+Maintainers can build an optimized, packaged app for local automation without
+giving the production bundle an unstable ad-hoc signature:
+
+```sh
+npm run desktop:build:automation
+open "src-tauri/target/release/bundle/macos/Coda Dev.app"
+```
+
+This command requires the local `Coda Local Development` code-signing identity.
+It fails before building when that identity is unavailable; set
+`CODA_AUTOMATION_CODESIGN_IDENTITY` only to select a different installed
+identity. The resulting app deliberately reuses the isolated `Coda Dev`
+identifier and app-data profile, has release updating disabled, creates no
+updater artifact, and is not for distribution. Ordinary `npm run dev` uses the
+same non-updating profile; production desktop builds retain the signed updater.
+
+macOS may request Keychain approval once for this signed `Coda Dev` identity.
+Choose **Always Allow** for access to the saved Bandcamp Subsonic credential. Later
+automation rebuilds retain the same designated requirement, so they do not
+need another approval unless the signing certificate changes. The build does
+not place Bandcamp credentials in environment variables, logs, source files,
+or app data; authenticated operations continue to use the system Keychain.
+
+Unlike this explicit automation build, ordinary `npm run dev` remains portable:
+it uses `Coda Local Development` when available and falls back to ad-hoc signing
+when it is not.
 
 To create a native installer for the current platform:
 
@@ -157,14 +188,17 @@ short-lived and are not written to the persistent player snapshot. See
 
 ```sh
 npm test
+npm run test:automation-build
 npm run test:coverage
 npm run build
 cargo test --manifest-path src-tauri/Cargo.toml
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 ```
 
-CI runs the frontend suite, production renderer build, Rust tests, Clippy, and
-native Tauri builds on Windows, macOS, and Ubuntu.
+CI runs the frontend and automation-profile suites, production renderer build,
+Rust tests, Clippy, and native Tauri builds on Windows, macOS, and Ubuntu. The
+automation-profile suite also exercises the local signing runner's stable,
+missing, duplicate, and ad-hoc identity paths where a POSIX shell is available.
 
 ## Contributing
 

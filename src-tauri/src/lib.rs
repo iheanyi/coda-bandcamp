@@ -144,8 +144,13 @@ pub fn run() {
                 let previous =
                     MenuItem::with_id(app, "previous", "Previous Track", true, None::<&str>)?;
                 let next = MenuItem::with_id(app, "next", "Next Track", true, None::<&str>)?;
-                let shuffle =
-                    MenuItem::with_id(app, "shuffle-library", "Surprise Me", true, None::<&str>)?;
+                let shuffle = MenuItem::with_id(
+                    app,
+                    "shuffle-library",
+                    "Shuffle Entire Library",
+                    true,
+                    None::<&str>,
+                )?;
                 let separator = PredefinedMenuItem::separator(app)?;
                 let quit = MenuItem::with_id(
                     app,

@@ -21,8 +21,11 @@ Treat these behaviors as product requirements, not implementation details:
 - Clicking compact-player artwork opens the full Now Playing page. Album text
   still opens album detail, and Back restores the exact underlying context.
 - **Shuffle all** is contextual. It shuffles the artist, album, search results,
-  genre, Recent, Singles, Albums, or Collection currently being viewed. The tray
-  action explicitly named **Shuffle Entire Library** remains global.
+  genre, Recent, Singles, Albums, or Collection currently being viewed.
+  **Surprise Me** uses that same visible scope to choose either one weighted
+  track or one multi-track release without hydrating the whole scope; a chosen
+  release queues its complete tracklist in album order. The tray action
+  explicitly named **Shuffle Entire Library** remains global.
 - Album artwork and album titles open an album detail page. Artist names open an
   artist page. Track titles start playback.
 - Albums are full pages, not modals, so navigation and history remain coherent.
@@ -213,6 +216,13 @@ overhead should not exceed the work being parallelized.
 
 - Use React state for playback, queue, navigation, authenticated library data,
   and other local application state.
+- Keep Vite Fast Refresh boundaries runtime-component-only. A module that
+  exports a React component or Provider must not also export hooks, contexts,
+  query keys, or other non-component runtime values; move those to a focused
+  `.ts` sibling and use type-only re-exports when an API type must stay nearby.
+  Give the sibling a distinct basename rather than pairing `Thing.ts` with
+  `Thing.tsx`, because TypeScript resolution can shadow the component module on
+  case-insensitive filesystems.
 - TanStack Query owns album metadata, Discover, Radio, and playlist server
   state. Local Favorites, the player, and the queue remain React/local
   application state; authenticated credentials never enter the query cache.
