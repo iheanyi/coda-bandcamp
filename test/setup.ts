@@ -14,6 +14,16 @@ Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
   value: vi.fn(),
 });
 
+Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+  configurable: true,
+  value: vi.fn(),
+});
+
+Object.defineProperty(window, "scrollTo", {
+  configurable: true,
+  value: vi.fn(),
+});
+
 Object.defineProperty(HTMLMediaElement.prototype, "play", {
   configurable: true,
   value: vi.fn().mockResolvedValue(undefined),
