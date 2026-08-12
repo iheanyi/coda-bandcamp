@@ -429,6 +429,7 @@ pub(super) fn write_player_state_without_stale_checkpoint(
     checkpoint_path: &Path,
     state: &PlayerStateSnapshot,
 ) -> Result<(), String> {
+    write_player_state(state_path, state)?;
     match fs::remove_file(checkpoint_path) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -438,7 +439,7 @@ pub(super) fn write_player_state_without_stale_checkpoint(
             ))
         }
     }
-    write_player_state(state_path, state)
+    Ok(())
 }
 
 fn read_player_checkpoint_classified(

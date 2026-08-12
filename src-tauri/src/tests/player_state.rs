@@ -132,7 +132,7 @@ fn atomically_round_trips_player_state_and_discards_corruption() {
 }
 
 #[test]
-fn a_checkpoint_cleanup_failure_cannot_commit_a_conflicting_full_snapshot() {
+fn a_checkpoint_cleanup_failure_is_reported_after_committing_the_snapshot() {
     let state_path = temporary_player_state_path("checkpoint-cleanup-failure");
     let directory = state_path.parent().unwrap().to_path_buf();
     let checkpoint_path = directory.join("checkpoint-that-cannot-be-removed");
@@ -142,6 +142,7 @@ fn a_checkpoint_cleanup_failure_cannot_commit_a_conflicting_full_snapshot() {
     write_player_state(&state_path, &original).unwrap();
     let mut replacement = original.clone();
     replacement.queue[0].id = "replacement-track".into();
+    replacement.last_fm_progress.as_mut().unwrap().track_id = "replacement-track".into();
 
     assert!(write_player_state_without_stale_checkpoint(
         &state_path,
@@ -151,8 +152,34 @@ fn a_checkpoint_cleanup_failure_cannot_commit_a_conflicting_full_snapshot() {
     .is_err());
     assert_eq!(
         read_player_state(&state_path).unwrap().unwrap().queue[0].id,
-        original.queue[0].id
+        replacement.queue[0].id
     );
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn a_player_state_write_failure_preserves_the_checkpoint() {
+    let state_path = temporary_player_state_path("state-write-failure");
+    let directory = state_path.parent().unwrap().to_path_buf();
+    let checkpoint_path = directory.join("player-state-checkpoint.json");
+    fs::create_dir_all(&state_path).unwrap();
+    let checkpoint = PlayerStateCheckpoint {
+        current_index: 0,
+        current_track_id: "track-1".into(),
+        position_seconds: 90.0,
+        last_fm_progress: None,
+        radio_scrobble_progress: None,
+    };
+    write_player_checkpoint(&checkpoint_path, &checkpoint).unwrap();
+
+    assert!(write_player_state_without_stale_checkpoint(
+        &state_path,
+        &checkpoint_path,
+        &sample_player_state(),
+    )
+    .is_err());
+    assert!(checkpoint_path.exists());
 
     fs::remove_dir_all(directory).unwrap();
 }
