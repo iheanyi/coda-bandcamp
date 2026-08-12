@@ -21,127 +21,156 @@ export type LocalFavoritesStorage = {
   clear: () => Promise<void>;
 };
 
-let databaseRequest: Promise<IDBDatabase> | undefined;
-let indexedStorageUnavailable = false;
-let storageOperationChain: Promise<void> = Promise.resolve();
+class LocalFavoritesStoreClient {
+  private databaseRequest: Promise<IDBDatabase> | undefined;
+  private indexedStorageUnavailable = false;
+  private storageOperationChain: Promise<void> = Promise.resolve();
 
-function enqueueStorageOperation<Value>(
-  operation: () => Promise<Value>,
-): Promise<Value> {
-  const result = storageOperationChain.then(operation);
-  storageOperationChain = result.then(
-    () => undefined,
-    () => undefined,
-  );
-  return result;
-}
-
-function openDatabase(): Promise<IDBDatabase> {
-  if (!databaseRequest) {
-    const pending = new Promise<IDBDatabase>((resolve, reject) => {
-      const request = window.indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
-      request.onupgradeneeded = () => {
-        if (!request.result.objectStoreNames.contains(FAVORITES_STORE)) {
-          request.result.createObjectStore(FAVORITES_STORE);
-        }
-      };
+  private readonly defaultIndexedFavoritesStorage: LocalFavoritesStorage = {
+    read: () => this.transact("readonly", (store, resolve, reject) => {
+      const request = store.get(FAVORITES_KEY);
       request.onsuccess = () => {
-        const database = request.result;
-        database.onversionchange = () => {
-          database.close();
-          databaseRequest = undefined;
-        };
-        database.onclose = () => {
-          databaseRequest = undefined;
-        };
-        resolve(database);
+        const stored: unknown = request.result;
+        resolve(stored);
       };
-      request.onerror = () => {
-        databaseRequest = undefined;
-        reject(request.error ?? new Error("Coda could not open local Favorites."));
+      request.onerror = () => reject(request.error);
+    }),
+    write: (serialized) =>
+      this.transact("readwrite", (store, resolve, reject) => {
+        const request = store.put(serialized, FAVORITES_KEY);
+        request.onsuccess = () => resolve();
+        request.onerror = () => reject(request.error);
+      }),
+    clear: () => this.transact("readwrite", (store, resolve, reject) => {
+      const request = store.delete(FAVORITES_KEY);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    }),
+  };
+
+  availableIndexedStorage(): LocalFavoritesStorage | undefined {
+    if (typeof window === "undefined" || this.indexedStorageUnavailable) {
+      return undefined;
+    }
+    try {
+      return window.indexedDB
+        ? this.defaultIndexedFavoritesStorage
+        : undefined;
+    } catch {
+      this.indexedStorageUnavailable = true;
+      return undefined;
+    }
+  }
+
+  enqueueStorageOperation<Value>(
+    operation: () => Promise<Value>,
+  ): Promise<Value> {
+    const result = this.storageOperationChain.then(operation);
+    this.storageOperationChain = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  isIndexedStorageUnavailable(): boolean {
+    return this.indexedStorageUnavailable;
+  }
+
+  private openDatabase(): Promise<IDBDatabase> {
+    if (!this.databaseRequest) {
+      let guarded: Promise<IDBDatabase>;
+      const pending = new Promise<IDBDatabase>((resolve, reject) => {
+        const request = window.indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
+        request.onupgradeneeded = () => {
+          if (!request.result.objectStoreNames.contains(FAVORITES_STORE)) {
+            request.result.createObjectStore(FAVORITES_STORE);
+          }
+        };
+        request.onsuccess = () => {
+          const database = request.result;
+          const release = () => {
+            if (this.databaseRequest === guarded) {
+              this.databaseRequest = undefined;
+            }
+          };
+          database.onversionchange = () => {
+            database.close();
+            release();
+          };
+          database.onclose = release;
+          resolve(database);
+        };
+        request.onerror = () => {
+          if (this.databaseRequest === guarded) {
+            this.databaseRequest = undefined;
+          }
+          reject(
+            request.error ?? new Error("Coda could not open local Favorites."),
+          );
+        };
+      });
+      guarded = pending.catch((cause) => {
+        if (this.databaseRequest === guarded) {
+          this.databaseRequest = undefined;
+        }
+        throw cause;
+      });
+      this.databaseRequest = guarded;
+    }
+    return this.databaseRequest;
+  }
+
+  private async transact<T>(
+    mode: IDBTransactionMode,
+    operation: (
+      store: IDBObjectStore,
+      resolve: (value: T) => void,
+      reject: (cause: unknown) => void,
+    ) => void,
+  ): Promise<T> {
+    const database = await this.openDatabase();
+    return new Promise<T>((resolve, reject) => {
+      const transaction = database.transaction(FAVORITES_STORE, mode);
+      let result: T;
+      let resultReady = false;
+      transaction.onerror = () => reject(
+        transaction.error ?? new Error("Coda could not access local Favorites."),
+      );
+      transaction.onabort = () => reject(
+        transaction.error ?? new Error("Coda could not update local Favorites."),
+      );
+      transaction.oncomplete = () => {
+        if (resultReady) resolve(result);
+        else reject(new Error("Coda did not finish the local Favorites request."));
       };
+      operation(
+        transaction.objectStore(FAVORITES_STORE),
+        (value) => {
+          result = value;
+          resultReady = true;
+        },
+        reject,
+      );
     });
-    let guarded: Promise<IDBDatabase>;
-    guarded = pending.catch((cause) => {
-      if (databaseRequest === guarded) databaseRequest = undefined;
-      throw cause;
-    });
-    databaseRequest = guarded;
   }
-  return databaseRequest;
-}
 
-async function transact<T>(
-  mode: IDBTransactionMode,
-  operation: (store: IDBObjectStore, resolve: (value: T) => void, reject: (cause: unknown) => void) => void,
-): Promise<T> {
-  const database = await openDatabase();
-  return new Promise<T>((resolve, reject) => {
-    const transaction = database.transaction(FAVORITES_STORE, mode);
-    let result: T;
-    let resultReady = false;
-    transaction.onerror = () => reject(
-      transaction.error ?? new Error("Coda could not access local Favorites."),
+  disableDefaultIndexedStorage(
+    storage: LocalFavoritesStorage,
+  ): boolean {
+    if (storage !== this.defaultIndexedFavoritesStorage) return false;
+    this.indexedStorageUnavailable = true;
+    const pending = this.databaseRequest;
+    this.databaseRequest = undefined;
+    void pending?.then(
+      (database) => database.close(),
+      () => undefined,
     );
-    transaction.onabort = () => reject(
-      transaction.error ?? new Error("Coda could not update local Favorites."),
-    );
-    transaction.oncomplete = () => {
-      if (resultReady) resolve(result);
-      else reject(new Error("Coda did not finish the local Favorites request."));
-    };
-    operation(
-      transaction.objectStore(FAVORITES_STORE),
-      (value) => {
-        result = value;
-        resultReady = true;
-      },
-      reject,
-    );
-  });
-}
-
-const defaultIndexedFavoritesStorage: LocalFavoritesStorage = {
-  read: () => transact("readonly", (store, resolve, reject) => {
-    const request = store.get(FAVORITES_KEY);
-    request.onsuccess = () => resolve(request.result as unknown | undefined);
-    request.onerror = () => reject(request.error);
-  }),
-  write: (serialized) => transact("readwrite", (store, resolve, reject) => {
-    const request = store.put(serialized, FAVORITES_KEY);
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  }),
-  clear: () => transact("readwrite", (store, resolve, reject) => {
-    const request = store.delete(FAVORITES_KEY);
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  }),
-};
-
-function indexedFavoritesStorage(): LocalFavoritesStorage | undefined {
-  if (typeof window === "undefined" || indexedStorageUnavailable) {
-    return undefined;
-  }
-  try {
-    return window.indexedDB ? defaultIndexedFavoritesStorage : undefined;
-  } catch {
-    indexedStorageUnavailable = true;
-    return undefined;
+    return true;
   }
 }
 
-function disableDefaultIndexedStorage(storage: LocalFavoritesStorage): boolean {
-  if (storage !== defaultIndexedFavoritesStorage) return false;
-  indexedStorageUnavailable = true;
-  const pending = databaseRequest;
-  databaseRequest = undefined;
-  void pending?.then(
-    (database) => database.close(),
-    () => undefined,
-  );
-  return true;
-}
+const localFavoritesStore = new LocalFavoritesStoreClient();
 
 function removeLegacyFavorites(): void {
   if (typeof window === "undefined") return;
@@ -185,10 +214,11 @@ async function readPreparedLegacyFavorites(
 }
 
 export function readLocalFavoritesAsync(
-  storage: LocalFavoritesStorage | undefined = indexedFavoritesStorage(),
+  storage: LocalFavoritesStorage | undefined =
+    localFavoritesStore.availableIndexedStorage(),
   preparation: LocalFavoritesPreparation = localFavoritesPreparation,
 ): Promise<LocalFavoriteCollection> {
-  return enqueueStorageOperation(async () => {
+  return localFavoritesStore.enqueueStorageOperation(async () => {
     const legacyFavorites = await readPreparedLegacyFavorites(preparation);
     if (legacyFavorites) {
       if (!storage) return legacyFavorites;
@@ -198,7 +228,7 @@ export function readLocalFavoritesAsync(
         removeLegacyFavorites();
         return prepared.favorites;
       } catch {
-        disableDefaultIndexedStorage(storage);
+        localFavoritesStore.disableDefaultIndexedStorage(storage);
         // Leave the legacy snapshot in place so a later launch can retry.
         return legacyFavorites;
       }
@@ -216,7 +246,7 @@ export function readLocalFavoritesAsync(
       await storage.write(prepared.serialized);
       return prepared.favorites;
     } catch {
-      disableDefaultIndexedStorage(storage);
+      localFavoritesStore.disableDefaultIndexedStorage(storage);
       return (await readPreparedLegacyFavorites(preparation)) ??
         emptyLocalFavorites();
     }
@@ -225,10 +255,11 @@ export function readLocalFavoritesAsync(
 
 export function writeLocalFavoritesAsync(
   favorites: LocalFavoriteCollection,
-  storage: LocalFavoritesStorage | undefined = indexedFavoritesStorage(),
+  storage: LocalFavoritesStorage | undefined =
+    localFavoritesStore.availableIndexedStorage(),
   preparation: LocalFavoritesPreparation = localFavoritesPreparation,
 ): Promise<LocalFavoriteCollection> {
-  return enqueueStorageOperation(async () => {
+  return localFavoritesStore.enqueueStorageOperation(async () => {
     const prepared = await preparation.serialize(favorites);
     if (!storage) {
       writeLegacyPrepared(prepared);
@@ -238,7 +269,9 @@ export function writeLocalFavoritesAsync(
       await storage.write(prepared.serialized);
       removeLegacyFavorites();
     } catch (cause) {
-      if (!disableDefaultIndexedStorage(storage)) throw cause;
+      if (!localFavoritesStore.disableDefaultIndexedStorage(storage)) {
+        throw cause;
+      }
       writeLegacyPrepared(prepared);
     }
     return prepared.favorites;
@@ -246,20 +279,23 @@ export function writeLocalFavoritesAsync(
 }
 
 export function clearLocalFavoritesAsync(
-  storage: LocalFavoritesStorage | undefined = indexedFavoritesStorage(),
+  storage: LocalFavoritesStorage | undefined =
+    localFavoritesStore.availableIndexedStorage(),
   preparation: LocalFavoritesPreparation = localFavoritesPreparation,
 ): Promise<LocalFavoriteCollection> {
-  return enqueueStorageOperation(async () => {
+  return localFavoritesStore.enqueueStorageOperation(async () => {
     if (storage) {
       try {
         await storage.clear();
       } catch (cause) {
-        if (!disableDefaultIndexedStorage(storage)) throw cause;
+        if (!localFavoritesStore.disableDefaultIndexedStorage(storage)) {
+          throw cause;
+        }
         const tombstone = await preparation.serialize(emptyLocalFavorites());
         writeLegacyPrepared(tombstone);
         return tombstone.favorites;
       }
-    } else if (indexedStorageUnavailable) {
+    } else if (localFavoritesStore.isIndexedStorageUnavailable()) {
       const tombstone = await preparation.serialize(emptyLocalFavorites());
       writeLegacyPrepared(tombstone);
       return tombstone.favorites;

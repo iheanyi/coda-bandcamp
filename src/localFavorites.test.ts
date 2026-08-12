@@ -34,6 +34,12 @@ const album: Album = {
   songCount: 1,
   duration: 188,
   coverArt: "cover-1",
+  year: 2025,
+  addedAt: "30 Jun 2025 12:00:00 GMT",
+  starredAt: "2025-07-01T12:00:00Z",
+  playedAt: "2025-07-02T12:00:00Z",
+  originalReleaseDate: { year: 2001 },
+  releaseDate: { year: 2025, month: 6, day: 30 },
   artworkUrl: "https://bandcamp.com/api/subsonic/rest/getCoverArt.view?t=signed",
   tracks: [track],
   palette: ["#a66", "#222"],
@@ -77,7 +83,15 @@ describe("local favorites", () => {
     expect(readLocalFavorites()).toMatchObject({
       albumIds: ["album-1"],
       songIds: ["song-1"],
-      albums: [{ id: "album-1", coverArt: "cover-1" }],
+      albums: [{
+        id: "album-1",
+        coverArt: "cover-1",
+        addedAt: "30 Jun 2025 12:00:00 GMT",
+        starredAt: "2025-07-01T12:00:00Z",
+        playedAt: "2025-07-02T12:00:00Z",
+        originalReleaseDate: { year: 2001 },
+        releaseDate: { year: 2025, month: 6, day: 30 },
+      }],
       tracks: [{
         id: "song-1",
         coverArt: "cover-1",
@@ -118,6 +132,10 @@ describe("local favorites", () => {
       year: null,
       genre: null,
       addedAt: null,
+      starredAt: null,
+      playedAt: null,
+      originalReleaseDate: null,
+      releaseDate: null,
     } as unknown as Album;
     const nativeTrack = {
       ...track,
@@ -140,8 +158,77 @@ describe("local favorites", () => {
     expect(repaired.albums).toMatchObject([{ id: "album-1" }]);
     expect(repaired.tracks).toMatchObject([{ id: "song-1" }]);
     expect(repaired.albums[0]).not.toHaveProperty("coverArt");
+    expect(repaired.albums[0]).not.toHaveProperty("releaseDate");
     expect(repaired.tracks[0]).not.toHaveProperty("disc");
     expect(() => writeLocalFavorites(repaired)).not.toThrow();
+  });
+
+  it("rejects malformed or unbounded OpenSubsonic date metadata", () => {
+    const collectionFor = (candidate: Album) => ({
+      ...emptyLocalFavorites(),
+      albumIds: [candidate.id],
+      albums: [candidate],
+    });
+    const malformed: Album[] = [
+      { ...album, addedAt: "not-a-date" },
+      { ...album, starredAt: "2025-02-29T12:00:00Z" },
+      { ...album, playedAt: `2025-01-01T00:00:00Z${"x".repeat(1_025)}` },
+      { ...album, originalReleaseDate: { year: 2025, month: 2, day: 29 } },
+      { ...album, releaseDate: { year: 2025, day: 1 } },
+    ];
+
+    for (const candidate of malformed) {
+      expect(sanitizeLocalFavorites(collectionFor(candidate))).toBeUndefined();
+    }
+  });
+
+  it("repairs every preserved album date field and recognizes equal precision", () => {
+    const current = updateLocalFavorites(
+      emptyLocalFavorites(),
+      { id: album.id, kind: "album", favorite: true },
+      album,
+    );
+    const refreshed: Album = {
+      ...album,
+      addedAt: "01 Jul 2025 12:00:00 GMT",
+      starredAt: "2025-07-03T12:00:00Z",
+      playedAt: "2025-07-04T12:00:00Z",
+      originalReleaseDate: { year: 2001, month: 4 },
+      releaseDate: { year: 2025, month: 7, day: 1 },
+    };
+
+    const repaired = repairLocalFavoriteMetadata(current, [refreshed], []);
+
+    expect(repaired.albums[0]).toMatchObject({
+      addedAt: refreshed.addedAt,
+      starredAt: refreshed.starredAt,
+      playedAt: refreshed.playedAt,
+      originalReleaseDate: refreshed.originalReleaseDate,
+      releaseDate: refreshed.releaseDate,
+    });
+    expect(repairLocalFavoriteMetadata(
+      repaired,
+      [{
+        ...refreshed,
+        originalReleaseDate: { year: 2001, month: 4 },
+        releaseDate: { year: 2025, month: 7, day: 1 },
+      }],
+      [],
+    )).toBe(repaired);
+
+    const {
+      addedAt: _addedAt,
+      starredAt: _starredAt,
+      playedAt: _playedAt,
+      originalReleaseDate: _originalReleaseDate,
+      releaseDate: _releaseDate,
+      ...candidateWithoutDates
+    } = refreshed;
+    expect(repairLocalFavoriteMetadata(
+      repaired,
+      [candidateWithoutDates],
+      [],
+    )).toBe(repaired);
   });
 
   it("migrates version-one favorites without losing music metadata", () => {

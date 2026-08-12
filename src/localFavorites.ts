@@ -1,17 +1,19 @@
 import type {
   Album,
   FavoriteInput,
+  ItemDate,
   LocalFavoriteCollection,
   RadioShowSummary,
   Track,
 } from "./types";
+import { isItemDate, parseLibraryDate } from "./libraryDates";
 
 export const LOCAL_FAVORITES_KEY = "coda.local-favorites.v1";
 
 export const LOCAL_FAVORITES_VERSION = 2;
-const MAX_FAVORITE_ALBUMS = 5_000;
-const MAX_FAVORITE_TRACKS = 25_000;
-const MAX_FAVORITE_RADIO_SHOWS = 5_000;
+export const MAX_FAVORITE_ALBUMS = 5_000;
+export const MAX_FAVORITE_TRACKS = 25_000;
+export const MAX_FAVORITE_RADIO_SHOWS = 5_000;
 const MAX_TRACKS_PER_ALBUM = 5_000;
 export const MAX_LOCAL_FAVORITES_BYTES = 4 * 1024 * 1024;
 const MAX_TEXT_LENGTH = 1_024;
@@ -56,6 +58,32 @@ function isMusicBrainzId(value: unknown): value is string {
 
 function isAbsent(value: unknown): value is null | undefined {
   return value === undefined || value === null;
+}
+
+function sanitizeDateText(value: unknown): string | undefined {
+  return isText(value, false) && parseLibraryDate(value) !== undefined
+    ? value
+    : undefined;
+}
+
+function sanitizeItemDate(value: unknown): ItemDate | undefined {
+  if (!isItemDate(value)) return undefined;
+  return {
+    year: value.year,
+    ...(value.month === undefined ? {} : { month: value.month }),
+    ...(value.day === undefined ? {} : { day: value.day }),
+  };
+}
+
+function sameItemDate(
+  left: ItemDate | undefined,
+  right: ItemDate | undefined,
+): boolean {
+  return (
+    left?.year === right?.year &&
+    left?.month === right?.month &&
+    left?.day === right?.day
+  );
 }
 
 function palette(value: unknown): [string, string] | undefined {
@@ -107,6 +135,21 @@ function sanitizeTrack(value: unknown): Track | undefined {
 function sanitizeAlbum(value: unknown): Album | undefined {
   if (!isRecord(value)) return undefined;
   const colors = palette(value.palette);
+  const addedAt = isAbsent(value.addedAt)
+    ? undefined
+    : sanitizeDateText(value.addedAt);
+  const starredAt = isAbsent(value.starredAt)
+    ? undefined
+    : sanitizeDateText(value.starredAt);
+  const playedAt = isAbsent(value.playedAt)
+    ? undefined
+    : sanitizeDateText(value.playedAt);
+  const originalReleaseDate = isAbsent(value.originalReleaseDate)
+    ? undefined
+    : sanitizeItemDate(value.originalReleaseDate);
+  const releaseDate = isAbsent(value.releaseDate)
+    ? undefined
+    : sanitizeItemDate(value.releaseDate);
   const tracks = isAbsent(value.tracks)
     ? undefined
     : Array.isArray(value.tracks) && value.tracks.length <= MAX_TRACKS_PER_ALBUM
@@ -121,7 +164,11 @@ function sanitizeAlbum(value: unknown): Album | undefined {
     (!isAbsent(value.coverArt) && !isText(value.coverArt, false)) ||
     (!isAbsent(value.year) && !isCount(value.year)) ||
     (!isAbsent(value.genre) && !isText(value.genre, false)) ||
-    (!isAbsent(value.addedAt) && !isText(value.addedAt, false)) ||
+    (!isAbsent(value.addedAt) && addedAt === undefined) ||
+    (!isAbsent(value.starredAt) && starredAt === undefined) ||
+    (!isAbsent(value.playedAt) && playedAt === undefined) ||
+    (!isAbsent(value.originalReleaseDate) && originalReleaseDate === undefined) ||
+    (!isAbsent(value.releaseDate) && releaseDate === undefined) ||
     (!isAbsent(value.tracks) &&
       (!tracks ||
         tracks.some((track) => !track || track.albumId !== value.id))) ||
@@ -138,7 +185,11 @@ function sanitizeAlbum(value: unknown): Album | undefined {
     ...(isAbsent(value.coverArt) ? {} : { coverArt: value.coverArt }),
     ...(isAbsent(value.year) ? {} : { year: value.year }),
     ...(isAbsent(value.genre) ? {} : { genre: value.genre }),
-    ...(isAbsent(value.addedAt) ? {} : { addedAt: value.addedAt }),
+    ...(addedAt === undefined ? {} : { addedAt }),
+    ...(starredAt === undefined ? {} : { starredAt }),
+    ...(playedAt === undefined ? {} : { playedAt }),
+    ...(originalReleaseDate === undefined ? {} : { originalReleaseDate }),
+    ...(releaseDate === undefined ? {} : { releaseDate }),
     palette: colors,
   };
 }
@@ -221,9 +272,35 @@ function sameAlbumMetadata(left: Album, right: Album): boolean {
     left.year === right.year &&
     left.genre === right.genre &&
     left.addedAt === right.addedAt &&
+    left.starredAt === right.starredAt &&
+    left.playedAt === right.playedAt &&
+    sameItemDate(left.originalReleaseDate, right.originalReleaseDate) &&
+    sameItemDate(left.releaseDate, right.releaseDate) &&
     left.palette[0] === right.palette[0] &&
     left.palette[1] === right.palette[1]
   );
+}
+
+function preserveAlbumDates(candidate: Album, existing: Album): Album {
+  return {
+    ...candidate,
+    ...(candidate.addedAt === undefined && existing.addedAt !== undefined
+      ? { addedAt: existing.addedAt }
+      : {}),
+    ...(candidate.starredAt === undefined && existing.starredAt !== undefined
+      ? { starredAt: existing.starredAt }
+      : {}),
+    ...(candidate.playedAt === undefined && existing.playedAt !== undefined
+      ? { playedAt: existing.playedAt }
+      : {}),
+    ...(candidate.originalReleaseDate === undefined &&
+        existing.originalReleaseDate !== undefined
+      ? { originalReleaseDate: existing.originalReleaseDate }
+      : {}),
+    ...(candidate.releaseDate === undefined && existing.releaseDate !== undefined
+      ? { releaseDate: existing.releaseDate }
+      : {}),
+  };
 }
 
 export function emptyLocalFavorites(): LocalFavoriteCollection {
@@ -427,6 +504,10 @@ export function repairLocalFavoriteMetadata(
     .filter((album) => wantedAlbumIds.has(album.id))
     .map(sanitizeAlbum)
     .filter((album): album is Album => Boolean(album))
+    .map((album) => {
+      const existing = existingAlbums.get(album.id);
+      return existing ? preserveAlbumDates(album, existing) : album;
+    })
     .filter((album) => {
       const existing = existingAlbums.get(album.id);
       return !existing || !sameAlbumMetadata(existing, album);

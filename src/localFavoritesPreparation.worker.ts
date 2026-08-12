@@ -1,43 +1,51 @@
 import {
+  localFavoritesInputMatchesPrepared,
+  parseLocalFavoritesPreparationRequest,
   parseLocalFavoritesSerialized,
   serializeLocalFavorites,
-  type LocalFavoritesPreparationRequest,
   type LocalFavoritesPreparationResponse,
 } from "./localFavoritesPreparation";
 
-type LocalFavoritesWorkerScope = {
-  onmessage: (
-    (event: MessageEvent<LocalFavoritesPreparationRequest>) => void
-  ) | null;
-  postMessage: (response: LocalFavoritesPreparationResponse) => void;
-};
+function respond(response: LocalFavoritesPreparationResponse): void {
+  globalThis.postMessage(response);
+}
 
-const workerScope = globalThis as unknown as LocalFavoritesWorkerScope;
-
-workerScope.onmessage = ({ data }) => {
+globalThis.addEventListener("message", ({ data }: MessageEvent<unknown>) => {
+  const request = parseLocalFavoritesPreparationRequest(data);
+  if (!request) return;
   try {
-    if (data.kind === "parse-local-favorites") {
-      workerScope.postMessage({
+    if (request.kind === "parse-local-favorites") {
+      respond({
         kind: "local-favorites-parsed",
-        requestId: data.requestId,
-        favorites: parseLocalFavoritesSerialized(data.serialized),
+        requestId: request.requestId,
+        favorites: parseLocalFavoritesSerialized(request.serialized),
       });
       return;
     }
-    workerScope.postMessage({
+    const prepared = serializeLocalFavorites(request.favorites);
+    const inputMatches = localFavoritesInputMatchesPrepared(
+      typeof data === "object" && data !== null && "favorites" in data
+        ? data.favorites
+        : undefined,
+      prepared,
+    );
+    respond({
       kind: "local-favorites-serialized",
-      requestId: data.requestId,
-      prepared: serializeLocalFavorites(data.favorites),
+      requestId: request.requestId,
+      prepared: {
+        serialized: prepared.serialized,
+        ...(inputMatches ? {} : { favorites: prepared.favorites }),
+      },
     });
   } catch (cause) {
     const error = cause instanceof Error
       ? cause
       : new Error("Local Favorites are invalid and were not saved.");
-    workerScope.postMessage({
+    respond({
       kind: "local-favorites-error",
-      requestId: data.requestId,
+      requestId: request.requestId,
       errorName: error.name,
       errorMessage: error.message,
     });
   }
-};
+});
