@@ -192,6 +192,8 @@ pub(crate) struct RadioScrobbleProgress {
 pub(crate) struct PlayerStateSnapshot {
     pub(crate) version: u8,
     pub(crate) saved_at: u64,
+    #[serde(default)]
+    pub(crate) persistence_generation: u64,
     pub(crate) queue: Vec<PlayerStateTrack>,
     pub(crate) current_index: usize,
     pub(crate) position_seconds: f64,
@@ -207,6 +209,8 @@ pub(crate) struct PlayerStateSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct PlayerStateCheckpoint {
+    #[serde(default)]
+    pub(crate) persistence_generation: u64,
     pub(crate) current_index: usize,
     pub(crate) current_track_id: String,
     pub(crate) position_seconds: f64,

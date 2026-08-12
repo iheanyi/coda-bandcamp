@@ -30,6 +30,12 @@ enum PersistedPlayerReadError {
     Operational(String),
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum PlayerStateWriteOutcome {
+    CheckpointCleared,
+    CheckpointRetained(String),
+}
+
 impl PersistedPlayerReadError {
     #[cfg(test)]
     fn into_message(self) -> String {
@@ -351,7 +357,8 @@ pub(super) fn apply_player_checkpoint(
     state: &mut PlayerStateSnapshot,
     checkpoint: PlayerStateCheckpoint,
 ) -> bool {
-    if checkpoint.current_index >= state.queue.len()
+    if checkpoint.persistence_generation != state.persistence_generation
+        || checkpoint.current_index >= state.queue.len()
         || state.queue[checkpoint.current_index].id != checkpoint.current_track_id
     {
         return false;
@@ -424,22 +431,39 @@ pub(super) fn write_player_state(path: &Path, state: &PlayerStateSnapshot) -> Re
     write_bytes_atomically(path, &serialized, "player state")
 }
 
-pub(super) fn write_player_state_without_stale_checkpoint(
+fn write_player_state_without_stale_checkpoint(
     state_path: &Path,
     checkpoint_path: &Path,
     state: &PlayerStateSnapshot,
-) -> Result<(), String> {
+) -> Result<PlayerStateWriteOutcome, String> {
     write_player_state(state_path, state)?;
     match fs::remove_file(checkpoint_path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(format!(
-                "Could not clear the prior player checkpoint: {error}"
-            ))
+        Ok(()) => Ok(PlayerStateWriteOutcome::CheckpointCleared),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(PlayerStateWriteOutcome::CheckpointCleared)
         }
+        Err(error) => Ok(PlayerStateWriteOutcome::CheckpointRetained(format!(
+            "Could not clear the prior player checkpoint: {error}"
+        ))),
     }
-    Ok(())
+}
+
+#[cfg(test)]
+pub(super) fn write_player_state_without_stale_checkpoint_for_test(
+    state_path: &Path,
+    checkpoint_path: &Path,
+    state: &PlayerStateSnapshot,
+) -> Result<bool, String> {
+    write_player_state_without_stale_checkpoint(state_path, checkpoint_path, state)
+        .map(|outcome| matches!(outcome, PlayerStateWriteOutcome::CheckpointRetained(_)))
+}
+
+pub(super) fn next_player_persistence_generation(state_path: &Path) -> Result<u64, String> {
+    let prior_generation = load_player_state_or_clear_invalid(state_path)?
+        .map_or(0, |persisted| persisted.persistence_generation);
+    prior_generation
+        .checked_add(1)
+        .ok_or_else(|| "The player persistence generation is exhausted.".to_string())
 }
 
 fn read_player_checkpoint_classified(
@@ -650,7 +674,17 @@ pub(super) async fn save_player_state(
             validate_player_state(&state)?;
             let state_path = player_state_path(&app)?;
             let checkpoint_path = player_checkpoint_path(&app)?;
-            write_player_state_without_stale_checkpoint(&state_path, &checkpoint_path, &state)?;
+            state.persistence_generation = next_player_persistence_generation(&state_path)?;
+            let outcome =
+                write_player_state_without_stale_checkpoint(&state_path, &checkpoint_path, &state)?;
+            if let PlayerStateWriteOutcome::CheckpointRetained(error) = outcome {
+                append_player_state_snapshot_diagnostic(
+                    &app,
+                    "native.save.retained-stale-checkpoint",
+                    &state,
+                );
+                eprintln!("{error}");
+            }
             append_player_state_snapshot_diagnostic(&app, "native.save.ok", &state);
             Ok(())
         })();
@@ -700,6 +734,7 @@ pub(super) async fn checkpoint_player_state(
                 );
                 return Ok(false);
             }
+            checkpoint.persistence_generation = state.persistence_generation;
             if let Some(progress) = &mut checkpoint.last_fm_progress {
                 progress.started_at = 0;
                 progress.now_playing_sent = false;

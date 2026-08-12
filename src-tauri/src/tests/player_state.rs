@@ -65,6 +65,8 @@ fn matches_the_shared_renderer_radio_persistence_contract() {
         serde_json::from_value(contract["snapshot"].clone()).unwrap();
     let checkpoint: PlayerStateCheckpoint =
         serde_json::from_value(contract["checkpoint"].clone()).unwrap();
+    assert_eq!(state.persistence_generation, 0);
+    assert_eq!(checkpoint.persistence_generation, 0);
     assert!(validate_player_state(&state).is_ok());
     assert!(validate_player_checkpoint(&checkpoint).is_ok());
     assert!(apply_player_checkpoint(&mut state, checkpoint));
@@ -132,7 +134,7 @@ fn atomically_round_trips_player_state_and_discards_corruption() {
 }
 
 #[test]
-fn a_checkpoint_cleanup_failure_is_reported_after_committing_the_snapshot() {
+fn a_checkpoint_cleanup_failure_retains_a_generation_safe_committed_snapshot() {
     let state_path = temporary_player_state_path("checkpoint-cleanup-failure");
     let directory = state_path.parent().unwrap().to_path_buf();
     let checkpoint_path = directory.join("checkpoint-that-cannot-be-removed");
@@ -141,18 +143,21 @@ fn a_checkpoint_cleanup_failure_is_reported_after_committing_the_snapshot() {
     let original = sample_player_state();
     write_player_state(&state_path, &original).unwrap();
     let mut replacement = original.clone();
+    replacement.persistence_generation = original.persistence_generation + 1;
     replacement.queue[0].id = "replacement-track".into();
     replacement.last_fm_progress.as_mut().unwrap().track_id = "replacement-track".into();
 
-    assert!(write_player_state_without_stale_checkpoint(
+    assert!(write_player_state_without_stale_checkpoint_for_test(
         &state_path,
         &checkpoint_path,
-        &replacement,
+        &replacement
     )
-    .is_err());
+    .unwrap());
+    let restored = read_player_state(&state_path).unwrap().unwrap();
+    assert_eq!(restored.queue[0].id, replacement.queue[0].id);
     assert_eq!(
-        read_player_state(&state_path).unwrap().unwrap().queue[0].id,
-        replacement.queue[0].id
+        restored.persistence_generation,
+        replacement.persistence_generation
     );
 
     fs::remove_dir_all(directory).unwrap();
@@ -165,6 +170,7 @@ fn a_player_state_write_failure_preserves_the_checkpoint() {
     let checkpoint_path = directory.join("player-state-checkpoint.json");
     fs::create_dir_all(&state_path).unwrap();
     let checkpoint = PlayerStateCheckpoint {
+        persistence_generation: 0,
         current_index: 0,
         current_track_id: "track-1".into(),
         position_seconds: 90.0,
@@ -172,14 +178,15 @@ fn a_player_state_write_failure_preserves_the_checkpoint() {
         radio_scrobble_progress: None,
     };
     write_player_checkpoint(&checkpoint_path, &checkpoint).unwrap();
+    let checkpoint_bytes = fs::read(&checkpoint_path).unwrap();
 
-    assert!(write_player_state_without_stale_checkpoint(
+    assert!(write_player_state_without_stale_checkpoint_for_test(
         &state_path,
         &checkpoint_path,
         &sample_player_state(),
     )
     .is_err());
-    assert!(checkpoint_path.exists());
+    assert_eq!(fs::read(&checkpoint_path).unwrap(), checkpoint_bytes);
 
     fs::remove_dir_all(directory).unwrap();
 }
@@ -187,7 +194,9 @@ fn a_player_state_write_failure_preserves_the_checkpoint() {
 #[test]
 fn lightweight_checkpoint_applies_only_to_the_matching_track() {
     let mut state = sample_player_state();
+    state.persistence_generation = 7;
     let checkpoint = PlayerStateCheckpoint {
+        persistence_generation: 7,
         current_index: 0,
         current_track_id: "track-1".into(),
         position_seconds: 90.0,
@@ -211,6 +220,7 @@ fn lightweight_checkpoint_applies_only_to_the_matching_track() {
 
     let mut another_state = sample_player_state();
     let stale = PlayerStateCheckpoint {
+        persistence_generation: 0,
         current_index: 0,
         current_track_id: "another-track".into(),
         position_seconds: 120.0,
@@ -219,4 +229,41 @@ fn lightweight_checkpoint_applies_only_to_the_matching_track() {
     };
     assert!(!apply_player_checkpoint(&mut another_state, stale));
     assert_eq!(another_state.position_seconds, 42.0);
+}
+
+#[test]
+fn an_older_same_track_checkpoint_cannot_override_a_committed_snapshot() {
+    let mut state = sample_player_state();
+    state.persistence_generation = 2;
+    let checkpoint = PlayerStateCheckpoint {
+        persistence_generation: 1,
+        current_index: 0,
+        current_track_id: "track-1".into(),
+        position_seconds: 90.0,
+        last_fm_progress: None,
+        radio_scrobble_progress: None,
+    };
+
+    assert!(!apply_player_checkpoint(&mut state, checkpoint));
+    assert_eq!(state.position_seconds, 42.0);
+}
+
+#[test]
+fn persistence_generations_advance_from_the_last_committed_snapshot() {
+    let state_path = temporary_player_state_path("generation");
+    let directory = state_path.parent().unwrap().to_path_buf();
+    let mut state = sample_player_state();
+    state.persistence_generation = 4;
+    write_player_state(&state_path, &state).unwrap();
+
+    assert_eq!(next_player_persistence_generation(&state_path).unwrap(), 5);
+
+    state.persistence_generation = u64::MAX;
+    write_player_state(&state_path, &state).unwrap();
+    assert_eq!(
+        next_player_persistence_generation(&state_path).unwrap_err(),
+        "The player persistence generation is exhausted."
+    );
+
+    fs::remove_dir_all(directory).unwrap();
 }

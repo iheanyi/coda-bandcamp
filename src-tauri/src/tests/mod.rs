@@ -50,6 +50,7 @@ fn sample_player_state() -> PlayerStateSnapshot {
     PlayerStateSnapshot {
         version: PLAYER_STATE_VERSION,
         saved_at: 1_700_000_000_000,
+        persistence_generation: 0,
         queue: vec![sample_player_track("track-1")],
         current_index: 0,
         position_seconds: 42.0,
