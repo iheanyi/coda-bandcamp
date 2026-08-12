@@ -4,25 +4,17 @@ import {
   MapPin,
   Plus,
 } from "lucide-react";
-import { useEffect, useRef } from "react";
-import { Badge } from "./components/ui/badge";
-import { Button } from "./components/ui/button";
-import { PlaybackIcon } from "./components/ui/playback-icon";
-import { discoverPreviewTrack } from "./discover";
-import { formatTime, initials, paletteFor } from "./lib";
-import type { DiscoverRelease, Track } from "./types";
+import { useEffect, useRef, useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { PlaybackIcon } from "@/components/ui/playback-icon";
+import { discoverPreviewTrack } from "@/discover";
+import { formatTime, initials, paletteFor } from "@/lib";
+import { cn } from "@/lib/utils";
+import type { DiscoverRelease, Track } from "@/types";
 
-export function DiscoverReleaseDetail({
-  release,
-  currentTrackId,
-  playing,
-  onBack,
-  onPlay,
-  onQueue,
-  onTogglePlayback,
-  onArtist,
-  onOpenBandcamp,
-}: {
+export type DiscoverReleaseScreenProps = {
+  className?: string;
   release: DiscoverRelease;
   currentTrackId?: string;
   playing: boolean;
@@ -32,11 +24,33 @@ export function DiscoverReleaseDetail({
   onTogglePlayback: () => void;
   onArtist: (release: DiscoverRelease) => void;
   onOpenBandcamp: (url: string) => void;
-}) {
+};
+
+export function DiscoverReleaseScreen({
+  className,
+  release,
+  currentTrackId,
+  playing,
+  onBack,
+  onPlay,
+  onQueue,
+  onTogglePlayback,
+  onArtist,
+  onOpenBandcamp,
+}: DiscoverReleaseScreenProps) {
   const track = discoverPreviewTrack(release);
   const active = Boolean(track && currentTrackId === track.id);
   const palette = paletteFor(release.id);
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const artworkUrl = release.artworkUrl;
+  const [failedArtworkUrl, setFailedArtworkUrl] = useState<string>();
+  const [loadedArtworkUrl, setLoadedArtworkUrl] = useState<string>();
+  const artworkEligible = Boolean(
+    artworkUrl && failedArtworkUrl !== artworkUrl,
+  );
+  const artworkLoaded = Boolean(
+    artworkEligible && loadedArtworkUrl === artworkUrl,
+  );
 
   useEffect(() => {
     headingRef.current?.focus({ preventScroll: true });
@@ -44,7 +58,7 @@ export function DiscoverReleaseDetail({
 
   return (
     <article
-      className="mx-auto -mt-2 mb-8 w-full max-w-4xl"
+      className={cn("mx-auto -mt-2 mb-8 w-full max-w-4xl", className)}
       aria-labelledby="discover-release-heading"
       data-coda-discover-detail-surface=""
     >
@@ -68,16 +82,34 @@ export function DiscoverReleaseDetail({
             } as React.CSSProperties
           }
         >
-          {release.artworkUrl ? (
+          {artworkEligible && artworkUrl ? (
             <img
-              className="size-full object-cover"
-              src={release.artworkUrl}
+              key={artworkUrl}
+              className={cn(
+                "col-start-1 row-start-1 size-full object-cover",
+                !artworkLoaded && "invisible",
+              )}
+              data-discover-detail-artwork-image={artworkUrl}
+              src={artworkUrl}
               alt=""
               draggable={false}
+              onError={() => setFailedArtworkUrl(artworkUrl)}
+              onLoad={() => {
+                setLoadedArtworkUrl(artworkUrl);
+                setFailedArtworkUrl((current) =>
+                  current === artworkUrl ? undefined : current,
+                );
+              }}
             />
-          ) : (
-            <span>{initials(release.title)}</span>
-          )}
+          ) : null}
+          {!artworkLoaded ? (
+            <span
+              className="col-start-1 row-start-1"
+              data-discover-detail-artwork-fallback={artworkUrl ?? "missing"}
+            >
+              {initials(release.title)}
+            </span>
+          ) : null}
         </div>
         <div className="min-w-0 pb-1">
           <Badge variant="artwork" className="mb-3">Discover release</Badge>
@@ -177,4 +209,8 @@ export function DiscoverReleaseDetail({
       </section>
     </article>
   );
+}
+
+export function DiscoverReleaseDetail(props: DiscoverReleaseScreenProps) {
+  return <DiscoverReleaseScreen {...props} />;
 }
