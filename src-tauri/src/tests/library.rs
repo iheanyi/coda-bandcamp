@@ -1,6 +1,8 @@
 use super::*;
 use redb::ReadableDatabase;
-use std::sync::atomic::Ordering;
+use std::sync::{atomic::Ordering, Mutex};
+
+static ALBUM_CACHE_GENERATION_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn atomically_round_trips_bounded_library_cache_without_media_urls() {
@@ -158,9 +160,12 @@ fn connection_change_blocks_intermediate_album_requests_until_final_generation()
 
 #[test]
 fn connection_change_guard_excludes_overlapping_credential_mutations() {
+    let _generation_test_guard = ALBUM_CACHE_GENERATION_TEST_LOCK.lock().unwrap();
     assert!(!CONNECTION_CHANGE_IN_PROGRESS.load(Ordering::Acquire));
+    let original_generation = current_connection_generation();
     let first = ConnectionChangeGuard::begin().unwrap();
     assert!(CONNECTION_CHANGE_IN_PROGRESS.load(Ordering::Acquire));
+    assert_eq!(current_connection_generation(), original_generation + 1);
     assert!(ConnectionChangeGuard::begin().is_err());
     drop(first);
     assert!(!CONNECTION_CHANGE_IN_PROGRESS.load(Ordering::Acquire));
@@ -268,6 +273,7 @@ fn disconnect_cleanup_reports_partial_failure_without_implying_credentials_remai
 
 #[test]
 fn forced_album_refresh_supersedes_older_cache_and_network_requests() {
+    let _generation_test_guard = ALBUM_CACHE_GENERATION_TEST_LOCK.lock().unwrap();
     let suffix: String = rand::thread_rng()
         .sample_iter(&Alphanumeric)
         .take(16)
@@ -333,6 +339,97 @@ fn forced_album_refresh_supersedes_older_cache_and_network_requests() {
         .lock()
         .unwrap()
         .remove(&album_id);
+    drop(database);
+    fs::remove_dir_all(path.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn album_refresh_supersession_rolls_back_a_write_staged_before_commit() {
+    let _generation_test_guard = ALBUM_CACHE_GENERATION_TEST_LOCK.lock().unwrap();
+    let suffix: String = rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(16)
+        .map(char::from)
+        .collect();
+    let album_id = format!("album-commit-race-{suffix}");
+    let refresh_generation = album_refresh_generation(&album_id).unwrap();
+    let path = temporary_album_metadata_cache_path("commit-race");
+    let database = open_album_metadata_database(&path).unwrap();
+    let credentials = ConnectionInput {
+        username: format!("generated-user-{suffix}"),
+        password: "generated-password".into(),
+    };
+    let cache_key = persisted_album_track_cache_key(&credentials, &album_id);
+    let mut track = sample_track("track-stale");
+    track.album_id = album_id.clone();
+    let now = 1_800_000_000_000;
+
+    assert!(!write_persisted_album_tracks_with_before_commit(
+        &database,
+        &cache_key,
+        &album_id,
+        std::slice::from_ref(&track),
+        now,
+        AlbumCacheWriteExpectation::generations(None, Some((&album_id, refresh_generation))),
+        || {
+            assert_eq!(
+                bump_album_refresh_generation(&album_id).unwrap(),
+                refresh_generation + 1
+            );
+        },
+    )
+    .unwrap());
+    assert!(
+        read_persisted_album_tracks(&database, &cache_key, &album_id, now + 1)
+            .unwrap()
+            .is_none()
+    );
+
+    album_refresh_generations()
+        .lock()
+        .unwrap()
+        .remove(&album_id);
+    drop(database);
+    fs::remove_dir_all(path.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn connection_supersession_rolls_back_a_write_staged_before_commit() {
+    let _generation_test_guard = ALBUM_CACHE_GENERATION_TEST_LOCK.lock().unwrap();
+    let suffix: String = rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(16)
+        .map(char::from)
+        .collect();
+    let album_id = format!("album-connection-commit-race-{suffix}");
+    let connection_generation = current_connection_generation();
+    let path = temporary_album_metadata_cache_path("connection-commit-race");
+    let database = open_album_metadata_database(&path).unwrap();
+    let credentials = ConnectionInput {
+        username: format!("generated-user-{suffix}"),
+        password: "generated-password".into(),
+    };
+    let cache_key = persisted_album_track_cache_key(&credentials, &album_id);
+    let mut track = sample_track("track-stale");
+    track.album_id = album_id.clone();
+    let now = 1_800_000_000_000;
+
+    assert!(!write_persisted_album_tracks_with_before_commit(
+        &database,
+        &cache_key,
+        &album_id,
+        std::slice::from_ref(&track),
+        now,
+        AlbumCacheWriteExpectation::generations(Some(connection_generation), None),
+        || drop(ConnectionChangeGuard::begin().unwrap()),
+    )
+    .unwrap());
+    assert!(
+        read_persisted_album_tracks(&database, &cache_key, &album_id, now + 1)
+            .unwrap()
+            .is_none()
+    );
+
     drop(database);
     fs::remove_dir_all(path.parent().unwrap()).unwrap();
 }

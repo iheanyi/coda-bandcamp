@@ -1,7 +1,8 @@
 use crate::album_cache::{
-    album_metadata_database_for_access, album_refresh_generation, bump_album_refresh_generation,
-    clear_album_refresh_generations, persisted_album_track_cache_key, read_persisted_album_tracks,
-    reset_album_metadata_cache, write_persisted_album_tracks, AlbumMetadataCacheReset,
+    advance_album_cache_connection_generation, album_metadata_database_for_access,
+    album_refresh_generation, bump_album_refresh_generation, persisted_album_track_cache_key,
+    read_persisted_album_tracks, reset_album_metadata_cache, write_persisted_album_tracks,
+    AlbumMetadataCacheReset,
 };
 use crate::library_cache::{
     library_cache_path, load_library_cache_or_clear_invalid, write_library_cache,
@@ -10,10 +11,9 @@ use crate::library_cache::{
 use crate::models::{Album, ConnectionInput, LibraryCacheSnapshot, LibrarySyncEvent, Track};
 use crate::storage::{run_blocking, timestamp_ms};
 use crate::subsonic::{
-    advance_connection_generation, bounded_album_from_value, bounded_track_from_value,
-    credential_entry, current_connection_generation, load_credentials, load_credentials_async,
-    request_json, store_credentials_async, validate_credentials, validate_identifier,
-    MAX_PLAYLIST_TRACKS,
+    bounded_album_from_value, bounded_track_from_value, credential_entry,
+    current_connection_generation, load_credentials, load_credentials_async, request_json,
+    store_credentials_async, validate_credentials, validate_identifier, MAX_PLAYLIST_TRACKS,
 };
 use chrono::DateTime;
 use serde_json::Value;
@@ -42,7 +42,9 @@ static ALBUM_PERSIST_WORKER_RUNNING: AtomicBool = AtomicBool::new(false);
 pub(super) static CONNECTION_CHANGE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 static LIBRARY_SYNC_GENERATION: AtomicU64 = AtomicU64::new(0);
 
-pub(super) struct ConnectionChangeGuard;
+pub(super) struct ConnectionChangeGuard {
+    album_cache_generation: u64,
+}
 
 impl ConnectionChangeGuard {
     pub(super) fn begin() -> Result<Self, String> {
@@ -51,7 +53,14 @@ impl ConnectionChangeGuard {
             .map_err(|_| {
                 "Another Bandcamp connection change is already in progress.".to_string()
             })?;
-        Ok(Self)
+        let album_cache_generation = advance_album_cache_connection_generation();
+        Ok(Self {
+            album_cache_generation,
+        })
+    }
+
+    fn album_cache_generation(&self) -> u64 {
+        self.album_cache_generation
     }
 }
 
@@ -158,10 +167,8 @@ pub(super) async fn has_connection() -> bool {
 fn disconnect_blocking_with_guard(app: &tauri::AppHandle) -> Result<Option<String>, String> {
     match credential_entry()?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => {
-            advance_connection_generation();
             advance_library_sync_generation();
             cancel_pending_album_cache_writes();
-            clear_album_refresh_generations();
             let library_result = clear_library_cache_file(app);
             let album_result = reset_album_metadata_cache(app);
             let warning = finish_disconnect_cache_cleanup(library_result, album_result);
@@ -422,10 +429,9 @@ pub(super) async fn connect(
     ensure_library_sync_current(sync_generation, None)?;
     let owner_changed = connection_owner_changed(previous_credentials.as_ref(), &input);
     let connection_change_guard = ConnectionChangeGuard::begin()?;
+    let connection_generation = connection_change_guard.album_cache_generation();
     if owner_changed {
-        advance_connection_generation();
         cancel_pending_album_cache_writes();
-        clear_album_refresh_generations();
         let album_cache_app = app.clone();
         let reset = run_blocking("Could not finish resetting the album cache", move || {
             reset_album_metadata_cache(&album_cache_app)
@@ -480,8 +486,6 @@ pub(super) async fn connect(
         );
     }
 
-    let connection_generation = advance_connection_generation();
-    clear_album_refresh_generations();
     drop(connection_change_guard);
     let cache_app = app.clone();
     let cached_albums = albums.clone();

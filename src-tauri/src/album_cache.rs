@@ -1,8 +1,8 @@
 use crate::models::{ConnectionInput, PersistedAlbumTracks, Track};
 use crate::storage::write_bytes_atomically;
 use crate::subsonic::{
-    current_connection_generation, load_credentials, validate_identifier, validate_subsonic_id,
-    MAX_SUBSONIC_DURATION_SECONDS,
+    advance_connection_generation, current_connection_generation, load_credentials,
+    validate_identifier, validate_subsonic_id, MAX_SUBSONIC_DURATION_SECONDS,
 };
 use crate::validation::{
     valid_bounded_text, valid_musicbrainz_id, MAX_METADATA_TEXT_LENGTH, MAX_TRACK_NUMBER,
@@ -14,7 +14,7 @@ use redb::{
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use tauri::Manager;
 
 pub(super) const ALBUM_METADATA_CACHE_FILE: &str = "album-metadata-cache-v1.redb";
@@ -30,11 +30,33 @@ const MAX_PERSISTED_ALBUM_TRACK_CACHE_FILE_BYTES: u64 = 128 * 1024 * 1024;
 const REDB_ALBUM_METADATA_MEMORY_CACHE_BYTES: usize = 8 * 1024 * 1024;
 
 static ALBUM_METADATA_CACHE_WRITE_LOCK: Mutex<()> = Mutex::new(());
+static ALBUM_METADATA_CACHE_GENERATION_LOCK: Mutex<()> = Mutex::new(());
 static ALBUM_METADATA_DATABASE_INIT_LOCK: Mutex<()> = Mutex::new(());
 static ALBUM_METADATA_DATABASE: OnceLock<Database> = OnceLock::new();
 static ALBUM_REFRESH_GENERATIONS: OnceLock<Mutex<BTreeMap<String, u64>>> = OnceLock::new();
 pub(super) const ALBUM_TRACKS_TABLE: TableDefinition<&str, &[u8]> =
     TableDefinition::new("album_tracks_v1");
+
+#[derive(Clone, Copy)]
+pub(super) struct AlbumCacheWriteExpectation<'a> {
+    connection_generation: Option<u64>,
+    credentials: Option<&'a ConnectionInput>,
+    refresh: Option<(&'a str, u64)>,
+}
+
+#[cfg(test)]
+impl<'a> AlbumCacheWriteExpectation<'a> {
+    pub(super) fn generations(
+        connection_generation: Option<u64>,
+        refresh: Option<(&'a str, u64)>,
+    ) -> Self {
+        Self {
+            connection_generation,
+            credentials: None,
+            refresh,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum AlbumMetadataCacheReset {
@@ -46,14 +68,26 @@ pub(super) fn album_refresh_generations() -> &'static Mutex<BTreeMap<String, u64
     ALBUM_REFRESH_GENERATIONS.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 
-pub(super) fn album_refresh_generation(album_id: &str) -> Result<u64, String> {
+fn album_metadata_cache_generation_guard() -> MutexGuard<'static, ()> {
+    ALBUM_METADATA_CACHE_GENERATION_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn album_refresh_generation_unlocked(album_id: &str) -> Result<u64, String> {
     album_refresh_generations()
         .lock()
         .map_err(|_| "The album refresh state is unavailable.".to_string())
         .map(|generations| generations.get(album_id).copied().unwrap_or(0))
 }
 
+pub(super) fn album_refresh_generation(album_id: &str) -> Result<u64, String> {
+    let _generation_guard = album_metadata_cache_generation_guard();
+    album_refresh_generation_unlocked(album_id)
+}
+
 pub(super) fn bump_album_refresh_generation(album_id: &str) -> Result<u64, String> {
+    let _generation_guard = album_metadata_cache_generation_guard();
     let mut generations = album_refresh_generations()
         .lock()
         .map_err(|_| "The album refresh state is unavailable.".to_string())?;
@@ -62,12 +96,22 @@ pub(super) fn bump_album_refresh_generation(album_id: &str) -> Result<u64, Strin
     Ok(*generation)
 }
 
-pub(super) fn clear_album_refresh_generations() {
+fn clear_album_refresh_generations_unlocked() {
     if let Some(generations) = ALBUM_REFRESH_GENERATIONS.get() {
         if let Ok(mut generations) = generations.lock() {
             generations.clear();
         }
     }
+}
+
+pub(super) fn advance_album_cache_connection_generation() -> u64 {
+    // Keep every connection generation change ordered with the final cache
+    // validity check and commit below. A caller must not advance the
+    // connection generation directly.
+    let _generation_guard = album_metadata_cache_generation_guard();
+    let generation = advance_connection_generation();
+    clear_album_refresh_generations_unlocked();
+    generation
 }
 
 pub(super) fn album_metadata_cache_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -383,16 +427,60 @@ pub(super) fn write_persisted_album_tracks(
     expected_connection: Option<(u64, &ConnectionInput)>,
     expected_refresh: Option<(&str, u64)>,
 ) -> Result<bool, String> {
+    let expectation = AlbumCacheWriteExpectation {
+        connection_generation: expected_connection.map(|(generation, _)| generation),
+        credentials: expected_connection.map(|(_, credentials)| credentials),
+        refresh: expected_refresh,
+    };
+    write_persisted_album_tracks_inner(
+        database,
+        cache_key,
+        album_id,
+        tracks,
+        now,
+        expectation,
+        || {},
+    )
+}
+
+fn expected_album_cache_generations_are_current(
+    expectation: AlbumCacheWriteExpectation<'_>,
+) -> bool {
+    !expectation
+        .connection_generation
+        .is_some_and(|expected_generation| current_connection_generation() != expected_generation)
+        && !expectation
+            .refresh
+            .is_some_and(|(expected_album_id, expected_generation)| {
+                album_refresh_generation_unlocked(expected_album_id).ok()
+                    != Some(expected_generation)
+            })
+}
+
+fn write_persisted_album_tracks_inner<F>(
+    database: &Database,
+    cache_key: &str,
+    album_id: &str,
+    tracks: &[Track],
+    now: u64,
+    expectation: AlbumCacheWriteExpectation<'_>,
+    before_commit: F,
+) -> Result<bool, String>
+where
+    F: FnOnce(),
+{
     let _guard = ALBUM_METADATA_CACHE_WRITE_LOCK
         .lock()
         .map_err(|_| "The album metadata cache lock is unavailable.".to_string())?;
-    if expected_connection.is_some_and(|(expected_generation, expected_credentials)| {
-        current_connection_generation() != expected_generation
-            || load_credentials().ok().as_ref() != Some(expected_credentials)
-    }) || expected_refresh.is_some_and(|(expected_album_id, expected_generation)| {
-        album_refresh_generation(expected_album_id).ok() != Some(expected_generation)
-    }) {
-        return Ok(false);
+    {
+        let _generation_guard = album_metadata_cache_generation_guard();
+        if !expected_album_cache_generations_are_current(expectation)
+            || expectation.credentials.is_some_and(|expected_credentials| {
+                load_credentials().ok().as_ref() != Some(expected_credentials)
+            })
+        {
+            return Ok(false);
+        }
     }
     let entry = PersistedAlbumTracks {
         version: ALBUM_TRACK_CACHE_ENTRY_VERSION,
@@ -499,10 +587,39 @@ pub(super) fn write_persisted_album_tracks(
             }
         }
     }
+    before_commit();
+    let _generation_guard = album_metadata_cache_generation_guard();
+    if !expected_album_cache_generations_are_current(expectation) {
+        return Ok(false);
+    }
     transaction
         .commit()
         .map_err(|error| format!("Could not save the album metadata cache: {error}"))?;
     Ok(true)
+}
+
+#[cfg(test)]
+pub(super) fn write_persisted_album_tracks_with_before_commit<F>(
+    database: &Database,
+    cache_key: &str,
+    album_id: &str,
+    tracks: &[Track],
+    now: u64,
+    expectation: AlbumCacheWriteExpectation<'_>,
+    before_commit: F,
+) -> Result<bool, String>
+where
+    F: FnOnce(),
+{
+    write_persisted_album_tracks_inner(
+        database,
+        cache_key,
+        album_id,
+        tracks,
+        now,
+        expectation,
+        before_commit,
+    )
 }
 
 pub(super) fn clear_persisted_album_tracks(database: &Database) -> Result<(), String> {
