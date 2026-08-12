@@ -125,6 +125,56 @@ describe("detail source marker lifetimes", () => {
     expect(staticName).not.toHaveAttribute("data-coda-artist-name-return");
   });
 
+  it("pairs an album-card cover with an artist-name drill-in and return", () => {
+    const artistKey = parseArtistKeyParam("knxwledge");
+    const albumId = parseAlbumIdParam("album-hx-26");
+    const card = document.createElement("article");
+    card.dataset.albumCard = albumId;
+
+    const cover = document.createElement("span");
+    cover.dataset.slot = "cover";
+    const link = document.createElement("a");
+    link.href = `#/collection/artists/${encodeURIComponent(artistKey)}`;
+    link.dataset.artistOpen = artistKey;
+    link.dataset.navigationSlot = `album-card-artist:${albumId}`;
+    const nameWrapper = document.createElement("span");
+    nameWrapper.dataset.codaArtistNameTarget = artistKey;
+    const staticName = document.createElement("span");
+    staticName.dataset.slot = "overflow-marquee-text";
+    staticName.textContent = "Knxwledge.";
+    nameWrapper.append(staticName);
+    link.append(nameWrapper);
+    card.append(cover, link);
+    document.body.append(card);
+
+    const prepared = prepareDetailSource(
+      {
+        artistKey,
+        kind: "artist",
+        sourceTrigger: link,
+      },
+      collectionDestination(),
+    );
+    const releaseSource = prepared.applyMarkers();
+
+    expect(cover).toHaveAttribute("data-coda-artist-artwork-source", artistKey);
+    expect(staticName).toHaveAttribute(
+      "data-coda-artist-name-source",
+      artistKey,
+    );
+    releaseSource();
+
+    const releaseReturn = markArtistReturnDestination(link, artistKey);
+    expect(cover).toHaveAttribute("data-coda-artist-artwork-return", artistKey);
+    expect(staticName).toHaveAttribute(
+      "data-coda-artist-name-return",
+      artistKey,
+    );
+    releaseReturn();
+    expect(cover).not.toHaveAttribute("data-coda-artist-artwork-return");
+    expect(staticName).not.toHaveAttribute("data-coda-artist-name-return");
+  });
+
   it("forces a virtualized return card to remain paintable for the snapshot", () => {
     const albumId = parseAlbumIdParam("album-virtualized");
     const source = albumSourceCard(albumId);

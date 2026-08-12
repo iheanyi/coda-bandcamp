@@ -81,17 +81,33 @@ function sharedSnapshotDestination(kind: CodaViewTransitionKind) {
         ":is([data-coda-artist-artwork-source] [data-slot='cover'], [data-coda-artist-artwork-source][data-slot='cover'])",
       )
         ? ":is([data-coda-artist-artwork-detail][data-slot='cover'], [data-coda-artist-artwork-detail] [data-slot='cover'])"
-        : undefined;
+        : document.querySelector("[data-coda-artist-name-source]")
+          ? "[data-coda-artist-name-detail]"
+          : undefined;
     case "artist-detail-close": {
       const source = document.querySelector(
         "[data-coda-artist-artwork-detail][data-slot='cover']",
       );
-      return source
+      const artworkDestination = source
         ? identityDestination(
             source,
             ["data-coda-artist-artwork-detail"],
             "data-coda-artist-artwork-return",
             "[data-coda-artist-artwork-return]",
+          )
+        : undefined;
+      if (artworkDestination && document.querySelector(artworkDestination)) {
+        return artworkDestination;
+      }
+      const nameSource = document.querySelector(
+        "[data-coda-artist-name-detail]",
+      );
+      return nameSource
+        ? identityDestination(
+            nameSource,
+            ["data-coda-artist-name-detail"],
+            "data-coda-artist-name-return",
+            "[data-coda-artist-name-return]",
           )
         : undefined;
     }

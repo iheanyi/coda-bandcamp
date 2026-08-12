@@ -53,6 +53,28 @@ function mountArtistDestination() {
   return name;
 }
 
+function artistDetailName(artistKey: string) {
+  const detail = document.createElement("section");
+  detail.dataset.codaArtistDetailSurface = "";
+  const name = document.createElement("span");
+  name.dataset.codaArtistNameDetail = artistKey;
+  name.textContent = "Artist One";
+  detail.append(name);
+  document.body.append(detail);
+  return detail;
+}
+
+function mountArtistNameReturn(artistKey: string) {
+  const link = document.createElement("a");
+  link.dataset.artistOpen = artistKey;
+  const name = document.createElement("span");
+  name.dataset.codaArtistNameReturn = artistKey;
+  name.textContent = "Artist One";
+  link.append(name);
+  document.body.append(link);
+  return name;
+}
+
 function discoverDetailSource(releaseId: string) {
   const detail = document.createElement("article");
   detail.dataset.codaDiscoverDetailSurface = "";
@@ -186,6 +208,61 @@ describe("Motion-backed route View Transitions", () => {
     );
     await Promise.resolve();
 
+    expect(browserUpdateFinished).toBe(false);
+
+    routeRendered.resolve();
+    await transition;
+
+    expect(browserUpdateFinished).toBe(true);
+    expect(destinationPresentAtCapture).toBe(true);
+    expect(destinationNameAtCapture).not.toBe("none");
+  });
+
+  it("keeps a name-only artist return paintable without an artwork endpoint", async () => {
+    const artistKey = "artist-1";
+    const detail = artistDetailName(artistKey);
+    const routeRendered = deferred();
+    let browserUpdateFinished = false;
+    let destinationPresentAtCapture = false;
+    let destinationNameAtCapture = "";
+
+    Object.defineProperty(document, "getAnimations", {
+      configurable: true,
+      value: () => [],
+    });
+
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: vi.fn((update: () => void | Promise<void>) => {
+        const updateCallbackDone = Promise.resolve(update()).then(() => {
+          browserUpdateFinished = true;
+          const destination = document.querySelector<HTMLElement>(
+            `[data-coda-artist-name-return="${artistKey}"]`,
+          );
+          destinationPresentAtCapture = Boolean(destination);
+          destinationNameAtCapture = destination
+            ? getComputedStyle(destination).viewTransitionName
+            : "";
+        });
+        return {
+          finished: updateCallbackDone,
+          ready: updateCallbackDone,
+          skipTransition: vi.fn(),
+          updateCallbackDone,
+        };
+      }),
+    });
+
+    const transition = transitionCodaViewWithMotion(async () => {
+      await routeRendered.promise;
+      detail.remove();
+      mountArtistNameReturn(artistKey);
+    }, "artist-detail-close");
+
+    await vi.waitFor(() =>
+      expect(document.startViewTransition).toHaveBeenCalledOnce(),
+    );
+    await Promise.resolve();
     expect(browserUpdateFinished).toBe(false);
 
     routeRendered.resolve();

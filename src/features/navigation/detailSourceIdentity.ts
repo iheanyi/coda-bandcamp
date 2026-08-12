@@ -246,10 +246,14 @@ function prepareArtistSource(
   // The validated entity identity stays with a metadata link after its route
   // unmounts so a virtualized replacement can be selected on Back.
   if (isArtistNameLink) sourceTrigger.dataset.artistOpen = request.artistKey;
-  const sourceArtwork = isArtistCard
-    ? (sourceTrigger.querySelector<HTMLElement>("[data-slot=cover]") ??
-      undefined)
-    : undefined;
+  const artworkSurface = isArtistCard
+    ? sourceTrigger
+    : sourceTrigger.closest<HTMLElement>(
+        ":is([data-album-card], [data-coda-album-detail-surface])",
+      );
+  const sourceArtwork =
+    artworkSurface?.querySelector<HTMLElement>("[data-slot=cover]") ??
+    undefined;
   const artistNameTarget = isArtistCard
     ? sourceTrigger.querySelector<HTMLElement>("[data-coda-artist-name-target]")
     : undefined;
@@ -316,11 +320,15 @@ export function markArtistReturnDestination(
     return () => {};
   }
 
-  const sourceArtwork =
+  const artworkSurface =
     sourceTrigger.dataset.codaArtistCard !== undefined
-      ? (sourceTrigger.querySelector<HTMLElement>("[data-slot=cover]") ??
-        undefined)
-      : undefined;
+      ? sourceTrigger
+      : sourceTrigger.closest<HTMLElement>(
+          ":is([data-album-card], [data-coda-album-detail-surface])",
+        );
+  const sourceArtwork =
+    artworkSurface?.querySelector<HTMLElement>("[data-slot=cover]") ??
+    undefined;
   const nameWrapper =
     Array.from(
       sourceTrigger.querySelectorAll<HTMLElement>(
