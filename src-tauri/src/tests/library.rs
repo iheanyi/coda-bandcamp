@@ -1,5 +1,5 @@
 use super::*;
-use redb::ReadableDatabase;
+use redb::{ReadableDatabase, ReadableTableMetadata};
 use std::sync::{atomic::Ordering, Mutex};
 
 static ALBUM_CACHE_GENERATION_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -585,6 +585,194 @@ fn redb_discards_expired_and_incompatible_album_metadata() {
     drop(transaction);
     drop(database);
     fs::remove_dir_all(path.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn a_stale_album_cache_prune_cannot_delete_a_concurrent_refresh() {
+    let path = temporary_album_metadata_cache_path("stale-prune-race");
+    let database = open_album_metadata_database(&path).unwrap();
+    let credentials = ConnectionInput {
+        username: "generated-user".into(),
+        password: "generated-password".into(),
+    };
+    let album_id = "album-1";
+    let cache_key = persisted_album_track_cache_key(&credentials, album_id);
+    let now = 1_800_000_000_000;
+
+    let transaction = database.begin_write().unwrap();
+    {
+        let mut table = transaction.open_table(ALBUM_TRACKS_TABLE).unwrap();
+        table
+            .insert(cache_key.as_str(), b"{not-json".as_slice())
+            .unwrap();
+    }
+    transaction.commit().unwrap();
+
+    let mut refreshed_track = sample_track("track-refreshed");
+    refreshed_track.album_id = album_id.into();
+    assert!(read_persisted_album_tracks_with_before_prune(
+        &database,
+        &cache_key,
+        album_id,
+        now,
+        || {
+            assert!(write_persisted_album_tracks(
+                &database,
+                &cache_key,
+                album_id,
+                std::slice::from_ref(&refreshed_track),
+                now,
+                None,
+                None,
+            )
+            .unwrap());
+        },
+    )
+    .unwrap()
+    .is_none());
+
+    let restored = read_persisted_album_tracks(&database, &cache_key, album_id, now + 1)
+        .unwrap()
+        .expect("the concurrent refresh must survive a stale prune");
+    assert_eq!(restored[0].id, refreshed_track.id);
+
+    drop(database);
+    fs::remove_dir_all(path.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn corrupted_album_cache_files_are_recreated_fail_closed() {
+    let path = temporary_album_metadata_cache_path("corruption-recovery");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, b"definitely-not-a-redb-database").unwrap();
+
+    let database = open_album_metadata_database(&path).unwrap();
+    let transaction = database.begin_read().unwrap();
+    let table = transaction.open_table(ALBUM_TRACKS_TABLE).unwrap();
+    assert_eq!(table.len().unwrap(), 0);
+    drop(table);
+    drop(transaction);
+    drop(database);
+
+    fs::remove_dir_all(path.parent().unwrap()).unwrap();
+
+    let truncated_path = temporary_album_metadata_cache_path("truncation-recovery");
+    let database = open_album_metadata_database(&truncated_path).unwrap();
+    let credentials = ConnectionInput {
+        username: "generated-user".into(),
+        password: "generated-password".into(),
+    };
+    let cache_key = persisted_album_track_cache_key(&credentials, "album-1");
+    assert!(write_persisted_album_tracks(
+        &database,
+        &cache_key,
+        "album-1",
+        &[sample_track("track-1")],
+        1_800_000_000_000,
+        None,
+        None,
+    )
+    .unwrap());
+    drop(database);
+    let database = open_album_metadata_database(&truncated_path).unwrap();
+    assert!(
+        read_persisted_album_tracks(&database, &cache_key, "album-1", 1_800_000_000_001,)
+            .unwrap()
+            .is_some()
+    );
+    drop(database);
+    let file = fs::OpenOptions::new()
+        .write(true)
+        .open(&truncated_path)
+        .unwrap();
+    file.set_len(file.metadata().unwrap().len() / 2).unwrap();
+    drop(file);
+
+    let database = open_album_metadata_database(&truncated_path).unwrap();
+    let transaction = database.begin_read().unwrap();
+    let table = transaction.open_table(ALBUM_TRACKS_TABLE).unwrap();
+    assert_eq!(table.len().unwrap(), 0);
+    drop(table);
+    drop(transaction);
+    drop(database);
+    fs::remove_dir_all(truncated_path.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn album_cache_recovery_does_not_delete_operational_failures() {
+    let path = temporary_album_metadata_cache_path("operational-open-error");
+    fs::create_dir_all(&path).unwrap();
+
+    assert!(open_album_metadata_database(&path).is_err());
+    assert!(path.is_dir());
+
+    fs::remove_dir_all(path.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn impossible_redb_header_layouts_are_recreated_without_entering_redb() {
+    let source_path = temporary_album_metadata_cache_path("header-source");
+    drop(open_album_metadata_database(&source_path).unwrap());
+    let source = fs::read(&source_path).unwrap();
+    let corruptions: [(&str, &[(usize, u32)]); 6] = [
+        ("zero-page-size", &[(12, 0)]),
+        ("zero-region-capacity", &[(20, 0)]),
+        ("no-regions", &[(24, 0), (28, 0)]),
+        ("oversized-trailing-region", &[(20, 1), (28, 1)]),
+        (
+            "forged-length-consistent-layout",
+            &[(16, 0), (20, 1), (24, 257), (28, 0)],
+        ),
+        (
+            "overflowing-region-count",
+            &[(16, u32::MAX), (24, u32::MAX)],
+        ),
+    ];
+
+    for (label, fields) in corruptions {
+        let path = temporary_album_metadata_cache_path(label);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut corrupted = source.clone();
+        for (offset, value) in fields {
+            corrupted[*offset..*offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        fs::write(&path, corrupted).unwrap();
+
+        let database = open_album_metadata_database(&path).unwrap();
+        let transaction = database.begin_read().unwrap();
+        let table = transaction.open_table(ALBUM_TRACKS_TABLE).unwrap();
+        assert_eq!(table.len().unwrap(), 0, "{label}");
+        drop(table);
+        drop(transaction);
+        drop(database);
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    fs::remove_dir_all(source_path.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn redb_files_with_trailing_partial_pages_are_recreated_before_open() {
+    for trailing_bytes in [1_usize, 2_047] {
+        let path =
+            temporary_album_metadata_cache_path(&format!("trailing-partial-page-{trailing_bytes}"));
+        drop(open_album_metadata_database(&path).unwrap());
+        let baseline_len = fs::metadata(&path).unwrap().len();
+
+        let mut bytes = fs::read(&path).unwrap();
+        bytes.extend(std::iter::repeat_n(0xa5, trailing_bytes));
+        fs::write(&path, bytes).unwrap();
+
+        let database = open_album_metadata_database(&path).unwrap();
+        let transaction = database.begin_read().unwrap();
+        let table = transaction.open_table(ALBUM_TRACKS_TABLE).unwrap();
+        assert_eq!(table.len().unwrap(), 0);
+        drop(table);
+        drop(transaction);
+        drop(database);
+        assert_eq!(fs::metadata(&path).unwrap().len(), baseline_len);
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
 }
 
 #[test]

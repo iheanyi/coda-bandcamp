@@ -12,7 +12,8 @@ use redb::{
     TableDefinition,
 };
 use std::collections::BTreeMap;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use tauri::Manager;
@@ -28,6 +29,16 @@ const MAX_PERSISTED_ALBUM_TRACK_CACHE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_PERSISTED_ALBUM_TRACK_ENTRY_BYTES: usize = 8 * 1024 * 1024;
 const MAX_PERSISTED_ALBUM_TRACK_CACHE_FILE_BYTES: u64 = 128 * 1024 * 1024;
 const REDB_ALBUM_METADATA_MEMORY_CACHE_BYTES: usize = 8 * 1024 * 1024;
+const REDB_MAGIC: [u8; 9] = [b'r', b'e', b'd', b'b', 0x1A, 0x0A, 0xA9, 0x0D, 0x0A];
+const REDB_HEADER_BYTES: usize = 320;
+const REDB_PAGE_SIZE: u64 = 4_096;
+const REDB_REGION_HEADER_PAGES: u64 = 0;
+const REDB_REGION_MAX_DATA_PAGES: u64 = 1_048_576;
+const REDB_PAGE_SIZE_OFFSET: usize = 12;
+const REDB_REGION_HEADER_PAGES_OFFSET: usize = 16;
+const REDB_REGION_MAX_DATA_PAGES_OFFSET: usize = 20;
+const REDB_FULL_REGIONS_OFFSET: usize = 24;
+const REDB_TRAILING_DATA_PAGES_OFFSET: usize = 28;
 
 static ALBUM_METADATA_CACHE_WRITE_LOCK: Mutex<()> = Mutex::new(());
 static ALBUM_METADATA_CACHE_GENERATION_LOCK: Mutex<()> = Mutex::new(());
@@ -188,36 +199,57 @@ pub(super) fn open_album_metadata_database(path: &Path) -> Result<Database, Stri
         .ok_or_else(|| "The album metadata cache path is invalid.".to_string())?;
     fs::create_dir_all(directory)
         .map_err(|error| format!("Could not create Coda's application data directory: {error}"))?;
-    match fs::metadata(path) {
-        Ok(metadata) if metadata.len() > MAX_PERSISTED_ALBUM_TRACK_CACHE_FILE_BYTES => {
-            fs::remove_file(path).map_err(|error| {
-                format!("Could not replace the oversized album metadata cache: {error}")
-            })?;
-        }
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+    let mut file = match OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+    {
+        Ok(file) => file,
         Err(error) => {
-            return Err(format!(
-                "Could not inspect the album metadata cache: {error}"
-            ))
+            return Err(format!("Could not open the album metadata cache: {error}"));
         }
+    };
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("Could not inspect the album metadata cache: {error}"))?;
+    if !metadata.is_file() {
+        return Err("The album metadata cache path is not a file.".into());
+    }
+    let replace_file = metadata.len() > MAX_PERSISTED_ALBUM_TRACK_CACHE_FILE_BYTES
+        || !album_metadata_cache_layout_fits_file(&mut file, metadata.len())?;
+    if replace_file {
+        drop(file);
+        fs::remove_file(path).map_err(|error| {
+            format!("Could not replace the corrupted album metadata cache: {error}")
+        })?;
+        file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map_err(|error| format!("Could not recreate the album metadata cache: {error}"))?;
     }
 
-    let create_database = || {
+    let create_database = |file: File| {
         let mut builder = Database::builder();
         builder.set_cache_size(REDB_ALBUM_METADATA_MEMORY_CACHE_BYTES);
-        builder.create(path)
+        builder.create_file(file)
     };
-    let database = match create_database() {
+    let database = match create_database(file) {
         Ok(database) => database,
-        Err(
-            open_error @ (DatabaseError::Storage(StorageError::Corrupted(_))
-            | DatabaseError::UpgradeRequired(_)),
-        ) => {
+        Err(open_error) if discardable_album_metadata_database_error(&open_error) => {
             fs::remove_file(path).map_err(|remove_error| {
                 format!("Could not recover the album metadata cache ({open_error}; {remove_error})")
             })?;
-            create_database()
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .map_err(|error| format!("Could not recreate the album metadata cache: {error}"))?;
+            create_database(file)
                 .map_err(|error| format!("Could not recreate the album metadata cache: {error}"))?
         }
         Err(error) => return Err(format!("Could not open the album metadata cache: {error}")),
@@ -234,6 +266,88 @@ pub(super) fn open_album_metadata_database(path: &Path) -> Result<Database, Stri
         .commit()
         .map_err(|error| format!("Could not initialize the album metadata cache: {error}"))?;
     Ok(database)
+}
+
+fn read_redb_header_u32(header: &[u8; REDB_HEADER_BYTES], offset: usize) -> u32 {
+    u32::from_le_bytes(
+        header[offset..offset + 4]
+            .try_into()
+            .expect("fixed header field"),
+    )
+}
+
+fn album_metadata_cache_layout_fits_file(file: &mut File, file_len: u64) -> Result<bool, String> {
+    if file_len == 0 {
+        return Ok(true);
+    }
+    if file_len < REDB_HEADER_BYTES as u64 {
+        return Ok(false);
+    }
+    let mut header = [0_u8; REDB_HEADER_BYTES];
+    file.read_exact(&mut header)
+        .map_err(|error| format!("Could not inspect the album metadata cache header: {error}"))?;
+    if header[..REDB_MAGIC.len()] != REDB_MAGIC {
+        return Ok(false);
+    }
+
+    // redb 4.1 asserts instead of returning an error when a valid header
+    // advertises a layout beyond a truncated file. Mirror only the stable
+    // fixed-width layout fields needed to reject that impossible shape before
+    // handing the disposable cache to redb.
+    let page_size = u64::from(read_redb_header_u32(&header, REDB_PAGE_SIZE_OFFSET));
+    let region_header_pages = u64::from(read_redb_header_u32(
+        &header,
+        REDB_REGION_HEADER_PAGES_OFFSET,
+    ));
+    let region_max_data_pages = u64::from(read_redb_header_u32(
+        &header,
+        REDB_REGION_MAX_DATA_PAGES_OFFSET,
+    ));
+    let full_regions = u64::from(read_redb_header_u32(&header, REDB_FULL_REGIONS_OFFSET));
+    let trailing_data_pages = u64::from(read_redb_header_u32(
+        &header,
+        REDB_TRAILING_DATA_PAGES_OFFSET,
+    ));
+    // Coda uses redb's production defaults (4 KiB pages and 4 GiB regions),
+    // and caps this disposable cache below one full region. Accept only that
+    // exact shape: merely length-consistent forged layouts can still trip
+    // redb's allocator assertions before it can report corruption.
+    if page_size != REDB_PAGE_SIZE
+        || region_header_pages != REDB_REGION_HEADER_PAGES
+        || region_max_data_pages != REDB_REGION_MAX_DATA_PAGES
+        || full_regions != 0
+        || trailing_data_pages == 0
+        || trailing_data_pages >= region_max_data_pages
+    {
+        return Ok(false);
+    }
+
+    let full_region_bytes = region_header_pages
+        .checked_add(region_max_data_pages)
+        .and_then(|pages| pages.checked_mul(page_size));
+    let full_regions_bytes = full_region_bytes.and_then(|bytes| bytes.checked_mul(full_regions));
+    let trailing_region_bytes = if trailing_data_pages == 0 {
+        Some(0)
+    } else {
+        region_header_pages
+            .checked_add(trailing_data_pages)
+            .and_then(|pages| pages.checked_mul(page_size))
+    };
+    let expected_len = full_regions_bytes
+        .and_then(|bytes| bytes.checked_add(trailing_region_bytes?))
+        .and_then(|bytes| bytes.checked_add(page_size));
+    Ok(expected_len.is_some_and(|expected_len| expected_len == file_len))
+}
+
+fn discardable_album_metadata_database_error(error: &DatabaseError) -> bool {
+    matches!(
+        error,
+        DatabaseError::Storage(StorageError::Corrupted(_)) | DatabaseError::UpgradeRequired(_)
+    ) || matches!(
+        error,
+        DatabaseError::Storage(StorageError::Io(error))
+            if matches!(error.kind(), ErrorKind::InvalidData | ErrorKind::UnexpectedEof)
+    )
 }
 
 pub(super) fn album_metadata_database(app: &tauri::AppHandle) -> Result<&'static Database, String> {
@@ -351,9 +465,10 @@ pub(super) fn validate_persisted_album_tracks(
     Ok(())
 }
 
-pub(super) fn remove_persisted_album_tracks(
+fn remove_persisted_album_tracks_if_unchanged(
     database: &Database,
     cache_key: &str,
+    expected_serialized: &[u8],
 ) -> Result<(), String> {
     let _guard = ALBUM_METADATA_CACHE_WRITE_LOCK
         .lock()
@@ -365,6 +480,13 @@ pub(super) fn remove_persisted_album_tracks(
         let mut table = transaction
             .open_table(ALBUM_TRACKS_TABLE)
             .map_err(|error| format!("Could not open the album metadata cache: {error}"))?;
+        let unchanged = table
+            .get(cache_key)
+            .map_err(|error| format!("Could not inspect the album metadata cache: {error}"))?
+            .is_some_and(|value| value.value() == expected_serialized);
+        if !unchanged {
+            return Ok(());
+        }
         drop(
             table
                 .remove(cache_key)
@@ -382,6 +504,19 @@ pub(super) fn read_persisted_album_tracks(
     album_id: &str,
     now: u64,
 ) -> Result<Option<Vec<Track>>, String> {
+    read_persisted_album_tracks_inner(database, cache_key, album_id, now, || {})
+}
+
+fn read_persisted_album_tracks_inner<F>(
+    database: &Database,
+    cache_key: &str,
+    album_id: &str,
+    now: u64,
+    before_prune: F,
+) -> Result<Option<Vec<Track>>, String>
+where
+    F: FnOnce(),
+{
     let serialized = {
         let transaction = database
             .begin_read()
@@ -398,17 +533,33 @@ pub(super) fn read_persisted_album_tracks(
         return Ok(None);
     };
     if serialized.len() > MAX_PERSISTED_ALBUM_TRACK_ENTRY_BYTES {
-        remove_persisted_album_tracks(database, cache_key)?;
+        before_prune();
+        remove_persisted_album_tracks_if_unchanged(database, cache_key, &serialized)?;
         return Ok(None);
     }
     let entry = match serde_json::from_slice::<PersistedAlbumTracks>(&serialized) {
         Ok(entry) if validate_persisted_album_tracks(&entry, album_id, now).is_ok() => entry,
         _ => {
-            remove_persisted_album_tracks(database, cache_key)?;
+            before_prune();
+            remove_persisted_album_tracks_if_unchanged(database, cache_key, &serialized)?;
             return Ok(None);
         }
     };
     Ok(Some(entry.tracks))
+}
+
+#[cfg(test)]
+pub(super) fn read_persisted_album_tracks_with_before_prune<F>(
+    database: &Database,
+    cache_key: &str,
+    album_id: &str,
+    now: u64,
+    before_prune: F,
+) -> Result<Option<Vec<Track>>, String>
+where
+    F: FnOnce(),
+{
+    read_persisted_album_tracks_inner(database, cache_key, album_id, now, before_prune)
 }
 
 #[derive(Debug)]
