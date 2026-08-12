@@ -548,6 +548,30 @@ describe("library session disconnect", () => {
     );
   });
 
+  it("clears authenticated state and surfaces a native cleanup warning", async () => {
+    const client = queryClient();
+    const warning =
+      "Bandcamp credentials were removed, but local metadata cleanup is still pending.";
+    const deps = dependencies({
+      disconnect: vi.fn(async () => warning),
+    });
+    const notify = vi.fn();
+    const controller = createLibrarySessionController({
+      dependencies: deps,
+      notify,
+      queryClient: client,
+    });
+    controller.commands.acceptConnectedLibrary([album("original")], {
+      announce: false,
+    });
+
+    await controller.commands.disconnect();
+
+    expect(controller.getSnapshot().connection).toBe("disconnected");
+    expect(notify).toHaveBeenCalledWith("Bandcamp credentials removed", "good");
+    expect(notify).toHaveBeenLastCalledWith(warning, "bad");
+  });
+
   it("cancels an in-flight Query hydration so it cannot repopulate after disconnect", async () => {
     const client = queryClient();
     const metadata = deferred<Track[]>();

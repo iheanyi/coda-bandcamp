@@ -355,8 +355,8 @@ export async function connectBandcamp(
   return albums.map(hydrateAlbum);
 }
 
-export async function disconnect(): Promise<void> {
-  return invoke("disconnect");
+export async function disconnect(): Promise<string | undefined> {
+  return (await invoke<string | null>("disconnect")) ?? undefined;
 }
 
 export async function loadPlayerState(): Promise<PlayerStateSnapshot | undefined> {

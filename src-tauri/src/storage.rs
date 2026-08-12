@@ -6,6 +6,60 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const FALLBACK_TEMP_FILE_NAME: &str = "coda-state.json";
 
+#[cfg(not(target_os = "windows"))]
+fn sync_parent_directory(directory: &Path, label: &str) -> Result<(), String> {
+    fs::File::open(directory)
+        .and_then(|file| file.sync_all())
+        .map_err(|error| format!("Could not finalize the {label}: {error}"))
+}
+
+#[cfg(target_os = "windows")]
+fn sync_parent_directory(_directory: &Path, _label: &str) -> Result<(), String> {
+    // Windows rename/replace below requests write-through explicitly.
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn rename_file_atomically(temporary: &Path, path: &Path, label: &str) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let existing = temporary
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let destination = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    // SAFETY: Both UTF-16 buffers are NUL-terminated and remain alive for the
+    // duration of the call.
+    unsafe {
+        MoveFileExW(
+            PCWSTR(existing.as_ptr()),
+            PCWSTR(destination.as_ptr()),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    }
+    .map_err(|error| format!("Could not finalize the {label}: {error}"))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn rename_file_atomically(temporary: &Path, path: &Path, label: &str) -> Result<(), String> {
+    fs::rename(temporary, path)
+        .map_err(|error| format!("Could not finalize the {label}: {error}"))?;
+    sync_parent_directory(
+        path.parent()
+            .ok_or_else(|| format!("The {label} path is invalid."))?,
+        label,
+    )
+}
+
 #[cfg(target_os = "windows")]
 fn replace_existing_file(
     temporary: &Path,
@@ -104,13 +158,14 @@ pub(crate) fn write_bytes_atomically(
             .map_err(|error| format!("Could not write the {label}: {error}"))?;
         drop(file);
 
-        match fs::rename(&temporary, path) {
-            Ok(()) => Ok(()),
-            Err(first_error) if path.exists() => {
-                replace_existing_file(&temporary, path, label, first_error)
+        rename_file_atomically(&temporary, path, label).or_else(|first_error| {
+            if path.exists() {
+                replace_existing_file(&temporary, path, label, std::io::Error::other(first_error))?;
+                sync_parent_directory(directory, label)
+            } else {
+                Err(first_error)
             }
-            Err(error) => Err(format!("Could not finalize the {label}: {error}")),
-        }
+        })
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temporary);

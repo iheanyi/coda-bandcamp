@@ -1,4 +1,5 @@
 use crate::models::{ConnectionInput, PersistedAlbumTracks, Track};
+use crate::storage::write_bytes_atomically;
 use crate::subsonic::{
     current_connection_generation, load_credentials, validate_identifier, validate_subsonic_id,
     MAX_SUBSONIC_DURATION_SECONDS,
@@ -17,6 +18,8 @@ use std::sync::{Mutex, OnceLock};
 use tauri::Manager;
 
 pub(super) const ALBUM_METADATA_CACHE_FILE: &str = "album-metadata-cache-v1.redb";
+pub(super) const ALBUM_METADATA_CACHE_INVALIDATION_FILE: &str =
+    "album-metadata-cache-invalidated-v1";
 pub(super) const ALBUM_TRACK_CACHE_ENTRY_VERSION: u8 = 1;
 pub(super) const PERSISTED_ALBUM_TRACK_CACHE_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
 const MAX_PERSISTED_ALBUM_TRACK_CACHE_ENTRIES: usize = 256;
@@ -32,6 +35,12 @@ static ALBUM_METADATA_DATABASE: OnceLock<Database> = OnceLock::new();
 static ALBUM_REFRESH_GENERATIONS: OnceLock<Mutex<BTreeMap<String, u64>>> = OnceLock::new();
 pub(super) const ALBUM_TRACKS_TABLE: TableDefinition<&str, &[u8]> =
     TableDefinition::new("album_tracks_v1");
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum AlbumMetadataCacheReset {
+    Cleared,
+    Invalidated,
+}
 
 pub(super) fn album_refresh_generations() -> &'static Mutex<BTreeMap<String, u64>> {
     ALBUM_REFRESH_GENERATIONS.get_or_init(|| Mutex::new(BTreeMap::new()))
@@ -66,6 +75,67 @@ pub(super) fn album_metadata_cache_path(app: &tauri::AppHandle) -> Result<PathBu
         .app_data_dir()
         .map(|directory| directory.join(ALBUM_METADATA_CACHE_FILE))
         .map_err(|error| format!("Could not locate Coda's application data directory: {error}"))
+}
+
+pub(super) fn album_metadata_cache_invalidation_path(
+    app: &tauri::AppHandle,
+) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map(|directory| directory.join(ALBUM_METADATA_CACHE_INVALIDATION_FILE))
+        .map_err(|error| format!("Could not locate Coda's application data directory: {error}"))
+}
+
+pub(super) fn album_metadata_cache_invalidated_at(path: &Path) -> Result<bool, String> {
+    match fs::metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!(
+            "Could not inspect the album metadata cache invalidation marker: {error}"
+        )),
+    }
+}
+
+pub(super) fn album_metadata_cache_access_allowed_at(path: &Path) -> Result<(), String> {
+    if album_metadata_cache_invalidated_at(path)? {
+        Err("The album metadata cache remains disabled until local cleanup succeeds.".into())
+    } else {
+        Ok(())
+    }
+}
+
+pub(super) fn reset_album_metadata_cache_at<F>(
+    invalidation_path: &Path,
+    clear: F,
+) -> Result<AlbumMetadataCacheReset, String>
+where
+    F: FnOnce() -> Result<(), String>,
+{
+    let invalidation_result = match album_metadata_cache_invalidated_at(invalidation_path) {
+        Ok(true) => Ok(()),
+        Ok(false) | Err(_) => write_bytes_atomically(
+            invalidation_path,
+            b"coda-album-metadata-cache-invalidated-v1\n",
+            "album metadata cache invalidation marker",
+        ),
+    };
+    let clear_result = clear();
+
+    match clear_result {
+        Ok(()) => match fs::remove_file(invalidation_path) {
+            Ok(()) => Ok(AlbumMetadataCacheReset::Cleared),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(AlbumMetadataCacheReset::Cleared)
+            }
+            // The data is gone and the remaining marker keeps access fail-closed.
+            Err(_) => Ok(AlbumMetadataCacheReset::Invalidated),
+        },
+        Err(_) if invalidation_result.is_ok() => Ok(AlbumMetadataCacheReset::Invalidated),
+        Err(clear_error) => Err(format!(
+            "The album metadata cache could not be cleared or invalidated ({clear_error}; {}).",
+            invalidation_result.unwrap_err()
+        )),
+    }
 }
 
 pub(super) fn open_album_metadata_database(path: &Path) -> Result<Database, String> {
@@ -141,6 +211,31 @@ pub(super) fn album_metadata_database(app: &tauri::AppHandle) -> Result<&'static
     ALBUM_METADATA_DATABASE
         .get()
         .ok_or_else(|| "Could not initialize the album metadata cache.".to_string())
+}
+
+pub(super) fn reset_album_metadata_cache(
+    app: &tauri::AppHandle,
+) -> Result<AlbumMetadataCacheReset, String> {
+    let invalidation_path = album_metadata_cache_invalidation_path(app)?;
+    reset_album_metadata_cache_at(&invalidation_path, || {
+        album_metadata_database(app).and_then(clear_persisted_album_tracks)
+    })
+}
+
+pub(super) fn album_metadata_database_for_access(
+    app: &tauri::AppHandle,
+) -> Result<Option<&'static Database>, String> {
+    let invalidation_path = album_metadata_cache_invalidation_path(app)?;
+    match album_metadata_cache_access_allowed_at(&invalidation_path) {
+        Ok(()) => album_metadata_database(app).map(Some),
+        Err(_) if album_metadata_cache_invalidated_at(&invalidation_path)? => {
+            match reset_album_metadata_cache(app)? {
+                AlbumMetadataCacheReset::Cleared => album_metadata_database(app).map(Some),
+                AlbumMetadataCacheReset::Invalidated => Ok(None),
+            }
+        }
+        Err(error) => Err(error),
+    }
 }
 
 pub(super) fn album_track_cache_namespace(credentials: &ConnectionInput) -> String {

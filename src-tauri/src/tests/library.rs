@@ -1,5 +1,6 @@
 use super::*;
 use redb::ReadableDatabase;
+use std::sync::atomic::Ordering;
 
 #[test]
 fn atomically_round_trips_bounded_library_cache_without_media_urls() {
@@ -146,6 +147,123 @@ fn account_cache_reset_is_required_when_the_previous_owner_is_unknown_or_changes
     assert!(connection_owner_changed(None, &first));
     assert!(!connection_owner_changed(Some(&first), &refreshed));
     assert!(connection_owner_changed(Some(&first), &second));
+}
+
+#[test]
+fn connection_change_blocks_intermediate_album_requests_until_final_generation() {
+    assert!(!album_request_connection_is_current(7, 7, true));
+    assert!(!album_request_connection_is_current(7, 8, false));
+    assert!(album_request_connection_is_current(8, 8, false));
+}
+
+#[test]
+fn connection_change_guard_excludes_overlapping_credential_mutations() {
+    assert!(!CONNECTION_CHANGE_IN_PROGRESS.load(Ordering::Acquire));
+    let first = ConnectionChangeGuard::begin().unwrap();
+    assert!(CONNECTION_CHANGE_IN_PROGRESS.load(Ordering::Acquire));
+    assert!(ConnectionChangeGuard::begin().is_err());
+    drop(first);
+    assert!(!CONNECTION_CHANGE_IN_PROGRESS.load(Ordering::Acquire));
+    drop(ConnectionChangeGuard::begin().unwrap());
+}
+
+#[test]
+fn failed_album_cache_clear_stays_durably_invalidated_until_retry_succeeds() {
+    let path = temporary_album_metadata_cache_path("failed-clear-invalidation");
+    let marker_path = path
+        .parent()
+        .unwrap()
+        .join(ALBUM_METADATA_CACHE_INVALIDATION_FILE);
+    let database = open_album_metadata_database(&path).unwrap();
+    let credentials = ConnectionInput {
+        username: "generated-user".into(),
+        password: "generated-password".into(),
+    };
+    let cache_key = persisted_album_track_cache_key(&credentials, "album-1");
+    let now = 1_800_000_000_000;
+
+    assert!(write_persisted_album_tracks(
+        &database,
+        &cache_key,
+        "album-1",
+        &[sample_track("track-1")],
+        now,
+        None,
+        None,
+    )
+    .unwrap());
+
+    assert_eq!(
+        reset_album_metadata_cache_at(&marker_path, || Err("injected redb failure".into()))
+            .unwrap(),
+        AlbumMetadataCacheReset::Invalidated
+    );
+    assert!(album_metadata_cache_invalidated_at(&marker_path).unwrap());
+    assert!(album_metadata_cache_access_allowed_at(&marker_path).is_err());
+    assert!(
+        read_persisted_album_tracks(&database, &cache_key, "album-1", now + 1)
+            .unwrap()
+            .is_some()
+    );
+
+    assert_eq!(
+        reset_album_metadata_cache_at(&marker_path, || { clear_persisted_album_tracks(&database) })
+            .unwrap(),
+        AlbumMetadataCacheReset::Cleared
+    );
+    assert!(!album_metadata_cache_invalidated_at(&marker_path).unwrap());
+    assert!(album_metadata_cache_access_allowed_at(&marker_path).is_ok());
+    assert!(
+        read_persisted_album_tracks(&database, &cache_key, "album-1", now + 1)
+            .unwrap()
+            .is_none()
+    );
+
+    drop(database);
+    fs::remove_dir_all(path.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn album_cache_reset_rejects_when_neither_clear_nor_invalidation_can_succeed() {
+    let directory = temporary_album_metadata_cache_path("double-reset-failure")
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    fs::create_dir_all(&directory).unwrap();
+    let invalid_parent = directory.join("not-a-directory");
+    fs::write(&invalid_parent, b"occupied").unwrap();
+    let marker_path = invalid_parent.join(ALBUM_METADATA_CACHE_INVALIDATION_FILE);
+
+    let error = reset_album_metadata_cache_at(&marker_path, || Err("injected redb failure".into()))
+        .unwrap_err();
+    assert!(error.contains("could not be cleared or invalidated"));
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn disconnect_cleanup_reports_partial_failure_without_implying_credentials_remain() {
+    assert_eq!(
+        finish_disconnect_cache_cleanup(Ok(()), Ok(AlbumMetadataCacheReset::Cleared)),
+        None
+    );
+    assert_eq!(
+        finish_disconnect_cache_cleanup(Ok(()), Ok(AlbumMetadataCacheReset::Invalidated)),
+        None
+    );
+
+    let album_warning =
+        finish_disconnect_cache_cleanup(Ok(()), Err("cache reset failed".into())).unwrap();
+    assert!(album_warning.contains("credentials were removed"));
+    assert!(!album_warning.contains("Could not remove credentials"));
+
+    let library_warning = finish_disconnect_cache_cleanup(
+        Err("library reset failed".into()),
+        Ok(AlbumMetadataCacheReset::Cleared),
+    )
+    .unwrap();
+    assert!(library_warning.contains("credentials were removed"));
+    assert!(!library_warning.contains("Could not remove credentials"));
 }
 
 #[test]

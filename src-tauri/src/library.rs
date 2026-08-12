@@ -1,7 +1,7 @@
 use crate::album_cache::{
-    album_metadata_database, album_refresh_generation, bump_album_refresh_generation,
-    clear_album_refresh_generations, clear_persisted_album_tracks, persisted_album_track_cache_key,
-    read_persisted_album_tracks, write_persisted_album_tracks,
+    album_metadata_database_for_access, album_refresh_generation, bump_album_refresh_generation,
+    clear_album_refresh_generations, persisted_album_track_cache_key, read_persisted_album_tracks,
+    reset_album_metadata_cache, write_persisted_album_tracks, AlbumMetadataCacheReset,
 };
 use crate::library_cache::{
     library_cache_path, load_library_cache_or_clear_invalid, write_library_cache,
@@ -39,7 +39,35 @@ struct AlbumPersistJob {
 
 static ALBUM_PERSIST_QUEUE: OnceLock<Mutex<VecDeque<AlbumPersistJob>>> = OnceLock::new();
 static ALBUM_PERSIST_WORKER_RUNNING: AtomicBool = AtomicBool::new(false);
+pub(super) static CONNECTION_CHANGE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 static LIBRARY_SYNC_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+pub(super) struct ConnectionChangeGuard;
+
+impl ConnectionChangeGuard {
+    pub(super) fn begin() -> Result<Self, String> {
+        CONNECTION_CHANGE_IN_PROGRESS
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| {
+                "Another Bandcamp connection change is already in progress.".to_string()
+            })?;
+        Ok(Self)
+    }
+}
+
+impl Drop for ConnectionChangeGuard {
+    fn drop(&mut self) {
+        CONNECTION_CHANGE_IN_PROGRESS.store(false, Ordering::Release);
+    }
+}
+
+pub(super) fn album_request_connection_is_current(
+    expected_generation: u64,
+    current_generation: u64,
+    connection_change_in_progress: bool,
+) -> bool {
+    !connection_change_in_progress && expected_generation == current_generation
+}
 
 pub(super) fn library_sync_generation() -> u64 {
     LIBRARY_SYNC_GENERATION.load(Ordering::Acquire)
@@ -95,10 +123,27 @@ fn clear_library_cache_file(app: &tauri::AppHandle) -> Result<(), String> {
     }
 }
 
-fn clear_album_metadata_cache_best_effort(app: &tauri::AppHandle, operation: &str) {
-    if let Err(error) = album_metadata_database(app).and_then(clear_persisted_album_tracks) {
-        eprintln!("{operation}: {error}");
+fn cancel_pending_album_cache_writes() {
+    if let Some(queue) = ALBUM_PERSIST_QUEUE.get() {
+        if let Ok(mut queue) = queue.lock() {
+            queue.clear();
+        }
     }
+}
+
+pub(super) fn finish_disconnect_cache_cleanup(
+    library_result: Result<(), String>,
+    album_result: Result<AlbumMetadataCacheReset, String>,
+) -> Option<&'static str> {
+    if library_result.is_ok() && album_result.is_ok() {
+        if matches!(album_result, Ok(AlbumMetadataCacheReset::Invalidated)) {
+            eprintln!("The album metadata cache remains disabled while local cleanup retries.");
+        }
+        return None;
+    }
+    Some(
+        "Bandcamp credentials were removed, but Coda could not finish clearing local library metadata. No credentials remain; retry connecting later and Coda will retry cleanup before saving credentials."
+    )
 }
 
 #[tauri::command]
@@ -110,33 +155,32 @@ pub(super) async fn has_connection() -> bool {
     .unwrap_or(false)
 }
 
-fn disconnect_blocking(app: tauri::AppHandle) -> Result<(), String> {
-    let _guard = LIBRARY_CACHE_LOCK
-        .lock()
-        .map_err(|_| "The library cache lock is unavailable.".to_string())?;
-    let path = library_cache_path(&app)?;
-    match fs::remove_file(path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(format!("Could not remove the saved library: {error}")),
-    }
+fn disconnect_blocking_with_guard(app: &tauri::AppHandle) -> Result<Option<String>, String> {
     match credential_entry()?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => {
             advance_connection_generation();
             advance_library_sync_generation();
+            cancel_pending_album_cache_writes();
             clear_album_refresh_generations();
-            clear_album_metadata_cache_best_effort(
-                &app,
-                "Could not clear the album metadata cache during disconnect",
-            );
-            Ok(())
+            let library_result = clear_library_cache_file(app);
+            let album_result = reset_album_metadata_cache(app);
+            let warning = finish_disconnect_cache_cleanup(library_result, album_result);
+            if let Some(warning) = &warning {
+                eprintln!("Could not finish disconnect cleanup: {warning}");
+            }
+            Ok(warning.map(str::to_string))
         }
         Err(error) => Err(format!("Could not remove credentials: {error}")),
     }
 }
 
+fn disconnect_blocking(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let _connection_change_guard = ConnectionChangeGuard::begin()?;
+    disconnect_blocking_with_guard(&app)
+}
+
 #[tauri::command]
-pub(super) async fn disconnect(app: tauri::AppHandle) -> Result<(), String> {
+pub(super) async fn disconnect(app: tauri::AppHandle) -> Result<Option<String>, String> {
     run_blocking("Could not finish disconnecting Bandcamp", move || {
         disconnect_blocking(app)
     })
@@ -376,16 +420,24 @@ pub(super) async fn connect(
         .await
         .map_err(connection_error)?;
     ensure_library_sync_current(sync_generation, None)?;
-    if connection_owner_changed(previous_credentials.as_ref(), &input) {
+    let owner_changed = connection_owner_changed(previous_credentials.as_ref(), &input);
+    let connection_change_guard = ConnectionChangeGuard::begin()?;
+    if owner_changed {
+        advance_connection_generation();
+        cancel_pending_album_cache_writes();
+        clear_album_refresh_generations();
         let album_cache_app = app.clone();
-        run_blocking("Could not finish resetting the album cache", move || {
-            clear_album_metadata_cache_best_effort(
-                &album_cache_app,
-                "Could not reset the album metadata cache",
-            );
-            Ok(())
+        let reset = run_blocking("Could not finish resetting the album cache", move || {
+            reset_album_metadata_cache(&album_cache_app)
         })
-        .await?;
+        .await
+        .map_err(|_| {
+            "Coda could not safely revoke the prior album metadata. The Bandcamp connection was not changed; retry connecting."
+                .to_string()
+        })?;
+        if reset == AlbumMetadataCacheReset::Invalidated {
+            eprintln!("The prior album metadata cache remains disabled while cleanup retries.");
+        }
 
         let library_cache_app = app.clone();
         run_blocking("Could not finish resetting the library cache", move || {
@@ -396,11 +448,32 @@ pub(super) async fn connect(
     ensure_library_sync_current(sync_generation, None)?;
     store_credentials_async(input.clone()).await?;
 
-    let stored = load_credentials_async().await.map_err(|error| {
-        format!("Credentials were accepted but could not be verified in the system vault: {error}")
-    })?;
+    let stored = match load_credentials_async().await {
+        Ok(stored) => stored,
+        Err(error) => {
+            let cleanup_app = app.clone();
+            if let Err(cleanup_error) = run_blocking(
+                "Could not finish removing an unverified Bandcamp connection",
+                move || disconnect_blocking_with_guard(&cleanup_app),
+            )
+            .await
+            {
+                return Err(format!(
+                    "Credentials were accepted but could not be verified or removed from the system vault: {error}. {cleanup_error}"
+                ));
+            }
+            return Err(format!(
+                "Credentials were accepted but could not be verified in the system vault, so Coda removed them: {error}"
+            ));
+        }
+    };
     if stored.username != input.username || stored.password != input.password {
-        let _ = disconnect(app.clone()).await;
+        let cleanup_app = app.clone();
+        run_blocking(
+            "Could not finish removing an unverified Bandcamp connection",
+            move || disconnect_blocking_with_guard(&cleanup_app),
+        )
+        .await?;
         return Err(
             "Credentials were accepted but the system vault did not return the saved connection."
                 .into(),
@@ -409,6 +482,7 @@ pub(super) async fn connect(
 
     let connection_generation = advance_connection_generation();
     clear_album_refresh_generations();
+    drop(connection_change_guard);
     let cache_app = app.clone();
     let cached_albums = albums.clone();
     let cached_credentials = input.clone();
@@ -618,7 +692,7 @@ async fn run_album_persist_worker() {
             return;
         };
         let _ = tauri::async_runtime::spawn_blocking(move || {
-            let Ok(database) = album_metadata_database(&job.app) else {
+            let Ok(Some(database)) = album_metadata_database_for_access(&job.app) else {
                 return;
             };
             let Ok(now) = timestamp_ms() else {
@@ -644,7 +718,7 @@ pub(super) async fn load_persisted_album_tracks(
     album_id: String,
 ) -> Option<Vec<Track>> {
     tauri::async_runtime::spawn_blocking(move || {
-        let database = album_metadata_database(&app).ok()?;
+        let database = album_metadata_database_for_access(&app).ok().flatten()?;
         let now = timestamp_ms().ok()?;
         read_persisted_album_tracks(database, &cache_key, &album_id, now)
             .ok()
@@ -660,7 +734,11 @@ pub(super) fn ensure_album_request_current(
     album_id: &str,
     refresh_generation: u64,
 ) -> Result<(), String> {
-    if current_connection_generation() != connection_generation {
+    if !album_request_connection_is_current(
+        connection_generation,
+        current_connection_generation(),
+        CONNECTION_CHANGE_IN_PROGRESS.load(Ordering::Acquire),
+    ) {
         return Err("The Bandcamp connection changed while the album was loading.".into());
     }
     if album_refresh_generation(album_id)? != refresh_generation {
@@ -676,6 +754,9 @@ pub(super) async fn fetch_album(
     force_refresh: bool,
 ) -> Result<Vec<Track>, String> {
     validate_identifier(&album_id)?;
+    if CONNECTION_CHANGE_IN_PROGRESS.load(Ordering::Acquire) {
+        return Err("The Bandcamp connection is changing; retry the album shortly.".into());
+    }
     let connection_generation = current_connection_generation();
     let refresh_generation = if force_refresh {
         bump_album_refresh_generation(&album_id)?

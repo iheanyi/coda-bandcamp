@@ -147,7 +147,7 @@ type LibrarySessionDependencies = Readonly<{
   checkConnection: () => Promise<boolean>;
   clearArtworkUrls: () => void;
   clearRuntimeData: () => void;
-  disconnect: () => Promise<void>;
+  disconnect: () => Promise<string | undefined>;
   emitArtworkRefresh: () => void;
   ensureAlbumTracks: (
     queryClient: QueryClient,
@@ -303,9 +303,10 @@ function boundedConcurrency(requested: number | undefined, total: number) {
 
 function routeSnapshot(
   connection: LibraryConnectionStatus,
+  disconnecting = false,
 ): LibrarySessionRouteSnapshot {
   return Object.freeze({
-    canPreloadAuthenticatedRoute: connection === "connected",
+    canPreloadAuthenticatedRoute: connection === "connected" && !disconnecting,
     connection,
     ready: connection !== "checking",
   });
@@ -728,7 +729,7 @@ export function createLibrarySessionController({
   const disconnectCommand = async () => {
     if (disconnectRequest) return disconnectRequest;
     const request = dependencies.disconnect().then(
-      () => {
+      (cleanupWarning) => {
         ++lifecycleGeneration;
         ++syncGeneration;
         ++sessionGeneration;
@@ -742,6 +743,7 @@ export function createLibrarySessionController({
         setConnection("disconnected");
         setSync("idle");
         notify("Bandcamp credentials removed", "good");
+        if (cleanupWarning) notify(cleanupWarning, "bad");
       },
       (cause) => {
         throw cause;
@@ -786,7 +788,8 @@ export function createLibrarySessionController({
       if (!album) return undefined;
       return cachedAlbumTracks(queryClient, album)?.map(routeSafeTrack);
     },
-    getSnapshot: () => routeSnapshot(state.connection),
+    getSnapshot: () =>
+      routeSnapshot(state.connection, Boolean(disconnectRequest)),
     preloadAlbum: (albumOrId) => {
       if (state.connection !== "connected" || disconnectRequest) return;
       const album =
