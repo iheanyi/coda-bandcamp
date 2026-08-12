@@ -58,4 +58,16 @@ describe("queue recommendations", () => {
       reason: "A wildcard from your collection",
     });
   });
+
+  it("moves past releases already accepted from queue recommendations", () => {
+    const result = recommendQueueAlbum(
+      [album("accepted", "Artist A", "Jazz")],
+      undefined,
+      new Set(),
+      0,
+      new Set(["accepted"]),
+    );
+
+    expect(result).toBeUndefined();
+  });
 });

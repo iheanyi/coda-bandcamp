@@ -1,21 +1,23 @@
-"use client"
+"use client";
 
-import * as React from "react"
-import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog"
-import { AnimatePresence } from "motion/react"
-import * as m from "motion/react-m"
+import * as React from "react";
+import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog";
+import { AnimatePresence } from "motion/react";
+import * as m from "motion/react-m";
 
-import { cn } from "@/lib/utils"
-import { Button } from "@/components/ui/button"
-import { codaMotion } from "@/motion"
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { codaMotion } from "@/motion";
+
+import { useMotionExitWatchdog } from "./useMotionExitWatchdog";
 
 type AlertDialogPresenceContextValue = {
-  actionsRef: React.RefObject<AlertDialogPrimitive.Root.Actions | null>
-  open: boolean
-}
+  actionsRef: React.RefObject<AlertDialogPrimitive.Root.Actions | null>;
+  open: boolean;
+};
 
 const AlertDialogPresenceContext =
-  React.createContext<AlertDialogPresenceContextValue | null>(null)
+  React.createContext<AlertDialogPresenceContextValue | null>(null);
 
 function AlertDialog({
   open: openProp,
@@ -24,12 +26,11 @@ function AlertDialog({
   actionsRef: actionsRefProp,
   ...props
 }: AlertDialogPrimitive.Root.Props) {
-  const [uncontrolledOpen, setUncontrolledOpen] =
-    React.useState(defaultOpen)
+  const [uncontrolledOpen, setUncontrolledOpen] = React.useState(defaultOpen);
   const internalActionsRef =
-    React.useRef<AlertDialogPrimitive.Root.Actions | null>(null)
-  const actionsRef = actionsRefProp ?? internalActionsRef
-  const open = openProp ?? uncontrolledOpen
+    React.useRef<AlertDialogPrimitive.Root.Actions | null>(null);
+  const actionsRef = actionsRefProp ?? internalActionsRef;
+  const open = openProp ?? uncontrolledOpen;
 
   return (
     <AlertDialogPresenceContext.Provider value={{ actionsRef, open }}>
@@ -39,23 +40,23 @@ function AlertDialog({
         open={open}
         onOpenChange={(nextOpen, details) => {
           if (!nextOpen && details.reason === "escape-key") {
-            details.cancel()
-            return
+            details.cancel();
+            return;
           }
-          if (!nextOpen) details.preventUnmountOnClose()
-          if (openProp === undefined) setUncontrolledOpen(nextOpen)
-          onOpenChange?.(nextOpen, details)
+          if (!nextOpen) details.preventUnmountOnClose();
+          if (openProp === undefined) setUncontrolledOpen(nextOpen);
+          onOpenChange?.(nextOpen, details);
         }}
         {...props}
       />
     </AlertDialogPresenceContext.Provider>
-  )
+  );
 }
 
 function AlertDialogTrigger({ ...props }: AlertDialogPrimitive.Trigger.Props) {
   return (
     <AlertDialogPrimitive.Trigger data-slot="alert-dialog-trigger" {...props} />
-  )
+  );
 }
 
 function AlertDialogPortal({
@@ -68,7 +69,7 @@ function AlertDialogPortal({
       keepMounted={keepMounted}
       {...props}
     />
-  )
+  );
 }
 
 function AlertDialogOverlay({
@@ -80,7 +81,7 @@ function AlertDialogOverlay({
       data-slot="alert-dialog-overlay"
       className={cn(
         "fixed inset-0 isolate z-50 bg-[rgba(5,6,7,0.72)] backdrop-blur-sm",
-        className
+        className,
       )}
       {...props}
       render={
@@ -91,7 +92,7 @@ function AlertDialogOverlay({
         />
       }
     />
-  )
+  );
 }
 
 function AlertDialogContent({
@@ -99,25 +100,27 @@ function AlertDialogContent({
   size = "default",
   ...props
 }: AlertDialogPrimitive.Popup.Props & {
-  size?: "default" | "sm"
+  size?: "default" | "sm";
 }) {
-  const presence = React.useContext(AlertDialogPresenceContext)
-  const open = presence?.open ?? true
+  const presence = React.useContext(AlertDialogPresenceContext);
+  const open = presence?.open ?? true;
+  const completeExit = useMotionExitWatchdog({
+    open,
+    onExitComplete: () => presence?.actionsRef.current?.unmount(),
+  });
 
   return (
-    <AlertDialogPortal>
-      <AnimatePresence
-        onExitComplete={() => presence?.actionsRef.current?.unmount()}
-      >
-        {open ? (
-          <React.Fragment key="alert-dialog-presence">
+    <AnimatePresence onExitComplete={completeExit}>
+      {open ? (
+        <AlertDialogPortal key="alert-dialog-presence">
+          <React.Fragment>
             <AlertDialogOverlay forceRender />
             <AlertDialogPrimitive.Popup
               data-slot="alert-dialog-content"
               data-size={size}
               className={cn(
                 "group/alert-dialog-content fixed top-1/2 left-1/2 z-50 grid w-[calc(100%-2rem)] max-w-md -translate-1/2 gap-4 rounded-lg border border-(--line-strong) bg-coda-radio p-6 text-popover-foreground shadow-[0_26px_70px_rgba(0,0,0,0.45)] outline-none",
-                className
+                className,
               )}
               {...props}
               render={
@@ -140,10 +143,10 @@ function AlertDialogContent({
               }
             />
           </React.Fragment>
-        ) : null}
-      </AnimatePresence>
-    </AlertDialogPortal>
-  )
+        </AlertDialogPortal>
+      ) : null}
+    </AnimatePresence>
+  );
 }
 
 function AlertDialogHeader({
@@ -155,11 +158,11 @@ function AlertDialogHeader({
       data-slot="alert-dialog-header"
       className={cn(
         "grid grid-rows-[auto_1fr] place-items-center gap-1.5 text-center has-data-[slot=alert-dialog-media]:grid-rows-[auto_auto_1fr] has-data-[slot=alert-dialog-media]:gap-x-4 sm:group-data-[size=default]/alert-dialog-content:place-items-start sm:group-data-[size=default]/alert-dialog-content:text-left sm:group-data-[size=default]/alert-dialog-content:has-data-[slot=alert-dialog-media]:grid-rows-[auto_1fr]",
-        className
+        className,
       )}
       {...props}
     />
-  )
+  );
 }
 
 function AlertDialogFooter({
@@ -171,11 +174,11 @@ function AlertDialogFooter({
       data-slot="alert-dialog-footer"
       className={cn(
         "-mx-6 -mb-6 flex flex-col-reverse gap-2 rounded-b-lg border-t bg-muted/50 p-6 group-data-[size=sm]/alert-dialog-content:grid group-data-[size=sm]/alert-dialog-content:grid-cols-2 sm:flex-row sm:justify-end",
-        className
+        className,
       )}
       {...props}
     />
-  )
+  );
 }
 
 function AlertDialogMedia({
@@ -187,11 +190,11 @@ function AlertDialogMedia({
       data-slot="alert-dialog-media"
       className={cn(
         "mb-2 inline-flex size-10 items-center justify-center rounded-md bg-muted sm:group-data-[size=default]/alert-dialog-content:row-span-2 *:[svg:not([class*='size-'])]:size-6",
-        className
+        className,
       )}
       {...props}
     />
-  )
+  );
 }
 
 function AlertDialogTitle({
@@ -203,11 +206,11 @@ function AlertDialogTitle({
       data-slot="alert-dialog-title"
       className={cn(
         "text-base font-medium sm:group-data-[size=default]/alert-dialog-content:group-has-data-[slot=alert-dialog-media]/alert-dialog-content:col-start-2",
-        className
+        className,
       )}
       {...props}
     />
-  )
+  );
 }
 
 function AlertDialogDescription({
@@ -219,18 +222,17 @@ function AlertDialogDescription({
       data-slot="alert-dialog-description"
       className={cn(
         "text-sm text-balance text-muted-foreground md:text-pretty *:[a]:underline *:[a]:underline-offset-3 *:[a]:hover:text-foreground",
-        className
+        className,
       )}
       {...props}
     />
-  )
+  );
 }
 
 function AlertDialogAction({
   className,
   ...props
-}: AlertDialogPrimitive.Close.Props &
-  React.ComponentProps<typeof Button>) {
+}: AlertDialogPrimitive.Close.Props & React.ComponentProps<typeof Button>) {
   return (
     <AlertDialogPrimitive.Close
       data-slot="alert-dialog-action"
@@ -238,7 +240,7 @@ function AlertDialogAction({
       render={<Button />}
       {...props}
     />
-  )
+  );
 }
 
 function AlertDialogCancel({
@@ -255,7 +257,7 @@ function AlertDialogCancel({
       render={<Button variant={variant} size={size} />}
       {...props}
     />
-  )
+  );
 }
 
 export {
@@ -271,4 +273,4 @@ export {
   AlertDialogPortal,
   AlertDialogTitle,
   AlertDialogTrigger,
-}
+};

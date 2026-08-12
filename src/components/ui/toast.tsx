@@ -1,5 +1,5 @@
-import * as React from "react"
-import { Toast as ToastPrimitive } from "@base-ui/react/toast"
+import * as React from "react";
+import { Toast as ToastPrimitive } from "@base-ui/react/toast";
 import {
   CircleCheck,
   Info,
@@ -7,49 +7,35 @@ import {
   OctagonX,
   TriangleAlert,
   X,
-} from "lucide-react"
-import { AnimatePresence } from "motion/react"
-import * as m from "motion/react-m"
+} from "lucide-react";
+import { AnimatePresence, usePresence } from "motion/react";
+import * as m from "motion/react-m";
 
-import { cn } from "@/lib/utils"
-import { Button } from "@/components/ui/button"
-import { codaMotion } from "@/motion"
-
-const toast = ToastPrimitive.createToastManager()
-
-type ToastTone = "good" | "bad"
-type ToastNotifier = (message: string, tone?: ToastTone) => void
-
-const notifyToast: ToastNotifier = (message, tone) => {
-  toast.add({
-    title: message,
-    type: tone === "good" ? "success" : tone === "bad" ? "error" : undefined,
-    priority: tone === "bad" ? "high" : "low",
-  })
-}
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { codaMotion } from "@/motion";
+import { toast } from "@/components/ui/toastManager";
+import { useMotionExitWatchdog } from "@/components/ui/useMotionExitWatchdog";
 
 function ToastProvider({ ...props }: ToastPrimitive.Provider.Props) {
-  return <ToastPrimitive.Provider {...props} />
+  return <ToastPrimitive.Provider {...props} />;
 }
 
 function ToastPortal({ ...props }: ToastPrimitive.Portal.Props) {
-  return <ToastPrimitive.Portal data-slot="toast-portal" {...props} />
+  return <ToastPrimitive.Portal data-slot="toast-portal" {...props} />;
 }
 
-function ToastViewport({
-  className,
-  ...props
-}: ToastPrimitive.Viewport.Props) {
+function ToastViewport({ className, ...props }: ToastPrimitive.Viewport.Props) {
   return (
     <ToastPrimitive.Viewport
       data-slot="toast-viewport"
       className={cn(
         "pointer-events-none fixed right-4 bottom-28 z-50 w-[calc(100%-2rem)] max-w-xs outline-none",
-        className
+        className,
       )}
       {...props}
     />
-  )
+  );
 }
 
 function Toast({ className, ...props }: ToastPrimitive.Root.Props) {
@@ -71,27 +57,24 @@ function Toast({ className, ...props }: ToastPrimitive.Root.Props) {
         "data-expanded:data-ending-style:data-[swipe-direction=left]:transform-[translateX(calc(var(--toast-swipe-movement-x)-150%))_translateY(var(--offset-y))]",
         "data-expanded:data-ending-style:data-[swipe-direction=right]:transform-[translateX(calc(var(--toast-swipe-movement-x)+150%))_translateY(var(--offset-y))]",
         "data-expanded:data-ending-style:data-[swipe-direction=up]:transform-[translateY(calc(var(--toast-swipe-movement-y)-150%))]",
-        className
+        className,
       )}
       {...props}
     />
-  )
+  );
 }
 
-function ToastContent({
-  className,
-  ...props
-}: ToastPrimitive.Content.Props) {
+function ToastContent({ className, ...props }: ToastPrimitive.Content.Props) {
   return (
     <ToastPrimitive.Content
       data-slot="toast-content"
       className={cn(
         "flex h-full items-center gap-2 overflow-hidden px-3 py-2.5 transition-opacity duration-(--duration-coda-standard) ease-coda-enter data-behind:opacity-0 data-expanded:opacity-100",
-        className
+        className,
       )}
       {...props}
     />
-  )
+  );
 }
 
 function ToastTitle({ className, ...props }: ToastPrimitive.Title.Props) {
@@ -101,7 +84,7 @@ function ToastTitle({ className, ...props }: ToastPrimitive.Title.Props) {
       className={cn("min-w-0 flex-1 text-xs font-medium", className)}
       {...props}
     />
-  )
+  );
 }
 
 function ToastDescription({
@@ -114,7 +97,7 @@ function ToastDescription({
       className={cn("text-xs text-muted-foreground", className)}
       {...props}
     />
-  )
+  );
 }
 
 function ToastAction({
@@ -129,7 +112,7 @@ function ToastAction({
       className={cn("shrink-0", className)}
       {...props}
     />
-  )
+  );
 }
 
 function ToastClose({
@@ -145,31 +128,33 @@ function ToastClose({
       render={render}
       className={cn(
         "relative shrink-0 text-muted-foreground after:absolute after:-inset-2 after:content-[''] hover:text-foreground",
-        className
+        className,
       )}
       {...props}
     >
       {children ?? <X aria-hidden="true" />}
     </ToastPrimitive.Close>
-  )
+  );
 }
 
 function ToastIcon({ type }: { type: string | undefined }) {
-  let icon: React.ReactNode = null
+  let icon: React.ReactNode = null;
 
   if (type === "success") {
-    icon = <CircleCheck className="text-coda-success" aria-hidden="true" />
+    icon = <CircleCheck className="text-coda-success" aria-hidden="true" />;
   } else if (type === "info") {
-    icon = <Info aria-hidden="true" />
+    icon = <Info aria-hidden="true" />;
   } else if (type === "warning") {
-    icon = <TriangleAlert aria-hidden="true" />
+    icon = <TriangleAlert aria-hidden="true" />;
   } else if (type === "error") {
-    icon = <OctagonX className="text-coda-danger-foreground" aria-hidden="true" />
+    icon = (
+      <OctagonX className="text-coda-danger-foreground" aria-hidden="true" />
+    );
   } else if (type === "loading") {
-    icon = <Loader2 className="animate-spin" aria-hidden="true" />
+    icon = <Loader2 className="animate-spin" aria-hidden="true" />;
   }
 
-  if (!icon) return null
+  if (!icon) return null;
 
   return (
     <span
@@ -178,50 +163,77 @@ function ToastIcon({ type }: { type: string | undefined }) {
     >
       {icon}
     </span>
-  )
+  );
+}
+
+function ToastMotionItem({
+  index,
+  toastItem,
+}: Readonly<{
+  index: number;
+  toastItem: ToastPrimitive.Root.Props["toast"];
+}>) {
+  const [isPresent, safeToRemove] = usePresence();
+  const completeExit = useMotionExitWatchdog({
+    open: isPresent,
+    onExitComplete: () => safeToRemove?.(),
+  });
+
+  return (
+    <m.div
+      data-slot="toast-motion"
+      className="pointer-events-none absolute right-0 bottom-0 w-full origin-bottom"
+      inert={!isPresent || undefined}
+      aria-hidden={!isPresent || undefined}
+      style={{
+        pointerEvents: isPresent ? undefined : "none",
+        zIndex: 1000 - index,
+      }}
+      initial={{
+        opacity: 0,
+        transform: "translateY(12px) scale(0.98)",
+      }}
+      animate={{
+        opacity: 1,
+        transform: "translateY(0px) scale(1)",
+        transition: codaMotion.componentEnter,
+      }}
+      exit={{
+        opacity: 0,
+        transform: "translateY(8px) scale(0.98)",
+        transition: codaMotion.componentExit,
+      }}
+      onAnimationComplete={completeExit}
+    >
+      <Toast toast={toastItem}>
+        <ToastContent>
+          <ToastIcon type={toastItem.type} />
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
+            <ToastTitle />
+            <ToastDescription />
+          </div>
+          <ToastAction />
+          <ToastClose />
+        </ToastContent>
+      </Toast>
+    </m.div>
+  );
 }
 
 function ToastList() {
-  const { toasts } = ToastPrimitive.useToastManager()
+  const { toasts } = ToastPrimitive.useToastManager();
 
   return (
     <AnimatePresence initial={false}>
       {toasts.map((toastItem, index) => (
-        <m.div
+        <ToastMotionItem
           key={toastItem.id}
-          data-slot="toast-motion"
-          className="pointer-events-none absolute right-0 bottom-0 w-full origin-bottom"
-          style={{ zIndex: 1000 - index }}
-          initial={{
-            opacity: 0,
-            transform: "translateY(12px) scale(0.98)",
-          }}
-          animate={{
-            opacity: 1,
-            transform: "translateY(0px) scale(1)",
-            transition: codaMotion.componentEnter,
-          }}
-          exit={{
-            opacity: 0,
-            transform: "translateY(8px) scale(0.98)",
-            transition: codaMotion.componentExit,
-          }}
-        >
-          <Toast toast={toastItem}>
-            <ToastContent>
-              <ToastIcon type={toastItem.type} />
-              <div className="flex min-w-0 flex-1 flex-col gap-1">
-                <ToastTitle />
-                <ToastDescription />
-              </div>
-              <ToastAction />
-              <ToastClose />
-            </ToastContent>
-          </Toast>
-        </m.div>
+          index={index}
+          toastItem={toastItem}
+        />
       ))}
     </AnimatePresence>
-  )
+  );
 }
 
 function Toaster({
@@ -238,11 +250,8 @@ function Toaster({
         </ToastViewport>
       </ToastPortal>
     </ToastProvider>
-  )
+  );
 }
-
-const createToastManager = ToastPrimitive.createToastManager
-const useToastManager = ToastPrimitive.useToastManager
 
 export {
   Toaster,
@@ -255,9 +264,4 @@ export {
   ToastProvider,
   ToastTitle,
   ToastViewport,
-  createToastManager,
-  notifyToast,
-  toast,
-  useToastManager,
-}
-export type { ToastNotifier, ToastTone }
+};

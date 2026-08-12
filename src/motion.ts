@@ -46,6 +46,10 @@ export const codaMotion = {
     visualDuration: 0.44,
     bounce: 0,
   },
+  detailIdentityFade: {
+    duration: 0.2,
+    ease: "linear",
+  },
   detailSurfaceEnter: {
     duration: 0.3,
     ease: viewEnterEase,
@@ -54,6 +58,11 @@ export const codaMotion = {
     type: "spring",
     visualDuration: 0.22,
     bounce: 0.08,
+  },
+  selectionPill: {
+    type: "spring",
+    visualDuration: 0.3,
+    bounce: 0.04,
   },
 } satisfies Record<string, Transition>;
 

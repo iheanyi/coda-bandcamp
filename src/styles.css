@@ -56,7 +56,9 @@
   --color-coda-field-placeholder: var(--coda-field-placeholder);
   --color-coda-label: var(--coda-label);
   --shadow-coda-player: 0 -10px 30px rgba(0, 0, 0, 0.16);
-  --shadow-coda-queue: 0 22px 54px rgba(0, 0, 0, 0.42), 0 4px 16px rgba(0, 0, 0, 0.24), inset 1px 0 rgba(255, 255, 255, 0.025);
+  --shadow-coda-queue:
+    0 22px 54px rgba(0, 0, 0, 0.42), 0 4px 16px rgba(0, 0, 0, 0.24),
+    inset 1px 0 rgba(255, 255, 255, 0.025);
   --shadow-coda-artwork: 0 30px 58px rgba(0, 0, 0, 0.38);
   --radius-sm: 5px;
   --radius-md: 7px;
@@ -177,7 +179,9 @@
    */
   html:is(
     .coda-transition--album-detail,
+    .coda-transition--album-detail-close,
     .coda-transition--artist-detail,
+    .coda-transition--artist-detail-close,
     .coda-transition--discover-detail,
     .coda-transition--playlist-detail,
     .coda-transition--playlist-detail-close,
@@ -187,46 +191,72 @@
     view-transition-name: none;
   }
 
-  html.coda-transition--album-detail .coda-album-artwork-source,
-  html.coda-transition--album-detail .album-detail__artwork [data-slot="cover"] {
+  html:is(.coda-transition--album-detail, .coda-transition--album-detail-close)
+    .coda-album-artwork-source,
+  html:is(.coda-transition--album-detail, .coda-transition--album-detail-close)
+    [data-coda-album-artwork-detail],
+  html.coda-transition--album-detail-close [data-coda-album-artwork-return] {
     view-transition-name: coda-album-artwork;
   }
 
-  html.coda-transition--album-detail
-    [data-coda-album-detail-surface] {
+  html.coda-transition--album-detail [data-coda-album-detail-surface] {
     view-transition-name: coda-album-detail-surface;
   }
 
-  html.coda-transition--album-detail
+  html:is(.coda-transition--album-detail, .coda-transition--album-detail-close)
     :is(
       [data-coda-album-title-source],
-      [data-coda-album-title-detail]
+      [data-coda-album-title-detail],
+      [data-coda-album-title-return]
     ) {
     view-transition-name: coda-album-title;
   }
 
-  html.coda-transition--artist-detail
+  html:is(
+      .coda-transition--artist-detail,
+      .coda-transition--artist-detail-close
+    )
     [data-coda-artist-artwork-source]
     [data-slot="cover"],
-  html.coda-transition--artist-detail
+  html:is(
+      .coda-transition--artist-detail,
+      .coda-transition--artist-detail-close
+    )
     [data-coda-artist-artwork-source][data-slot="cover"],
-  html.coda-transition--artist-detail
+  html:is(
+      .coda-transition--artist-detail,
+      .coda-transition--artist-detail-close
+    )
     [data-coda-artist-artwork-detail]
     [data-slot="cover"],
-  html.coda-transition--artist-detail
+  html:is(
+      .coda-transition--artist-detail,
+      .coda-transition--artist-detail-close
+    )
     [data-coda-artist-artwork-detail][data-slot="cover"] {
     view-transition-name: coda-artist-artwork;
   }
 
-  html.coda-transition--artist-detail
+  html.coda-transition--artist-detail-close [data-coda-artist-artwork-return] {
+    view-transition-name: coda-artist-artwork;
+  }
+
+  html:is(
+      .coda-transition--artist-detail,
+      .coda-transition--artist-detail-close
+    )
     [data-coda-artist-detail-surface] {
     view-transition-name: coda-artist-detail-surface;
   }
 
-  html.coda-transition--artist-detail
+  html:is(
+      .coda-transition--artist-detail,
+      .coda-transition--artist-detail-close
+    )
     :is(
       [data-coda-artist-name-source],
-      [data-coda-artist-name-detail]
+      [data-coda-artist-name-detail],
+      [data-coda-artist-name-return]
     ) {
     view-transition-name: coda-artist-name;
   }
@@ -239,23 +269,16 @@
     view-transition-name: coda-discover-artwork;
   }
 
-  html.coda-transition--discover-detail
-    [data-coda-discover-detail-surface] {
+  html.coda-transition--discover-detail [data-coda-discover-detail-surface] {
     view-transition-name: coda-discover-detail-surface;
   }
 
   html.coda-transition--discover-detail
-    :is(
-      [data-coda-discover-title-source],
-      [data-coda-discover-title-detail]
-    ) {
+    :is([data-coda-discover-title-source], [data-coda-discover-title-detail]) {
     view-transition-name: coda-discover-title;
   }
 
-  html:is(
-    .coda-transition--radio-detail,
-    .coda-transition--radio-detail-close
-  )
+  html:is(.coda-transition--radio-detail, .coda-transition--radio-detail-close)
     :is(
       [data-coda-radio-artwork-source],
       [data-coda-radio-artwork-detail],
@@ -264,15 +287,11 @@
     view-transition-name: coda-radio-artwork;
   }
 
-  html.coda-transition--radio-detail
-    [data-coda-radio-detail-surface] {
+  html.coda-transition--radio-detail [data-coda-radio-detail-surface] {
     view-transition-name: coda-radio-detail-surface;
   }
 
-  html:is(
-    .coda-transition--radio-detail,
-    .coda-transition--radio-detail-close
-  )
+  html:is(.coda-transition--radio-detail, .coda-transition--radio-detail-close)
     :is(
       [data-coda-radio-title-source],
       [data-coda-radio-title-detail],
@@ -282,9 +301,9 @@
   }
 
   html:is(
-    .coda-transition--playlist-detail,
-    .coda-transition--playlist-detail-close
-  )
+      .coda-transition--playlist-detail,
+      .coda-transition--playlist-detail-close
+    )
     :is(
       [data-coda-playlist-identity-source],
       [data-coda-playlist-identity-detail],
@@ -293,15 +312,14 @@
     view-transition-name: coda-playlist-identity;
   }
 
-  html.coda-transition--playlist-detail
-    [data-coda-playlist-detail-surface] {
+  html.coda-transition--playlist-detail [data-coda-playlist-detail-surface] {
     view-transition-name: coda-playlist-detail-surface;
   }
 
   html:is(
-    .coda-transition--playlist-detail,
-    .coda-transition--playlist-detail-close
-  )
+      .coda-transition--playlist-detail,
+      .coda-transition--playlist-detail-close
+    )
     :is(
       [data-coda-playlist-title-source],
       [data-coda-playlist-title-detail],
@@ -311,20 +329,22 @@
   }
 
   html:is(
-    .coda-transition--now-playing-open,
-    .coda-transition--now-playing-close
-  ) .player__art-link,
+      .coda-transition--now-playing-open,
+      .coda-transition--now-playing-close
+    )
+    .player__art-link,
   html:is(
-    .coda-transition--now-playing-open,
-    .coda-transition--now-playing-close
-  ) .now-playing__artwork {
+      .coda-transition--now-playing-open,
+      .coda-transition--now-playing-close
+    )
+    .now-playing__artwork {
     view-transition-name: coda-now-playing-artwork;
   }
 
   html:is(
-    .coda-transition--now-playing-open,
-    .coda-transition--now-playing-close
-  )
+      .coda-transition--now-playing-open,
+      .coda-transition--now-playing-close
+    )
     :is(
       [data-coda-now-playing-title-compact],
       [data-coda-now-playing-title-detail]
@@ -333,24 +353,27 @@
   }
 
   html:is(
-    .coda-transition--now-playing-open,
-    .coda-transition--now-playing-close
-  ) .now-playing__header {
+      .coda-transition--now-playing-open,
+      .coda-transition--now-playing-close
+    )
+    .now-playing__header {
     view-transition-name: coda-now-playing-header;
   }
 
   html:is(
-    .coda-transition--now-playing-open,
-    .coda-transition--now-playing-close
-  ) .now-playing__details {
+      .coda-transition--now-playing-open,
+      .coda-transition--now-playing-close
+    )
+    .now-playing__details {
     view-transition-name: coda-now-playing-details;
   }
 
   html:is(
-    .coda-transition--page-forward,
-    .coda-transition--page-back,
-    .coda-transition--page-crossfade
-  ) .library-pane {
+      .coda-transition--page-forward,
+      .coda-transition--page-back,
+      .coda-transition--page-crossfade
+    )
+    .library-pane {
     view-transition-name: coda-page-content;
   }
 }
@@ -386,6 +409,7 @@
   height: 100%;
   object-fit: cover;
   animation: none;
+  mix-blend-mode: normal;
 }
 
 ::view-transition-group(.coda-motion-shared-artwork) {
@@ -445,7 +469,8 @@
 ::view-transition-old(coda-now-playing-title),
 ::view-transition-old(.coda-motion-shared-title) {
   animation: none;
-  opacity: 0;
+  opacity: 1;
+  mix-blend-mode: normal;
 }
 
 ::view-transition-new(coda-album-title),
@@ -480,50 +505,52 @@
 }
 
 html:is(
-  .coda-transition--album-detail,
-  .coda-transition--artist-detail,
-  .coda-transition--discover-detail,
-  .coda-transition--radio-detail,
-  .coda-transition--playlist-detail
-)::view-transition-new(coda-album-detail-surface),
+    .coda-transition--album-detail,
+    .coda-transition--artist-detail,
+    .coda-transition--discover-detail,
+    .coda-transition--radio-detail,
+    .coda-transition--playlist-detail
+  )::view-transition-new(coda-album-detail-surface),
 html:is(
-  .coda-transition--album-detail,
-  .coda-transition--artist-detail,
-  .coda-transition--discover-detail,
-  .coda-transition--radio-detail,
-  .coda-transition--playlist-detail
-)::view-transition-new(coda-artist-detail-surface),
+    .coda-transition--album-detail,
+    .coda-transition--artist-detail,
+    .coda-transition--discover-detail,
+    .coda-transition--radio-detail,
+    .coda-transition--playlist-detail
+  )::view-transition-new(coda-artist-detail-surface),
 html:is(
-  .coda-transition--album-detail,
-  .coda-transition--artist-detail,
-  .coda-transition--discover-detail,
-  .coda-transition--radio-detail,
-  .coda-transition--playlist-detail
-)::view-transition-new(coda-discover-detail-surface),
+    .coda-transition--album-detail,
+    .coda-transition--artist-detail,
+    .coda-transition--discover-detail,
+    .coda-transition--radio-detail,
+    .coda-transition--playlist-detail
+  )::view-transition-new(coda-discover-detail-surface),
 html:is(
-  .coda-transition--album-detail,
-  .coda-transition--artist-detail,
-  .coda-transition--discover-detail,
-  .coda-transition--radio-detail,
-  .coda-transition--playlist-detail
-)::view-transition-new(coda-radio-detail-surface),
+    .coda-transition--album-detail,
+    .coda-transition--artist-detail,
+    .coda-transition--discover-detail,
+    .coda-transition--radio-detail,
+    .coda-transition--playlist-detail
+  )::view-transition-new(coda-radio-detail-surface),
 html:is(
-  .coda-transition--album-detail,
-  .coda-transition--artist-detail,
-  .coda-transition--radio-detail,
-  .coda-transition--playlist-detail
-)::view-transition-new(coda-playlist-detail-surface) {
+    .coda-transition--album-detail,
+    .coda-transition--artist-detail,
+    .coda-transition--radio-detail,
+    .coda-transition--playlist-detail
+  )::view-transition-new(coda-playlist-detail-surface) {
   animation: coda-detail-surface-in 300ms var(--ease-coda-enter) both;
 }
 
 :is(
   [data-coda-album-title-source],
+  [data-coda-album-title-return],
+  [data-coda-artist-name-source],
+  [data-coda-artist-name-return],
   [data-coda-discover-title-source],
   [data-coda-radio-title-source],
   [data-coda-radio-title-return],
   [data-coda-playlist-title-source],
-  [data-coda-playlist-title-return],
-  [data-coda-now-playing-title-compact]
+  [data-coda-playlist-title-return]
 ) {
   display: inline-block;
   width: max-content;
@@ -533,14 +560,32 @@ html:is(
 }
 
 :is(
-  [data-coda-album-title-source],
-  [data-coda-discover-title-source],
-  [data-coda-radio-title-source],
-  [data-coda-radio-title-return],
-  [data-coda-playlist-title-source],
-  [data-coda-playlist-title-return],
+    [data-coda-album-title-source],
+    [data-coda-album-title-return],
+    [data-coda-artist-name-source],
+    [data-coda-artist-name-return],
+    [data-coda-discover-title-source],
+    [data-coda-radio-title-source],
+    [data-coda-radio-title-return],
+    [data-coda-playlist-title-source],
+    [data-coda-playlist-title-return]
+  )
+  ~ [data-slot="overflow-marquee-track"] {
+  animation: none !important;
+  opacity: 0 !important;
+}
+
+html.coda-view-transitioning [data-coda-now-playing-title-compact] {
+  display: inline-block;
+  width: max-content;
+  max-width: 100%;
+  vertical-align: top;
+  opacity: 1 !important;
+}
+
+html.coda-view-transitioning
   [data-coda-now-playing-title-compact]
-) ~ [data-slot="overflow-marquee-track"] {
+  ~ [data-slot="overflow-marquee-track"] {
   animation: none !important;
   opacity: 0 !important;
 }
@@ -565,93 +610,88 @@ html:is(
   animation: none;
 }
 
-html.coda-transition--now-playing-open::view-transition-old(root) {
-  animation: coda-view-old-out var(--duration-coda-standard) var(--ease-coda-exit) both;
+html.coda-transition--now-playing-open::view-transition-new(
+    coda-now-playing-header
+  ) {
+  animation: coda-view-content-in var(--duration-coda-panel) 50ms
+    var(--ease-coda-enter) both;
 }
 
-html.coda-transition--now-playing-open::view-transition-new(root) {
-  animation: coda-view-new-in var(--duration-coda-shared-artwork) var(--ease-coda-enter) both;
+html.coda-transition--now-playing-open::view-transition-new(
+    coda-now-playing-details
+  ) {
+  animation: coda-view-content-in var(--duration-coda-panel) 80ms
+    var(--ease-coda-enter) both;
 }
 
-html.coda-transition--now-playing-open::view-transition-new(coda-now-playing-header) {
-  animation: coda-view-content-in var(--duration-coda-panel) 50ms var(--ease-coda-enter) both;
-}
-
-html.coda-transition--now-playing-open::view-transition-new(coda-now-playing-details) {
-  animation: coda-view-content-in var(--duration-coda-panel) 80ms var(--ease-coda-enter) both;
-}
-
-html.coda-transition--now-playing-close::view-transition-old(root) {
-  animation: coda-view-old-out var(--duration-coda-standard) var(--ease-coda-exit) both;
-}
-
-html.coda-transition--now-playing-close::view-transition-new(root) {
-  animation: coda-view-new-in var(--duration-coda-panel) var(--ease-coda-enter) both;
-}
-
-html.coda-transition--now-playing-close::view-transition-old(coda-now-playing-header),
-html.coda-transition--now-playing-close::view-transition-old(coda-now-playing-details) {
-  animation: coda-view-content-close-out var(--duration-coda-fast) var(--ease-coda-exit) both;
+html.coda-transition--now-playing-close::view-transition-old(
+    coda-now-playing-header
+  ),
+html.coda-transition--now-playing-close::view-transition-old(
+    coda-now-playing-details
+  ) {
+  animation: coda-view-content-close-out var(--duration-coda-fast)
+    var(--ease-coda-exit) both;
 }
 
 html:is(
-  .coda-transition--page-forward,
-  .coda-transition--page-back,
-  .coda-transition--page-crossfade
-)::view-transition-old(root),
+    .coda-transition--now-playing-open,
+    .coda-transition--now-playing-close,
+    .coda-transition--page-forward,
+    .coda-transition--page-back,
+    .coda-transition--page-crossfade
+  )::view-transition-old(root),
 html:is(
-  .coda-transition--album-detail,
-  .coda-transition--artist-detail,
-  .coda-transition--discover-detail,
-  .coda-transition--playlist-detail,
-  .coda-transition--playlist-detail-close,
-  .coda-transition--radio-detail,
-  .coda-transition--radio-detail-close,
-  .coda-transition--page-forward,
-  .coda-transition--page-back,
-  .coda-transition--page-crossfade
-)::view-transition-new(root) {
+    .coda-transition--now-playing-open,
+    .coda-transition--now-playing-close,
+    .coda-transition--album-detail,
+    .coda-transition--album-detail-close,
+    .coda-transition--artist-detail,
+    .coda-transition--artist-detail-close,
+    .coda-transition--discover-detail,
+    .coda-transition--playlist-detail,
+    .coda-transition--playlist-detail-close,
+    .coda-transition--radio-detail,
+    .coda-transition--radio-detail-close,
+    .coda-transition--page-forward,
+    .coda-transition--page-back,
+    .coda-transition--page-crossfade
+  )::view-transition-new(root) {
   animation: none;
 }
 
-html:is(
-  .coda-transition--page-forward
-)::view-transition-old(coda-page-content) {
-  animation: coda-page-forward-out var(--duration-coda-fast) var(--ease-coda-exit) both;
+html:is(.coda-transition--page-forward)::view-transition-old(
+    coda-page-content
+  ) {
+  animation: coda-page-forward-out var(--duration-coda-fast)
+    var(--ease-coda-exit) both;
 }
 
-html:is(
-  .coda-transition--page-forward
-)::view-transition-new(coda-page-content) {
-  animation: coda-page-forward-in var(--duration-coda-view) 35ms var(--ease-coda-enter) both;
+html:is(.coda-transition--page-forward)::view-transition-new(
+    coda-page-content
+  ) {
+  animation: coda-page-forward-in var(--duration-coda-view) 35ms
+    var(--ease-coda-enter) both;
 }
 
 html.coda-transition--page-back::view-transition-old(coda-page-content) {
-  animation: coda-page-back-out var(--duration-coda-fast) var(--ease-coda-exit) both;
+  animation: coda-page-back-out var(--duration-coda-fast) var(--ease-coda-exit)
+    both;
 }
 
 html.coda-transition--page-back::view-transition-new(coda-page-content) {
-  animation: coda-page-back-in var(--duration-coda-view) 35ms var(--ease-coda-enter) both;
+  animation: coda-page-back-in var(--duration-coda-view) 35ms
+    var(--ease-coda-enter) both;
 }
 
 html.coda-transition--page-crossfade::view-transition-old(coda-page-content) {
-  animation: coda-page-fade-out var(--duration-coda-fast) var(--ease-coda-exit) both;
+  animation: coda-page-fade-out var(--duration-coda-fast) var(--ease-coda-exit)
+    both;
 }
 
 html.coda-transition--page-crossfade::view-transition-new(coda-page-content) {
-  animation: coda-page-fade-in var(--duration-coda-standard) 25ms var(--ease-coda-enter) both;
-}
-
-@keyframes coda-view-old-out {
-  to {
-    opacity: 0.32;
-  }
-}
-
-@keyframes coda-view-new-in {
-  from {
-    opacity: 0;
-  }
+  animation: coda-page-fade-in var(--duration-coda-standard) 25ms
+    var(--ease-coda-enter) both;
 }
 
 @keyframes coda-view-content-in {
@@ -715,24 +755,29 @@ html.coda-transition--page-crossfade::view-transition-new(coda-page-content) {
 }
 
 html:not(.coda-view-transitions-supported) .now-playing__wash {
-  animation: now-playing-wash-in var(--duration-coda-shared-artwork) var(--ease-coda-enter) both;
+  animation: now-playing-wash-in var(--duration-coda-shared-artwork)
+    var(--ease-coda-enter) both;
 }
 
 html:not(.coda-view-transitions-supported) .now-playing__header {
-  animation: now-playing-content-in var(--duration-coda-panel) 40ms var(--ease-coda-enter) both;
+  animation: now-playing-content-in var(--duration-coda-panel) 40ms
+    var(--ease-coda-enter) both;
 }
 
 html:not(.coda-view-transitions-supported) .now-playing__artwork {
-  animation: now-playing-artwork-in var(--duration-coda-shared-artwork) var(--ease-coda-enter) both;
+  animation: now-playing-artwork-in var(--duration-coda-shared-artwork)
+    var(--ease-coda-enter) both;
 }
 
 html:not(.coda-view-transitions-supported) .now-playing__details {
-  animation: now-playing-content-in var(--duration-coda-panel) 80ms var(--ease-coda-enter) both;
+  animation: now-playing-content-in var(--duration-coda-panel) 80ms
+    var(--ease-coda-enter) both;
 }
 
 html:not(.coda-view-transitions-supported) .now-playing__radio-timeline,
 html:not(.coda-view-transitions-supported) .now-playing__up-next {
-  animation: now-playing-lower-content-in var(--duration-coda-panel) 100ms var(--ease-coda-enter) both;
+  animation: now-playing-lower-content-in var(--duration-coda-panel) 100ms
+    var(--ease-coda-enter) both;
 }
 
 @keyframes now-playing-wash-in {

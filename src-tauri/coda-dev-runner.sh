@@ -34,16 +34,35 @@ exit_after_signal() {
   exit "$signal_status"
 }
 
-find_signing_identity_hash() {
+find_signing_identity_hashes() {
   security find-identity -v -p codesigning |
-    grep -F "\"$identity\"" |
-    awk 'NR == 1 { print $2 }'
+    awk -v requested="$identity" '
+      {
+        hash = $2
+        line = $0
+        sub(/[[:space:]]+$/, "", line)
+        quote = index(line, "\"")
+        if (quote == 0 || substr(line, length(line), 1) != "\"") next
+        name = substr(line, quote + 1, length(line) - quote - 1)
+        if (name == requested && length(hash) == 40 && hash ~ /^[0-9A-F]+$/) {
+          print hash
+        }
+      }
+    '
 }
 
 resolve_signing_identity() {
   identity_hash=""
   if [ "$identity" != "-" ]; then
-    identity_hash="$(find_signing_identity_hash)"
+    identity_hashes="$(find_signing_identity_hashes)"
+    identity_count="$(printf '%s\n' "$identity_hashes" | awk 'NF { count += 1 } END { print count + 0 }')"
+    if [ "$identity_count" -gt 1 ]; then
+      printf 'Coda found more than one macOS code-signing identity named "%s". Remove the duplicate or choose a unique identity.\n' "$identity" >&2
+      exit 1
+    fi
+    if [ "$identity_count" -eq 1 ]; then
+      identity_hash="$identity_hashes"
+    fi
   fi
 
   if printf '%s\n' "$identity_hash" | grep -Eq '^[0-9A-F]{40}$'; then

@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   VirtualizedQueueList,
@@ -68,6 +69,7 @@ function Queue({
       aria-label="Upcoming tracks"
       estimateSize={ROW_HEIGHT}
       getItemKey={(queueItem) => queueItem.entryId}
+      getItemLabel={(queueItem) => queueItem.title}
       items={items}
       onMove={onMove}
       renderItem={(queueItem, context) => (
@@ -183,6 +185,85 @@ describe("VirtualizedQueueList", () => {
     fireEvent.drop(to);
 
     expect(onMove).toHaveBeenCalledWith(8, 9);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Moved Queue track 1 to position 3 of 3.",
+    );
+  });
+
+  it("offers keyboard-operable move controls with bounded destinations", async () => {
+    const onMove = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <Queue
+        items={[item(0), item(1), item(2)]}
+        onMove={onMove}
+        startIndex={7}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Move Queue track 0 up" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Move Queue track 0 down" }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Move Queue track 2 up" }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Move Queue track 2 down" }),
+    ).toBeDisabled();
+
+    const moveUp = screen.getByRole("button", {
+      name: "Move Queue track 1 up",
+    });
+    moveUp.focus();
+    await user.keyboard("{Enter}");
+
+    expect(moveUp).toHaveFocus();
+    expect(onMove).toHaveBeenCalledOnce();
+    expect(onMove).toHaveBeenCalledWith(8, 7);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Moved Queue track 1 to position 1 of 3.",
+    );
+  });
+
+  it("does not announce or dispatch unavailable moves", () => {
+    const onMove = vi.fn();
+    render(<Queue items={[item(0)]} onMove={onMove} />);
+
+    const moveUp = screen.getByRole("button", {
+      name: "Move Queue track 0 up",
+    });
+    const moveDown = screen.getByRole("button", {
+      name: "Move Queue track 0 down",
+    });
+    expect(moveUp).toBeDisabled();
+    expect(moveDown).toBeDisabled();
+
+    fireEvent.click(moveUp);
+    fireEvent.click(moveDown);
+
+    expect(onMove).not.toHaveBeenCalled();
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+  });
+
+  it("falls back to a positional accessible name", () => {
+    render(
+      <VirtualizedQueueList
+        aria-label="Upcoming tracks"
+        items={["first", "second"]}
+        onMove={vi.fn()}
+        renderItem={(queueItem) => <span>{queueItem}</span>}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Move queue item 1 down" }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Move queue item 2 up" }),
+    ).toBeEnabled();
   });
 });
 

@@ -15,8 +15,9 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
-import { AnimatePresence, useIsPresent } from "motion/react";
+import { AnimatePresence, usePresence } from "motion/react";
 import * as m from "motion/react-m";
+import { Link } from "@tanstack/react-router";
 import {
   memo,
   type CSSProperties,
@@ -40,28 +41,43 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useMotionExitWatchdog } from "@/components/ui/useMotionExitWatchdog";
+import {
+  LibraryAlbumLink,
+  LibraryArtistLink,
+  TrackAlbumLink,
+  TrackArtistLink,
+} from "@/features/player/TrackRouteLinks";
 import { cn } from "@/lib/utils";
-import { codaMotion } from "./motion";
-import { formatTime, openBandcampUrl } from "./lib";
-import { countLabel } from "./countLabel";
-import { normalizedReleaseTitle } from "./playerState";
+import { countLabel } from "@/countLabel";
+import { formatTime, openBandcampUrl } from "@/lib";
+import { codaMotion } from "@/motion";
+import { normalizedReleaseTitle } from "@/playerState";
 import {
   RadioChapterArtwork,
   RadioChapterCopy,
   type RadioChapterLocalLinks,
-} from "./RadioChapterMetadata";
+} from "@/RadioChapterMetadata";
 import {
   nextRadioChapterTimeInTimeline,
   previousRadioChapterTimeInTimeline,
   radioAiringIndexesAt,
   radioShowIdFromTrackId,
-} from "./radioPlayback";
-import { radioSeriesByTitle } from "./radioSeries";
-import type { QueueRecommendation } from "./queueRecommendation";
-import type { PlaybackClock } from "./playbackClock";
-import type { RadioChapter, RepeatMode, Track } from "./types";
+} from "@/radioPlayback";
+import { BANDCAMP_RADIO_PROVIDER } from "@/radioIdentity";
+import { radioSeriesByTitle } from "@/radioSeries";
+import type { PlaybackClock } from "@/playbackClock";
+import type { QueueRecommendation } from "@/queueRecommendation";
+import { handleCodaLinkActivation } from "@/routing/linkActivation";
+import {
+  parseRadioSeriesIdParam,
+  parseRadioShowIdParam,
+  stringifyRadioSeriesIdParam,
+  stringifyRadioShowIdParam,
+} from "@/routing/routeContracts";
+import type { Album, RadioChapter, RepeatMode, Track } from "@/types";
 
-type NowPlayingViewProps = {
+export type NowPlayingViewProps = {
   track: Track;
   radioTimeline: readonly RadioChapter[];
   queue: Track[];
@@ -92,15 +108,18 @@ type NowPlayingViewProps = {
     sourceTrack?: Track,
     sourceTrigger?: HTMLElement,
   ) => void;
-  onAlbum: (track: Track, trigger?: HTMLButtonElement) => void;
+  onAlbum: (track: Track, trigger?: HTMLElement) => void;
   albumLoading?: boolean;
   onPlayQueueIndex: (index: number) => void;
-  onRadioSeries: (seriesId?: number) => void;
+  onRadioSeries: (seriesId?: number, trigger?: HTMLAnchorElement) => void;
   recommendation?: QueueRecommendation;
   recommendationArtwork?: ReactNode;
   recommendationLoading: boolean;
+  recommendationQueueLoading?: boolean;
+  onQueueRecommendation?: () => void;
   onPlayRecommendation: () => void;
   onAnotherRecommendation: () => void;
+  onRecommendationAlbum?: (album: Album, trigger: HTMLAnchorElement) => void;
   getRadioChapterLocalLinks?: (chapter: RadioChapter) => RadioChapterLocalLinks;
   favorite?: boolean;
   onToggleFavorite?: () => void;
@@ -114,7 +133,11 @@ function PresencePanel({
   children: ReactNode;
   className: string;
 }) {
-  const isPresent = useIsPresent();
+  const [isPresent, safeToRemove] = usePresence();
+  const completeExit = useMotionExitWatchdog({
+    open: isPresent,
+    onExitComplete: () => safeToRemove?.(),
+  });
   return (
     <m.div
       aria-hidden={!isPresent || undefined}
@@ -134,6 +157,7 @@ function PresencePanel({
         transform: "translateY(4px)",
         transition: codaMotion.componentExit,
       }}
+      onAnimationComplete={completeExit}
       style={{ pointerEvents: isPresent ? "auto" : "none" }}
     >
       {children}
@@ -172,15 +196,14 @@ const NowPlayingRadioSummary = memo(function NowPlayingRadioSummary({
 }) {
   const currentIndex = useCurrentRadioIndex(playbackClock, timeline);
   const current = currentIndex >= 0 ? timeline[currentIndex] : undefined;
-  const next = currentIndex + 1 < timeline.length
-    ? timeline[currentIndex + 1]
-    : undefined;
+  const next =
+    currentIndex + 1 < timeline.length ? timeline[currentIndex + 1] : undefined;
 
   if (current) {
     return (
       <section
         className="my-4 grid max-w-lg gap-1 rounded-lg border border-primary/25 bg-primary/10 p-4"
-        aria-label="Currently airing on Bandcamp Radio"
+        aria-label={`Currently airing on ${BANDCAMP_RADIO_PROVIDER}`}
         aria-live="polite"
         aria-atomic="true"
       >
@@ -274,7 +297,10 @@ const NowPlayingPlaybackControls = memo(function NowPlayingPlaybackControls({
           value={[Math.min(Math.max(0, currentTime), safeDuration || 1)]}
           onValueChange={(values) => onSeek(values[0] ?? 0)}
         />
-        <div className="mt-2 flex justify-between text-xs text-[#8e918c] tabular-nums" aria-hidden="true">
+        <div
+          className="mt-2 flex justify-between text-xs text-[#8e918c] tabular-nums"
+          aria-hidden="true"
+        >
           <span>{formatTime(currentTime)}</span>
           <span>−{formatTime(remaining)}</span>
         </div>
@@ -301,9 +327,11 @@ const NowPlayingPlaybackControls = memo(function NowPlayingPlaybackControls({
               />
             }
           >
-            {repeat === "one"
-              ? <Repeat1 className="size-5" size={20} />
-              : <Repeat className="size-5" size={20} />}
+            {repeat === "one" ? (
+              <Repeat1 className="size-5" size={20} />
+            ) : (
+              <Repeat className="size-5" size={20} />
+            )}
           </TooltipTrigger>
           <TooltipContent>{repeatLabel}</TooltipContent>
         </Tooltip>
@@ -372,7 +400,9 @@ const NowPlayingPlaybackControls = memo(function NowPlayingPlaybackControls({
               </TooltipTrigger>
             }
           />
-          <TooltipContent>{queueOpen ? "Hide queue" : "Show queue"}</TooltipContent>
+          <TooltipContent>
+            {queueOpen ? "Hide queue" : "Show queue"}
+          </TooltipContent>
         </Tooltip>
       </div>
     </>
@@ -397,9 +427,7 @@ const NowPlayingRadioTimeline = memo(function NowPlayingRadioTimeline({
   getLocalLinks?: (chapter: RadioChapter) => RadioChapterLocalLinks;
 }) {
   const currentIndex = useCurrentRadioIndex(playbackClock, timeline);
-  const nextIndex = currentIndex + 1 < timeline.length
-    ? currentIndex + 1
-    : -1;
+  const nextIndex = currentIndex + 1 < timeline.length ? currentIndex + 1 : -1;
 
   if (!timeline.length) return null;
 
@@ -410,7 +438,10 @@ const NowPlayingRadioTimeline = memo(function NowPlayingRadioTimeline({
     >
       <div className="mb-4 flex items-end justify-between gap-5 px-1">
         <div>
-          <Badge variant="artwork" className="mb-1.5 h-auto border-0 bg-transparent p-0 text-xs tracking-widest uppercase">
+          <Badge
+            variant="artwork"
+            className="mb-1.5 h-auto border-0 bg-transparent p-0 text-xs tracking-widest uppercase"
+          >
             Broadcast tracklist
           </Badge>
           <h2
@@ -420,7 +451,9 @@ const NowPlayingRadioTimeline = memo(function NowPlayingRadioTimeline({
             Songs in this show
           </h2>
         </div>
-        <span className="text-xs text-[#777b76]">{countLabel(timeline.length, "chapter")}</span>
+        <span className="text-xs text-[#777b76]">
+          {countLabel(timeline.length, "chapter")}
+        </span>
       </div>
       <ol
         className="relative m-0 grid max-h-[min(42vh,24rem)] scrollbar-thin [scrollbar-color:#3e4142_transparent] scrollbar-gutter-stable list-none gap-1 overflow-y-auto overscroll-contain rounded-lg bg-[rgba(13,15,17,0.66)] py-1.5 pr-2.5 pl-1.5"
@@ -448,8 +481,14 @@ const NowPlayingRadioTimeline = memo(function NowPlayingRadioTimeline({
                 aria-label={`Seek to ${chapter.title} at ${formatTime(chapter.timecode)}`}
                 title={`Play from ${formatTime(chapter.timecode)}`}
               >
-                <RadioChapterArtwork chapter={chapter} index={index} active={isCurrent} />
-                <time className="text-xs tabular-nums">{formatTime(chapter.timecode)}</time>
+                <RadioChapterArtwork
+                  chapter={chapter}
+                  index={index}
+                  active={isCurrent}
+                />
+                <time className="text-xs tabular-nums">
+                  {formatTime(chapter.timecode)}
+                </time>
               </Button>
               <RadioChapterCopy
                 chapter={chapter}
@@ -476,7 +515,10 @@ const NowPlayingRadioTimeline = memo(function NowPlayingRadioTimeline({
                   On air
                 </Badge>
               ) : isNext ? (
-                <Badge variant="secondary" className="justify-self-end px-2 py-1 text-xs tracking-widest uppercase">
+                <Badge
+                  variant="secondary"
+                  className="justify-self-end px-2 py-1 text-xs tracking-widest uppercase"
+                >
                   Up next
                 </Badge>
               ) : null}
@@ -526,8 +568,11 @@ function NowPlayingViewComponent({
   recommendation,
   recommendationArtwork,
   recommendationLoading,
+  recommendationQueueLoading = false,
+  onQueueRecommendation,
   onPlayRecommendation,
   onAnotherRecommendation,
+  onRecommendationAlbum,
   getRadioChapterLocalLinks,
   favorite = false,
   onToggleFavorite,
@@ -536,13 +581,26 @@ function NowPlayingViewComponent({
   const headingRef = useRef<HTMLHeadingElement>(null);
   const [radioLinkError, setRadioLinkError] = useState("");
   const safeDuration = Math.max(0, duration);
-  const upcoming = queue.slice(currentIndex + 1, currentIndex + 1 + UPCOMING_PREVIEW_LIMIT);
-  const moreUpcoming = Math.max(0, queue.length - currentIndex - 1 - upcoming.length);
+  const upcoming = queue.slice(
+    currentIndex + 1,
+    currentIndex + 1 + UPCOMING_PREVIEW_LIMIT,
+  );
+  const moreUpcoming = Math.max(
+    0,
+    queue.length - currentIndex - 1 - upcoming.length,
+  );
   const radioShowId = radioShowIdFromTrackId(track.id);
+  const radioShowRouteId =
+    radioShowId === undefined ? undefined : parseRadioShowIdParam(radioShowId);
   const radioShowUrl = radioShowId
     ? `https://bandcamp.com/radio?show=${radioShowId}`
     : undefined;
-  const radioSeries = radioShowUrl ? radioSeriesByTitle(track.album) : undefined;
+  const radioSeries = radioShowUrl
+    ? radioSeriesByTitle(track.album)
+    : undefined;
+  const radioSeriesRouteId = radioSeries
+    ? parseRadioSeriesIdParam(radioSeries.id)
+    : undefined;
   const releaseTitle = normalizedReleaseTitle(track.album);
 
   const openRadioChapter = useCallback((url: string) => {
@@ -551,7 +609,6 @@ function NowPlayingViewComponent({
       setRadioLinkError(String(cause).replace(/^Error:\s*/, ""));
     });
   }, []);
-
   useEffect(() => {
     headingRef.current?.focus({ preventScroll: true });
   }, []);
@@ -602,36 +659,48 @@ function NowPlayingViewComponent({
       </header>
 
       <div className="relative mx-auto grid w-full max-w-5xl grid-cols-[minmax(15rem,24rem)_minmax(17rem,1fr)] items-center gap-16 max-xl:max-w-xl max-xl:grid-cols-1 max-xl:gap-6">
-        <div className="now-playing__artwork aspect-square w-full drop-shadow-[0_32px_44px_rgba(0,0,0,0.42)] **:data-[cover-size=large]:size-full **:data-[cover-size=large]:rounded-xl **:data-[cover-size=large]:border **:data-[cover-size=large]:border-white/10 **:data-[cover-size=large]:shadow-none max-xl:mx-auto max-xl:w-64 max-lg:w-52">
+        <div
+          className="now-playing__artwork aspect-square w-full drop-shadow-[0_32px_44px_rgba(0,0,0,0.42)] **:data-[cover-size=large]:size-full **:data-[cover-size=large]:rounded-xl **:data-[cover-size=large]:border **:data-[cover-size=large]:border-white/10 **:data-[cover-size=large]:shadow-none max-xl:mx-auto max-xl:w-64 max-lg:w-52"
+          data-coda-track-id={track.id}
+        >
           {artwork}
         </div>
-        <section className="now-playing__details min-w-0 max-xl:text-center" aria-label="Current track">
+        <section
+          className="now-playing__details min-w-0 max-xl:text-center"
+          aria-label="Current track"
+        >
           <h1
             id="now-playing-heading"
             ref={headingRef}
             className={cn(
               "m-0 max-w-3xl wrap-anywhere font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-6xl/tight font-bold tracking-tighter text-balance text-[#f5f2eb] outline-none max-xl:text-5xl max-lg:text-3xl",
-              track.title.length > 32 && "text-5xl leading-none max-xl:text-4xl max-lg:text-3xl",
+              track.title.length > 32 &&
+                "text-5xl leading-none max-xl:text-4xl max-lg:text-3xl",
             )}
             title={track.title}
             tabIndex={-1}
           >
-            {radioShowUrl ? (
-              <Button
-                variant="text"
-                size="compact"
-                className="group/show tracking-inherit inline-flex h-auto max-w-full items-baseline gap-1 overflow-hidden p-0 text-left text-inherit [font:inherit] hover:bg-transparent hover:text-inherit"
-                onClick={() => openRadioChapter(radioShowUrl)}
-                aria-label={`Open ${track.title} on Bandcamp Radio`}
-                title="Open show on Bandcamp Radio"
+            {radioShowRouteId ? (
+              <Link
+                className="inline-block max-w-full truncate text-inherit outline-none hover:text-(--now-playing-accent) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                data-coda-now-playing-title-detail={track.id}
+                onClick={(event) =>
+                  handleCodaLinkActivation(event, (trigger) =>
+                    onAlbum(track, trigger),
+                  )
+                }
+                params={{
+                  showId: stringifyRadioShowIdParam(radioShowRouteId),
+                }}
+                title={`Open ${track.title} Radio show details`}
+                to="/radio/shows/$showId"
               >
-                <span className="truncate">{track.title}</span>
-                <ExternalLink className="size-5 shrink-0 text-[#858984] transition-[color,transform] duration-(--duration-coda-standard) ease-coda-enter group-hover/show:translate-x-0.5 group-hover/show:-translate-y-0.5 group-hover/show:text-(--now-playing-accent) motion-reduce:transition-none" aria-hidden="true" />
-              </Button>
+                {track.title}
+              </Link>
             ) : (
               <span
                 className="inline-block max-w-full align-top"
-                data-coda-now-playing-title-detail=""
+                data-coda-now-playing-title-detail={track.id}
               >
                 {track.title}
               </span>
@@ -640,51 +709,87 @@ function NowPlayingViewComponent({
           <div className="mt-4 flex min-w-0 items-center gap-2 text-[#696d68] max-xl:justify-center">
             {radioShowUrl ? (
               <>
-                <Button
-                  variant="text"
-                  size="compact"
+                <Link
                   className="h-auto max-w-[46%] truncate p-0 text-sm font-medium text-[#c1c2bc] hover:bg-transparent hover:text-primary"
-                  onClick={() => onRadioSeries()}
+                  onClick={(event) =>
+                    handleCodaLinkActivation(event, (trigger) =>
+                      onRadioSeries(undefined, trigger),
+                    )
+                  }
+                  to="/radio"
                 >
-                  Bandcamp Radio
-                </Button>
+                  {BANDCAMP_RADIO_PROVIDER}
+                </Link>
                 <span aria-hidden="true">·</span>
+                {radioSeriesRouteId ? (
+                  <Link
+                    className="h-auto max-w-[46%] truncate p-0 text-sm font-medium text-[#c1c2bc] hover:bg-transparent hover:text-primary"
+                    onClick={(event) =>
+                      handleCodaLinkActivation(event, (trigger) =>
+                        onRadioSeries(radioSeries?.id, trigger),
+                      )
+                    }
+                    params={{
+                      seriesId: stringifyRadioSeriesIdParam(radioSeriesRouteId),
+                    }}
+                    to="/radio/series/$seriesId"
+                  >
+                    {releaseTitle}
+                  </Link>
+                ) : radioShowRouteId ? (
+                  <Link
+                    className="h-auto max-w-[46%] truncate p-0 text-sm font-medium text-[#c1c2bc] hover:bg-transparent hover:text-primary"
+                    onClick={(event) =>
+                      handleCodaLinkActivation(event, (trigger) =>
+                        onAlbum(track, trigger),
+                      )
+                    }
+                    params={{
+                      showId: stringifyRadioShowIdParam(radioShowRouteId),
+                    }}
+                    to="/radio/shows/$showId"
+                  >
+                    {releaseTitle}
+                  </Link>
+                ) : null}
                 <Button
+                  aria-label={`Open ${track.title} on ${BANDCAMP_RADIO_PROVIDER}`}
+                  className="group/show size-6 shrink-0 rounded-sm p-0 text-[#858984] hover:bg-transparent hover:text-(--now-playing-accent)"
+                  onClick={() => openRadioChapter(radioShowUrl)}
+                  size="icon-compact"
+                  title={`Open show on ${BANDCAMP_RADIO_PROVIDER}`}
                   variant="text"
-                  size="compact"
-                  className="h-auto max-w-[46%] truncate p-0 text-sm font-medium text-[#c1c2bc] hover:bg-transparent hover:text-primary"
-                  onClick={() => onRadioSeries(radioSeries?.id)}
                 >
-                  {releaseTitle}
+                  <ExternalLink
+                    aria-hidden="true"
+                    className="size-4 transition-transform duration-(--duration-coda-standard) ease-coda-enter group-hover/show:translate-x-0.5 group-hover/show:-translate-y-0.5 motion-reduce:transition-none"
+                  />
                 </Button>
               </>
             ) : (
               <>
-                <Button
-                  variant="text"
-                  size="compact"
+                <TrackArtistLink
                   className="h-auto min-w-0 max-w-[46%] overflow-hidden p-0 text-sm font-medium text-[#c1c2bc] hover:bg-transparent hover:text-primary"
-                  onClick={(event) =>
-                    onArtist(
-                      track.artist,
-                      track.albumId,
-                      track,
-                      event.currentTarget,
-                    )}
+                  onNavigate={onArtist}
+                  track={track}
                 >
                   <OverflowMarquee text={track.artist} />
-                </Button>
+                </TrackArtistLink>
                 {releaseTitle ? (
                   <>
                     <span aria-hidden="true">·</span>
-                    <Button
-                      variant="text"
-                      size="compact"
+                    <TrackAlbumLink
                       className="h-auto min-w-0 max-w-[46%] overflow-hidden p-0 text-sm font-medium text-[#c1c2bc] hover:bg-transparent hover:text-primary"
-                      onClick={(event) => onAlbum(track, event.currentTarget)}
-                      aria-busy={albumLoading}
-                      aria-label={albumLoading ? `Loading album ${releaseTitle}` : undefined}
+                      onNavigate={onAlbum}
+                      busy={albumLoading}
+                      ariaLabel={
+                        albumLoading
+                          ? `Loading album ${releaseTitle}`
+                          : undefined
+                      }
+                      dataPlayerAlbumLink
                       disabled={albumLoading}
+                      track={track}
                     >
                       {albumLoading ? (
                         <Spinner
@@ -693,7 +798,7 @@ function NowPlayingViewComponent({
                         />
                       ) : null}
                       <OverflowMarquee className="flex-1" text={releaseTitle} />
-                    </Button>
+                    </TrackAlbumLink>
                   </>
                 ) : null}
               </>
@@ -708,20 +813,27 @@ function NowPlayingViewComponent({
             />
           ) : null}
           <div className="mt-3.5 flex items-center gap-2 text-xs text-[#7d817b] max-xl:justify-center max-lg:flex-wrap">
-            <span className="inline-flex items-center gap-1 after:ml-2 after:text-[#505450] after:content-['·']">Track {track.track}</span>
-            <span className="inline-flex items-center gap-1 after:ml-2 after:text-[#505450] after:content-['·']"><Clock3 size={13} /> {formatTime(safeDuration)}</span>
-            <span className="inline-flex items-center gap-1">{countLabel(queue.length - currentIndex - 1, "track")} next</span>
+            <span className="inline-flex items-center gap-1 after:ml-2 after:text-[#505450] after:content-['·']">
+              Track {track.track}
+            </span>
+            <span className="inline-flex items-center gap-1 after:ml-2 after:text-[#505450] after:content-['·']">
+              <Clock3 size={13} /> {formatTime(safeDuration)}
+            </span>
+            <span className="inline-flex items-center gap-1">
+              {countLabel(queue.length - currentIndex - 1, "track")} next
+            </span>
           </div>
-          {(
-            onToggleFavorite ||
-            (!track.id.startsWith("radio:") && onAddToPlaylist)
-          ) ? (
+          {onToggleFavorite ||
+          (!track.id.startsWith("radio:") && onAddToPlaylist) ? (
             <div className="mt-2.5 flex gap-2 max-xl:justify-center">
               {onToggleFavorite ? (
                 <Button
                   variant="text"
                   size="compact"
-                  className={cn("bg-white/2.5 px-2", favorite && "text-[#ef8066]")}
+                  className={cn(
+                    "bg-white/2.5 px-2",
+                    favorite && "text-[#ef8066]",
+                  )}
                   onClick={onToggleFavorite}
                   aria-pressed={favorite}
                 >
@@ -730,7 +842,12 @@ function NowPlayingViewComponent({
                 </Button>
               ) : null}
               {!track.id.startsWith("radio:") && onAddToPlaylist ? (
-                <Button variant="text" size="compact" className="bg-white/2.5 px-2" onClick={onAddToPlaylist}>
+                <Button
+                  variant="text"
+                  size="compact"
+                  className="bg-white/2.5 px-2"
+                  onClick={onAddToPlaylist}
+                >
                   <ListPlus size={15} /> Add to playlist
                 </Button>
               ) : null}
@@ -772,9 +889,11 @@ function NowPlayingViewComponent({
                     />
                   }
                 >
-                  {volume
-                    ? <Volume2 className="size-5" size={19} />
-                    : <VolumeX className="size-5" size={19} />}
+                  {volume ? (
+                    <Volume2 className="size-5" size={19} />
+                  ) : (
+                    <VolumeX className="size-5" size={19} />
+                  )}
                 </TooltipTrigger>
                 <TooltipContent>{volume ? "Mute" : "Unmute"}</TooltipContent>
               </Tooltip>
@@ -821,14 +940,20 @@ function NowPlayingViewComponent({
       >
         <div className="mb-3 flex items-end justify-between gap-5 max-lg:flex-col max-lg:items-start max-lg:gap-2">
           <div>
-            <Badge variant="artwork" className="mb-1 h-auto border-0 bg-transparent p-0 text-xs tracking-widest uppercase">
+            <Badge
+              variant="artwork"
+              className="mb-1 h-auto border-0 bg-transparent p-0 text-xs tracking-widest uppercase"
+            >
               {upcoming.length
                 ? "In this session"
                 : hasDeferredTracks
                   ? "Shuffle loading"
                   : "Queue complete"}
             </Badge>
-            <h2 id="up-next-heading" className="m-0 text-base/tight font-semibold tracking-tight text-[#dfddd7]">
+            <h2
+              id="up-next-heading"
+              className="m-0 text-base/tight font-semibold tracking-tight text-[#dfddd7]"
+            >
               {upcoming.length
                 ? "Up next"
                 : hasDeferredTracks
@@ -847,26 +972,49 @@ function NowPlayingViewComponent({
                 {upcoming.map((item, index) => {
                   const queueIndex = currentIndex + index + 1;
                   return (
-                    <Button
-                      variant="ghost"
-                      size="compact"
+                    <div
                       className="grid h-auto min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-2.5 rounded-md px-2.5 py-2 text-left hover:bg-white/4"
                       key={`${item.id}-${queueIndex}`}
-                      onClick={() => onPlayQueueIndex(queueIndex)}
-                      aria-label={`Play ${item.title}`}
                     >
                       <span className="text-xs font-normal text-[#686c67] tabular-nums">
                         {String(queueIndex + 1).padStart(2, "0")}
                       </span>
                       <span className="flex min-w-0 flex-col gap-0.5 overflow-hidden">
-                        <OverflowMarquee
-                          className="text-xs/snug text-[#d4d3cd]"
-                          text={item.title}
-                        />
-                        <small className="truncate text-xs font-normal text-[#737772]">{item.artist} · {item.album}</small>
+                        <Button
+                          aria-label={`Play ${item.title}`}
+                          className="h-auto min-w-0 justify-start overflow-hidden p-0 text-left hover:bg-transparent"
+                          onClick={() => onPlayQueueIndex(queueIndex)}
+                          size="compact"
+                          variant="text"
+                        >
+                          <OverflowMarquee
+                            className="text-xs/snug text-[#d4d3cd]"
+                            text={item.title}
+                          />
+                        </Button>
+                        <small className="flex min-w-0 items-center gap-1 truncate text-xs font-normal text-[#737772]">
+                          <TrackArtistLink
+                            className="min-w-0 truncate hover:text-primary"
+                            onNavigate={onArtist}
+                            onRadioSeries={onRadioSeries}
+                            track={item}
+                          >
+                            {item.artist}
+                          </TrackArtistLink>
+                          <span aria-hidden="true">·</span>
+                          <TrackAlbumLink
+                            className="min-w-0 truncate hover:text-primary"
+                            onNavigate={onAlbum}
+                            track={item}
+                          >
+                            {item.album}
+                          </TrackAlbumLink>
+                        </small>
                       </span>
-                      <span className="text-xs font-normal text-[#686c67] tabular-nums">{formatTime(item.duration)}</span>
-                    </Button>
+                      <span className="text-xs font-normal text-[#686c67] tabular-nums">
+                        {formatTime(item.duration)}
+                      </span>
+                    </div>
                   );
                 })}
               </PresencePanel>
@@ -883,32 +1031,74 @@ function NowPlayingViewComponent({
                 key={`recommendation:${recommendation.album.id}`}
                 className="grid min-h-20 grid-cols-[3.5rem_minmax(0,1fr)_auto] items-center gap-3.5 rounded-lg border border-white/7 bg-[radial-gradient(circle_at_0_0,rgba(221,101,73,0.1),transparent_42%),rgba(255,255,255,0.025)] p-3 max-lg:grid-cols-[3rem_minmax(0,1fr)]"
               >
-                <div className="size-14 overflow-hidden rounded-lg **:data-[slot=cover]:size-full max-lg:size-12">
+                <LibraryAlbumLink
+                  album={recommendation.album}
+                  ariaLabel={`Open ${recommendation.album.title}`}
+                  className="size-14 overflow-hidden rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring **:data-[slot=cover]:size-full max-lg:size-12"
+                  onNavigate={onRecommendationAlbum}
+                >
                   {recommendationArtwork}
-                </div>
+                </LibraryAlbumLink>
                 <div className="flex min-w-0 flex-col overflow-hidden">
                   <span className="text-xs font-bold tracking-widest text-[#d37e68] uppercase">
                     Picked from your collection
                   </span>
-                  <OverflowMarquee
-                    className="mt-1 text-sm text-[#e2e0da]"
-                    text={recommendation.album.title}
-                  />
+                  <LibraryAlbumLink
+                    album={recommendation.album}
+                    className="mt-1 min-w-0 overflow-hidden text-sm text-[#e2e0da] hover:text-primary"
+                    onNavigate={onRecommendationAlbum}
+                  >
+                    <OverflowMarquee text={recommendation.album.title} />
+                  </LibraryAlbumLink>
                   <small className="mt-1 truncate text-xs text-[#777b76]">
-                    {recommendation.album.artist} · {recommendation.reason}
+                    <LibraryArtistLink
+                      artist={recommendation.album.artist}
+                      className="font-semibold hover:text-primary"
+                      onNavigate={onArtist}
+                    >
+                      {recommendation.album.artist}
+                    </LibraryArtistLink>
+                    {" · "}
+                    {recommendation.reason}
                   </small>
                 </div>
                 <div className="flex items-center gap-2 max-lg:col-span-full">
+                  {onQueueRecommendation ? (
+                    <Button
+                      variant="primary"
+                      size="compact"
+                      className="h-8 px-2.5"
+                      onClick={onQueueRecommendation}
+                      disabled={
+                        recommendationLoading || recommendationQueueLoading
+                      }
+                      aria-label={`Add ${recommendation.album.title} to queue`}
+                    >
+                      {recommendationQueueLoading ? (
+                        <Spinner
+                          aria-hidden="true"
+                          className="size-4 text-current motion-reduce:animate-none"
+                        />
+                      ) : (
+                        <ListPlus size={15} />
+                      )}
+                      {recommendationQueueLoading ? "Adding…" : "Add to queue"}
+                    </Button>
+                  ) : null}
                   <Button
-                    variant="primary"
                     size="compact"
                     className="h-8 px-2.5"
                     onClick={onPlayRecommendation}
-                    disabled={recommendationLoading}
+                    disabled={
+                      recommendationLoading || recommendationQueueLoading
+                    }
                     aria-label={`Play something from ${recommendation.album.title}`}
                   >
                     {recommendationLoading ? (
-                      <Spinner aria-hidden="true" className="size-4 text-current motion-reduce:animate-none" />
+                      <Spinner
+                        aria-hidden="true"
+                        className="size-4 text-current motion-reduce:animate-none"
+                      />
                     ) : (
                       <Play size={15} fill="currentColor" />
                     )}
@@ -918,7 +1108,9 @@ function NowPlayingViewComponent({
                     size="compact"
                     className="h-8 px-2.5"
                     onClick={onAnotherRecommendation}
-                    disabled={recommendationLoading}
+                    disabled={
+                      recommendationLoading || recommendationQueueLoading
+                    }
                   >
                     <Dices size={15} />
                     Another pick
@@ -930,14 +1122,20 @@ function NowPlayingViewComponent({
                 key="empty"
                 className="flex flex-col items-start gap-1 rounded-lg bg-white/2.5 p-4 text-xs text-[#747873]"
               >
-                <strong className="text-xs text-[#c9c8c2]">You reached the end.</strong>
-                <span className="text-xs text-[#717570]">Open the queue or browse your collection to keep listening.</span>
+                <strong className="text-xs text-[#c9c8c2]">
+                  You reached the end.
+                </strong>
+                <span className="text-xs text-[#717570]">
+                  Open the queue or browse your collection to keep listening.
+                </span>
               </PresencePanel>
             )}
           </AnimatePresence>
         </div>
         {moreUpcoming ? (
-          <span className="mt-2 block text-right text-xs text-[#747873]">{moreUpcoming} more in the full queue</span>
+          <span className="mt-2 block text-right text-xs text-[#747873]">
+            {moreUpcoming} more in the full queue
+          </span>
         ) : null}
       </section>
     </article>

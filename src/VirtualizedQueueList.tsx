@@ -33,6 +33,7 @@ export type VirtualizedQueueListProps<Item> = {
   empty?: ReactNode;
   estimateSize?: number;
   getItemKey?: (item: Item, absoluteIndex: number) => Key;
+  getItemLabel?: (item: Item, absoluteIndex: number) => string;
   items: readonly Item[];
   onMove?: (fromAbsoluteIndex: number, toAbsoluteIndex: number) => void;
   overscan?: number;
@@ -75,6 +76,7 @@ export function VirtualizedQueueList<Item>({
   empty = null,
   estimateSize = DEFAULT_QUEUE_ROW_ESTIMATE,
   getItemKey,
+  getItemLabel,
   items,
   onMove,
   overscan = DEFAULT_QUEUE_OVERSCAN,
@@ -90,6 +92,7 @@ export function VirtualizedQueueList<Item>({
   const [draggedIndex, setDraggedIndex] = useState<number>();
   const [dropIndex, setDropIndex] = useState<number>();
   const [focusedIndex, setFocusedIndex] = useState<number>();
+  const [moveAnnouncement, setMoveAnnouncement] = useState("");
   const virtualized = items.length > Math.max(0, virtualizationThreshold);
 
   const itemKey = useCallback(
@@ -143,6 +146,36 @@ export function VirtualizedQueueList<Item>({
     setDropIndex(undefined);
   }, []);
 
+  const accessibleItemLabel = useCallback(
+    (index: number) => {
+      const absoluteIndex = startIndex + index;
+      const label = getItemLabel?.(items[index], absoluteIndex).trim();
+      return label || `queue item ${index + 1}`;
+    },
+    [getItemLabel, items, startIndex],
+  );
+
+  const commitMove = useCallback(
+    (from: number, to: number) => {
+      if (
+        !onMove ||
+        from < 0 ||
+        from >= items.length ||
+        to < 0 ||
+        to >= items.length ||
+        from === to
+      ) {
+        return;
+      }
+      const label = accessibleItemLabel(from);
+      onMove(startIndex + from, startIndex + to);
+      setMoveAnnouncement(
+        `Moved ${label} to position ${to + 1} of ${items.length}.`,
+      );
+    },
+    [accessibleItemLabel, items.length, onMove, startIndex],
+  );
+
   const handleDragOver = useCallback(
     (event: DragEvent<HTMLDivElement>) => {
       if (draggedIndexRef.current === undefined) return;
@@ -180,11 +213,11 @@ export function VirtualizedQueueList<Item>({
       const from = draggedIndexRef.current;
       const to = dropIndexRef.current;
       if (to !== undefined && from !== to) {
-        onMove?.(startIndex + from, startIndex + to);
+        commitMove(from, to);
       }
       clearDrag();
     },
-    [clearDrag, onMove, startIndex],
+    [clearDrag, commitMove],
   );
 
   const renderRow = (
@@ -196,6 +229,7 @@ export function VirtualizedQueueList<Item>({
     const absoluteIndex = startIndex + index;
     const isDragging = draggedIndex === index;
     const isDropTarget = dropIndex === index;
+    const itemLabel = accessibleItemLabel(index);
     return (
       <div
         aria-posinset={index + 1}
@@ -207,6 +241,7 @@ export function VirtualizedQueueList<Item>({
         data-drop-target={isDropTarget || undefined}
         data-index={index}
         draggable={Boolean(onMove)}
+        className="group/queue-row relative"
         key={key}
         onBlurCapture={(event) => {
           if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
@@ -231,6 +266,35 @@ export function VirtualizedQueueList<Item>({
           index,
           virtualized,
         })}
+        {onMove ? (
+          <div
+            aria-label={`Reorder ${itemLabel}`}
+            className="pointer-events-none absolute top-1/2 right-8 z-10 flex -translate-y-1/2 gap-0.5 rounded-sm border border-white/10 bg-coda-queue p-0.5 opacity-0 shadow-md transition-opacity group-hover/queue-row:pointer-events-auto group-hover/queue-row:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100"
+            data-queue-reorder-controls=""
+            role="group"
+          >
+            <button
+              type="button"
+              aria-label={`Move ${itemLabel} up`}
+              className="grid size-6 place-items-center rounded-sm border-0 bg-transparent text-xs font-bold text-[#8d918b] outline-none hover:bg-white/8 hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-default disabled:opacity-35"
+              disabled={index === 0}
+              onClick={() => commitMove(index, index - 1)}
+              title="Move up"
+            >
+              <span aria-hidden="true">↑</span>
+            </button>
+            <button
+              type="button"
+              aria-label={`Move ${itemLabel} down`}
+              className="grid size-6 place-items-center rounded-sm border-0 bg-transparent text-xs font-bold text-[#8d918b] outline-none hover:bg-white/8 hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-default disabled:opacity-35"
+              disabled={index === items.length - 1}
+              onClick={() => commitMove(index, index + 1)}
+              title="Move down"
+            >
+              <span aria-hidden="true">↓</span>
+            </button>
+          </div>
+        ) : null}
       </div>
     );
   };
@@ -279,6 +343,16 @@ export function VirtualizedQueueList<Item>({
           </div>
         )
       ) : empty}
+      {onMove ? (
+        <div
+          aria-atomic="true"
+          aria-live="polite"
+          className="sr-only"
+          role="status"
+        >
+          {moveAnnouncement}
+        </div>
+      ) : null}
     </div>
   );
 }

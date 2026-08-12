@@ -108,20 +108,23 @@ describe("Select Motion integration", () => {
     );
 
     await user.click(trigger);
-    expect(chevron).toHaveAttribute(
-      "data-motion-animate",
-      JSON.stringify({ transform: "rotate(180deg)" }),
+    await screen.findByRole("listbox");
+    await waitFor(() =>
+      expect(chevron).toHaveAttribute(
+        "data-motion-animate",
+        JSON.stringify({ transform: "rotate(180deg)" }),
+      ),
     );
 
     await user.keyboard("{Escape}");
-    await waitFor(() =>
-      expect(screen.queryByRole("listbox")).not.toBeInTheDocument(),
-    );
+    await waitFor(() => {
+      expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+      expect(chevron).toHaveAttribute(
+        "data-motion-animate",
+        JSON.stringify({ transform: "rotate(0deg)" }),
+      );
+    });
     expect(trigger).toHaveTextContent("recent");
     expect(trigger).toHaveFocus();
-    expect(chevron).toHaveAttribute(
-      "data-motion-animate",
-      JSON.stringify({ transform: "rotate(0deg)" }),
-    );
   });
 });

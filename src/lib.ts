@@ -291,6 +291,10 @@ export function invalidateCoverUrl(coverArtId: string): void {
   coverUrlCache.delete(coverArtId);
 }
 
+export function invalidateStreamUrl(trackId: string): void {
+  streamUrlCache.delete(trackId);
+}
+
 export function clearCoverUrlCache(): void {
   coverUrlCache.clear();
 }

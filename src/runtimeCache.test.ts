@@ -19,6 +19,7 @@ import {
   fetchCoverUrl,
   fetchLibrary,
   fetchStreamUrl,
+  invalidateStreamUrl,
 } from "./lib";
 
 describe("runtime media caches", () => {
@@ -53,6 +54,20 @@ describe("runtime media caches", () => {
     await expect(fetchStreamUrl("track-1"))
       .resolves.toBe("https://bandcamp.com/stream/first");
     vi.advanceTimersByTime(10 * 60 * 1_000 + 1);
+    await expect(fetchStreamUrl("track-1"))
+      .resolves.toBe("https://bandcamp.com/stream/refreshed");
+
+    expect(mocks.invoke).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes a stream URL immediately after playback invalidates it", async () => {
+    mocks.invoke
+      .mockResolvedValueOnce("https://bandcamp.com/stream/expired")
+      .mockResolvedValueOnce("https://bandcamp.com/stream/refreshed");
+
+    await expect(fetchStreamUrl("track-1"))
+      .resolves.toBe("https://bandcamp.com/stream/expired");
+    invalidateStreamUrl("track-1");
     await expect(fetchStreamUrl("track-1"))
       .resolves.toBe("https://bandcamp.com/stream/refreshed");
 

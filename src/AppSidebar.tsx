@@ -9,9 +9,11 @@ import {
   Radio,
   Settings2,
   type LucideIcon,
-} from "lucide-react"
+} from "lucide-react";
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
+import type { MouseEvent } from "react";
 
-import { Button } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Sidebar,
   SidebarContent,
@@ -20,86 +22,105 @@ import {
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarMenu,
-  SidebarMenuButton,
   SidebarMenuItem,
-} from "@/components/ui/sidebar"
+} from "@/components/ui/sidebar";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/components/ui/tooltip"
-import { cn } from "@/lib/utils"
+} from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
+import { BANDCAMP_RADIO_PROVIDER } from "@/radioIdentity";
+import {
+  handleCodaLinkActivation,
+  isUnmodifiedPrimaryActivation,
+} from "@/routing/linkActivation";
+import {
+  validateCollectionSearch,
+  validateDiscoverSearch,
+} from "@/routing/routeContracts";
 
-export type AppSidebarView =
-  | "library"
-  | "favorites"
-  | "playlists"
-  | "recent"
-  | "discover"
-  | "radio"
+export type AppSidebarDestination =
+  | "/collection"
+  | "/favorites"
+  | "/playlists"
+  | "/recent"
+  | "/discover"
+  | "/radio";
 
-type SidebarDestination = {
-  icon: LucideIcon
-  label: string
-  view: AppSidebarView
-}
+export type AppSidebarNavigationRequest = Readonly<{
+  destination: AppSidebarDestination;
+  navigate: () => Promise<void>;
+  trigger: HTMLAnchorElement;
+}>;
 
-const MUSIC_DESTINATIONS: readonly SidebarDestination[] = [
-  { icon: Library, label: "Collection", view: "library" },
-  { icon: Heart, label: "Favorites", view: "favorites" },
-  { icon: ListMusic, label: "Playlists", view: "playlists" },
-  { icon: Clock3, label: "Recently added", view: "recent" },
-  { icon: Compass, label: "Discover", view: "discover" },
-]
+type AppSidebarProps = Readonly<{
+  connected: boolean;
+  onConnect: () => void;
+  onDiscoverNavigate?: () => boolean;
+  onNavigate?: (request: AppSidebarNavigationRequest) => void | Promise<void>;
+}>;
 
-const LISTEN_DESTINATIONS: readonly SidebarDestination[] = [
-  { icon: Radio, label: "Bandcamp Radio", view: "radio" },
-]
+const navigationLinkClass = cn(
+  buttonVariants({ size: "default", variant: "ghost" }),
+  "relative h-10 w-full justify-start gap-2 rounded-md px-2 text-left text-xs font-medium text-[#a8aaa5] hover:bg-white/4 hover:text-[#e3e1db] lg:gap-3 lg:px-3 lg:text-sm data-active:bg-accent data-active:text-[#f0b09f] data-active:before:absolute data-active:before:-left-3.5 data-active:before:h-5 data-active:before:w-1 data-active:before:bg-primary data-active:before:content-['']",
+);
 
-const navigationButtonClass =
-  "relative h-10 w-full justify-start gap-2 rounded-md px-2 text-left text-xs font-medium text-[#a8aaa5] hover:bg-white/4 hover:text-[#e3e1db] lg:gap-3 lg:px-3 lg:text-sm data-active:bg-accent data-active:text-[#f0b09f] data-active:before:absolute data-active:before:-left-3.5 data-active:before:h-5 data-active:before:w-1 data-active:before:bg-primary data-active:before:content-['']"
+const navigationLinkProps = {
+  activeOptions: { includeSearch: false },
+  activeProps: { "data-active": "" },
+  className: navigationLinkClass,
+  "data-slot": "sidebar-menu-button",
+} as const;
 
-function AppSidebarMenu({
-  destinations,
-  onView,
-  view,
-}: {
-  destinations: readonly SidebarDestination[]
-  onView: (view: AppSidebarView) => void
-  view: AppSidebarView
-}) {
+function NavigationLinkContent({
+  icon: Icon,
+  label,
+}: Readonly<{
+  icon: LucideIcon;
+  label: string;
+}>) {
   return (
-    <SidebarMenu className="gap-1">
-      {destinations.map((destination) => {
-        const Icon = destination.icon
-        return (
-          <SidebarMenuItem key={destination.view}>
-            <SidebarMenuButton
-              className={navigationButtonClass}
-              isActive={view === destination.view}
-              onClick={() => onView(destination.view)}
-            >
-              <Icon size={18} />
-              <span>{destination.label}</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        )
-      })}
-    </SidebarMenu>
-  )
+    <>
+      <Icon aria-hidden="true" size={18} />
+      <span>{label}</span>
+    </>
+  );
 }
 
 function AppSidebar({
-  view,
-  onView,
   connected,
   onConnect,
-}: {
-  view: AppSidebarView
-  onView: (view: AppSidebarView) => void
-  connected: boolean
-  onConnect: () => void
-}) {
+  onDiscoverNavigate,
+  onNavigate,
+}: AppSidebarProps) {
+  const navigate = useNavigate();
+  const currentSearch = useRouterState({
+    select: (state) => state.location.search,
+  });
+  const collectionSearch = validateCollectionSearch(currentSearch);
+  const discoverSearch = validateDiscoverSearch(currentSearch);
+  const activateNavigation = (
+    event: MouseEvent<HTMLAnchorElement>,
+    destination: AppSidebarDestination,
+    navigateToDestination: () => Promise<void>,
+    beforeNavigate?: () => boolean,
+  ) => {
+    if (!isUnmodifiedPrimaryActivation(event)) return;
+    if (beforeNavigate?.()) {
+      event.preventDefault();
+      return;
+    }
+    if (!onNavigate) return;
+    handleCodaLinkActivation(event, (trigger) => {
+      void onNavigate({
+        destination,
+        navigate: navigateToDestination,
+        trigger,
+      });
+    });
+  };
+
   return (
     <Sidebar className="border-r border-sidebar-border px-2 pt-6 pb-3.5 lg:px-3.5">
       <SidebarContent>
@@ -109,11 +130,103 @@ function AppSidebar({
               Your music
             </SidebarGroupLabel>
             <SidebarGroupContent>
-              <AppSidebarMenu
-                destinations={MUSIC_DESTINATIONS}
-                onView={onView}
-                view={view}
-              />
+              <SidebarMenu className="gap-1">
+                <SidebarMenuItem>
+                  <Link
+                    {...navigationLinkProps}
+                    onClick={(event) =>
+                      activateNavigation(event, "/collection", async () => {
+                        await navigate({
+                          search: collectionSearch,
+                          to: "/collection",
+                          viewTransition: false,
+                        });
+                      })
+                    }
+                    search={collectionSearch}
+                    to="/collection"
+                  >
+                    <NavigationLinkContent icon={Library} label="Collection" />
+                  </Link>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <Link
+                    {...navigationLinkProps}
+                    onClick={(event) =>
+                      activateNavigation(event, "/favorites", async () => {
+                        await navigate({
+                          to: "/favorites",
+                          viewTransition: false,
+                        });
+                      })
+                    }
+                    to="/favorites"
+                  >
+                    <NavigationLinkContent icon={Heart} label="Favorites" />
+                  </Link>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <Link
+                    {...navigationLinkProps}
+                    onClick={(event) =>
+                      activateNavigation(event, "/playlists", async () => {
+                        await navigate({
+                          to: "/playlists",
+                          viewTransition: false,
+                        });
+                      })
+                    }
+                    preload={connected ? undefined : false}
+                    to="/playlists"
+                  >
+                    <NavigationLinkContent icon={ListMusic} label="Playlists" />
+                  </Link>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <Link
+                    {...navigationLinkProps}
+                    onClick={(event) =>
+                      activateNavigation(event, "/recent", async () => {
+                        await navigate({
+                          search: collectionSearch,
+                          to: "/recent",
+                          viewTransition: false,
+                        });
+                      })
+                    }
+                    search={collectionSearch}
+                    to="/recent"
+                  >
+                    <NavigationLinkContent
+                      icon={Clock3}
+                      label="Recently added"
+                    />
+                  </Link>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <Link
+                    {...navigationLinkProps}
+                    onClick={(event) =>
+                      activateNavigation(
+                        event,
+                        "/discover",
+                        async () => {
+                          await navigate({
+                            search: discoverSearch,
+                            to: "/discover",
+                            viewTransition: false,
+                          });
+                        },
+                        onDiscoverNavigate,
+                      )
+                    }
+                    search={discoverSearch}
+                    to="/discover"
+                  >
+                    <NavigationLinkContent icon={Compass} label="Discover" />
+                  </Link>
+                </SidebarMenuItem>
+              </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
           <SidebarGroup className="mt-6">
@@ -121,11 +234,27 @@ function AppSidebar({
               Listen
             </SidebarGroupLabel>
             <SidebarGroupContent>
-              <AppSidebarMenu
-                destinations={LISTEN_DESTINATIONS}
-                onView={onView}
-                view={view}
-              />
+              <SidebarMenu className="gap-1">
+                <SidebarMenuItem>
+                  <Link
+                    {...navigationLinkProps}
+                    onClick={(event) =>
+                      activateNavigation(event, "/radio", async () => {
+                        await navigate({
+                          to: "/radio",
+                          viewTransition: false,
+                        });
+                      })
+                    }
+                    to="/radio"
+                  >
+                    <NavigationLinkContent
+                      icon={Radio}
+                      label={BANDCAMP_RADIO_PROVIDER}
+                    />
+                  </Link>
+                </SidebarMenuItem>
+              </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
         </nav>
@@ -134,7 +263,7 @@ function AppSidebar({
       <SidebarFooter className="min-w-0 pt-3">
         <Tooltip>
           <TooltipTrigger
-            render={(
+            render={
               <Button
                 aria-label="Connection settings"
                 className="group h-auto w-full min-w-0 justify-start gap-2 rounded-lg px-2 py-2"
@@ -143,7 +272,7 @@ function AppSidebar({
                 size="compact"
                 variant="secondary"
               />
-            )}
+            }
           >
             <span
               aria-hidden="true"
@@ -181,7 +310,7 @@ function AppSidebar({
         </Tooltip>
       </SidebarFooter>
     </Sidebar>
-  )
+  );
 }
 
-export { AppSidebar }
+export { AppSidebar };

@@ -11,6 +11,7 @@
   },
   "app": {
     "security": {
+      "capabilities": ["default"],
       "csp": "default-src 'self' ipc: http://ipc.localhost; connect-src 'self' ipc: http://ipc.localhost https://bandcamp.com https://*.bcbits.com; img-src 'self' data: https://bandcamp.com https://*.bcbits.com; media-src 'self' https://bandcamp.com https://*.bcbits.com; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
     },
     "windows": [
