@@ -237,7 +237,7 @@ export const QueuePanel = memo(function QueuePanel({
     >
       <div className="flex flex-col items-center gap-3">
         <Music2
-          className="box-content shrink-0 rounded-full border border-white/[0.07] bg-coda-radio p-2 text-[#777b76]"
+          className="box-content shrink-0 rounded-full border border-white/[0.07] bg-coda-radio p-2 text-coda-subtle-foreground"
           size={25}
         />
         <div className="flex max-w-64 flex-col items-center gap-1 text-balance">
@@ -248,7 +248,7 @@ export const QueuePanel = memo(function QueuePanel({
                 : "End of the queue"
               : "Your queue is empty"}
           </p>
-          <p className="text-coda-meta text-[#777b76]">
+          <p className="text-coda-meta text-coda-subtle-foreground">
             {currentTrack && hasDeferredTracks
               ? "Coda is filling the next part of this shuffle."
               : recommendation
@@ -280,7 +280,7 @@ export const QueuePanel = memo(function QueuePanel({
     >
       <DrawerHeader className="flex-row items-center justify-between gap-4 bg-coda-queue px-3 pt-6 pb-4 text-left">
         <div>
-          <span className="mb-2 text-coda-meta font-bold tracking-widest text-[#777b76] uppercase">
+          <span className="mb-2 text-coda-meta font-bold tracking-widest text-coda-subtle-foreground uppercase">
             Playing next
           </span>
           <DrawerTitle className="m-0 font-display text-xl leading-none font-semibold">

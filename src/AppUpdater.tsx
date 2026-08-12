@@ -116,7 +116,7 @@ export function AppUpdatePrompt({
         <div className="mb-5 grid size-12 place-items-center rounded-full bg-accent text-[#e77b60]">
           <Download size={24} />
         </div>
-        <span className="mb-2.5 text-xs font-bold tracking-widest text-[#777b76] uppercase">
+        <span className="mb-2.5 text-xs font-bold tracking-widest text-coda-subtle-foreground uppercase">
           Coda update
         </span>
         <DialogTitle
@@ -126,7 +126,7 @@ export function AppUpdatePrompt({
           Coda {update.version} is ready
         </DialogTitle>
         {update.date ? (
-          <p className="mt-2 mb-0 text-xs text-[#777b76]">
+          <p className="mt-2 mb-0 text-xs text-coda-subtle-foreground">
             Released {update.date}
           </p>
         ) : null}

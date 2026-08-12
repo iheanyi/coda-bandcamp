@@ -221,11 +221,11 @@ const radioDateFormatter = new Intl.DateTimeFormat(undefined, {
   year: "numeric",
 });
 const eyebrowClassName =
-  "mb-2.5 text-xs font-bold tracking-widest text-[#777b76] uppercase";
+  "mb-2.5 text-xs font-bold tracking-widest text-coda-subtle-foreground uppercase";
 const metadataLinkClassName =
-  "inline-flex h-auto min-w-0 max-w-[48%] cursor-pointer items-center truncate rounded-none border-0 bg-transparent p-0 text-left text-xs font-normal text-[#777b76] outline-none hover:text-accent-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring";
+  "inline-flex h-auto min-w-0 max-w-[48%] cursor-pointer items-center truncate rounded-none border-0 bg-transparent p-0 text-left text-xs font-normal text-coda-subtle-foreground outline-none hover:text-accent-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring";
 const metadataTextClassName =
-  "h-auto min-w-0 max-w-[48%] truncate text-left text-xs font-normal text-[#777b76]";
+  "h-auto min-w-0 max-w-[48%] truncate text-left text-xs font-normal text-coda-subtle-foreground";
 const savedPageClassName = "mx-auto min-h-full w-full max-w-5xl pt-2 pb-12";
 const FAVORITE_RADIO_GRID_LAYOUTS = [
   {
@@ -627,7 +627,7 @@ function SavedEmpty({
       <h2 className="m-0 font-display text-lg/tight font-semibold text-[#d7d6d0]">
         {title}
       </h2>
-      <p className="mt-2 mb-4 max-w-sm text-xs/relaxed text-[#777b76]">
+      <p className="mt-2 mb-4 max-w-sm text-xs/relaxed text-coda-subtle-foreground">
         {detail}
       </p>
       {action}
@@ -675,7 +675,7 @@ function PlaylistList({
         <div className="col-span-full flex flex-col items-start lg:col-span-1">
           <Eyebrow className="mb-1">New playlist</Eyebrow>
           <strong className="text-sm text-[#deddd7]">Create a playlist</strong>
-          <p className="mt-1 mb-0 text-xs text-[#777b76]">
+          <p className="mt-1 mb-0 text-xs text-coda-subtle-foreground">
             Playlists sync with your Bandcamp collection.
           </p>
         </div>
@@ -761,14 +761,14 @@ function PlaylistList({
                       text={playlist.name}
                     />
                   </span>
-                  <span className="col-start-2 truncate text-xs text-[#777b76]">
+                  <span className="col-start-2 truncate text-xs text-coda-subtle-foreground">
                     {countLabel(playlist.songCount, "track")}
                     {playlist.duration
                       ? ` · ${formatTime(playlist.duration)}`
                       : ""}
                   </span>
                   {playlist.comment ? (
-                    <small className="col-start-2 truncate text-xs text-[#777b76]">
+                    <small className="col-start-2 truncate text-xs text-coda-subtle-foreground">
                       {playlist.comment}
                     </small>
                   ) : null}
@@ -1202,7 +1202,7 @@ function PlaylistDetailView({
                     )}
                   </span>
                 </div>
-                <span className="justify-self-end pr-1 text-right text-xs text-[#777b76] tabular-nums">
+                <span className="justify-self-end pr-1 text-right text-xs text-coda-subtle-foreground tabular-nums">
                   {formatTime(track.duration)}
                 </span>
                 <Button
@@ -2263,7 +2263,7 @@ function SavedLibraryController({
                     Tracks
                   </h2>
                   <Badge
-                    className="border-white/8 bg-white/2 text-[#777b76]"
+                    className="border-white/8 bg-white/2 text-coda-subtle-foreground"
                     size="compact"
                     variant="outline"
                   >
@@ -2485,7 +2485,7 @@ function SavedLibraryController({
                           )}
                         </div>
                       </div>
-                      <span className="justify-self-end pr-1 text-right text-xs text-[#777b76] tabular-nums">
+                      <span className="justify-self-end pr-1 text-right text-xs text-coda-subtle-foreground tabular-nums">
                         {formatTime(track.duration)}
                       </span>
                       <Button
@@ -2507,7 +2507,7 @@ function SavedLibraryController({
                         <ListPlus size={15} />
                       </Button>
                       <Button
-                        className="text-[#ef8066]"
+                        className="text-coda-favorite"
                         onClick={() =>
                           onToggleFavorite(track.id, "song", false)
                         }
@@ -2646,13 +2646,13 @@ function SavedLibraryController({
                           )}
                         </span>
                         <time
-                          className="truncate text-xs text-[#777b76]"
+                          className="truncate text-xs text-coda-subtle-foreground"
                           dateTime={show.publishedAt}
                         >
                           {radioShowDate(show.publishedAt)}
                         </time>
                         {show.description ? (
-                          <p className="m-0 truncate text-xs text-[#777b76]">
+                          <p className="m-0 truncate text-xs text-coda-subtle-foreground">
                             {show.description}
                           </p>
                         ) : null}
@@ -2712,7 +2712,7 @@ function SavedLibraryController({
                           )}
                         </Button>
                         <Button
-                          className="text-[#ef8066]"
+                          className="text-coda-favorite"
                           onClick={() => onToggleRadioFavorite(show, false)}
                           aria-label={`Remove ${identity.episodeTitle} from favorites`}
                           title="Remove from favorites"
@@ -2869,14 +2869,14 @@ function SavedLibraryController({
                               </ArtistTransitionName>
                             </Link>
                           ) : (
-                            <span className="mt-1 truncate text-xs text-[#777b76]">
+                            <span className="mt-1 truncate text-xs text-coda-subtle-foreground">
                               {album.artist}
                             </span>
                           )}
                         </span>
                       </div>
                       <Button
-                        className="text-[#ef8066]"
+                        className="text-coda-favorite"
                         onClick={() =>
                           onToggleFavorite(album.id, "album", false)
                         }

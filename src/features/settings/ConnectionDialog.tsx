@@ -227,7 +227,7 @@ export function ConnectionDialog({
           <div className="mb-5 grid size-12 place-items-center rounded-full bg-accent text-[#e77b60]">
             <Radio size={24} />
           </div>
-          <span className="mb-2.5 text-xs font-bold tracking-widest text-[#777b76] uppercase">
+          <span className="mb-2.5 text-xs font-bold tracking-widest text-coda-subtle-foreground uppercase">
             Secure connection
           </span>
           <DialogTitle

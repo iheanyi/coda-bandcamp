@@ -3,8 +3,6 @@ import { Link } from "@tanstack/react-router";
 import {
   ArrowDownUp,
   ArrowUpRight,
-  ChevronLeft,
-  ChevronRight,
   Disc3,
   Plus,
   RefreshCw,
@@ -17,15 +15,13 @@ import {
   memo,
   useCallback,
   useEffect,
-  useId,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import { LayoutGroup } from "motion/react";
-import * as m from "motion/react-m";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { ScrollableSelectionRail } from "@/components/ScrollableSelectionRail";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -58,7 +54,6 @@ import {
   validateDiscoverSearch,
 } from "@/routing/routeContracts";
 import { handleCodaLinkActivation } from "@/routing/linkActivation";
-import { useDistanceAwareSelectionPill } from "@/selectionMotion";
 import type {
   DiscoverFilters,
   DiscoverRelease,
@@ -356,17 +351,6 @@ export function DiscoverScreen({
   );
   const total = query.data?.pages[0]?.resultCount ?? 0;
   const selectedGenre = filters.tag.toLocaleLowerCase("en-US");
-  const genreLayoutGroupId = `discover-genres-${useId()}`;
-  const genreIndicatorLayoutId = `${genreLayoutGroupId}-selected`;
-  const genreSelectedIndex = Math.max(
-    0,
-    ["", ...DISCOVER_GENRES].findIndex(
-      (tag) => tag.toLocaleLowerCase("en-US") === selectedGenre,
-    ),
-  );
-  const genreIndicatorMotion = useDistanceAwareSelectionPill(
-    genreSelectedIndex,
-  );
   const genreRailRef = useRef<HTMLElement>(null);
   const discoverScrollElementRef = useRef<HTMLElement | null>(null);
   const [genreRailEdges, setGenreRailEdges] = useState({
@@ -459,7 +443,7 @@ export function DiscoverScreen({
           <h1 className="m-0 font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-4xl leading-none font-semibold tracking-tighter xl:text-5xl">Discover</h1>
           <p className="mt-3 mb-0 max-w-xl text-sm/normal text-[#969a95]">Browse Bandcamp’s public feed, preview a release, then send it straight to your queue.</p>
         </div>
-        <form className="relative z-1 flex h-10 min-w-70 basis-90 items-center rounded-lg border border-(--line-strong) bg-[rgba(9,10,11,0.52)] pl-3 text-[#777b76] shadow-[0_12px_30px_rgba(0,0,0,0.16)] focus-within:border-[rgba(221,101,73,0.5)] max-xl:w-full max-xl:max-w-md max-xl:basis-auto" onSubmit={submit}>
+        <form className="relative z-1 flex h-10 min-w-70 basis-90 items-center rounded-lg border border-(--line-strong) bg-[rgba(9,10,11,0.52)] pl-3 text-coda-subtle-foreground shadow-[0_12px_30px_rgba(0,0,0,0.16)] focus-within:border-[rgba(221,101,73,0.5)] max-xl:w-full max-xl:max-w-md max-xl:basis-auto" onSubmit={submit}>
           <Search size={17} />
           <label className="sr-only" htmlFor="discover-tag">Search Discover by tag</label>
           <Input
@@ -479,101 +463,26 @@ export function DiscoverScreen({
       </div>
 
       <div className="flex items-center gap-2 border-b border-(--line) pb-3 lg:gap-4">
-        <div className="relative min-w-0 flex-1">
-          <LayoutGroup id={genreLayoutGroupId}>
-            <nav
-              ref={genreRailRef}
-              aria-label="Filter Discover by genre"
-              className="flex items-center gap-1 overflow-x-auto overscroll-x-contain pr-10 scroll-px-10 scrollbar-none [&::-webkit-scrollbar]:hidden"
-              onScroll={(event) => updateGenreRailEdges(event.currentTarget)}
-            >
-              <Button
-                type="button"
-                className="relative isolate h-8 shrink-0 px-3 text-xs font-semibold text-coda-selection-muted hover:bg-transparent hover:text-coda-selection-hover aria-pressed:text-coda-selection-foreground"
-                onClick={() => chooseGenre("all")}
-                aria-pressed={!selectedGenre}
-                disabled={query.isPending}
-                size="compact"
-                variant="ghost"
-              >
-                {!selectedGenre ? (
-                  <m.div
-                    aria-hidden="true"
-                    className="pointer-events-none absolute inset-0 z-0 rounded-sm bg-coda-active"
-                    data-discover-genre-indicator=""
-                    data-selection-travel-steps={genreIndicatorMotion.travelSteps}
-                    layoutId={genreIndicatorLayoutId}
-                    transition={genreIndicatorMotion.transition}
-                  />
-                ) : null}
-                <span className="relative z-10">All genres</span>
-              </Button>
-              {DISCOVER_GENRES.map((tag) => {
-                const selected = selectedGenre === tag;
-                return (
-                  <Button
-                    type="button"
-                    key={tag}
-                    className="relative isolate h-8 shrink-0 px-3 text-xs font-semibold text-coda-selection-muted hover:bg-transparent hover:text-coda-selection-hover aria-pressed:text-coda-selection-foreground"
-                    onClick={() => chooseGenre(tag)}
-                    aria-pressed={selected}
-                    disabled={query.isPending}
-                    size="compact"
-                    variant="ghost"
-                  >
-                    {selected ? (
-                      <m.div
-                        aria-hidden="true"
-                        className="pointer-events-none absolute inset-0 z-0 rounded-sm bg-coda-active"
-                        data-discover-genre-indicator=""
-                        data-selection-travel-steps={genreIndicatorMotion.travelSteps}
-                        layoutId={genreIndicatorLayoutId}
-                        transition={genreIndicatorMotion.transition}
-                      />
-                    ) : null}
-                    <span className="relative z-10">{normalizeGenre(tag)}</span>
-                  </Button>
-                );
-              })}
-            </nav>
-          </LayoutGroup>
-          {genreRailEdges.start ? (
-            <>
-              <span
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-y-0 left-0 w-10 bg-linear-to-r from-background to-transparent"
-              />
-              <Button
-                type="button"
-                aria-label="Show previous genres"
-                className="absolute top-1/2 left-0 z-10 -translate-y-1/2 rounded-full border-border bg-[#1b1e20] text-[#9a9d98] shadow-md hover:bg-[#26292b] hover:text-[#efede7]"
-                onClick={() => scrollGenreRail(-1)}
-                size="icon-compact"
-                variant="secondary"
-              >
-                <ChevronLeft aria-hidden="true" className="size-3.5" />
-              </Button>
-            </>
-          ) : null}
-          {genreRailEdges.end ? (
-            <>
-              <span
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-y-0 right-0 w-12 bg-linear-to-l from-background to-transparent"
-              />
-              <Button
-                type="button"
-                aria-label="Show more genres"
-                className="absolute top-1/2 right-0 z-10 -translate-y-1/2 rounded-full border-border bg-[#1b1e20] text-[#9a9d98] shadow-md hover:bg-[#26292b] hover:text-[#efede7]"
-                onClick={() => scrollGenreRail(1)}
-                size="icon-compact"
-                variant="secondary"
-              >
-                <ChevronRight aria-hidden="true" className="size-3.5" />
-              </Button>
-            </>
-          ) : null}
-        </div>
+        <ScrollableSelectionRail
+          aria-label="Filter Discover by genre"
+          className="flex-1"
+          disabled={query.isPending}
+          edges={genreRailEdges}
+          items={[
+            { label: "All genres", value: "" },
+            ...DISCOVER_GENRES.map((tag) => ({
+              label: normalizeGenre(tag) ?? tag,
+              value: tag,
+            })),
+          ]}
+          nextLabel="Show more genres"
+          onScroll={updateGenreRailEdges}
+          onScrollByDirection={scrollGenreRail}
+          onValueChange={(tag) => chooseGenre(tag || "all")}
+          previousLabel="Show previous genres"
+          railRef={genreRailRef}
+          value={selectedGenre}
+        />
         <Select
           items={DISCOVER_SORT_OPTIONS}
           value={filters.sort}

@@ -212,7 +212,7 @@ export function MiniPlayerView({
                 <h1 className="truncate text-xs leading-4 font-bold text-foreground">
                   Nothing queued
                 </h1>
-                <p className="mt-1 max-w-52 text-xs leading-3 text-[#777b76]">
+                <p className="mt-1 max-w-52 text-xs leading-3 text-coda-subtle-foreground">
                   Choose something in Coda to start listening.
                 </p>
               </div>

@@ -1,6 +1,5 @@
 import {
   ArrowDownUp,
-  ChevronLeft,
   ChevronRight,
   CircleAlert,
   Dices,
@@ -15,6 +14,7 @@ import { LayoutGroup } from "motion/react";
 import * as m from "motion/react-m";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ScrollableSelectionRail } from "@/components/ScrollableSelectionRail";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -160,8 +160,6 @@ export function LibraryScreenChrome({
 }: LibraryScreenChromeProps) {
   const browseLayoutGroupId = `collection-browse-${useId()}`;
   const browseIndicatorLayoutId = `${browseLayoutGroupId}-selected`;
-  const genreLayoutGroupId = `collection-genres-${useId()}`;
-  const genreIndicatorLayoutId = `${genreLayoutGroupId}-selected`;
   const browseSelectedIndex = browse
     ? Math.max(
         0,
@@ -173,14 +171,10 @@ export function LibraryScreenChrome({
   const browseIndicatorMotion =
     useDistanceAwareSelectionPill(browseSelectedIndex);
   const genreOptions = filter ? ["All", ...filter.model.genres] : ["All"];
-  const genreSelectedIndex = Math.max(
-    0,
-    genreOptions.findIndex(
+  const selectedGenre =
+    genreOptions.find(
       (genre) => genreKey(genre) === genreKey(filter?.model.genre ?? "All"),
-    ),
-  );
-  const genreIndicatorMotion =
-    useDistanceAwareSelectionPill(genreSelectedIndex);
+    ) ?? "All";
 
   return (
     <>
@@ -191,7 +185,7 @@ export function LibraryScreenChrome({
         )}
       >
         <div>
-          <span className="mb-2.5 text-xs font-bold tracking-widest text-[#777b76] uppercase">
+          <span className="mb-2.5 text-xs font-bold tracking-widest text-coda-subtle-foreground uppercase">
             {model.connected ? "Your Bandcamp" : "Your music"}
           </span>
           <h1 className="m-0 font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-3xl leading-none font-semibold tracking-tighter text-foreground lg:text-4xl">
@@ -394,93 +388,28 @@ export function LibraryScreenChrome({
             filter.model.kind === "collection" ? "mt-3" : "mt-7",
           )}
         >
-          <div className="relative min-w-0 flex-1">
-            <LayoutGroup id={genreLayoutGroupId}>
-              <nav
-                ref={refs.genreRail}
-                aria-label="Filter collection by genre"
-                className="flex items-center gap-1 overflow-x-auto overscroll-x-contain pr-10 scroll-px-10 scrollbar-none [&::-webkit-scrollbar]:hidden"
-                onScroll={(event) =>
-                  filter.actions.onGenreRailScroll(event.currentTarget)
-                }
-              >
-                {genreOptions.map((item) => {
-                  const selected =
-                    genreKey(filter.model.genre) === genreKey(item);
-
-                  return (
-                    <Button
-                      key={item}
-                      className="relative isolate h-8 shrink-0 px-3 text-xs font-semibold text-coda-selection-muted transition-colors duration-150 ease-out hover:bg-transparent hover:text-coda-selection-hover aria-pressed:text-coda-selection-foreground"
-                      onClick={() => filter.actions.onGenreChange(item)}
-                      aria-pressed={selected}
-                      size="compact"
-                      variant="ghost"
-                    >
-                      {selected ? (
-                        <m.div
-                          aria-hidden="true"
-                          className="pointer-events-none absolute inset-0 z-0 bg-coda-active"
-                          data-collection-genre-indicator=""
-                          data-selection-travel-steps={
-                            genreIndicatorMotion.travelSteps
-                          }
-                          layoutId={genreIndicatorLayoutId}
-                          style={COLLECTION_BROWSE_INDICATOR_STYLE}
-                          transition={genreIndicatorMotion.transition}
-                        />
-                      ) : null}
-                      <span className="relative z-10 transition-colors duration-150 ease-out">
-                        {item}
-                      </span>
-                    </Button>
-                  );
-                })}
-              </nav>
-            </LayoutGroup>
-            {filter.model.edges.start ? (
-              <>
-                <span
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-y-0 left-0 w-10 bg-linear-to-r from-background to-transparent"
-                />
-                <Button
-                  type="button"
-                  aria-label="Show previous genres"
-                  className="absolute top-1/2 left-0 z-10 -translate-y-1/2 rounded-full border-border bg-[#1b1e20] text-[#9a9d98] shadow-md hover:bg-[#26292b] hover:text-[#efede7]"
-                  onClick={() => filter.actions.onScrollGenres(-1)}
-                  size="icon-compact"
-                  variant="secondary"
-                >
-                  <ChevronLeft aria-hidden="true" className="size-3.5" />
-                </Button>
-              </>
-            ) : null}
-            {filter.model.edges.end ? (
-              <>
-                <span
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-y-0 right-0 w-12 bg-linear-to-l from-background to-transparent"
-                />
-                <Button
-                  type="button"
-                  aria-label="Show more genres"
-                  className="absolute top-1/2 right-0 z-10 -translate-y-1/2 rounded-full border-border bg-[#1b1e20] text-[#9a9d98] shadow-md hover:bg-[#26292b] hover:text-[#efede7]"
-                  onClick={() => filter.actions.onScrollGenres(1)}
-                  size="icon-compact"
-                  variant="secondary"
-                >
-                  <ChevronRight aria-hidden="true" className="size-3.5" />
-                </Button>
-              </>
-            ) : null}
-          </div>
+          <ScrollableSelectionRail
+            aria-label="Filter collection by genre"
+            className="flex-1"
+            edges={filter.model.edges}
+            items={genreOptions.map((genre) => ({
+              label: genre,
+              value: genre,
+            }))}
+            nextLabel="Show more genres"
+            onScroll={filter.actions.onGenreRailScroll}
+            onScrollByDirection={filter.actions.onScrollGenres}
+            onValueChange={filter.actions.onGenreChange}
+            previousLabel="Show previous genres"
+            railRef={refs.genreRail}
+            value={selectedGenre}
+          />
           {filter.model.trailingControl === "recent" ? (
-            <span className="flex shrink-0 items-center gap-1.5 text-xs font-semibold text-[#777b76]">
+            <span className="flex shrink-0 items-center gap-1.5 text-xs font-semibold text-coda-subtle-foreground">
               <ArrowDownUp size={14} /> Newest first
             </span>
           ) : filter.model.trailingControl === "artists" ? (
-            <span className="flex shrink-0 items-center gap-1.5 text-xs font-semibold text-[#777b76] [&>svg]:max-lg:hidden">
+            <span className="flex shrink-0 items-center gap-1.5 text-xs font-semibold text-coda-subtle-foreground [&>svg]:max-lg:hidden">
               <ArrowDownUp size={14} /> Artist A–Z
             </span>
           ) : (

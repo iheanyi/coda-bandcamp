@@ -52,7 +52,7 @@ export const ArtistCard = memo(function ArtistCard({
             {group.name}
           </span>
         </strong>
-        <span className="truncate text-xs font-normal text-[#777b76]">
+        <span className="truncate text-xs font-normal text-coda-subtle-foreground">
           {countLabel(group.releaseCount, "release")}
           {" · "}
           {countLabel(group.trackCount, "track")}

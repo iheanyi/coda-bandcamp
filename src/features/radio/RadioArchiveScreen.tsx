@@ -288,7 +288,7 @@ function RadioArchiveScreen({
           <strong className="mt-3 text-base text-[#cac9c3]">
             Tuning {BANDCAMP_RADIO_PROVIDER}…
           </strong>
-          <span className="mt-1.5 max-w-md text-xs/normal text-[#777b76]">
+          <span className="mt-1.5 max-w-md text-xs/normal text-coda-subtle-foreground">
             Loading the latest artist interviews and curated shows.
           </span>
         </div>
@@ -305,7 +305,7 @@ function RadioArchiveScreen({
           <strong className="mt-3 text-base text-[#cac9c3]">
             {BANDCAMP_RADIO_PROVIDER} is off the air
           </strong>
-          <span className="mt-1.5 max-w-md text-xs/normal text-[#777b76]">
+          <span className="mt-1.5 max-w-md text-xs/normal text-coda-subtle-foreground">
             {String(showsQuery.error).replace(/^Error:\s*/, "")}
           </span>
           <Button
@@ -339,7 +339,7 @@ function RadioArchiveScreen({
           <strong className="mt-3 text-base text-[#cac9c3]">
             No episodes found
           </strong>
-          <span className="mt-1.5 max-w-md text-xs/normal text-[#777b76]">
+          <span className="mt-1.5 max-w-md text-xs/normal text-coda-subtle-foreground">
             {selectedSeries
               ? `Bandcamp did not return any ${selectedSeries.title} episodes.`
               : "Bandcamp did not return any Radio episodes."}
@@ -477,7 +477,7 @@ function RadioArchiveScreen({
             </Button>
             <Button
               className={cn(
-                favoriteShowIds.has(featured.id) && "text-[#ef8066]",
+                favoriteShowIds.has(featured.id) && "text-coda-favorite",
               )}
               onClick={() => onToggleFavorite(featured)}
               disabled={Boolean(busy)}

@@ -160,7 +160,7 @@ export const AlbumCard = memo(function AlbumCard({
         </Link>
       </div>
       <Button
-        className="absolute right-0 bottom-0 items-end border-0 bg-transparent text-[#777b76] opacity-0 shadow-none group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-transparent hover:text-primary"
+        className="absolute right-0 bottom-0 items-end border-0 bg-transparent text-coda-subtle-foreground opacity-0 shadow-none group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-transparent hover:text-primary"
         onClick={() => onQueue(album)}
         size="icon-compact"
         title="Add album to queue"

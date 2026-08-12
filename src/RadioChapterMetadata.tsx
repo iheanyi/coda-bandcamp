@@ -117,7 +117,7 @@ export const RadioChapterCopy = memo(function RadioChapterCopy({
         >
           <span className="truncate">{chapter.title}</span>
           <ExternalLink
-            className="size-3 shrink-0 text-[#777b76]"
+            className="size-3 shrink-0 text-coda-subtle-foreground"
             aria-hidden="true"
           />
         </Button>

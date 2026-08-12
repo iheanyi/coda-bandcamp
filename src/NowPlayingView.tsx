@@ -452,7 +452,7 @@ const NowPlayingRadioTimeline = memo(function NowPlayingRadioTimeline({
             Songs in this show
           </h2>
         </div>
-        <span className="text-xs text-[#777b76]">
+        <span className="text-xs text-coda-subtle-foreground">
           {countLabel(timeline.length, "chapter")}
         </span>
       </div>
@@ -833,7 +833,7 @@ function NowPlayingViewComponent({
                   size="compact"
                   className={cn(
                     "bg-white/2.5 px-2",
-                    favorite && "text-[#ef8066]",
+                    favorite && "text-coda-favorite",
                   )}
                   onClick={onToggleFavorite}
                   aria-pressed={favorite}
@@ -1051,7 +1051,7 @@ function NowPlayingViewComponent({
                   >
                     <OverflowMarquee text={recommendation.album.title} />
                   </LibraryAlbumLink>
-                  <small className="mt-1 truncate text-xs text-[#777b76]">
+                  <small className="mt-1 truncate text-xs text-coda-subtle-foreground">
                     <LibraryArtistLink
                       artist={recommendation.album.artist}
                       className="font-semibold hover:text-primary"

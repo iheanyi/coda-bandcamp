@@ -406,7 +406,7 @@ export const RadioCard = memo(function RadioCard({
                 <Button
                   variant="ghost"
                   size="icon-compact"
-                  className={cn("size-8", favorite && "text-[#ef8066]")}
+                  className={cn("size-8", favorite && "text-coda-favorite")}
                   onClick={() => onToggleFavorite(show)}
                   disabled={Boolean(busyAction)}
                   aria-label={
@@ -631,7 +631,7 @@ export const RadioDetail = memo(function RadioDetail({
               Add to queue
             </Button>
             <Button
-              className={cn(favorite && "text-[#ef8066]")}
+              className={cn(favorite && "text-coda-favorite")}
               onClick={() => onToggleFavorite(show)}
               aria-pressed={favorite}
               aria-label={
@@ -704,7 +704,7 @@ export const RadioDetail = memo(function RadioDetail({
             Songs in this show
           </h2>
         </div>
-        <span className="text-xs text-[#777b76]">
+        <span className="text-xs text-coda-subtle-foreground">
           {countLabel(chapters.length, "chapter")}
         </span>
       </div>
@@ -731,7 +731,7 @@ export const RadioDetail = memo(function RadioDetail({
                   className="min-w-0"
                   onOpen={onOpenItem}
                 />
-                <time className="text-center text-xs text-[#777b76] tabular-nums">
+                <time className="text-center text-xs text-coda-subtle-foreground tabular-nums">
                   {formatTime(chapter.timecode)}
                 </time>
                 {onPlayAt ? (

@@ -96,7 +96,7 @@ export function AlbumDetailPage({
           <CoverArt album={album} albumArtworkDetail={album.id} size="large" />
         </div>
         <div className="min-w-0 pb-1" data-coda-album-metadata-detail="">
-          <span className="mb-2.5 text-xs font-bold tracking-widest text-[#777b76] uppercase">
+          <span className="mb-2.5 text-xs font-bold tracking-widest text-coda-subtle-foreground uppercase">
             {album.songCount === 1 ? "Single" : "Album"}
           </span>
           <h2
@@ -169,7 +169,7 @@ export function AlbumDetailPage({
               <ListPlus size={17} /> Add to playlist
             </Button>
             <Button
-              className={favoriteAlbum ? "text-[#ef8066]" : ""}
+              className={favoriteAlbum ? "text-coda-favorite" : ""}
               onClick={onToggleFavoriteAlbum}
               aria-pressed={favoriteAlbum}
             >
@@ -186,7 +186,7 @@ export function AlbumDetailPage({
       >
         <div className="flex items-end justify-between px-6 pt-6 pb-2">
           <div>
-            <span className="mb-2.5 text-xs font-bold tracking-widest text-[#777b76] uppercase">
+            <span className="mb-2.5 text-xs font-bold tracking-widest text-coda-subtle-foreground uppercase">
               Track list
             </span>
             <h3 className="mt-1 mb-0 font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-base leading-none font-semibold text-[#d7d6d0]">
@@ -229,7 +229,7 @@ export function AlbumDetailPage({
                     <strong className="mt-1 text-xs text-[#c7c8c2]">
                       No playable tracks returned
                     </strong>
-                    <span className="max-w-80 text-xs/normal text-[#777b76]">
+                    <span className="max-w-80 text-xs/normal text-coda-subtle-foreground">
                       This release may not be streamable through Bandcamp’s
                       Subsonic beta yet.
                     </span>
@@ -291,7 +291,7 @@ export function AlbumDetailPage({
                               />
                             </Button>
                             <Link
-                              className="w-fit max-w-full truncate text-xs text-[#777b76] outline-none hover:text-coda-link-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+                              className="w-fit max-w-full truncate text-xs text-coda-subtle-foreground outline-none hover:text-coda-link-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                               data-artist-open={parseArtistKeyParam(
                                 artistKey(track.artist),
                               )}
@@ -333,7 +333,7 @@ export function AlbumDetailPage({
                               </ArtistTransitionName>
                             </Link>
                           </div>
-                          <span className="grid place-items-center justify-self-stretch text-center text-xs text-[#777b76] tabular-nums">
+                          <span className="grid place-items-center justify-self-stretch text-center text-xs text-coda-subtle-foreground tabular-nums">
                             {formatTime(track.duration)}
                           </span>
                           <div className="grid grid-cols-[repeat(3,2rem)] justify-end">
@@ -356,7 +356,7 @@ export function AlbumDetailPage({
                               <ListPlus size={16} />
                             </Button>
                             <Button
-                              className={favoriteTrack ? "text-[#ef8066]" : ""}
+                              className={favoriteTrack ? "text-coda-favorite" : ""}
                               onClick={() => onToggleFavoriteTrack(track)}
                               size="icon"
                               title={

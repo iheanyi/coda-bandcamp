@@ -60,6 +60,8 @@
   --color-coda-selection-muted: var(--coda-selection-muted);
   --color-coda-selection-hover: var(--coda-selection-hover);
   --color-coda-selection-foreground: var(--coda-selection-foreground);
+  --color-coda-favorite: var(--coda-favorite);
+  --color-coda-subtle-foreground: var(--coda-subtle-foreground);
   --shadow-coda-player: 0 -10px 30px rgba(0, 0, 0, 0.16);
   --shadow-coda-queue:
     0 22px 54px rgba(0, 0, 0, 0.42), 0 4px 16px rgba(0, 0, 0, 0.24),
@@ -121,6 +123,8 @@
   --coda-selection-muted: #888b86;
   --coda-selection-hover: #dddcd7;
   --coda-selection-foreground: #f0eee8;
+  --coda-favorite: #ef8066;
+  --coda-subtle-foreground: #777b76;
   --duration-coda-fast: 140ms;
   --duration-coda-standard: 180ms;
   --duration-coda-panel: 240ms;

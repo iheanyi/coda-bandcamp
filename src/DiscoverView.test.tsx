@@ -436,11 +436,11 @@ describe("Discover", () => {
     const allGenres = screen.getByRole("button", { name: "All genres" });
     expect(allGenres).toHaveAttribute("aria-pressed", "true");
     expect(
-      allGenres.querySelector("[data-discover-genre-indicator]"),
+      allGenres.querySelector("[data-selection-rail-indicator]"),
     ).toHaveClass("pointer-events-none");
     expect(allGenres).not.toHaveClass("overflow-hidden");
     expect(
-      allGenres.querySelector("[data-discover-genre-indicator]"),
+      allGenres.querySelector("[data-selection-rail-indicator]"),
     ).toHaveClass("rounded-sm");
 
     fireEvent.click(screen.getByRole("button", { name: "Rock" }));
@@ -451,7 +451,7 @@ describe("Discover", () => {
     expect(
       screen
         .getByRole("button", { name: "Rock" })
-        .querySelector("[data-discover-genre-indicator]"),
+        .querySelector("[data-selection-rail-indicator]"),
     ).toHaveAttribute("data-selection-travel-steps", "2");
     expect(allGenres).toHaveAttribute("aria-pressed", "false");
 

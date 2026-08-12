@@ -61,7 +61,7 @@ export const QueueRadioChapters = memo(function QueueRadioChapters({
                 size="compact"
                 variant="text"
               >
-                <time className="text-coda-micro text-[#777b76] tabular-nums">
+                <time className="text-coda-micro text-coda-subtle-foreground tabular-nums">
                   {formatTime(chapter.timecode)}
                 </time>
                 <span className="flex min-w-0 flex-col gap-1">

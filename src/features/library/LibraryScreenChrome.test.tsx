@@ -31,14 +31,14 @@ vi.mock("motion/react-m", async () => {
       HTMLDivElement,
       HTMLAttributes<HTMLDivElement> & {
         "data-collection-browse-indicator"?: string;
-        "data-collection-genre-indicator"?: string;
+        "data-selection-rail-indicator"?: string;
         layoutId?: string;
         transition?: unknown;
       }
     >(function MotionDiv({ layoutId, transition, ...props }, ref) {
       capturedIndicators.push({
         kind:
-          props["data-collection-genre-indicator"] !== undefined
+          props["data-selection-rail-indicator"] !== undefined
             ? "genre"
             : props["data-collection-browse-indicator"] !== undefined
               ? "browse"
@@ -424,10 +424,10 @@ describe("Collection genre filters", () => {
       ).not.toHaveAttribute("role", "tablist");
       expect(allGenres).toHaveAttribute("aria-pressed", "true");
       expect(
-        allGenres.querySelector("[data-collection-genre-indicator]"),
+        allGenres.querySelector("[data-selection-rail-indicator]"),
       ).toBeInTheDocument();
       expect(
-        allGenres.querySelector("[data-collection-genre-indicator]"),
+        allGenres.querySelector("[data-selection-rail-indicator]"),
       ).toHaveClass("pointer-events-none");
       expect(allGenres).not.toHaveClass("overflow-hidden");
 
@@ -452,10 +452,10 @@ describe("Collection genre filters", () => {
 
       expect(rock).toHaveAttribute("aria-pressed", "true");
       expect(
-        rock.querySelector("[data-collection-genre-indicator]"),
+        rock.querySelector("[data-selection-rail-indicator]"),
       ).toBeInTheDocument();
       expect(
-        rock.querySelector("[data-collection-genre-indicator]"),
+        rock.querySelector("[data-selection-rail-indicator]"),
       ).toHaveAttribute("data-selection-travel-steps", "1");
       expect(
         capturedIndicators.filter(({ kind }) => kind === "genre").at(-1)

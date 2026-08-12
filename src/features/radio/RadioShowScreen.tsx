@@ -73,7 +73,7 @@ export function RadioShowScreen({
           <strong className="mt-3 text-base text-[#cac9c3]">
             Loading show details…
           </strong>
-          <span className="mt-1.5 max-w-md text-xs/normal text-[#777b76]">
+          <span className="mt-1.5 max-w-md text-xs/normal text-coda-subtle-foreground">
             Fetching the episode audio and tracklist from Bandcamp.
           </span>
         </div>
@@ -101,7 +101,7 @@ export function RadioShowScreen({
           <strong className="mt-3 text-base text-[#cac9c3]">
             This Radio show is off the air
           </strong>
-          <span className="mt-1.5 max-w-md text-xs/normal text-[#777b76]">
+          <span className="mt-1.5 max-w-md text-xs/normal text-coda-subtle-foreground">
             {String(showQuery.error).replace(/^Error:\s*/, "")}
           </span>
           <Button

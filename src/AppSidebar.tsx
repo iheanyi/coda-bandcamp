@@ -126,7 +126,7 @@ function AppSidebar({
       <SidebarContent>
         <nav aria-label="Primary navigation">
           <SidebarGroup>
-            <SidebarGroupLabel className="mb-2.5 text-xs font-bold tracking-widest text-[#777b76] uppercase">
+            <SidebarGroupLabel className="mb-2.5 text-xs font-bold tracking-widest text-coda-subtle-foreground uppercase">
               Your music
             </SidebarGroupLabel>
             <SidebarGroupContent>
@@ -246,7 +246,7 @@ function AppSidebar({
             </SidebarGroupContent>
           </SidebarGroup>
           <SidebarGroup className="mt-6">
-            <SidebarGroupLabel className="mb-2.5 text-xs font-bold tracking-widest text-[#777b76] uppercase">
+            <SidebarGroupLabel className="mb-2.5 text-xs font-bold tracking-widest text-coda-subtle-foreground uppercase">
               Listen
             </SidebarGroupLabel>
             <SidebarGroupContent>

@@ -57,7 +57,7 @@ export const ArtistHero = memo(function ArtistHero({
           <ArrowLeft size={14} />
           Back
         </Button>
-        <span className="mb-2.5 block text-xs font-bold tracking-widest text-[#777b76] uppercase">
+        <span className="mb-2.5 block text-xs font-bold tracking-widest text-coda-subtle-foreground uppercase">
           Artist
         </span>
         <h2
