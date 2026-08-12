@@ -1,4 +1,9 @@
-import type { QueryClient } from "@tanstack/react-query";
+import type {
+  DefaultError,
+  EnsureQueryDataOptions,
+  QueryClient,
+  QueryKey,
+} from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import {
   createHashHistory,
@@ -15,7 +20,19 @@ import {
 import { notifyToast } from "@/components/ui/toastManager";
 import { routeTree } from "./routeTree.gen";
 
+export type AuthenticatedQueryPreloader = Readonly<{
+  ensureQueryData<
+    TQueryFnData,
+    TError = DefaultError,
+    TData = TQueryFnData,
+    TQueryKey extends QueryKey = QueryKey,
+  >(
+    options: EnsureQueryDataOptions<TQueryFnData, TError, TData, TQueryKey>,
+  ): Promise<TData | undefined>;
+}>;
+
 export type CodaRouterContext = Readonly<{
+  authenticatedQueryPreloader: AuthenticatedQueryPreloader;
   librarySession: LibrarySessionRouteReader;
   librarySessionBoundary: (
     props: Readonly<{ children: ReactNode }>,
@@ -44,8 +61,18 @@ function createCodaRouterWithHistory({
       {children}
     </LibrarySessionProvider>
   );
+  const authenticatedQueryPreloader =
+    Object.freeze<AuthenticatedQueryPreloader>({
+      async ensureQueryData(options) {
+        if (!librarySession.route.getSnapshot().canPreloadAuthenticatedRoute) {
+          return undefined;
+        }
+        return queryClient.ensureQueryData(options);
+      },
+    });
   return createRouter({
     context: {
+      authenticatedQueryPreloader,
       librarySession: librarySession.route,
       librarySessionBoundary: LibrarySessionBoundary,
       queryClient,

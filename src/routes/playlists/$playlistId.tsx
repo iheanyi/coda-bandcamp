@@ -3,6 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { PlaylistDetailScreen } from "@/SavedLibraryView";
 import { usePlaylistRouteNavigation } from "@/features/saved-library/playlistRouteNavigation";
 import { useSavedLibraryRuntime } from "@/features/saved-library/SavedLibraryRuntimeContext";
+import { playlistQueryOptions } from "@/queries/savedLibraryQueries";
 import {
   parsePlaylistIdParam,
   stringifyPlaylistIdParam,
@@ -44,6 +45,11 @@ export const Route = createFileRoute("/playlists/$playlistId")({
     stringify: ({ playlistId }) => ({
       playlistId: stringifyPlaylistIdParam(playlistId),
     }),
+  },
+  loader: async ({ context, params }) => {
+    await context.authenticatedQueryPreloader.ensureQueryData(
+      playlistQueryOptions(params.playlistId),
+    );
   },
   staticData: codaRouteMeta("playlist", "playlists"),
 });

@@ -8,11 +8,15 @@ import { type SavedLibraryRuntimeValue } from "@/features/saved-library/SavedLib
 import { SavedLibraryRuntimeProvider } from "@/features/saved-library/SavedLibraryRuntimeProvider";
 import { createLibrarySessionController } from "@/features/library-session";
 import { createCodaMemoryRouter } from "@/router";
+import { parsePlaylistIdParam } from "@/routing/routeContracts";
 import type { PlaylistDetail, PlaylistSummary, Track } from "@/types";
 
 const mocks = vi.hoisted(() => ({
+  fetchCoverUrl: vi.fn(),
   fetchPlaylist: vi.fn(),
   fetchPlaylists: vi.fn(),
+  fetchStreamUrl: vi.fn(),
+  readLocalFavoritesAsync: vi.fn(),
 }));
 
 vi.mock("@/App", async () => {
@@ -24,8 +28,18 @@ vi.mock("@/lib", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib")>();
   return {
     ...actual,
+    fetchCoverUrl: mocks.fetchCoverUrl,
     fetchPlaylist: mocks.fetchPlaylist,
     fetchPlaylists: mocks.fetchPlaylists,
+    fetchStreamUrl: mocks.fetchStreamUrl,
+  };
+});
+
+vi.mock("@/localFavoritesStore", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/localFavoritesStore")>();
+  return {
+    ...actual,
+    readLocalFavoritesAsync: mocks.readLocalFavoritesAsync,
   };
 });
 
@@ -120,8 +134,11 @@ const originalStartViewTransition = Object.getOwnPropertyDescriptor(
 beforeEach(() => {
   vi.stubEnv("VITE_CODA_MOTION_VIEW_TRANSITIONS", "0");
   vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
+  mocks.fetchCoverUrl.mockReset();
   mocks.fetchPlaylist.mockReset().mockResolvedValue(detail);
   mocks.fetchPlaylists.mockReset().mockResolvedValue([summary]);
+  mocks.fetchStreamUrl.mockReset();
+  mocks.readLocalFavoritesAsync.mockReset();
   Object.values(runtime).forEach((value) => {
     if (vi.isMockFunction(value)) value.mockClear();
   });
@@ -146,6 +163,115 @@ afterEach(() => {
 });
 
 describe("Playlist file routes", () => {
+  it.each(["checking", "disconnected"] as const)(
+    "keeps %s authenticated route preload inert",
+    async (connection) => {
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const librarySession = createLibrarySessionController({
+        dependencies: {
+          checkConnection: vi.fn(async () => false),
+          clearRuntimeData: vi.fn(),
+        },
+        queryClient,
+      });
+      const deactivate =
+        connection === "disconnected" ? librarySession.activate() : undefined;
+      if (connection === "disconnected") {
+        await waitFor(() => {
+          expect(librarySession.route.getSnapshot().connection).toBe(
+            "disconnected",
+          );
+        });
+      }
+      const router = createCodaMemoryRouter(
+        queryClient,
+        ["/collection?q=&genre=All&sort=recent&mode=releases"],
+        librarySession,
+      );
+      await router.load();
+
+      await router.preloadRoute({
+        params: { playlistId: parsePlaylistIdParam(summary.id) },
+        to: "/playlists/$playlistId",
+      });
+
+      expect(mocks.fetchPlaylists).not.toHaveBeenCalled();
+      expect(mocks.fetchPlaylist).not.toHaveBeenCalled();
+      expect(mocks.readLocalFavoritesAsync).not.toHaveBeenCalled();
+      expect(mocks.fetchCoverUrl).not.toHaveBeenCalled();
+      expect(mocks.fetchStreamUrl).not.toHaveBeenCalled();
+      deactivate?.();
+    },
+  );
+
+  it("stops authenticated preload as soon as disconnect begins", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    let finishDisconnect!: () => void;
+    const disconnect = vi.fn(
+      () =>
+        new Promise<string | undefined>((resolve) => {
+          finishDisconnect = () => resolve(undefined);
+        }),
+    );
+    const librarySession = createLibrarySessionController({
+      dependencies: { clearRuntimeData: vi.fn(), disconnect },
+      queryClient,
+    });
+    librarySession.commands.acceptConnectedLibrary([], { announce: false });
+    const disconnectRequest = librarySession.commands.disconnect();
+    expect(librarySession.route.getSnapshot()).toMatchObject({
+      canPreloadAuthenticatedRoute: false,
+      connection: "connected",
+    });
+    const router = createCodaMemoryRouter(queryClient, ["/collection"], librarySession);
+    await router.load();
+
+    await router.preloadRoute({ to: "/playlists" });
+
+    expect(mocks.fetchPlaylists).not.toHaveBeenCalled();
+    finishDisconnect();
+    await disconnectRequest;
+  });
+
+  it("primes connected list and detail data once, then reuses both on activation", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const checkConnection = vi.fn(async () => true);
+    const librarySession = createLibrarySessionController({
+      dependencies: { checkConnection },
+      queryClient,
+    });
+    librarySession.commands.acceptConnectedLibrary([], { announce: false });
+    const router = createCodaMemoryRouter(queryClient, ["/collection"], librarySession);
+    await router.load();
+    const playlistId = parsePlaylistIdParam(summary.id);
+
+    await router.preloadRoute({
+      params: { playlistId },
+      to: "/playlists/$playlistId",
+    });
+
+    expect(mocks.fetchPlaylists).toHaveBeenCalledOnce();
+    expect(mocks.fetchPlaylist).toHaveBeenCalledOnce();
+    expect(checkConnection).not.toHaveBeenCalled();
+
+    await router.navigate({
+      params: { playlistId },
+      to: "/playlists/$playlistId",
+    });
+
+    expect(mocks.fetchPlaylists).toHaveBeenCalledOnce();
+    expect(mocks.fetchPlaylist).toHaveBeenCalledOnce();
+    expect(mocks.readLocalFavoritesAsync).not.toHaveBeenCalled();
+    expect(mocks.fetchCoverUrl).not.toHaveBeenCalled();
+    expect(mocks.fetchStreamUrl).not.toHaveBeenCalled();
+  });
+
   it("activates a typed playlist link from the keyboard without starting playback", async () => {
     const user = userEvent.setup();
     const { router } = renderPlaylistRoute();

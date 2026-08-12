@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { AppSidebar } from "@/AppSidebar"
+import { createLibrarySessionController } from "@/features/library-session"
 import { createCodaMemoryRouter } from "@/router"
 
 const mocks = vi.hoisted(() => ({
@@ -39,9 +40,15 @@ async function renderSidebar(connected: boolean) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
-  const router = createCodaMemoryRouter(queryClient, [
-    "/collection?q=&genre=All&sort=recent&mode=releases",
-  ])
+  const librarySession = createLibrarySessionController({ queryClient })
+  if (connected) {
+    librarySession.commands.acceptConnectedLibrary([], { announce: false })
+  }
+  const router = createCodaMemoryRouter(
+    queryClient,
+    ["/collection?q=&genre=All&sort=recent&mode=releases"],
+    librarySession,
+  )
   await router.load()
   const onConnect = vi.fn()
 
@@ -57,7 +64,7 @@ async function renderSidebar(connected: boolean) {
 beforeEach(() => {
   mocks.fetchCoverUrl.mockReset()
   mocks.fetchPlaylist.mockReset()
-  mocks.fetchPlaylists.mockReset()
+  mocks.fetchPlaylists.mockReset().mockResolvedValue([])
   mocks.fetchRadioShows.mockReset().mockResolvedValue({
     hasMore: false,
     results: [],
@@ -118,16 +125,24 @@ describe("Coda sidebar intent preloading", () => {
     expect(onConnect).not.toHaveBeenCalled()
   })
 
-  it("allows playlist route code to preload only after connection is resolved", async () => {
-    const { router } = await renderSidebar(true)
+  it("preloads connected playlists once and reuses the Query cache on activation", async () => {
+    const { queryClient, router } = await renderSidebar(true)
     const preloadRoute = vi.spyOn(router, "preloadRoute")
+    const playlistsLink = screen.getByRole("link", { name: "Playlists" })
 
-    fireEvent.focus(screen.getByRole("link", { name: "Playlists" }))
+    fireEvent.focus(playlistsLink)
 
     await waitFor(() => {
       expect(preloadRoute).toHaveBeenCalledOnce()
+      expect(mocks.fetchPlaylists).toHaveBeenCalledOnce()
     })
-    expect(mocks.fetchPlaylists).not.toHaveBeenCalled()
+    expect(queryClient.getQueryData(["bandcamp", "playlists"])).toEqual([])
+
+    fireEvent.click(playlistsLink)
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/playlists")
+    })
+    expect(mocks.fetchPlaylists).toHaveBeenCalledOnce()
     expect(mocks.fetchPlaylist).not.toHaveBeenCalled()
     expect(mocks.readLocalFavoritesAsync).not.toHaveBeenCalled()
     expect(mocks.fetchCoverUrl).not.toHaveBeenCalled()

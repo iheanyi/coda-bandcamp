@@ -17,6 +17,7 @@ vi.mock("@/lib", async (importOriginal) => {
 });
 
 import {
+  PLAYLIST_STALE_TIME_MS,
   playlistQueryOptions,
   playlistsQueryOptions,
 } from "./savedLibraryQueries";
@@ -35,7 +36,7 @@ beforeEach(() => {
 });
 
 describe("saved-library query options", () => {
-  it("preserves list/detail keys without adding cache or session policy", () => {
+  it("preserves list/detail keys with bounded freshness and no GC override", () => {
     const listOptions = playlistsQueryOptions();
     const detailOptions = playlistQueryOptions("playlist-1");
 
@@ -47,8 +48,8 @@ describe("saved-library query options", () => {
     ]);
     expect(listOptions.enabled).toBeUndefined();
     expect(detailOptions.enabled).toBeUndefined();
-    expect(listOptions.staleTime).toBeUndefined();
-    expect(detailOptions.staleTime).toBeUndefined();
+    expect(listOptions.staleTime).toBe(PLAYLIST_STALE_TIME_MS);
+    expect(detailOptions.staleTime).toBe(PLAYLIST_STALE_TIME_MS);
     expect(listOptions.gcTime).toBeUndefined();
     expect(detailOptions.gcTime).toBeUndefined();
   });
