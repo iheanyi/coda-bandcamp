@@ -108,6 +108,19 @@ function sharedSnapshotDestination(kind: CodaViewTransitionKind) {
           )
         : undefined;
     }
+    case "discover-detail-close": {
+      const source = document.querySelector(
+        "[data-coda-discover-artwork-detail]",
+      );
+      return source
+        ? identityDestination(
+            source,
+            ["data-coda-discover-artwork-detail"],
+            "data-coda-discover-artwork-return",
+            "[data-coda-discover-artwork-return]",
+          )
+        : undefined;
+    }
     case "radio-detail": {
       const source = document.querySelector("[data-coda-radio-artwork-source]");
       return source
@@ -208,6 +221,9 @@ function sharedSnapshotSourceHasImage(kind: CodaViewTransitionKind) {
       break;
     case "discover-detail":
       source = document.querySelector("[data-coda-discover-artwork-source]");
+      break;
+    case "discover-detail-close":
+      source = document.querySelector("[data-coda-discover-artwork-detail]");
       break;
     case "radio-detail":
       source = document.querySelector("[data-coda-radio-artwork-source]");
@@ -630,6 +646,36 @@ function configureMotionTransition(
           ["data-coda-discover-title-source", "data-coda-discover-title"],
           "data-coda-discover-title-detail",
           "[data-coda-discover-title-detail]",
+        ),
+      );
+      return;
+    }
+    case "discover-detail-close": {
+      const discoverArtwork = document.querySelector(
+        "[data-coda-discover-artwork-detail]",
+      );
+      const discoverTitle = document.querySelector(
+        "[data-coda-discover-title-detail]",
+      );
+      configureSharedElement(
+        transition,
+        discoverArtwork,
+        identityDestination(
+          discoverArtwork,
+          ["data-coda-discover-artwork-detail"],
+          "data-coda-discover-artwork-return",
+          "[data-coda-discover-artwork-return]",
+        ),
+        codaMotion.detailArtwork,
+      );
+      configureSharedTitle(
+        transition,
+        discoverTitle,
+        identityDestination(
+          discoverTitle,
+          ["data-coda-discover-title-detail"],
+          "data-coda-discover-title-return",
+          "[data-coda-discover-title-return]",
         ),
       );
       return;

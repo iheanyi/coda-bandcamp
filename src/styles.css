@@ -183,6 +183,7 @@
     .coda-transition--artist-detail,
     .coda-transition--artist-detail-close,
     .coda-transition--discover-detail,
+    .coda-transition--discover-detail-close,
     .coda-transition--playlist-detail,
     .coda-transition--playlist-detail-close,
     .coda-transition--radio-detail,
@@ -261,10 +262,14 @@
     view-transition-name: coda-artist-name;
   }
 
-  html.coda-transition--discover-detail
+  html:is(
+      .coda-transition--discover-detail,
+      .coda-transition--discover-detail-close
+    )
     :is(
       [data-coda-discover-artwork-source],
-      [data-coda-discover-artwork-detail]
+      [data-coda-discover-artwork-detail],
+      [data-coda-discover-artwork-return]
     ) {
     view-transition-name: coda-discover-artwork;
   }
@@ -273,8 +278,15 @@
     view-transition-name: coda-discover-detail-surface;
   }
 
-  html.coda-transition--discover-detail
-    :is([data-coda-discover-title-source], [data-coda-discover-title-detail]) {
+  html:is(
+      .coda-transition--discover-detail,
+      .coda-transition--discover-detail-close
+    )
+    :is(
+      [data-coda-discover-title-source],
+      [data-coda-discover-title-detail],
+      [data-coda-discover-title-return]
+    ) {
     view-transition-name: coda-discover-title;
   }
 
@@ -547,6 +559,7 @@ html:is(
   [data-coda-artist-name-source],
   [data-coda-artist-name-return],
   [data-coda-discover-title-source],
+  [data-coda-discover-title-return],
   [data-coda-radio-title-source],
   [data-coda-radio-title-return],
   [data-coda-playlist-title-source],
@@ -565,6 +578,7 @@ html:is(
     [data-coda-artist-name-source],
     [data-coda-artist-name-return],
     [data-coda-discover-title-source],
+    [data-coda-discover-title-return],
     [data-coda-radio-title-source],
     [data-coda-radio-title-return],
     [data-coda-playlist-title-source],
@@ -649,6 +663,7 @@ html:is(
     .coda-transition--artist-detail,
     .coda-transition--artist-detail-close,
     .coda-transition--discover-detail,
+    .coda-transition--discover-detail-close,
     .coda-transition--playlist-detail,
     .coda-transition--playlist-detail-close,
     .coda-transition--radio-detail,

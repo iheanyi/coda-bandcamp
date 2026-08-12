@@ -130,6 +130,25 @@ function artistCard(artistKey: string) {
   return { cover, link, name };
 }
 
+function discoverCard(releaseId: string) {
+  const card = document.createElement("article");
+  card.dataset.discoverReleaseCard = releaseId;
+  const artwork = document.createElement("div");
+  artwork.dataset.codaDiscoverArtwork = releaseId;
+  const artworkLink = document.createElement("a");
+  artworkLink.href = `#/discover/releases/${encodeURIComponent(releaseId)}`;
+  artwork.append(artworkLink);
+  const titleLink = document.createElement("a");
+  titleLink.href = `#/discover/releases/${encodeURIComponent(releaseId)}`;
+  const title = document.createElement("span");
+  title.dataset.codaDiscoverTitle = releaseId;
+  title.textContent = "Blue Hours";
+  titleLink.append(title);
+  card.append(artwork, titleLink);
+  document.body.append(card);
+  return { artwork, artworkLink, card, title, titleLink };
+}
+
 function deferred() {
   let resolve!: () => void;
   const promise = new Promise<void>((next) => {
@@ -683,5 +702,117 @@ describe("useDetailNavigationController", () => {
     });
     expect(source.cover).not.toHaveAttribute("data-coda-artist-artwork-return");
     expect(source.name).not.toHaveAttribute("data-coda-artist-name-return");
+  });
+
+  it("reverse-morphs Discover artwork and title into the exact originating slot", async () => {
+    const releaseId = parseDiscoverReleaseIdParam("discover:blue-hours");
+    const source = discoverCard(releaseId);
+    const kinds: string[] = [];
+    const returnMarkers: Array<{
+      artwork: string | undefined;
+      title: string | undefined;
+    }> = [];
+    const scrollRoot = document.createElement("main");
+    scrollRoot.scrollTop = 428;
+    document.body.append(scrollRoot);
+    controllerMocks.capture = (kind) => kinds.push(kind);
+    const initialDestination = destination(undefined, "entry-1");
+    const { result, rerender } = renderHook(
+      ({ route }) => useDetailNavigationController(route),
+      { initialProps: { route: initialDestination } },
+    );
+    result.current.scrollRootRef.current = scrollRoot;
+
+    await act(() =>
+      result.current.open({
+        kind: "discover-release",
+        releaseId,
+        releaseTitle: "Blue Hours",
+        sourceTrigger: source.titleLink,
+      }),
+    );
+    const heading = document.createElement("h1");
+    heading.id = "discover-release-heading";
+    heading.tabIndex = -1;
+    document.body.append(heading);
+    rerender({
+      route: destination({ kind: "discover-release", releaseId }, "entry-2"),
+    });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(scrollRoot.scrollTop).toBe(0);
+
+    source.card.remove();
+    let replacement: ReturnType<typeof discoverCard> | undefined;
+    window.requestAnimationFrame(() => {
+      replacement = discoverCard(releaseId);
+    });
+    controllerMocks.afterUpdate = () => {
+      returnMarkers.push({
+        artwork: replacement?.artwork.dataset.codaDiscoverArtworkReturn,
+        title: replacement?.title.dataset.codaDiscoverTitleReturn,
+      });
+    };
+
+    await act(() => result.current.back());
+    rerender({ route: destination(undefined, "entry-3") });
+
+    await waitFor(() => expect(replacement?.titleLink).toHaveFocus());
+    expect(scrollRoot.scrollTop).toBe(428);
+    expect(kinds).toEqual(["discover-detail", "discover-detail-close"]);
+    expect(returnMarkers.at(-1)).toEqual({
+      artwork: releaseId,
+      title: releaseId,
+    });
+    expect(replacement?.artwork).not.toHaveAttribute(
+      "data-coda-discover-artwork-return",
+    );
+    expect(replacement?.title).not.toHaveAttribute(
+      "data-coda-discover-title-return",
+    );
+    expect(controllerMocks.navigate).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        replace: true,
+        to: "/discover",
+        viewTransition: false,
+      }),
+    );
+  });
+
+  it("keeps non-card Discover returns on the directional page transition", async () => {
+    const releaseId = parseDiscoverReleaseIdParam("discover:blue-hours");
+    const playerAlbumLink = document.createElement("a");
+    playerAlbumLink.href = `#/discover/releases/${encodeURIComponent(releaseId)}`;
+    playerAlbumLink.dataset.playerAlbumLink = "";
+    const playerTitle = document.createElement("span");
+    playerTitle.dataset.slot = "overflow-marquee-text";
+    playerTitle.textContent = "Blue Hours";
+    playerAlbumLink.append(playerTitle);
+    document.body.append(playerAlbumLink);
+    const kinds: string[] = [];
+    controllerMocks.capture = (kind) => kinds.push(kind);
+    const { result, rerender } = renderHook(
+      ({ route }) => useDetailNavigationController(route),
+      { initialProps: { route: destination(undefined, "entry-1") } },
+    );
+
+    await act(() =>
+      result.current.open({
+        kind: "discover-release",
+        releaseId,
+        releaseTitle: "Blue Hours",
+        sourceTrackId: "track-1",
+        sourceTrigger: playerAlbumLink,
+      }),
+    );
+    rerender({
+      route: destination({ kind: "discover-release", releaseId }, "entry-2"),
+    });
+
+    await act(() => result.current.back({ restoreFocus: false }));
+
+    expect(kinds).toEqual(["discover-detail", "page-back"]);
+    expect(playerAlbumLink).not.toHaveAttribute(
+      "data-coda-discover-title-return",
+    );
   });
 });

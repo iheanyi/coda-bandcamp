@@ -90,8 +90,10 @@ afterEach(() => {
         "[data-coda-album-title-detail]",
         "[data-coda-discover-artwork-source]",
         "[data-coda-discover-artwork-detail]",
+        "[data-coda-discover-artwork-return]",
         "[data-coda-discover-title-source]",
         "[data-coda-discover-title-detail]",
+        "[data-coda-discover-title-return]",
         "[data-coda-playlist-identity-source]",
         "[data-coda-playlist-identity-detail]",
         "[data-coda-playlist-title-source]",
@@ -113,6 +115,7 @@ afterEach(() => {
     "coda-transition--album-detail",
     "coda-transition--artist-detail",
     "coda-transition--discover-detail",
+    "coda-transition--discover-detail-close",
     "coda-transition--playlist-detail",
     "coda-transition--playlist-detail-close",
     "coda-transition--radio-detail",
@@ -224,6 +227,7 @@ describe("transitionCodaView", () => {
       ["album-detail", "coda-transition--album-detail"],
       ["artist-detail", "coda-transition--artist-detail"],
       ["discover-detail", "coda-transition--discover-detail"],
+      ["discover-detail-close", "coda-transition--discover-detail-close"],
       ["playlist-detail", "coda-transition--playlist-detail"],
       ["playlist-detail-close", "coda-transition--playlist-detail-close"],
       ["radio-detail", "coda-transition--radio-detail"],
@@ -904,6 +908,12 @@ describe("transitionCodaView with Motion view transitions", () => {
       "coda-motion-shared-artwork",
     ],
     [
+      "discover-detail-close",
+      "data-coda-discover-artwork-detail",
+      "[data-coda-discover-artwork-return]",
+      "coda-motion-shared-artwork",
+    ],
+    [
       "radio-detail",
       "data-coda-radio-artwork-source",
       "[data-coda-radio-artwork-detail]",
@@ -993,6 +1003,35 @@ describe("transitionCodaView with Motion view transitions", () => {
       "",
     );
     expect(sourceTitle.style.getPropertyValue("view-transition-name")).toBe("");
+  });
+
+  it("pairs Discover detail artwork and title back to one validated release", async () => {
+    enableMotionViewTransitions();
+    const releaseId = 'discover:release-"one"';
+    const detailArtwork = document.createElement("div");
+    detailArtwork.dataset.codaDiscoverArtworkDetail = releaseId;
+    const detailTitle = document.createElement("span");
+    detailTitle.dataset.codaDiscoverTitleDetail = releaseId;
+    document.body.append(detailArtwork, detailTitle);
+    const builder = motionBuilder();
+    motionMocks.animateView.mockImplementation((update: () => void) => {
+      update();
+      return builder;
+    });
+
+    await transitionCodaView(vi.fn(), "discover-detail-close");
+
+    expect(builder.add).toHaveBeenCalledWith(
+      detailArtwork,
+      '[data-coda-discover-artwork-return="discover:release-\\"one\\""]',
+    );
+    expect(builder.add).toHaveBeenCalledWith(
+      detailTitle,
+      '[data-coda-discover-title-return="discover:release-\\"one\\""]',
+    );
+    expect(builder.class).toHaveBeenCalledWith("coda-motion-shared-artwork");
+    expect(builder.class).toHaveBeenCalledWith("coda-motion-shared-title");
+    expect(builder.add).not.toHaveBeenCalledWith(".library-pane");
   });
 
   it("resolves a superseded transition against the latest validated identity", async () => {
@@ -1090,6 +1129,11 @@ describe("transitionCodaView with Motion view transitions", () => {
       "discover-detail",
       "data-coda-discover-title-source",
       "[data-coda-discover-title-detail]",
+    ],
+    [
+      "discover-detail-close",
+      "data-coda-discover-title-detail",
+      "[data-coda-discover-title-return]",
     ],
     [
       "radio-detail",

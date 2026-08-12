@@ -53,6 +53,32 @@ function mountArtistDestination() {
   return name;
 }
 
+function discoverDetailSource(releaseId: string) {
+  const detail = document.createElement("article");
+  detail.dataset.codaDiscoverDetailSurface = "";
+  const artwork = document.createElement("div");
+  artwork.dataset.codaDiscoverArtworkDetail = releaseId;
+  const title = document.createElement("span");
+  title.dataset.codaDiscoverTitleDetail = releaseId;
+  title.textContent = "Blue Hours";
+  detail.append(artwork, title);
+  document.body.append(detail);
+  return detail;
+}
+
+function mountDiscoverReturnDestination(releaseId: string) {
+  const card = document.createElement("article");
+  card.dataset.discoverReleaseCard = releaseId;
+  const artwork = document.createElement("div");
+  artwork.dataset.codaDiscoverArtworkReturn = releaseId;
+  const title = document.createElement("span");
+  title.dataset.codaDiscoverTitleReturn = releaseId;
+  title.textContent = "Blue Hours";
+  card.append(artwork, title);
+  document.body.append(card);
+  return { artwork, title };
+}
+
 afterEach(() => {
   document.body.replaceChildren();
   Reflect.deleteProperty(document, "getAnimations");
@@ -168,5 +194,71 @@ describe("Motion-backed route View Transitions", () => {
     expect(browserUpdateFinished).toBe(true);
     expect(destinationPresentAtCapture).toBe(true);
     expect(destinationNameAtCapture).not.toBe("none");
+  });
+
+  it("keeps Discover detail identity shared until its exact return card mounts", async () => {
+    const releaseId = "discover:blue-hours";
+    const detail = discoverDetailSource(releaseId);
+    const routeRendered = deferred();
+    let browserUpdateFinished = false;
+    let artworkPresentAtCapture = false;
+    let titlePresentAtCapture = false;
+    let artworkNameAtCapture = "";
+    let titleNameAtCapture = "";
+
+    Object.defineProperty(document, "getAnimations", {
+      configurable: true,
+      value: () => [],
+    });
+
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: vi.fn((update: () => void | Promise<void>) => {
+        const updateCallbackDone = Promise.resolve(update()).then(() => {
+          browserUpdateFinished = true;
+          const artwork = document.querySelector<HTMLElement>(
+            `[data-coda-discover-artwork-return="${releaseId}"]`,
+          );
+          const title = document.querySelector<HTMLElement>(
+            `[data-coda-discover-title-return="${releaseId}"]`,
+          );
+          artworkPresentAtCapture = Boolean(artwork);
+          titlePresentAtCapture = Boolean(title);
+          artworkNameAtCapture = artwork
+            ? getComputedStyle(artwork).viewTransitionName
+            : "";
+          titleNameAtCapture = title
+            ? getComputedStyle(title).viewTransitionName
+            : "";
+        });
+        return {
+          finished: updateCallbackDone,
+          ready: updateCallbackDone,
+          skipTransition: vi.fn(),
+          updateCallbackDone,
+        };
+      }),
+    });
+
+    const transition = transitionCodaViewWithMotion(async () => {
+      await routeRendered.promise;
+      detail.remove();
+      mountDiscoverReturnDestination(releaseId);
+    }, "discover-detail-close");
+
+    await vi.waitFor(() =>
+      expect(document.startViewTransition).toHaveBeenCalledOnce(),
+    );
+    await Promise.resolve();
+    expect(browserUpdateFinished).toBe(false);
+
+    routeRendered.resolve();
+    await transition;
+
+    expect(browserUpdateFinished).toBe(true);
+    expect(artworkPresentAtCapture).toBe(true);
+    expect(titlePresentAtCapture).toBe(true);
+    expect(artworkNameAtCapture).not.toBe("none");
+    expect(titleNameAtCapture).not.toBe("none");
   });
 });

@@ -9,11 +9,13 @@ import {
   DEFAULT_DISCOVER_ROUTE_SEARCH,
   parseAlbumIdParam,
   parseArtistKeyParam,
+  parseDiscoverReleaseIdParam,
 } from "@/routing/routeContracts";
 
 import {
   markAlbumReturnDestination,
   markArtistReturnDestination,
+  markDiscoverReturnDestination,
   prepareDetailSource,
 } from "./detailSourceIdentity";
 import type { CodaRouteDestination } from "./useRouteDestination";
@@ -140,5 +142,74 @@ describe("detail source marker lifetimes", () => {
     release();
     expect(card.style.getPropertyValue("content-visibility")).toBe("auto");
     expect(source.cover).not.toHaveAttribute("data-coda-album-artwork-return");
+  });
+
+  it("keeps only the exact Discover return identity leased through overlapping cleanup", () => {
+    const releaseId = parseDiscoverReleaseIdParam("discover:blue-hours");
+    const otherReleaseId = parseDiscoverReleaseIdParam("discover:other");
+    const makeCard = (id: string) => {
+      const card = document.createElement("article");
+      card.dataset.discoverReleaseCard = id;
+      card.style.setProperty("content-visibility", "auto");
+      const artwork = document.createElement("div");
+      artwork.dataset.codaDiscoverArtwork = id;
+      const artworkLink = document.createElement("a");
+      artworkLink.href = `#/discover/releases/${encodeURIComponent(id)}`;
+      artwork.append(artworkLink);
+      const titleLink = document.createElement("a");
+      titleLink.href = `#/discover/releases/${encodeURIComponent(id)}`;
+      const title = document.createElement("span");
+      title.dataset.codaDiscoverTitle = id;
+      titleLink.append(title);
+      card.append(artwork, titleLink);
+      document.body.append(card);
+      return { artwork, card, title, titleLink };
+    };
+    const exact = makeCard(releaseId);
+    const other = makeCard(otherReleaseId);
+
+    const releaseFirst = markDiscoverReturnDestination(
+      exact.titleLink,
+      releaseId,
+    );
+    const releaseSecond = markDiscoverReturnDestination(
+      exact.titleLink,
+      releaseId,
+    );
+
+    expect(exact.card.style.getPropertyValue("content-visibility")).toBe(
+      "visible",
+    );
+    expect(exact.artwork).toHaveAttribute(
+      "data-coda-discover-artwork-return",
+      releaseId,
+    );
+    expect(exact.title).toHaveAttribute(
+      "data-coda-discover-title-return",
+      releaseId,
+    );
+    expect(other.artwork).not.toHaveAttribute(
+      "data-coda-discover-artwork-return",
+    );
+    expect(other.title).not.toHaveAttribute("data-coda-discover-title-return");
+
+    releaseFirst();
+    expect(exact.artwork).toHaveAttribute(
+      "data-coda-discover-artwork-return",
+      releaseId,
+    );
+    expect(exact.title).toHaveAttribute(
+      "data-coda-discover-title-return",
+      releaseId,
+    );
+
+    releaseSecond();
+    expect(exact.card.style.getPropertyValue("content-visibility")).toBe(
+      "auto",
+    );
+    expect(exact.artwork).not.toHaveAttribute(
+      "data-coda-discover-artwork-return",
+    );
+    expect(exact.title).not.toHaveAttribute("data-coda-discover-title-return");
   });
 });

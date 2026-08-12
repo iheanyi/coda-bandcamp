@@ -42,6 +42,7 @@ import {
 import {
   markAlbumReturnDestination,
   markArtistReturnDestination,
+  markDiscoverReturnDestination,
   prepareDetailSource,
   type PreparedDetailSource,
 } from "./detailSourceIdentity";
@@ -280,6 +281,13 @@ function replacementNavigationTrigger(
   }
 }
 
+function returnsToDiscoverCard(
+  transaction: NavigationTransaction | undefined,
+): transaction is NavigationTransaction {
+  const sourceSlot = transaction?.sourceTrigger?.dataset.navigationSlot;
+  return sourceSlot === "discover-artwork" || sourceSlot === "discover-title";
+}
+
 function destinationHeadingId(
   destination: CodaDetailDestination | undefined,
 ): string | undefined {
@@ -490,6 +498,9 @@ export function useDetailNavigationController(
         ? coordinator.navigation.active
         : undefined;
       const returnToDestinationHeading = coordinator.returnToDestinationHeading;
+      const discoverCardReturn =
+        detail.kind === "discover-release" &&
+        returnsToDiscoverCard(transaction);
       const returnGeneration = ++returnGenerationRef.current;
       const isCurrentReturn = () =>
         returnGenerationRef.current === returnGeneration;
@@ -535,6 +546,21 @@ export function useDetailNavigationController(
                 replacementAfterBack,
                 detail.artistKey,
               );
+            } else if (
+              detail.kind === "discover-release" &&
+              discoverCardReturn
+            ) {
+              replacementAfterBack = await awaitVirtualReturnTrigger({
+                findTrigger: () =>
+                  replacementNavigationTrigger(transaction, detail),
+                isCurrent: isCurrentReturn,
+                scrollRoot: scrollRootRef.current,
+                scrollTop: returnScrollTop,
+              });
+              releaseReturnDestination = markDiscoverReturnDestination(
+                replacementAfterBack,
+                detail.releaseId,
+              );
             }
           },
           detail.kind === "now-playing"
@@ -543,7 +569,9 @@ export function useDetailNavigationController(
               ? "album-detail-close"
               : detail.kind === "artist" && transaction
                 ? "artist-detail-close"
-                : "page-back",
+                : discoverCardReturn
+                  ? "discover-detail-close"
+                  : "page-back",
         );
 
         // WebKit can move focus while tearing down the View Transition

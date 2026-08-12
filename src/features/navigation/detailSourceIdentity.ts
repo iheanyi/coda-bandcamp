@@ -1,3 +1,5 @@
+import type { DiscoverReleaseId } from "@/routing/routeContracts";
+
 import type {
   AlbumDetailNavigationRequest,
   ArtistDetailNavigationRequest,
@@ -521,6 +523,57 @@ function prepareDiscoverSource(
     compactPlayerDiscoverSource(request, sourceTrigger) ??
     inertPreparedSource(sourceTrigger)
   );
+}
+
+export function markDiscoverReturnDestination(
+  sourceTrigger: HTMLElement | undefined,
+  releaseId: DiscoverReleaseId,
+): () => void {
+  if (!anchorTargetsDiscoverRelease(sourceTrigger, releaseId)) {
+    return () => {};
+  }
+  const sourceCard = sourceTrigger.closest<HTMLElement>(
+    "[data-discover-release-card]",
+  );
+  if (sourceCard?.dataset.discoverReleaseCard !== releaseId) {
+    return () => {};
+  }
+  const sourceArtworkCandidate = sourceCard.querySelector<HTMLElement>(
+    "[data-coda-discover-artwork]",
+  );
+  const sourceTitleCandidate = sourceCard.querySelector<HTMLElement>(
+    "[data-coda-discover-title]",
+  );
+  const sourceArtwork =
+    sourceArtworkCandidate?.dataset.codaDiscoverArtwork === releaseId
+      ? sourceArtworkCandidate
+      : undefined;
+  const sourceTitle =
+    sourceTitleCandidate?.dataset.codaDiscoverTitle === releaseId
+      ? sourceTitleCandidate
+      : undefined;
+
+  return combineMarkerReleases([
+    forcePaintedAncestors(sourceCard),
+    ...(sourceArtwork
+      ? [
+          acquireTemporaryAttribute(
+            sourceArtwork,
+            "data-coda-discover-artwork-return",
+            releaseId,
+          ),
+        ]
+      : []),
+    ...(sourceTitle
+      ? [
+          acquireTemporaryAttribute(
+            sourceTitle,
+            "data-coda-discover-title-return",
+            releaseId,
+          ),
+        ]
+      : []),
+  ]);
 }
 
 function prepareNowPlayingSource(
