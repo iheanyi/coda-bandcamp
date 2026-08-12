@@ -129,9 +129,9 @@ export const PlayerTrack = memo(function PlayerTrack({
                 </span>
                 {favoriteControl}
               </div>
-              <span className="flex min-w-0 items-center gap-1 text-xs text-[#7f827e]">
+              <span className="flex h-4 min-w-0 items-center gap-1 text-xs leading-4 text-[#7f827e]">
                 <TrackArtistLink
-                  className="h-auto min-w-0 max-w-[46%] overflow-hidden p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73]"
+                  className="inline-flex h-4 min-w-0 max-w-[46%] items-center overflow-hidden p-0 text-xs leading-4 text-coda-metadata-link hover:bg-transparent hover:text-coda-link-hover"
                   onNavigate={onArtist}
                   track={track}
                 >
@@ -143,7 +143,7 @@ export const PlayerTrack = memo(function PlayerTrack({
                       ·
                     </span>
                     <TrackAlbumLink
-                      className="h-auto min-w-0 max-w-[46%] overflow-hidden p-0 text-xs text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73]"
+                      className="inline-flex h-4 min-w-0 max-w-[46%] items-center overflow-hidden p-0 text-xs leading-4 text-coda-metadata-link hover:bg-transparent hover:text-coda-link-hover"
                       onNavigate={onAlbum}
                       busy={albumLoading}
                       ariaLabel={

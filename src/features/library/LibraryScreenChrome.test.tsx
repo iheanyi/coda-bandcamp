@@ -429,6 +429,7 @@ describe("Collection genre filters", () => {
       expect(
         allGenres.querySelector("[data-collection-genre-indicator]"),
       ).toHaveClass("pointer-events-none");
+      expect(allGenres).not.toHaveClass("overflow-hidden");
 
       await user.click(allGenres);
       expect(onGenreChange).toHaveBeenCalledWith("All");

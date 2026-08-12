@@ -55,6 +55,11 @@
   --color-coda-field-foreground: var(--coda-field-foreground);
   --color-coda-field-placeholder: var(--coda-field-placeholder);
   --color-coda-label: var(--coda-label);
+  --color-coda-metadata-link: var(--coda-metadata-link);
+  --color-coda-link-hover: var(--coda-link-hover);
+  --color-coda-selection-muted: var(--coda-selection-muted);
+  --color-coda-selection-hover: var(--coda-selection-hover);
+  --color-coda-selection-foreground: var(--coda-selection-foreground);
   --shadow-coda-player: 0 -10px 30px rgba(0, 0, 0, 0.16);
   --shadow-coda-queue:
     0 22px 54px rgba(0, 0, 0, 0.42), 0 4px 16px rgba(0, 0, 0, 0.24),
@@ -111,6 +116,11 @@
   --coda-field-foreground: #deddd7;
   --coda-field-placeholder: #747773;
   --coda-label: #b3b5af;
+  --coda-metadata-link: #7b7f7a;
+  --coda-link-hover: #e28a73;
+  --coda-selection-muted: #888b86;
+  --coda-selection-hover: #dddcd7;
+  --coda-selection-foreground: #f0eee8;
   --duration-coda-fast: 140ms;
   --duration-coda-standard: 180ms;
   --duration-coda-panel: 240ms;

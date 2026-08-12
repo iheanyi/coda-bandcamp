@@ -350,7 +350,7 @@ export function LibraryScreenChrome({
               return (
                 <Button
                   key={mode}
-                  className="group relative isolate min-h-8 gap-2 px-2.5 text-xs text-[#858984] transition-colors duration-150 ease-out hover:bg-transparent hover:text-[#deddd7] aria-pressed:text-[#f0eee8]"
+                  className="group relative isolate min-h-8 gap-2 px-2.5 text-xs text-[#858984] transition-colors duration-150 ease-out hover:bg-transparent hover:text-[#deddd7] aria-pressed:text-coda-selection-foreground"
                   onClick={() => browse.actions.onChooseMode(mode)}
                   aria-pressed={selected}
                   size="compact"
@@ -411,7 +411,7 @@ export function LibraryScreenChrome({
                   return (
                     <Button
                       key={item}
-                      className="relative isolate h-8 shrink-0 overflow-hidden px-3 text-xs font-semibold text-[#888b86] transition-colors duration-150 ease-out hover:bg-transparent hover:text-[#dddcd7] aria-pressed:text-[#f0eee8]"
+                      className="relative isolate h-8 shrink-0 px-3 text-xs font-semibold text-coda-selection-muted transition-colors duration-150 ease-out hover:bg-transparent hover:text-coda-selection-hover aria-pressed:text-coda-selection-foreground"
                       onClick={() => filter.actions.onGenreChange(item)}
                       aria-pressed={selected}
                       size="compact"

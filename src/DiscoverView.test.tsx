@@ -438,6 +438,10 @@ describe("Discover", () => {
     expect(
       allGenres.querySelector("[data-discover-genre-indicator]"),
     ).toHaveClass("pointer-events-none");
+    expect(allGenres).not.toHaveClass("overflow-hidden");
+    expect(
+      allGenres.querySelector("[data-discover-genre-indicator]"),
+    ).toHaveClass("rounded-sm");
 
     fireEvent.click(screen.getByRole("button", { name: "Rock" }));
     expect(screen.getByRole("button", { name: "Rock" })).toHaveAttribute(

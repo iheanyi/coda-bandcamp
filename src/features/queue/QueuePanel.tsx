@@ -385,7 +385,7 @@ export const QueuePanel = memo(function QueuePanel({
                       />
                     </Link>
                     <TrackArtistLink
-                      className="h-auto justify-start truncate p-0 text-(length:--text-coda-meta) font-normal text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73]"
+                      className="h-auto justify-start truncate p-0 text-(length:--text-coda-meta) font-normal text-coda-metadata-link hover:bg-transparent hover:text-coda-link-hover"
                       onNavigate={onArtist}
                       onRadioSeries={onRadioSeries}
                       track={currentTrack}
@@ -495,7 +495,7 @@ export const QueuePanel = memo(function QueuePanel({
                     <OverflowMarquee className="w-full" text={track.title} />
                   </Button>
                   <TrackArtistLink
-                    className="h-auto justify-start truncate p-0 text-(length:--text-coda-meta) font-normal text-[#7b7f7a] hover:bg-transparent hover:text-[#e28a73]"
+                    className="h-auto justify-start truncate p-0 text-(length:--text-coda-meta) font-normal text-coda-metadata-link hover:bg-transparent hover:text-coda-link-hover"
                     onNavigate={onArtist}
                     onRadioSeries={onRadioSeries}
                     track={track}

@@ -489,7 +489,7 @@ export function DiscoverScreen({
             >
               <Button
                 type="button"
-                className="relative isolate h-8 shrink-0 overflow-hidden px-3 text-xs font-semibold text-[#888b86] hover:bg-transparent hover:text-[#dddcd7] aria-pressed:text-[#f0eee8]"
+                className="relative isolate h-8 shrink-0 px-3 text-xs font-semibold text-coda-selection-muted hover:bg-transparent hover:text-coda-selection-hover aria-pressed:text-coda-selection-foreground"
                 onClick={() => chooseGenre("all")}
                 aria-pressed={!selectedGenre}
                 disabled={query.isPending}
@@ -499,7 +499,7 @@ export function DiscoverScreen({
                 {!selectedGenre ? (
                   <m.div
                     aria-hidden="true"
-                    className="pointer-events-none absolute inset-0 z-0 bg-coda-active"
+                    className="pointer-events-none absolute inset-0 z-0 rounded-sm bg-coda-active"
                     data-discover-genre-indicator=""
                     data-selection-travel-steps={genreIndicatorMotion.travelSteps}
                     layoutId={genreIndicatorLayoutId}
@@ -514,7 +514,7 @@ export function DiscoverScreen({
                   <Button
                     type="button"
                     key={tag}
-                    className="relative isolate h-8 shrink-0 overflow-hidden px-3 text-xs font-semibold text-[#888b86] hover:bg-transparent hover:text-[#dddcd7] aria-pressed:text-[#f0eee8]"
+                    className="relative isolate h-8 shrink-0 px-3 text-xs font-semibold text-coda-selection-muted hover:bg-transparent hover:text-coda-selection-hover aria-pressed:text-coda-selection-foreground"
                     onClick={() => chooseGenre(tag)}
                     aria-pressed={selected}
                     disabled={query.isPending}
@@ -524,7 +524,7 @@ export function DiscoverScreen({
                     {selected ? (
                       <m.div
                         aria-hidden="true"
-                        className="pointer-events-none absolute inset-0 z-0 bg-coda-active"
+                        className="pointer-events-none absolute inset-0 z-0 rounded-sm bg-coda-active"
                         data-discover-genre-indicator=""
                         data-selection-travel-steps={genreIndicatorMotion.travelSteps}
                         layoutId={genreIndicatorLayoutId}

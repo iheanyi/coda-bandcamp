@@ -113,7 +113,7 @@ export function AlbumDetailPage({
             </span>
           </h2>
           <Link
-            className="mx-0 my-2 block max-w-full truncate text-sm font-semibold text-[#d98771] outline-none hover:text-[#e28a73] hover:underline hover:underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            className="mx-0 my-2 block max-w-full truncate text-sm font-semibold text-[#d98771] outline-none hover:text-coda-link-hover hover:underline hover:underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             data-artist-open={albumArtistKey}
             data-coda-artist-name-target={albumArtistKey}
             data-navigation-slot={`album-detail-artist:${album.id}`}
@@ -291,7 +291,7 @@ export function AlbumDetailPage({
                               />
                             </Button>
                             <Link
-                              className="w-fit max-w-full truncate text-xs text-[#777b76] outline-none hover:text-[#e28a73] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+                              className="w-fit max-w-full truncate text-xs text-[#777b76] outline-none hover:text-coda-link-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                               data-artist-open={parseArtistKeyParam(
                                 artistKey(track.artist),
                               )}
