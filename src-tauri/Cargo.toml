@@ -1,6 +1,6 @@
 [package]
 name = "coda"
-version = "0.4.2"
+version = "0.4.3"
 description = "A focused Bandcamp desktop player with a real queue."
 authors = ["Coda Contributors"]
 edition = "2021"
