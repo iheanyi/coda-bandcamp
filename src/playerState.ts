@@ -357,106 +357,55 @@ async function parseQueueAsync(
   return tracks;
 }
 
-export function createPlayerState(input: PlayerStateInput, now = Date.now()): PlayerStateSnapshot {
+type PreparedPlayerStateQueue = {
+  queue: PlayerStateTrack[];
+  retainedThroughCurrent: number;
+  currentWasOmitted: boolean;
+};
+
+function assertCreatablePlayerState(input: PlayerStateInput): void {
   if (
     !Array.isArray(input.queue) ||
     input.queue.length > MAX_PERSISTED_QUEUE_LENGTH ||
     !queuePositionIsValid(
-      input.queue as PlayerStateTrack[],
+      input.queue,
       input.currentIndex,
       input.positionSeconds,
     )
   ) {
     throw new Error("The player state is invalid and was not saved.");
   }
-  const parsedQueue = input.queue.map((track) => {
-    if (isRecord(track) && typeof track.id === "string" && isEphemeralTrackId(track.id)) {
-      const candidate = { ...track, id: `persistable:${track.id}` };
-      return { track: parseTrack(candidate), ephemeral: true };
-    }
-    return { track: parseTrack(track), ephemeral: false };
-  });
-  if (parsedQueue.some(({ track }) => !track)) {
-    throw new Error("The player state is invalid and was not saved.");
-  }
-  const queue = parsedQueue
-    .filter(({ ephemeral }) => !ephemeral)
-    .map(({ track }) => track as PlayerStateTrack);
-  const originalCurrent = input.queue[input.currentIndex];
-  const currentWasOmitted =
-    isRecord(originalCurrent) &&
-    typeof originalCurrent.id === "string" &&
-    isEphemeralTrackId(originalCurrent.id);
-  const currentIndex = queue.length === 0
-    ? 0
-    : currentWasOmitted
-      ? Math.min(
-        parsedQueue.slice(0, input.currentIndex).filter(({ ephemeral }) => !ephemeral).length,
-        queue.length - 1,
-      )
-      : parsedQueue
-        .slice(0, input.currentIndex + 1)
-        .filter(({ ephemeral }) => !ephemeral).length - 1;
-  const candidate = playerStateRecord({
-    ...input,
-    queue,
-    currentIndex,
-    positionSeconds: queue.length === 0 || currentWasOmitted ? 0 : input.positionSeconds,
-    lastFmProgress: currentWasOmitted ? undefined : input.lastFmProgress,
-    radioScrobbleProgress: currentWasOmitted ? undefined : input.radioScrobbleProgress,
-    version: PLAYER_STATE_VERSION,
-    savedAt: now,
-  });
-  const parsed = candidate ? finishPlayerState(candidate, queue) : undefined;
-  if (!parsed) throw new Error("The player state is invalid and was not saved.");
-  return parsed;
 }
 
-export async function createPlayerStateAsync(
-  input: PlayerStateInput,
-  now = Date.now(),
-  yieldControl: PlayerStateYield = yieldPlayerStateValidation,
-): Promise<PlayerStateSnapshot> {
-  if (
-    !Array.isArray(input.queue) ||
-    input.queue.length > MAX_PERSISTED_QUEUE_LENGTH ||
-    !queuePositionIsValid(
-      input.queue as PlayerStateTrack[],
-      input.currentIndex,
-      input.positionSeconds,
-    )
-  ) {
+function appendPreparedPlayerStateTrack(
+  prepared: PreparedPlayerStateQueue,
+  candidate: unknown,
+  index: number,
+  currentIndex: number,
+): void {
+  const ephemeral =
+    isRecord(candidate) &&
+    typeof candidate.id === "string" &&
+    isEphemeralTrackId(candidate.id);
+  const parsedTrack = parseTrack(
+    ephemeral
+      ? { ...candidate, id: `persistable:${candidate.id}` }
+      : candidate,
+  );
+  if (!parsedTrack) {
     throw new Error("The player state is invalid and was not saved.");
   }
+  if (!ephemeral) prepared.queue.push(parsedTrack);
+  if (index <= currentIndex && !ephemeral) prepared.retainedThroughCurrent += 1;
+  if (index === currentIndex) prepared.currentWasOmitted = ephemeral;
+}
 
-  const queue: PlayerStateTrack[] = [];
-  let retainedThroughCurrent = 0;
-  let currentWasOmitted = false;
-  for (let index = 0; index < input.queue.length; index += 1) {
-    const candidate = input.queue[index];
-    const ephemeral =
-      isRecord(candidate) &&
-      typeof candidate.id === "string" &&
-      isEphemeralTrackId(candidate.id);
-    const parsedTrack = parseTrack(
-      ephemeral
-        ? { ...candidate, id: `persistable:${candidate.id as string}` }
-        : candidate,
-    );
-    if (!parsedTrack) {
-      throw new Error("The player state is invalid and was not saved.");
-    }
-    if (!ephemeral) queue.push(parsedTrack);
-    if (index <= input.currentIndex && !ephemeral) retainedThroughCurrent += 1;
-    if (index === input.currentIndex) currentWasOmitted = ephemeral;
-    if (
-      (index + 1) % PLAYER_STATE_VALIDATION_CHUNK_SIZE === 0 &&
-      index + 1 < input.queue.length
-    ) {
-      await yieldControl();
-    }
-  }
-
+function finishCreatedPlayerState(
+  input: PlayerStateInput,
+  now: number,
+  prepared: PreparedPlayerStateQueue,
+): PlayerStateSnapshot {
+  const { queue, retainedThroughCurrent, currentWasOmitted } = prepared;
   const currentIndex = queue.length === 0
     ? 0
     : currentWasOmitted
@@ -475,6 +424,47 @@ export async function createPlayerStateAsync(
   const parsed = candidate ? finishPlayerState(candidate, queue) : undefined;
   if (!parsed) throw new Error("The player state is invalid and was not saved.");
   return parsed;
+}
+
+export function createPlayerState(input: PlayerStateInput, now = Date.now()): PlayerStateSnapshot {
+  assertCreatablePlayerState(input);
+  const prepared: PreparedPlayerStateQueue = {
+    queue: [],
+    retainedThroughCurrent: 0,
+    currentWasOmitted: false,
+  };
+  input.queue.forEach((candidate, index) => {
+    appendPreparedPlayerStateTrack(prepared, candidate, index, input.currentIndex);
+  });
+  return finishCreatedPlayerState(input, now, prepared);
+}
+
+export async function createPlayerStateAsync(
+  input: PlayerStateInput,
+  now = Date.now(),
+  yieldControl: PlayerStateYield = yieldPlayerStateValidation,
+): Promise<PlayerStateSnapshot> {
+  assertCreatablePlayerState(input);
+  const prepared: PreparedPlayerStateQueue = {
+    queue: [],
+    retainedThroughCurrent: 0,
+    currentWasOmitted: false,
+  };
+  for (let index = 0; index < input.queue.length; index += 1) {
+    appendPreparedPlayerStateTrack(
+      prepared,
+      input.queue[index],
+      index,
+      input.currentIndex,
+    );
+    if (
+      (index + 1) % PLAYER_STATE_VALIDATION_CHUNK_SIZE === 0 &&
+      index + 1 < input.queue.length
+    ) {
+      await yieldControl();
+    }
+  }
+  return finishCreatedPlayerState(input, now, prepared);
 }
 
 export function parsePlayerState(value: unknown): PlayerStateSnapshot | undefined {
