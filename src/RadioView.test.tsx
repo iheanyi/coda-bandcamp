@@ -160,7 +160,6 @@ function renderRadio(
 }
 
 beforeEach(() => {
-  vi.stubEnv("VITE_CODA_MOTION_VIEW_TRANSITIONS", "0");
   mocks.fetchRadioShow.mockReset().mockResolvedValue(show);
   mocks.fetchRadioShows.mockReset().mockResolvedValue({
     results: shows,

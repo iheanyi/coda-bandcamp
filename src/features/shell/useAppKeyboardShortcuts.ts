@@ -4,6 +4,7 @@ export type AppKeyboardShortcutsOptions = Readonly<{
   onNext: () => void;
   onPrevious: () => void;
   onTogglePlayback: () => void;
+  onToggleMotionLab?: () => void;
   searchRef: RefObject<HTMLInputElement | null>;
 }>;
 
@@ -20,10 +21,23 @@ export function useAppKeyboardShortcuts({
   onNext,
   onPrevious,
   onTogglePlayback,
+  onToggleMotionLab,
   searchRef,
 }: AppKeyboardShortcutsOptions): void {
   useEffect(() => {
     const keyboard = (event: KeyboardEvent) => {
+      if (
+        !event.repeat &&
+        event.metaKey &&
+        event.shiftKey &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        event.key.toLowerCase() === "d"
+      ) {
+        event.preventDefault();
+        onToggleMotionLab?.();
+        return;
+      }
       const target = event.target instanceof HTMLElement ? event.target : null;
       const interactiveTarget = target?.closest(
         "button, input, textarea, select, a, [contenteditable='true'], [role='slider']",
@@ -50,5 +64,5 @@ export function useAppKeyboardShortcuts({
     };
     window.addEventListener("keydown", keyboard);
     return () => window.removeEventListener("keydown", keyboard);
-  }, [onNext, onPrevious, onTogglePlayback, searchRef]);
+  }, [onNext, onPrevious, onToggleMotionLab, onTogglePlayback, searchRef]);
 }

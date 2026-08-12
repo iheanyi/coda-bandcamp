@@ -675,38 +675,97 @@ html:is(
   animation: none;
 }
 
+html:is(
+    .coda-transition--now-playing-open,
+    .coda-transition--now-playing-close,
+    .coda-transition--page-forward,
+    .coda-transition--page-back,
+    .coda-transition--page-crossfade
+  )::view-transition-old(root) {
+  opacity: 0;
+  mix-blend-mode: normal;
+}
+
+html:is(
+    .coda-transition--now-playing-open,
+    .coda-transition--now-playing-close,
+    .coda-transition--album-detail,
+    .coda-transition--album-detail-close,
+    .coda-transition--artist-detail,
+    .coda-transition--artist-detail-close,
+    .coda-transition--discover-detail,
+    .coda-transition--discover-detail-close,
+    .coda-transition--playlist-detail,
+    .coda-transition--playlist-detail-close,
+    .coda-transition--radio-detail,
+    .coda-transition--radio-detail-close,
+    .coda-transition--page-forward,
+    .coda-transition--page-back,
+    .coda-transition--page-crossfade
+  )::view-transition-new(root) {
+  opacity: 1;
+  mix-blend-mode: normal;
+}
+
+::view-transition-image-pair(coda-page-content),
+::view-transition-old(coda-page-content),
+::view-transition-new(coda-page-content) {
+  mix-blend-mode: normal;
+}
+
+html:is(
+    .coda-transition--page-forward,
+    .coda-transition--page-back,
+    .coda-transition--page-crossfade
+  )::view-transition-group(coda-page-content) {
+  animation-duration: var(--coda-motion-page-total-duration, 195ms);
+  animation-timing-function: var(
+    --coda-motion-page-enter-ease,
+    var(--ease-coda-enter)
+  );
+}
+
 html:is(.coda-transition--page-forward)::view-transition-old(
     coda-page-content
   ) {
-  animation: coda-page-forward-out var(--duration-coda-fast)
-    var(--ease-coda-exit) both;
+  animation: coda-page-forward-out
+    var(--coda-motion-page-exit-duration, var(--duration-coda-fast))
+    var(--coda-motion-page-exit-ease, var(--ease-coda-exit)) both;
 }
 
 html:is(.coda-transition--page-forward)::view-transition-new(
     coda-page-content
   ) {
-  animation: coda-page-forward-in var(--duration-coda-view) 35ms
-    var(--ease-coda-enter) both;
+  animation: coda-page-forward-in
+    var(--coda-motion-page-enter-duration, var(--duration-coda-view))
+    var(--coda-motion-page-enter-delay, 35ms)
+    var(--coda-motion-page-enter-ease, var(--ease-coda-enter)) both;
 }
 
 html.coda-transition--page-back::view-transition-old(coda-page-content) {
-  animation: coda-page-back-out var(--duration-coda-fast) var(--ease-coda-exit)
-    both;
+  animation: coda-page-back-out
+    var(--coda-motion-page-exit-duration, var(--duration-coda-fast))
+    var(--coda-motion-page-exit-ease, var(--ease-coda-exit)) both;
 }
 
 html.coda-transition--page-back::view-transition-new(coda-page-content) {
-  animation: coda-page-back-in var(--duration-coda-view) 35ms
-    var(--ease-coda-enter) both;
+  animation: coda-page-back-in
+    var(--coda-motion-page-enter-duration, var(--duration-coda-view))
+    var(--coda-motion-page-enter-delay, 35ms)
+    var(--coda-motion-page-enter-ease, var(--ease-coda-enter)) both;
 }
 
 html.coda-transition--page-crossfade::view-transition-old(coda-page-content) {
-  animation: coda-page-fade-out var(--duration-coda-fast) var(--ease-coda-exit)
-    both;
+  animation: coda-page-fade-out
+    var(--coda-motion-page-exit-duration, var(--duration-coda-fast))
+    var(--coda-motion-page-exit-ease, var(--ease-coda-exit)) both;
 }
 
 html.coda-transition--page-crossfade::view-transition-new(coda-page-content) {
-  animation: coda-page-fade-in var(--duration-coda-standard) 25ms
-    var(--ease-coda-enter) both;
+  animation: coda-page-fade-in
+    var(--coda-motion-page-enter-duration, var(--duration-coda-standard))
+    var(--coda-motion-page-enter-delay, 25ms)
+    var(--coda-motion-page-enter-ease, var(--ease-coda-enter)) both;
 }
 
 @keyframes coda-view-content-in {
@@ -731,41 +790,45 @@ html.coda-transition--page-crossfade::view-transition-new(coda-page-content) {
 
 @keyframes coda-page-forward-out {
   to {
-    opacity: 0;
-    transform: translateX(-8px);
+    opacity: var(--coda-motion-page-opacity-from, 0);
+    transform: translateX(var(--coda-motion-page-old-x, -8px))
+      scale(var(--coda-motion-page-scale-from, 1));
   }
 }
 
 @keyframes coda-page-forward-in {
   from {
-    opacity: 0;
-    transform: translateX(12px);
+    opacity: var(--coda-motion-page-opacity-from, 0);
+    transform: translateX(var(--coda-motion-page-new-x, 12px))
+      scale(var(--coda-motion-page-scale-from, 1));
   }
 }
 
 @keyframes coda-page-back-out {
   to {
-    opacity: 0;
-    transform: translateX(8px);
+    opacity: var(--coda-motion-page-opacity-from, 0);
+    transform: translateX(var(--coda-motion-page-old-x, 8px))
+      scale(var(--coda-motion-page-scale-from, 1));
   }
 }
 
 @keyframes coda-page-back-in {
   from {
-    opacity: 0;
-    transform: translateX(-12px);
+    opacity: var(--coda-motion-page-opacity-from, 0);
+    transform: translateX(var(--coda-motion-page-new-x, -12px))
+      scale(var(--coda-motion-page-scale-from, 1));
   }
 }
 
 @keyframes coda-page-fade-out {
   to {
-    opacity: 0;
+    opacity: var(--coda-motion-page-opacity-from, 0);
   }
 }
 
 @keyframes coda-page-fade-in {
   from {
-    opacity: 0;
+    opacity: var(--coda-motion-page-opacity-from, 0);
   }
 }
 

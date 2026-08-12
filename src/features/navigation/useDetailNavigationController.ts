@@ -514,6 +514,16 @@ export function useDetailNavigationController(
 
       let releaseReturnDestination = () => {};
       let replacementAfterBack: HTMLElement | undefined;
+      const transitionKind =
+        detail.kind === "now-playing"
+          ? "now-playing-close"
+          : detail.kind === "album" && transaction
+            ? "album-detail-close"
+            : detail.kind === "artist" && transaction
+              ? "artist-detail-close"
+              : discoverCardReturn
+                ? "discover-detail-close"
+                : "page-back";
       try {
         await transitionCodaView(
           async () => {
@@ -563,15 +573,10 @@ export function useDetailNavigationController(
               );
             }
           },
-          detail.kind === "now-playing"
-            ? "now-playing-close"
-            : detail.kind === "album" && transaction
-              ? "album-detail-close"
-              : detail.kind === "artist" && transaction
-                ? "artist-detail-close"
-                : discoverCardReturn
-                  ? "discover-detail-close"
-                  : "page-back",
+          transitionKind,
+          transitionKind === "page-back"
+            ? { routerOwnedPage: true }
+            : undefined,
         );
 
         // WebKit can move focus while tearing down the View Transition
@@ -610,7 +615,7 @@ export function useDetailNavigationController(
 
   const transitionPrimary = useCallback(
     (update: CodaViewTransitionUpdate) =>
-      transitionCodaView(update, "page-crossfade"),
+      transitionCodaView(update, "page-forward", { routerOwnedPage: true }),
     [],
   );
 

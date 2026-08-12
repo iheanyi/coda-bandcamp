@@ -5,32 +5,21 @@ import {
 } from "./temporaryDomMarkers";
 
 const MAX_VIRTUAL_RETURN_ATTEMPTS = 8;
-const DOM_OPPORTUNITY_TIMEOUT_MS = 50;
 
 function nextDomOpportunity(): Promise<void> {
   return new Promise((resolve) => {
-    let settled = false;
-    let frame: number | undefined;
-    let timer: number | undefined;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      if (frame !== undefined) window.cancelAnimationFrame(frame);
-      if (timer !== undefined) window.clearTimeout(timer);
-      resolve();
-    };
-
-    timer = window.setTimeout(finish, DOM_OPPORTUNITY_TIMEOUT_MS);
     if (typeof window.requestAnimationFrame === "function") {
-      frame = window.requestAnimationFrame(finish);
+      window.requestAnimationFrame(() => resolve());
+      return;
     }
+    queueMicrotask(resolve);
   });
 }
 
 /**
  * Restore the persistent scroll surface before asking a virtualizer for the
  * exact entity/slot that initiated navigation. The frame count and per-frame
- * timeout keep a suspended or background WebView from blocking navigation.
+ * frame budget gives the virtualizer bounded opportunities to mount it.
  */
 export async function awaitVirtualReturnTrigger({
   findTrigger,

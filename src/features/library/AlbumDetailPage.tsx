@@ -16,7 +16,7 @@ import { formatTime } from "@/lib";
 import { cn } from "@/lib/utils";
 import { formatAlbumReleaseDate } from "@/libraryDates";
 import { artistKey } from "@/libraryBrowse";
-import { codaMotion } from "@/motion";
+import { useCodaMotion } from "@/motion";
 import { handleCodaLinkActivation } from "@/routing/linkActivation";
 import { parseArtistKeyParam } from "@/routing/routeContracts";
 import type { Album, Track } from "@/types";
@@ -401,6 +401,7 @@ export function AlbumTracklistPresence({
   children,
   className,
 }: AlbumTracklistPresenceProps) {
+  const codaMotion = useCodaMotion();
   const [isPresent, safeToRemove] = usePresence();
   const completeExit = useMotionExitWatchdog({
     open: isPresent,
@@ -412,15 +413,18 @@ export function AlbumTracklistPresence({
       className={className}
       aria-hidden={!isPresent || undefined}
       inert={!isPresent || undefined}
-      initial={{ opacity: 0, transform: "translateY(5px)" }}
+      initial={{
+        opacity: codaMotion.profile.component.opacityFrom,
+        transform: `translateY(${codaMotion.profile.component.translationPx}px) scale(${codaMotion.profile.component.scaleFrom})`,
+      }}
       animate={{
         opacity: 1,
-        transform: "translateY(0px)",
+        transform: "translateY(0px) scale(1)",
         transition: codaMotion.componentEnter,
       }}
       exit={{
-        opacity: 0,
-        transform: "translateY(-3px)",
+        opacity: codaMotion.profile.component.opacityFrom,
+        transform: `translateY(${-codaMotion.profile.component.translationPx * 0.6}px) scale(${codaMotion.profile.component.scaleFrom})`,
         transition: codaMotion.componentExit,
       }}
       onAnimationComplete={completeExit}

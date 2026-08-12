@@ -50,7 +50,7 @@ export type AppSidebarDestination =
 
 export type AppSidebarNavigationRequest = Readonly<{
   destination: AppSidebarDestination;
-  navigate: () => Promise<void>;
+  navigate: (viewTransition?: boolean) => Promise<void>;
   trigger: HTMLAnchorElement;
 }>;
 
@@ -103,7 +103,7 @@ function AppSidebar({
   const activateNavigation = (
     event: MouseEvent<HTMLAnchorElement>,
     destination: AppSidebarDestination,
-    navigateToDestination: () => Promise<void>,
+    navigateToDestination: (viewTransition?: boolean) => Promise<void>,
     beforeNavigate?: () => boolean,
   ) => {
     if (!isUnmodifiedPrimaryActivation(event)) return;
@@ -135,13 +135,17 @@ function AppSidebar({
                   <Link
                     {...navigationLinkProps}
                     onClick={(event) =>
-                      activateNavigation(event, "/collection", async () => {
-                        await navigate({
-                          search: collectionSearch,
-                          to: "/collection",
-                          viewTransition: false,
-                        });
-                      })
+                      activateNavigation(
+                        event,
+                        "/collection",
+                        async (viewTransition = true) => {
+                          await navigate({
+                            search: collectionSearch,
+                            to: "/collection",
+                            viewTransition,
+                          });
+                        },
+                      )
                     }
                     search={collectionSearch}
                     to="/collection"
@@ -153,12 +157,16 @@ function AppSidebar({
                   <Link
                     {...navigationLinkProps}
                     onClick={(event) =>
-                      activateNavigation(event, "/favorites", async () => {
-                        await navigate({
-                          to: "/favorites",
-                          viewTransition: false,
-                        });
-                      })
+                      activateNavigation(
+                        event,
+                        "/favorites",
+                        async (viewTransition = true) => {
+                          await navigate({
+                            to: "/favorites",
+                            viewTransition,
+                          });
+                        },
+                      )
                     }
                     to="/favorites"
                   >
@@ -169,12 +177,16 @@ function AppSidebar({
                   <Link
                     {...navigationLinkProps}
                     onClick={(event) =>
-                      activateNavigation(event, "/playlists", async () => {
-                        await navigate({
-                          to: "/playlists",
-                          viewTransition: false,
-                        });
-                      })
+                      activateNavigation(
+                        event,
+                        "/playlists",
+                        async (viewTransition = true) => {
+                          await navigate({
+                            to: "/playlists",
+                            viewTransition,
+                          });
+                        },
+                      )
                     }
                     preload={connected ? undefined : false}
                     to="/playlists"
@@ -186,13 +198,17 @@ function AppSidebar({
                   <Link
                     {...navigationLinkProps}
                     onClick={(event) =>
-                      activateNavigation(event, "/recent", async () => {
-                        await navigate({
-                          search: collectionSearch,
-                          to: "/recent",
-                          viewTransition: false,
-                        });
-                      })
+                      activateNavigation(
+                        event,
+                        "/recent",
+                        async (viewTransition = true) => {
+                          await navigate({
+                            search: collectionSearch,
+                            to: "/recent",
+                            viewTransition,
+                          });
+                        },
+                      )
                     }
                     search={collectionSearch}
                     to="/recent"
@@ -210,11 +226,11 @@ function AppSidebar({
                       activateNavigation(
                         event,
                         "/discover",
-                        async () => {
+                        async (viewTransition = true) => {
                           await navigate({
                             search: discoverSearch,
                             to: "/discover",
-                            viewTransition: false,
+                            viewTransition,
                           });
                         },
                         onDiscoverNavigate,
@@ -239,12 +255,16 @@ function AppSidebar({
                   <Link
                     {...navigationLinkProps}
                     onClick={(event) =>
-                      activateNavigation(event, "/radio", async () => {
-                        await navigate({
-                          to: "/radio",
-                          viewTransition: false,
-                        });
-                      })
+                      activateNavigation(
+                        event,
+                        "/radio",
+                        async (viewTransition = true) => {
+                          await navigate({
+                            to: "/radio",
+                            viewTransition,
+                          });
+                        },
+                      )
                     }
                     to="/radio"
                   >

@@ -149,7 +149,6 @@ function createRadioSeriesNavHarness(
 }
 
 beforeEach(() => {
-  vi.stubEnv("VITE_CODA_MOTION_VIEW_TRANSITIONS", "0");
   vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
   mocks.fetchRadioShow.mockReset().mockResolvedValue(show);
   mocks.fetchRadioShows.mockReset().mockResolvedValue({
@@ -341,7 +340,7 @@ describe("Radio file routes", () => {
   });
 
   it("keeps rapid series choices URL-backed without invoking a major view transition", async () => {
-    vi.stubEnv("VITE_CODA_MOTION_VIEW_TRANSITIONS", "1");
+    vi.stubEnv("MODE", "coda-dev");
     const startViewTransition = vi.fn((update: () => void | Promise<void>) => {
       const updateCallbackDone = Promise.resolve(update());
       return {

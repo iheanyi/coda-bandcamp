@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const motionMocks = vi.hoisted(() => ({
+  animate: vi.fn(),
   animateView: vi.fn(),
   spring: vi.fn(),
 }));
 
 vi.mock("motion", () => ({
+  animate: motionMocks.animate,
   animateView: motionMocks.animateView,
   spring: motionMocks.spring,
 }));
@@ -14,16 +16,20 @@ import {
   transitionCodaView,
   type CodaViewTransitionKind,
 } from "./viewTransitions";
+import {
+  resetMotionProfileStoreForTests,
+  selectMotionPreset,
+} from "./motionProfileStore";
 
 const originalStartViewTransition = Object.getOwnPropertyDescriptor(
   document,
   "startViewTransition",
 );
+const originalGetAnimations = Object.getOwnPropertyDescriptor(
+  document,
+  "getAnimations",
+);
 const originalMatchMedia = window.matchMedia;
-
-beforeEach(() => {
-  vi.stubEnv("VITE_CODA_MOTION_VIEW_TRANSITIONS", "0");
-});
 
 function deferred() {
   let resolve!: () => void;
@@ -75,6 +81,15 @@ function motionBuilder(
   );
   return builder;
 }
+
+beforeEach(() => {
+  window.localStorage.clear();
+  resetMotionProfileStoreForTests();
+  motionMocks.animate.mockImplementation(() => ({
+    finished: Promise.resolve(),
+    stop: vi.fn(),
+  }));
+});
 
 afterEach(() => {
   vi.useRealTimers();
@@ -137,12 +152,18 @@ afterEach(() => {
   } else {
     Reflect.deleteProperty(document, "startViewTransition");
   }
+  if (originalGetAnimations) {
+    Object.defineProperty(document, "getAnimations", originalGetAnimations);
+  } else {
+    Reflect.deleteProperty(document, "getAnimations");
+  }
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     value: originalMatchMedia,
   });
   vi.unstubAllEnvs();
   motionMocks.animateView.mockReset();
+  motionMocks.animate.mockReset();
 });
 
 describe("transitionCodaView", () => {
@@ -176,6 +197,45 @@ describe("transitionCodaView", () => {
     routeCommit.resolve();
     await transition;
     expect(destinationSnapshot).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the old pane live and animates the committed destination without a native snapshot", async () => {
+    const pane = document.createElement("main");
+    pane.className = "library-pane";
+    document.body.append(pane);
+    const startViewTransition = vi.fn();
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: startViewTransition,
+    });
+    const routeCommit = deferred();
+    const update = vi.fn((routerViewTransition?: boolean) => {
+      expect(routerViewTransition).toBe(false);
+      return routeCommit.promise;
+    });
+
+    const transition = transitionCodaView(update, "page-forward", {
+      routerOwnedPage: true,
+    });
+
+    expect(update).toHaveBeenCalledOnce();
+    expect(startViewTransition).not.toHaveBeenCalled();
+    expect(motionMocks.animate).not.toHaveBeenCalled();
+    routeCommit.resolve();
+    await transition;
+    expect(motionMocks.animate).toHaveBeenCalledOnce();
+    expect(motionMocks.animate).toHaveBeenCalledWith(
+      pane,
+      expect.objectContaining({ opacity: [0, 1] }),
+      expect.objectContaining({ duration: 0.18, delay: 0.015 }),
+    );
+    expect(document.documentElement).not.toHaveClass(
+      "coda-view-transitioning",
+      "coda-transition--page-forward",
+    );
+    expect(pane.style.opacity).toBe("");
+    expect(pane.style.transform).toBe("");
+    pane.remove();
   });
 
   it("excludes a root-owned shared source that remains mounted in the incoming snapshot", async () => {
@@ -280,9 +340,12 @@ describe("transitionCodaView", () => {
     });
     const update = vi.fn();
 
-    await transitionCodaView(update, "page-crossfade");
+    await transitionCodaView(update, "page-crossfade", {
+      routerOwnedPage: true,
+    });
 
     expect(update).toHaveBeenCalledOnce();
+    expect(update).toHaveBeenCalledWith(false);
     expect(startViewTransition).not.toHaveBeenCalled();
   });
 
@@ -543,267 +606,165 @@ describe("transitionCodaView", () => {
     await activeTransition;
   });
 
-  it("skips a stalled native snapshot and restores surviving live content", async () => {
+  it("uses the native transition lifecycle without a timer fallback", async () => {
     vi.useFakeTimers();
-    const source = document.createElement("a");
-    source.className = "player__art-link";
-    document.body.append(source);
-    const skipTransition = vi.fn();
+    const finished = deferred();
     Object.defineProperty(document, "startViewTransition", {
       configurable: true,
-      value: vi.fn((update: () => void | Promise<void>) => {
-        const updateCallbackDone = Promise.resolve(update());
-        return {
-          finished: new Promise<void>(() => undefined),
-          skipTransition,
-          updateCallbackDone,
-        };
-      }),
-    });
-
-    const transition = transitionCodaView(vi.fn(), "now-playing-open");
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(source.style.viewTransitionName).toBe("none");
-
-    await vi.advanceTimersByTimeAsync(2_499);
-    expect(skipTransition).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1);
-    await transition;
-
-    expect(skipTransition).toHaveBeenCalledOnce();
-    expect(source.style.viewTransitionName).toBe("");
-    expect(document.documentElement).not.toHaveClass("coda-view-transitioning");
-  });
-
-  it("commits once if the platform never invokes its update callback", async () => {
-    vi.useFakeTimers();
-    const skipTransition = vi.fn();
-    Object.defineProperty(document, "startViewTransition", {
-      configurable: true,
-      value: vi.fn(() => ({
-        finished: new Promise<void>(() => undefined),
-        skipTransition,
-      })),
-    });
-    const update = vi.fn();
-
-    const transition = transitionCodaView(update, "page-forward");
-    expect(update).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(2_500);
-    await transition;
-
-    expect(skipTransition).toHaveBeenCalledOnce();
-    expect(update).toHaveBeenCalledOnce();
-    expect(document.documentElement).not.toHaveClass("coda-view-transitioning");
-  });
-
-  it("does not suppress surviving content after a timed-out update settles late", async () => {
-    vi.useFakeTimers();
-    const update = deferred();
-    const source = document.createElement("a");
-    source.className = "player__art-link";
-    document.body.append(source);
-    Object.defineProperty(document, "startViewTransition", {
-      configurable: true,
-      value: vi.fn((commit: () => void | Promise<void>) => ({
-        finished: new Promise<void>(() => undefined),
+      value: vi.fn((update: () => void | Promise<void>) => ({
+        finished: Promise.resolve(update()).then(() => finished.promise),
         skipTransition: vi.fn(),
-        updateCallbackDone: Promise.resolve(commit()),
       })),
     });
+    let settled = false;
+    const transition = transitionCodaView(vi.fn(), "page-forward").then(() => {
+      settled = true;
+    });
 
-    const transition = transitionCodaView(
-      () => update.promise,
-      "now-playing-open",
-    );
-    await Promise.resolve();
-    await vi.advanceTimersByTimeAsync(2_500);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(settled).toBe(false);
+
+    finished.resolve();
     await transition;
-
-    expect(source.style.viewTransitionName).toBe("");
-    update.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(source.style.viewTransitionName).toBe("");
+    expect(settled).toBe(true);
   });
 });
 
 describe("transitionCodaView with Motion view transitions", () => {
   function enableMotionViewTransitions() {
-    vi.stubEnv("VITE_CODA_MOTION_VIEW_TRANSITIONS", "1");
+    vi.stubEnv("MODE", "coda-dev");
     Object.defineProperty(document, "startViewTransition", {
       configurable: true,
       value: vi.fn(),
     });
   }
 
-  it("uses Motion to animate only the page pane with forward direction", async () => {
+  function installNativePageTransition(
+    onCapture: () => void = () => undefined,
+  ) {
+    const startViewTransition = vi.fn((update: () => void | Promise<void>) => {
+      onCapture();
+      const updateCallbackDone = Promise.resolve(update());
+      return {
+        finished: updateCallbackDone,
+        ready: updateCallbackDone,
+        skipTransition: vi.fn(),
+        updateCallbackDone,
+      };
+    });
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: startViewTransition,
+    });
+    return startViewTransition;
+  }
+
+  it("uses the native page lifecycle with the snapshotted forward profile", async () => {
     enableMotionViewTransitions();
-    const builder = motionBuilder();
     let transitionClasses = "";
-    motionMocks.animateView.mockImplementation((update: () => void) => {
+    let oldX = "";
+    let newX = "";
+    let enterDuration = "";
+    let totalDuration = "";
+    installNativePageTransition(() => {
       transitionClasses = document.documentElement.className;
-      update();
-      return builder;
+      oldX = document.documentElement.style.getPropertyValue(
+        "--coda-motion-page-old-x",
+      );
+      newX = document.documentElement.style.getPropertyValue(
+        "--coda-motion-page-new-x",
+      );
+      enterDuration = document.documentElement.style.getPropertyValue(
+        "--coda-motion-page-enter-duration",
+      );
+      totalDuration = document.documentElement.style.getPropertyValue(
+        "--coda-motion-page-total-duration",
+      );
     });
     const update = vi.fn();
 
     await transitionCodaView(update, "page-forward");
 
     expect(update).toHaveBeenCalledOnce();
-    expect(motionMocks.animateView).toHaveBeenCalledWith(expect.any(Function), {
-      interrupt: "wait",
-    });
+    expect(motionMocks.animateView).not.toHaveBeenCalled();
     expect(transitionClasses).toContain("coda-view-transitioning");
-    expect(transitionClasses).not.toContain("coda-transition--page-forward");
-    expect(builder.add).toHaveBeenCalledWith(".library-pane");
-    expect(builder.group).toHaveBeenCalledWith(false);
-    expect(builder.old).toHaveBeenCalledWith(
-      {
-        opacity: 0,
-        transform: "translateX(-6px)",
-      },
-      expect.objectContaining({ duration: 0.12 }),
-    );
-    expect(builder.new).toHaveBeenCalledWith(
-      {
-        opacity: [0, 1],
-        transform: ["translateX(10px)", "translateX(0px)"],
-      },
-      expect.objectContaining({ delay: 0.015, duration: 0.18 }),
-    );
+    expect(transitionClasses).toContain("coda-transition--page-forward");
+    expect(oldX).toBe("-6px");
+    expect(newX).toBe("10px");
+    expect(enterDuration).toBe("180ms");
+    expect(totalDuration).toBe("195ms");
     expect(document.documentElement).toHaveClass(
       "coda-view-transitions-supported",
     );
     expect(document.documentElement).not.toHaveClass("coda-view-transitioning");
   });
 
-  it("releases a stalled platform snapshot without leaking transition ownership", async () => {
-    vi.useFakeTimers();
+  it("skips the prior native page snapshot before starting the next page", async () => {
     enableMotionViewTransitions();
-    const neverFinishes = new Promise<void>(() => undefined);
-    const builder = motionBuilder({ finished: neverFinishes });
-    const source = document.createElement("span");
-    source.dataset.codaArtistNameSource = "artist-stalled";
-    source.dataset.codaArtistNameTarget = "artist-stalled";
-    document.body.append(source);
-    motionMocks.animateView.mockImplementation((update: () => void) => {
-      update();
-      return builder;
+    const firstFinished = deferred();
+    const skipFirst = vi.fn(() => firstFinished.resolve());
+    let callCount = 0;
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: vi.fn((update: () => void | Promise<void>) => {
+        callCount += 1;
+        const updateCallbackDone = Promise.resolve(update());
+        return {
+          finished:
+            callCount === 1 ? firstFinished.promise : updateCallbackDone,
+          ready: updateCallbackDone,
+          skipTransition: callCount === 1 ? skipFirst : vi.fn(),
+          updateCallbackDone,
+        };
+      }),
     });
 
-    let settled = false;
-    const transition = transitionCodaView(vi.fn(), "artist-detail").then(() => {
-      settled = true;
-    });
+    const first = transitionCodaView(vi.fn(), "page-forward");
     await Promise.resolve();
-    await Promise.resolve();
+    const second = transitionCodaView(vi.fn(), "page-crossfade");
 
-    expect(source.style.viewTransitionName).toBe("");
-    expect(settled).toBe(false);
-    await vi.advanceTimersByTimeAsync(1_499);
-    expect(settled).toBe(false);
-
-    await vi.advanceTimersByTimeAsync(1);
-    await transition;
-    expect(settled).toBe(true);
-    expect(builder.controls.stop).toHaveBeenCalledOnce();
-    expect(source.style.viewTransitionName).toBe("");
-    expect(document.documentElement).not.toHaveClass("coda-view-transitioning");
+    await Promise.all([first, second]);
+    expect(skipFirst).toHaveBeenCalledOnce();
+    expect(motionMocks.animateView).not.toHaveBeenCalled();
   });
 
-  it("commits navigation if Motion never produces animation controls", async () => {
-    vi.useFakeTimers();
+  it("uses the reverse native profile values for Back navigation", async () => {
     enableMotionViewTransitions();
-    const builder = motionBuilder();
-    builder.then.mockImplementation(() => undefined);
-    motionMocks.animateView.mockReturnValue(builder);
-    const update = vi.fn();
-
-    let settled = false;
-    const transition = transitionCodaView(update, "album-detail").then(() => {
-      settled = true;
-    });
-    await Promise.resolve();
-    expect(update).not.toHaveBeenCalled();
-    expect(settled).toBe(false);
-
-    await vi.advanceTimersByTimeAsync(4_999);
-    expect(update).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1);
-    await transition;
-
-    expect(update).toHaveBeenCalledOnce();
-    expect(settled).toBe(true);
-    expect(document.documentElement).not.toHaveClass("coda-view-transitioning");
-  });
-
-  it("releases visual ownership when Motion and the fallback commit both stall", async () => {
-    vi.useFakeTimers();
-    enableMotionViewTransitions();
-    const builder = motionBuilder();
-    builder.then.mockImplementation(() => undefined);
-    motionMocks.animateView.mockReturnValue(builder);
-    const update = vi.fn(() => new Promise<void>(() => undefined));
-
-    let settled = false;
-    const transition = transitionCodaView(update, "album-detail").then(() => {
-      settled = true;
-    });
-    await Promise.resolve();
-
-    await vi.advanceTimersByTimeAsync(5_000);
-    await transition;
-
-    expect(update).toHaveBeenCalledOnce();
-    expect(settled).toBe(true);
-    expect(document.documentElement).not.toHaveClass(
-      "coda-view-transitions-supported",
-      "coda-view-transitioning",
-    );
-  });
-
-  it("uses the reverse direction for Back navigation", async () => {
-    enableMotionViewTransitions();
-    const builder = motionBuilder();
-    motionMocks.animateView.mockImplementation((update: () => void) => {
-      update();
-      return builder;
+    let oldX = "";
+    let newX = "";
+    installNativePageTransition(() => {
+      oldX = document.documentElement.style.getPropertyValue(
+        "--coda-motion-page-old-x",
+      );
+      newX = document.documentElement.style.getPropertyValue(
+        "--coda-motion-page-new-x",
+      );
     });
     const update = vi.fn();
 
     await transitionCodaView(update, "page-back");
 
     expect(update).toHaveBeenCalledOnce();
-    expect(builder.add).toHaveBeenCalledWith(".library-pane");
-    expect(builder.old).toHaveBeenCalledWith(
-      {
-        opacity: 0,
-        transform: "translateX(6px)",
-      },
-      expect.objectContaining({ duration: 0.12 }),
-    );
-    expect(builder.new).toHaveBeenCalledWith(
-      {
-        opacity: [0, 1],
-        transform: ["translateX(-10px)", "translateX(0px)"],
-      },
-      expect.objectContaining({ delay: 0.015, duration: 0.18 }),
-    );
+    expect(oldX).toBe("6px");
+    expect(newX).toBe("-10px");
   });
 
-  it("passes an async route commit through Motion before the new snapshot", async () => {
+  it("passes an async route commit through the native snapshot callback", async () => {
     enableMotionViewTransitions();
     const routeCommit = deferred();
-    const builder = motionBuilder();
     let capturedCommit: void | Promise<void>;
-    motionMocks.animateView.mockImplementation(
-      (update: () => void | Promise<void>) => {
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: vi.fn((update: () => void | Promise<void>) => {
         capturedCommit = update();
-        return builder;
-      },
-    );
+        const updateCallbackDone = Promise.resolve(capturedCommit);
+        return {
+          finished: updateCallbackDone,
+          ready: updateCallbackDone,
+          updateCallbackDone,
+        };
+      }),
+    });
 
     const transition = transitionCodaView(
       () => routeCommit.promise,
@@ -821,70 +782,69 @@ describe("transitionCodaView with Motion view transitions", () => {
     expect(commitSettled).toBe(true);
   });
 
-  it("waits for remounted shared artwork to decode before the new snapshot", async () => {
+  it.each(["current", "crossfade-baseline"])(
+    "keeps album-return artwork stable with the %s profile without holding decode open",
+    async (presetId) => {
+      enableMotionViewTransitions();
+      selectMotionPreset(presetId);
+      const source = document.createElement("div");
+      source.dataset.codaAlbumArtworkDetail = "album-1";
+      source.append(document.createElement("img"));
+      document.body.append(source);
+      const imageDecoded = deferred();
+      const decodeImage = vi.fn(() => imageDecoded.promise);
+      const builder = motionBuilder();
+      let capturedCommit: void | Promise<void>;
+      motionMocks.animateView.mockImplementation(
+        (update: () => void | Promise<void>) => {
+          capturedCommit = update();
+          return builder;
+        },
+      );
+
+      const transition = transitionCodaView(() => {
+        const destination = document.createElement("div");
+        destination.dataset.codaAlbumArtworkReturn = "album-1";
+        destination.dataset.slot = "cover";
+        const image = document.createElement("img");
+        image.decode = decodeImage;
+        destination.append(image);
+        document.body.append(destination);
+      }, "album-detail-close");
+
+      await vi.waitFor(() => expect(decodeImage).toHaveBeenCalledOnce());
+      await expect(capturedCommit!).resolves.toBeUndefined();
+      expect(builder.old).toHaveBeenCalledWith(
+        { opacity: [1, 1] },
+        expect.any(Object),
+      );
+      expect(builder.new).toHaveBeenCalledWith(
+        { opacity: [0, 0] },
+        expect.any(Object),
+      );
+
+      imageDecoded.resolve();
+      await Promise.all([capturedCommit!, transition]);
+      document.querySelector("[data-coda-album-artwork-return]")?.remove();
+    },
+  );
+
+  it("uses the native crossfade class for major destination changes", async () => {
     enableMotionViewTransitions();
-    const source = document.createElement("div");
-    source.dataset.codaAlbumArtworkDetail = "album-1";
-    source.append(document.createElement("img"));
-    document.body.append(source);
-    const imageMounted = deferred();
-    const imageDecoded = deferred();
-    const decodeImage = vi.fn(() => imageDecoded.promise);
-    const builder = motionBuilder();
-    let capturedCommit: void | Promise<void>;
-    motionMocks.animateView.mockImplementation(
-      (update: () => void | Promise<void>) => {
-        capturedCommit = update();
-        return builder;
-      },
-    );
-
-    const transition = transitionCodaView(() => {
-      const destination = document.createElement("div");
-      destination.dataset.codaAlbumArtworkReturn = "album-1";
-      destination.dataset.slot = "cover";
-      const image = document.createElement("img");
-      image.decode = decodeImage;
-      document.body.append(destination);
-      void imageMounted.promise.then(() => destination.append(image));
-    }, "album-detail-close");
-
-    let commitSettled = false;
-    void capturedCommit!.then(() => {
-      commitSettled = true;
-    });
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(commitSettled).toBe(false);
-
-    imageMounted.resolve();
-    await vi.waitFor(() => expect(decodeImage).toHaveBeenCalledOnce());
-    expect(commitSettled).toBe(false);
-
-    imageDecoded.resolve();
-    await Promise.all([capturedCommit!, transition]);
-    expect(commitSettled).toBe(true);
-    document.querySelector("[data-coda-album-artwork-return]")?.remove();
-  });
-
-  it("uses a quick dissolve for major destination changes", async () => {
-    enableMotionViewTransitions();
-    const builder = motionBuilder();
-    motionMocks.animateView.mockImplementation((update: () => void) => {
-      update();
-      return builder;
+    let transitionClasses = "";
+    let exitDuration = "";
+    installNativePageTransition(() => {
+      transitionClasses = document.documentElement.className;
+      exitDuration = document.documentElement.style.getPropertyValue(
+        "--coda-motion-page-exit-duration",
+      );
     });
 
     await transitionCodaView(vi.fn(), "page-crossfade");
 
-    expect(builder.old).toHaveBeenCalledWith(
-      { opacity: 0 },
-      expect.objectContaining({ duration: 0.12 }),
-    );
-    expect(builder.new).toHaveBeenCalledWith(
-      { opacity: [0, 1] },
-      expect.objectContaining({ duration: 0.18 }),
-    );
+    expect(transitionClasses).toContain("coda-transition--page-crossfade");
+    expect(exitDuration).toBe("120ms");
+    expect(motionMocks.animateView).not.toHaveBeenCalled();
   });
 
   it("pairs compact and full artwork while leaving the ephemeral name to Motion", async () => {

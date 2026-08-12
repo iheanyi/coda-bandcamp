@@ -1,7 +1,7 @@
 import { useLayoutEffect, useMemo, useRef } from "react";
 import { useReducedMotionConfig, type Transition } from "motion/react";
 
-import { codaMotion } from "@/motion";
+import { codaMotion, useCodaMotion } from "@/motion";
 
 const SELECTION_PILL_DURATION_PER_STEP = 0.055;
 const SELECTION_PILL_MAX_DURATION = 0.46;
@@ -14,18 +14,19 @@ function boundedTravelSteps(distanceSteps: number): number {
 export function selectionPillTransitionForDistance(
   distanceSteps: number,
   reducedMotion: boolean,
+  base: Transition = codaMotion.selectionPill,
 ): Transition {
   if (reducedMotion) return { duration: 0 };
 
   const travelSteps = Math.max(1, boundedTravelSteps(distanceSteps));
   return {
-    ...codaMotion.selectionPill,
+    ...base,
     visualDuration: Math.min(
-      codaMotion.selectionPill.visualDuration +
+      Number(base.visualDuration ?? 0.3) +
         (travelSteps - 1) * SELECTION_PILL_DURATION_PER_STEP,
       SELECTION_PILL_MAX_DURATION,
     ),
-    bounce: travelSteps > 2 ? 0.02 : codaMotion.selectionPill.bounce,
+    bounce: travelSteps > 2 ? 0.02 : base.bounce,
   };
 }
 
@@ -36,6 +37,7 @@ export function useDistanceAwareSelectionPill(
   transition: Transition;
   travelSteps: number;
 }> {
+  const codaMotion = useCodaMotion();
   const reducedMotion = useReducedMotionConfig() === true;
   const previousIndexRef = useRef(selectedIndex);
   const travelSteps = boundedTravelSteps(
@@ -47,8 +49,13 @@ export function useDistanceAwareSelectionPill(
   }, [selectedIndex]);
 
   const transition = useMemo(
-    () => selectionPillTransitionForDistance(travelSteps, reducedMotion),
-    [reducedMotion, travelSteps],
+    () =>
+      selectionPillTransitionForDistance(
+        travelSteps,
+        reducedMotion,
+        codaMotion.selectionPill,
+      ),
+    [codaMotion.selectionPill, reducedMotion, travelSteps],
   );
 
   return { transition, travelSteps };

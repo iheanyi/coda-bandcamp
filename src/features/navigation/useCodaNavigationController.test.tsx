@@ -11,12 +11,7 @@ import {
   validateCollectionSearch,
   validateDiscoverSearch,
 } from "@/routing/routeContracts";
-import type {
-  Album,
-  DiscoverRelease,
-  RadioChapter,
-  Track,
-} from "@/types";
+import type { Album, DiscoverRelease, RadioChapter, Track } from "@/types";
 
 import type {
   DetailNavigationController,
@@ -114,9 +109,7 @@ function createDetailNavigation() {
 function wrapper(queryClient: QueryClient) {
   return function QueryWrapper({ children }: { children: ReactNode }) {
     return (
-      <QueryClientProvider client={queryClient}>
-        {children}
-      </QueryClientProvider>
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     );
   };
 }
@@ -424,6 +417,7 @@ describe("useCodaNavigationController", () => {
     ).toBe(true);
     expect(rendered.detail.back).toHaveBeenCalledWith({ restoreFocus: false });
     await rendered.result.current.commands.sidebar.navigatePrimary({
+      destination: "/collection",
       navigate: commitNavigation,
     });
     expect(commitNavigation).toHaveBeenCalledOnce();

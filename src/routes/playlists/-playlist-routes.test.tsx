@@ -132,7 +132,6 @@ const originalStartViewTransition = Object.getOwnPropertyDescriptor(
 );
 
 beforeEach(() => {
-  vi.stubEnv("VITE_CODA_MOTION_VIEW_TRANSITIONS", "0");
   vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
   mocks.fetchCoverUrl.mockReset();
   mocks.fetchPlaylist.mockReset().mockResolvedValue(detail);

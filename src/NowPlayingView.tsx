@@ -51,7 +51,7 @@ import {
 import { cn } from "@/lib/utils";
 import { countLabel } from "@/countLabel";
 import { formatTime, openBandcampUrl } from "@/lib";
-import { codaMotion } from "@/motion";
+import { useCodaMotion } from "@/motion";
 import { normalizedReleaseTitle } from "@/playerState";
 import {
   RadioChapterArtwork,
@@ -133,6 +133,7 @@ function PresencePanel({
   children: ReactNode;
   className: string;
 }) {
+  const codaMotion = useCodaMotion();
   const [isPresent, safeToRemove] = usePresence();
   const completeExit = useMotionExitWatchdog({
     open: isPresent,
@@ -144,17 +145,17 @@ function PresencePanel({
       className={className}
       inert={!isPresent || undefined}
       initial={{
-        opacity: 0,
-        transform: "translateY(6px)",
+        opacity: codaMotion.profile.component.opacityFrom,
+        transform: `translateY(${codaMotion.profile.component.translationPx}px) scale(${codaMotion.profile.component.scaleFrom})`,
       }}
       animate={{
         opacity: 1,
-        transform: "translateY(0px)",
+        transform: "translateY(0px) scale(1)",
         transition: codaMotion.componentEnter,
       }}
       exit={{
-        opacity: 0,
-        transform: "translateY(4px)",
+        opacity: codaMotion.profile.component.opacityFrom,
+        transform: `translateY(${codaMotion.profile.component.translationPx * 0.6}px) scale(${codaMotion.profile.component.scaleFrom})`,
         transition: codaMotion.componentExit,
       }}
       onAnimationComplete={completeExit}

@@ -87,7 +87,6 @@ vi.mock("./lib", async (importOriginal) => {
     updateLastFmNowPlaying: mocks.updateLastFmNowPlaying,
   };
 });
-
 vi.mock("./localFavoritesStore", () => ({
   readLocalFavoritesAsync: mocks.readLocalFavoritesAsync,
   writeLocalFavoritesAsync: mocks.writeLocalFavoritesAsync,
@@ -219,7 +218,6 @@ function deferred<Value>() {
 }
 
 beforeEach(() => {
-  vi.stubEnv("VITE_CODA_MOTION_VIEW_TRANSITIONS", "0");
   window.localStorage.clear();
   mocks.beginLastFmAuthorization.mockReset();
   mocks.checkpointPlayerState.mockReset().mockResolvedValue(true);
@@ -4304,7 +4302,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         name: "Back",
       }));
 
-      expect(startViewTransition).toHaveBeenCalledTimes(2);
+      // Returning to the non-card Now Playing context is a snapshot-free live
+      // page Back; only the forward shared-element morph owns a native one.
+      expect(startViewTransition).toHaveBeenCalledOnce();
       expect(await screen.findByRole("article", { name: "Glass Lines" }))
         .toBeInTheDocument();
     } finally {
@@ -5039,7 +5039,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         className: expect.stringContaining(
           "coda-transition--album-detail",
         ),
-        artworkSourceBeforeUpdate: 0,
+        artworkSourceBeforeUpdate: 1,
         titleSourceBeforeUpdate: 1,
         titleDetailAfterUpdate: 1,
       }]));

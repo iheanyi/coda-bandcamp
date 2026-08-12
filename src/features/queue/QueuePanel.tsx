@@ -34,7 +34,7 @@ import {
 import { countLabel } from "@/countLabel";
 import { formatTime } from "@/lib";
 import { cn } from "@/lib/utils";
-import { codaMotion } from "@/motion";
+import { useCodaMotion } from "@/motion";
 import type { PlaybackClock } from "@/playbackClock";
 import type { QueueRecommendation } from "@/queueRecommendation";
 import { handleCodaLinkActivation } from "@/routing/linkActivation";
@@ -122,6 +122,7 @@ export const QueuePanel = memo(function QueuePanel({
   playerVisible,
   className,
 }: QueuePanelProps) {
+  const codaMotion = useCodaMotion();
   const upcoming = useMemo(
     () => (open ? queue.slice(currentIndex + 1) : []),
     [currentIndex, open, queue],

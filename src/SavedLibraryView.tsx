@@ -73,6 +73,7 @@ import {
   formatTime,
   invalidateCoverUrl,
   paletteFor,
+  readCachedCoverUrl,
   updatePlaylist,
 } from "@/lib";
 import { cn } from "@/lib/utils";
@@ -427,8 +428,12 @@ function FavoriteArtwork({
   className?: string;
   item: Pick<Album, "title" | "coverArt" | "artworkUrl" | "palette">;
 }) {
-  const [url, setUrl] = useState(item.artworkUrl);
-  const [loadedUrl, setLoadedUrl] = useState<string>();
+  const initialCachedUrl = item.coverArt
+    ? readCachedCoverUrl(item.coverArt)
+    : undefined;
+  const initialUrl = item.artworkUrl || initialCachedUrl;
+  const [url, setUrl] = useState(initialUrl);
+  const [loadedUrl, setLoadedUrl] = useState(initialCachedUrl);
   const [requestVersion, setRequestVersion] = useState(0);
   const coverIdRef = useRef(item.coverArt);
   const directArtworkUrlRef = useRef(item.artworkUrl);
@@ -447,6 +452,14 @@ function FavoriteArtwork({
     }
     if (item.artworkUrl && !failedUrlsRef.current.has(item.artworkUrl)) {
       setUrl(item.artworkUrl);
+      return;
+    }
+    const cachedUrl = item.coverArt
+      ? readCachedCoverUrl(item.coverArt)
+      : undefined;
+    if (cachedUrl && !failedUrlsRef.current.has(cachedUrl)) {
+      setLoadedUrl(cachedUrl);
+      setUrl(cachedUrl);
       return;
     }
     setUrl(undefined);
@@ -481,7 +494,7 @@ function FavoriteArtwork({
         "relative grid size-10 shrink-0 place-items-center overflow-hidden rounded-md text-white/70 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.07)]",
         className,
       )}
-      data-slot={url ? "cover" : undefined}
+      data-slot="cover"
       style={{
         background: `linear-gradient(145deg, ${item.palette[0]}, ${item.palette[1]})`,
       }}

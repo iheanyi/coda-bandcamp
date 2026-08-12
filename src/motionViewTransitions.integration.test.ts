@@ -289,7 +289,7 @@ describe("Motion-backed route View Transitions", () => {
     expect(destinationNameAtCapture).not.toBe("none");
   });
 
-  it("waits for the async artist artwork return that mounts during Back", async () => {
+  it("captures the async artist return without waiting on artwork decode", async () => {
     const artistKey = "artist-1";
     const detail = document.createElement("section");
     const detailArtwork = document.createElement("div");
@@ -359,14 +359,14 @@ describe("Motion-backed route View Transitions", () => {
       ).not.toBeNull(),
     );
     await vi.waitFor(() => expect(decodeImage).toHaveBeenCalledOnce());
-    expect(browserUpdateFinished).toBe(false);
+    expect(browserUpdateFinished).toBe(true);
+    expect(artworkPresentAtCapture).toBe(true);
+    expect(artworkNameAtCapture).not.toBe("none");
 
     imageDecoded.resolve();
     await transition;
 
-    expect(browserUpdateFinished).toBe(true);
-    expect(artworkPresentAtCapture).toBe(true);
-    expect(artworkNameAtCapture).not.toBe("none");
+    expect(decodeImage).toHaveBeenCalledOnce();
   });
 
   it("keeps Discover detail identity shared until its exact return card mounts", async () => {

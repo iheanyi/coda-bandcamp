@@ -10,6 +10,7 @@ import type { LocalFavoriteCollection } from "@/types";
 const mocks = vi.hoisted(() => ({
   fetchCoverUrl: vi.fn(),
   invalidateCoverUrl: vi.fn(),
+  readCachedCoverUrl: vi.fn(),
 }));
 
 vi.mock("@/lib", async (importOriginal) => {
@@ -18,6 +19,7 @@ vi.mock("@/lib", async (importOriginal) => {
     ...actual,
     fetchCoverUrl: mocks.fetchCoverUrl,
     invalidateCoverUrl: mocks.invalidateCoverUrl,
+    readCachedCoverUrl: mocks.readCachedCoverUrl,
   };
 });
 
@@ -27,13 +29,13 @@ const directArtworkUrl = "https://bandcamp.com/direct-expired.jpg";
 const refreshedArtworkUrl = "https://bandcamp.com/refreshed-cover.jpg";
 const laterArtworkUrl = "https://bandcamp.com/later-direct-cover.jpg";
 
-function favoriteCollection(artworkUrl: string): LocalFavoriteCollection {
+function favoriteCollection(artworkUrl?: string): LocalFavoriteCollection {
   return {
     albumIds: ["album-1"],
     albums: [
       {
         artist: "Sweeps",
-        artworkUrl,
+        ...(artworkUrl ? { artworkUrl } : {}),
         coverArt: "album-cover-id",
         duration: 188,
         id: "album-1",
@@ -82,7 +84,38 @@ function screenFor(favorites: LocalFavoriteCollection) {
 beforeEach(() => {
   mocks.fetchCoverUrl.mockReset().mockResolvedValue(refreshedArtworkUrl);
   mocks.invalidateCoverUrl.mockReset();
+  mocks.readCachedCoverUrl.mockReset().mockReturnValue(undefined);
   Object.values(actions).forEach((action) => action.mockReset());
+});
+
+it("exposes a stable return endpoint from the resolved cover cache on remount", () => {
+  const cachedArtworkUrl = "https://bandcamp.com/cached-cover.jpg";
+  mocks.readCachedCoverUrl.mockReturnValue(cachedArtworkUrl);
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const router = createCodaMemoryRouter(queryClient, ["/favorites"]);
+
+  render(
+    <CodaMotionProvider>
+      <QueryClientProvider client={queryClient}>
+        <RouterContextProvider router={router}>
+          {screenFor(favoriteCollection())}
+        </RouterContextProvider>
+      </QueryClientProvider>
+    </CodaMotionProvider>,
+  );
+
+  const artwork = screen
+    .getByRole("link", { name: "Open Mirage" })
+    .querySelector<HTMLElement>("[data-slot=cover]");
+  const image = artwork?.querySelector("img");
+  expect(artwork).toBeInTheDocument();
+  expect(image).toHaveAttribute("src", cachedArtworkUrl);
+  expect(image).not.toHaveClass("invisible");
+  expect(
+    artwork?.querySelector("[data-favorite-artwork-fallback]"),
+  ).not.toBeInTheDocument();
 });
 
 it("does not reselect failed direct Favorite artwork and recovers through refreshed URLs", async () => {

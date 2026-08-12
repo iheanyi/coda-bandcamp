@@ -6,7 +6,7 @@ import { AnimatePresence } from "motion/react";
 import * as m from "motion/react-m";
 
 import { cn } from "@/lib/utils";
-import { codaMotion } from "@/motion";
+import { useCodaMotion } from "@/motion";
 
 import { useMotionExitWatchdog } from "./useMotionExitWatchdog";
 
@@ -79,6 +79,7 @@ function TooltipContent({
     TooltipPrimitive.Positioner.Props,
     "align" | "alignOffset" | "side" | "sideOffset"
   >) {
+  const codaMotion = useCodaMotion();
   const presence = React.useContext(TooltipPresenceContext);
   const open = presence?.open ?? true;
   const completeExit = useMotionExitWatchdog({
@@ -107,15 +108,18 @@ function TooltipContent({
               {...props}
               render={
                 <m.div
-                  initial={{ opacity: 0, transform: "scale(0.96)" }}
+                  initial={{
+                    opacity: codaMotion.profile.component.opacityFrom,
+                    transform: `scale(${codaMotion.profile.component.scaleFrom})`,
+                  }}
                   animate={{
                     opacity: 1,
                     transform: "scale(1)",
                     transition: codaMotion.feedback,
                   }}
                   exit={{
-                    opacity: 0,
-                    transform: "scale(0.98)",
+                    opacity: codaMotion.profile.component.opacityFrom,
+                    transform: `scale(${codaMotion.profile.component.scaleFrom})`,
                     transition: codaMotion.componentExit,
                   }}
                 />

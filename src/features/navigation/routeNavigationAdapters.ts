@@ -9,8 +9,6 @@ import {
   stringifyRadioShowIdParam,
 } from "@/routing/routeContracts";
 
-export const ROUTER_RENDER_TIMEOUT_MS = 1_000;
-
 function renderedLocationKey(location: {
   href?: string;
   state: { __TSR_key?: string };
@@ -26,34 +24,25 @@ function renderedLocationKey(location: {
 export function awaitRouterNavigationAfterRender(
   router: CodaRouter,
   navigate: () => void | Promise<void>,
-  timeoutMs = ROUTER_RENDER_TIMEOUT_MS,
 ): Promise<void> {
   const fromLocationKey = renderedLocationKey(router.state.location);
 
   return new Promise<void>((resolve, reject) => {
     let navigationSettled = false;
     let rendered = false;
-    let timedOut = false;
     let settled = false;
-    let fallback: number | undefined;
     let unsubscribe = () => {};
 
-    const cleanup = () => {
-      if (fallback !== undefined) window.clearTimeout(fallback);
-      unsubscribe();
-    };
     const finish = () => {
-      if (settled || !navigationSettled || (!rendered && !timedOut)) {
-        return;
-      }
+      if (settled || !navigationSettled || !rendered) return;
       settled = true;
-      cleanup();
+      unsubscribe();
       resolve();
     };
     const fail = (cause: unknown) => {
       if (settled) return;
       settled = true;
-      cleanup();
+      unsubscribe();
       reject(cause);
     };
 
@@ -62,14 +51,6 @@ export function awaitRouterNavigationAfterRender(
       rendered = true;
       finish();
     });
-    fallback = window.setTimeout(
-      () => {
-        timedOut = true;
-        finish();
-      },
-      Math.max(0, timeoutMs),
-    );
-
     Promise.resolve()
       .then(navigate)
       .then(() => {
@@ -84,20 +65,15 @@ export function awaitRouterNavigationAfterRender(
  * different history entry has rendered so View Transition snapshots, focus,
  * and scroll restoration all observe the destination DOM.
  */
-export function awaitRouterBackAfterRender(
-  router: CodaRouter,
-  timeoutMs = ROUTER_RENDER_TIMEOUT_MS,
-): Promise<void> {
+export function awaitRouterBackAfterRender(router: CodaRouter): Promise<void> {
   const fromLocationKey = renderedLocationKey(router.state.location);
 
   return new Promise<void>((resolve) => {
     let settled = false;
-    let fallback: number | undefined;
     let unsubscribe = () => {};
     const finish = () => {
       if (settled) return;
       settled = true;
-      if (fallback !== undefined) window.clearTimeout(fallback);
       unsubscribe();
       resolve();
     };
@@ -106,7 +82,6 @@ export function awaitRouterBackAfterRender(
       const toLocationKey = renderedLocationKey(event.toLocation);
       if (toLocationKey !== fromLocationKey) finish();
     });
-    fallback = window.setTimeout(finish, Math.max(0, timeoutMs));
     router.history.back();
   });
 }

@@ -13,7 +13,7 @@ import * as m from "motion/react-m";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { codaMotion } from "@/motion";
+import { useCodaMotion } from "@/motion";
 import { toast } from "@/components/ui/toastManager";
 import { useMotionExitWatchdog } from "@/components/ui/useMotionExitWatchdog";
 
@@ -173,6 +173,7 @@ function ToastMotionItem({
   index: number;
   toastItem: ToastPrimitive.Root.Props["toast"];
 }>) {
+  const codaMotion = useCodaMotion();
   const [isPresent, safeToRemove] = usePresence();
   const completeExit = useMotionExitWatchdog({
     open: isPresent,
@@ -190,8 +191,8 @@ function ToastMotionItem({
         zIndex: 1000 - index,
       }}
       initial={{
-        opacity: 0,
-        transform: "translateY(12px) scale(0.98)",
+        opacity: codaMotion.profile.component.opacityFrom,
+        transform: `translateY(${codaMotion.profile.component.translationPx}px) scale(${codaMotion.profile.component.scaleFrom})`,
       }}
       animate={{
         opacity: 1,
@@ -199,8 +200,8 @@ function ToastMotionItem({
         transition: codaMotion.componentEnter,
       }}
       exit={{
-        opacity: 0,
-        transform: "translateY(8px) scale(0.98)",
+        opacity: codaMotion.profile.component.opacityFrom,
+        transform: `translateY(${codaMotion.profile.component.translationPx * 0.7}px) scale(${codaMotion.profile.component.scaleFrom})`,
         transition: codaMotion.componentExit,
       }}
       onAnimationComplete={completeExit}

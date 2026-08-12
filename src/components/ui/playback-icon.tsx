@@ -3,7 +3,7 @@ import { AnimatePresence } from "motion/react";
 import * as m from "motion/react-m";
 
 import { cn } from "@/lib/utils";
-import { codaMotion } from "@/motion";
+import { useCodaMotion } from "@/motion";
 
 function PlaybackIcon({
   className,
@@ -12,6 +12,7 @@ function PlaybackIcon({
   className?: string;
   playing: boolean;
 }) {
+  const codaMotion = useCodaMotion();
   return (
     <span
       aria-hidden="true"

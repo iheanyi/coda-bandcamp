@@ -1,11 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import {
-  useCallback,
-  useMemo,
-  useState,
-  type RefObject,
-} from "react";
+import { useCallback, useMemo, useState, type RefObject } from "react";
 
 import type { ToastNotifier } from "@/components/ui/toastManager";
 import type { LibraryArtistFallback } from "@/features/library/useLibraryBrowseController";
@@ -38,6 +33,7 @@ import type {
   Track,
 } from "@/types";
 import { transitionCodaView } from "@/viewTransitions";
+import type { AppSidebarDestination } from "@/AppSidebar";
 
 import type { DetailNavigationController } from "./useDetailNavigationController";
 import type { CodaRouteDestination } from "./useRouteDestination";
@@ -77,8 +73,29 @@ type DetailBackRequest = Readonly<{
 type AlbumOpener = (album: Album, sourceTrigger?: HTMLElement) => void;
 
 type PrimaryNavigationRequest = Readonly<{
-  navigate: () => Promise<void>;
+  destination: AppSidebarDestination;
+  navigate: (viewTransition?: boolean) => Promise<void>;
 }>;
+
+const PRIMARY_VIEW_ORDER: Readonly<Record<CodaPrimaryView, number>> = {
+  library: 0,
+  favorites: 1,
+  playlists: 2,
+  recent: 3,
+  discover: 4,
+  radio: 5,
+};
+
+const PRIMARY_DESTINATION_VIEW: Readonly<
+  Record<AppSidebarDestination, CodaPrimaryView>
+> = {
+  "/collection": "library",
+  "/favorites": "favorites",
+  "/playlists": "playlists",
+  "/recent": "recent",
+  "/discover": "discover",
+  "/radio": "radio",
+};
 
 export type CodaNavigationControllerOptions = Readonly<{
   albums: readonly Album[];
@@ -115,10 +132,7 @@ export type CodaNavigationCommands = Readonly<{
   discover: Readonly<{
     back: (options?: Readonly<{ restoreFocus?: boolean }>) => void;
     openArtist: (release: DiscoverRelease) => void;
-    openRelease: (
-      release: DiscoverRelease,
-      sourceTrigger: HTMLElement,
-    ) => void;
+    openRelease: (release: DiscoverRelease, sourceTrigger: HTMLElement) => void;
   }>;
   nowPlaying: Readonly<{
     back: () => void;
@@ -186,8 +200,7 @@ export function useCodaNavigationController({
     }
     if (
       selectedArtistFallbackSnapshot?.key === libraryRouteInput.artistKey &&
-      selectedArtistFallbackSnapshot.albumId ===
-        libraryRouteInput.sourceAlbumId
+      selectedArtistFallbackSnapshot.albumId === libraryRouteInput.sourceAlbumId
     ) {
       return selectedArtistFallbackSnapshot;
     }
@@ -204,9 +217,7 @@ export function useCodaNavigationController({
       cachedAlbumTracks(queryClient, sourceAlbum) ??
       sourceAlbum.tracks ??
       queue.filter((track) => track.albumId === sourceAlbum.id)
-    ).find(
-      (track) => artistKey(track.artist) === libraryRouteInput.artistKey,
-    );
+    ).find((track) => artistKey(track.artist) === libraryRouteInput.artistKey);
     return {
       albumId: sourceAlbum.id,
       key: libraryRouteInput.artistKey,
@@ -564,9 +575,21 @@ export function useCodaNavigationController({
   }, [back, destination.detail?.kind]);
 
   const navigatePrimary = useCallback(
-    ({ navigate: commitNavigation }: PrimaryNavigationRequest) =>
-      transitionCodaView(commitNavigation, "page-crossfade"),
-    [],
+    async ({
+      destination: target,
+      navigate: commitNavigation,
+    }: PrimaryNavigationRequest) => {
+      const targetView = PRIMARY_DESTINATION_VIEW[target];
+      const kind =
+        PRIMARY_VIEW_ORDER[targetView] <
+        PRIMARY_VIEW_ORDER[destination.primaryView]
+          ? "page-back"
+          : "page-forward";
+      await transitionCodaView(commitNavigation, kind, {
+        routerOwnedPage: true,
+      });
+    },
+    [destination.primaryView],
   );
 
   const commands = useMemo<CodaNavigationCommands>(

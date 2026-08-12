@@ -3,7 +3,7 @@ import { Select as SelectPrimitive } from "@base-ui/react/select"
 import * as m from "motion/react-m"
 
 import { cn } from "@/lib/utils"
-import { codaMotion } from "@/motion"
+import { useCodaMotion } from "@/motion"
 import { ChevronDownIcon, CheckIcon, ChevronUpIcon } from "lucide-react"
 
 const SelectPresenceContext = React.createContext(false)
@@ -61,6 +61,7 @@ function SelectTrigger({
   size?: "sm" | "default"
 }) {
   const open = React.useContext(SelectPresenceContext)
+  const codaMotion = useCodaMotion()
 
   return (
     <SelectPrimitive.Trigger
@@ -109,6 +110,7 @@ function SelectContent({
     "align" | "alignOffset" | "side" | "sideOffset" | "alignItemWithTrigger"
   >) {
   const open = React.useContext(SelectPresenceContext)
+  const codaMotion = useCodaMotion()
   const animatePopup = !alignItemWithTrigger
 
   return (
@@ -132,12 +134,17 @@ function SelectContent({
           render={
             <m.div
               initial={{
-                opacity: 0,
-                transform: animatePopup ? "scale(0.98)" : "scale(1)"
+                opacity: codaMotion.profile.component.opacityFrom,
+                transform: animatePopup
+                  ? `scale(${codaMotion.profile.component.scaleFrom})`
+                  : "scale(1)"
               }}
               animate={{
-                opacity: open ? 1 : 0,
-                transform: open || !animatePopup ? "scale(1)" : "scale(0.98)"
+                opacity: open ? 1 : codaMotion.profile.component.opacityFrom,
+                transform:
+                  open || !animatePopup
+                    ? "scale(1)"
+                    : `scale(${codaMotion.profile.component.scaleFrom})`
               }}
               transition={
                 open ? codaMotion.componentEnter : codaMotion.componentExit

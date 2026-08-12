@@ -3,7 +3,7 @@ import * as m from "motion/react-m";
 import type { ReactNode } from "react";
 import { useMotionExitWatchdog } from "@/components/ui/useMotionExitWatchdog";
 import { cn } from "@/lib/utils";
-import { codaMotion } from "@/motion";
+import { useCodaMotion } from "@/motion";
 
 export type QueueCurrentPresenceProps = {
   children: ReactNode;
@@ -14,6 +14,7 @@ export function QueueCurrentPresence({
   children,
   className,
 }: QueueCurrentPresenceProps) {
+  const codaMotion = useCodaMotion();
   const [isPresent, safeToRemove] = usePresence();
   const completeExit = useMotionExitWatchdog({
     open: isPresent,
@@ -28,17 +29,17 @@ export function QueueCurrentPresence({
       )}
       inert={!isPresent || undefined}
       initial={{
-        opacity: 0,
-        transform: "translateX(8px)",
+        opacity: codaMotion.profile.component.opacityFrom,
+        transform: `translateX(${codaMotion.profile.component.translationPx}px) scale(${codaMotion.profile.component.scaleFrom})`,
       }}
       animate={{
         opacity: 1,
-        transform: "translateX(0px)",
+        transform: "translateX(0px) scale(1)",
         transition: codaMotion.componentEnter,
       }}
       exit={{
-        opacity: 0,
-        transform: "translateX(-6px)",
+        opacity: codaMotion.profile.component.opacityFrom,
+        transform: `translateX(${-codaMotion.profile.component.translationPx * 0.75}px) scale(${codaMotion.profile.component.scaleFrom})`,
         transition: codaMotion.componentExit,
       }}
       onAnimationComplete={completeExit}

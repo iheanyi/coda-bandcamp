@@ -447,7 +447,6 @@ describe("saved Bandcamp library views", () => {
   });
 
   it("uses a directional Back transition after a cold playlist finishes opening", async () => {
-    vi.stubEnv("VITE_CODA_MOTION_VIEW_TRANSITIONS", "0");
     const originalDescriptor = Object.getOwnPropertyDescriptor(
       document,
       "startViewTransition",
@@ -506,7 +505,6 @@ describe("saved Bandcamp library views", () => {
   });
 
   it("pairs a warm playlist identity with its detail and returning row", async () => {
-    vi.stubEnv("VITE_CODA_MOTION_VIEW_TRANSITIONS", "0");
     mocks.fetchPlaylists.mockResolvedValueOnce([summary, otherSummary]);
     const snapshots: Array<{
       className: string;
@@ -696,7 +694,6 @@ describe("saved Bandcamp library views", () => {
   });
 
   it("keeps the icon pair when Back starts while the playlist name is being edited", async () => {
-    vi.stubEnv("VITE_CODA_MOTION_VIEW_TRANSITIONS", "0");
     const returnSnapshot: {
       beforeIcon?: string;
       beforeTitle?: string;

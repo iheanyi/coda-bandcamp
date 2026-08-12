@@ -91,4 +91,42 @@ describe("useAppKeyboardShortcuts", () => {
     window.dispatchEvent(new KeyboardEvent("keydown", { code: "Space" }));
     expect(nextToggle).toHaveBeenCalledOnce();
   });
+
+  it("toggles Motion Lab from editable controls and ignores key repeat", () => {
+    const input = document.createElement("input");
+    document.body.append(input);
+    input.focus();
+    const onToggleMotionLab = vi.fn();
+    const { unmount } = renderHook(() =>
+      useAppKeyboardShortcuts({
+        onNext: vi.fn(),
+        onPrevious: vi.fn(),
+        onTogglePlayback: vi.fn(),
+        onToggleMotionLab,
+        searchRef: { current: input },
+      }),
+    );
+
+    const shortcut = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      key: "D",
+      metaKey: true,
+      shiftKey: true,
+    });
+    input.dispatchEvent(shortcut);
+    input.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        bubbles: true,
+        key: "D",
+        metaKey: true,
+        repeat: true,
+        shiftKey: true,
+      }),
+    );
+
+    expect(shortcut.defaultPrevented).toBe(true);
+    expect(onToggleMotionLab).toHaveBeenCalledOnce();
+    unmount();
+  });
 });

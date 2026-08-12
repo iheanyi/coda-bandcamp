@@ -5,7 +5,7 @@ import * as m from "motion/react-m";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { codaMotion } from "@/motion";
+import { useCodaMotion } from "@/motion";
 import { XIcon } from "lucide-react";
 
 import { useMotionExitWatchdog } from "./useMotionExitWatchdog";
@@ -84,6 +84,7 @@ function DialogOverlay({
   className,
   ...props
 }: DialogPrimitive.Backdrop.Props) {
+  const codaMotion = useCodaMotion();
   return (
     <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
@@ -94,9 +95,12 @@ function DialogOverlay({
       {...props}
       render={
         <m.div
-          initial={{ opacity: 0 }}
+          initial={{ opacity: codaMotion.profile.component.opacityFrom }}
           animate={{ opacity: 1, transition: codaMotion.componentEnter }}
-          exit={{ opacity: 0, transition: codaMotion.componentExit }}
+          exit={{
+            opacity: codaMotion.profile.component.opacityFrom,
+            transition: codaMotion.componentExit,
+          }}
         />
       }
     />
@@ -111,6 +115,7 @@ function DialogContent({
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean;
 }) {
+  const codaMotion = useCodaMotion();
   const presence = React.useContext(DialogPresenceContext);
   const open = presence?.open ?? true;
   const completeExit = useMotionExitWatchdog({
@@ -137,8 +142,8 @@ function DialogContent({
               render={
                 <m.div
                   initial={{
-                    opacity: 0,
-                    transform: "scale(0.985)",
+                    opacity: codaMotion.profile.component.opacityFrom,
+                    transform: `scale(${codaMotion.profile.component.scaleFrom})`,
                   }}
                   animate={{
                     opacity: 1,
@@ -146,8 +151,8 @@ function DialogContent({
                     transition: codaMotion.componentEnter,
                   }}
                   exit={{
-                    opacity: 0,
-                    transform: "scale(0.985)",
+                    opacity: codaMotion.profile.component.opacityFrom,
+                    transform: `scale(${codaMotion.profile.component.scaleFrom})`,
                     transition: codaMotion.componentExit,
                   }}
                 />

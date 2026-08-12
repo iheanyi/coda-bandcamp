@@ -14,7 +14,13 @@ import type { CodaScreen } from "@/routing/routeMeta";
 const controllerMocks = vi.hoisted(() => ({
   afterUpdate: undefined as (() => void) | undefined,
   capture: undefined as
-    | ((kind: string, options: Readonly<{ skipSnapshot?: boolean }>) => void)
+    | ((
+        kind: string,
+        options: Readonly<{
+          routerOwnedPage?: boolean;
+          skipSnapshot?: boolean;
+        }>,
+      ) => void)
     | undefined,
   navigate: vi.fn(),
   nextRenderKey: 2,
@@ -184,19 +190,20 @@ beforeEach(() => {
         };
       },
     );
-  controllerMocks.transition
-    .mockReset()
-    .mockImplementation(
-      async (
-        update: () => void | Promise<void>,
-        kind: string,
-        options: Readonly<{ skipSnapshot?: boolean }> = {},
-      ) => {
-        controllerMocks.capture?.(kind, options);
-        await update();
-        controllerMocks.afterUpdate?.();
-      },
-    );
+  controllerMocks.transition.mockReset().mockImplementation(
+    async (
+      update: () => void | Promise<void>,
+      kind: string,
+      options: Readonly<{
+        routerOwnedPage?: boolean;
+        skipSnapshot?: boolean;
+      }> = {},
+    ) => {
+      controllerMocks.capture?.(kind, options);
+      await update();
+      controllerMocks.afterUpdate?.();
+    },
+  );
 });
 
 afterEach(() => {
@@ -789,7 +796,11 @@ describe("useDetailNavigationController", () => {
     playerAlbumLink.append(playerTitle);
     document.body.append(playerAlbumLink);
     const kinds: string[] = [];
-    controllerMocks.capture = (kind) => kinds.push(kind);
+    const options: Array<Readonly<{ routerOwnedPage?: boolean }>> = [];
+    controllerMocks.capture = (kind, transitionOptions) => {
+      kinds.push(kind);
+      options.push(transitionOptions);
+    };
     const { result, rerender } = renderHook(
       ({ route }) => useDetailNavigationController(route),
       { initialProps: { route: destination(undefined, "entry-1") } },
@@ -811,6 +822,7 @@ describe("useDetailNavigationController", () => {
     await act(() => result.current.back({ restoreFocus: false }));
 
     expect(kinds).toEqual(["discover-detail", "page-back"]);
+    expect(options.at(-1)).toEqual({ routerOwnedPage: true });
     expect(playerAlbumLink).not.toHaveAttribute(
       "data-coda-discover-title-return",
     );

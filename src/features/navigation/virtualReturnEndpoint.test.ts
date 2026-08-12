@@ -8,9 +8,11 @@ afterEach(() => {
 });
 
 describe("awaitVirtualReturnTrigger", () => {
-  it("remains time-bounded when animation frames stop firing", async () => {
-    vi.useFakeTimers();
-    vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => 1);
+  it("uses a bounded number of animation frames to find the endpoint", async () => {
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
     const findTrigger = vi.fn(() => undefined);
 
     const result = awaitVirtualReturnTrigger({
@@ -19,14 +21,12 @@ describe("awaitVirtualReturnTrigger", () => {
       scrollRoot: null,
       scrollTop: 0,
     });
-    await vi.advanceTimersByTimeAsync(500);
 
     await expect(result).resolves.toBeUndefined();
     expect(findTrigger).toHaveBeenCalledTimes(9);
   });
 
   it("stops waiting as soon as a newer navigation generation supersedes it", async () => {
-    vi.useFakeTimers();
     let current = true;
     const findTrigger = vi.fn(() => {
       current = false;
@@ -39,7 +39,6 @@ describe("awaitVirtualReturnTrigger", () => {
       scrollRoot: null,
       scrollTop: 0,
     });
-    await vi.advanceTimersByTimeAsync(50);
 
     await expect(result).resolves.toBeUndefined();
     expect(findTrigger).toHaveBeenCalledOnce();

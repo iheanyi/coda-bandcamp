@@ -103,22 +103,18 @@ describe("Coda sidebar", () => {
     const user = userEvent.setup();
     const router = createCodaMemoryRouter(new QueryClient(), ["/favorites"]);
     await router.load();
-    let resolvedPath = "";
     let capturedClassName = "";
-    vi.stubEnv("VITE_CODA_MOTION_VIEW_TRANSITIONS", "0");
     Object.defineProperty(document, "startViewTransition", {
       configurable: true,
-      value: vi.fn((update: () => void | Promise<void>) => {
-        capturedClassName = document.documentElement.className;
-        const updateCallbackDone = Promise.resolve(update()).then(() => {
-          resolvedPath = router.state.location.pathname;
-        });
-        return { finished: updateCallbackDone, updateCallbackDone };
-      }),
+      value: vi.fn(),
     });
-    const onNavigate = vi.fn((request: AppSidebarNavigationRequest) =>
-      transitionCodaView(request.navigate, "page-crossfade"),
-    );
+    const onNavigate = vi.fn((request: AppSidebarNavigationRequest) => {
+      const transition = transitionCodaView(request.navigate, "page-forward", {
+        routerOwnedPage: true,
+      });
+      capturedClassName = document.documentElement.className;
+      return transition;
+    });
 
     render(
       <RouterContextProvider router={router}>
@@ -145,9 +141,10 @@ describe("Coda sidebar", () => {
     await user.click(screen.getByRole("link", { name: "Recently added" }));
 
     await waitFor(() => {
-      expect(resolvedPath).toBe("/recent");
+      expect(router.state.location.pathname).toBe("/recent");
     });
-    expect(capturedClassName).toContain("coda-transition--page-crossfade");
+    expect(capturedClassName).not.toContain("coda-transition--page-crossfade");
+    expect(document.startViewTransition).not.toHaveBeenCalled();
     expect(onNavigate).toHaveBeenCalledOnce();
     expect(onNavigate.mock.calls[0]?.[0]).toEqual(
       expect.objectContaining({

@@ -117,12 +117,11 @@ describe("route navigation adapters", () => {
     );
     let settled = false;
 
-    const back = awaitRouterBackAfterRender(
-      adapterMocks.router as never,
-      1_000,
-    ).then(() => {
-      settled = true;
-    });
+    const back = awaitRouterBackAfterRender(adapterMocks.router as never).then(
+      () => {
+        settled = true;
+      },
+    );
 
     expect(adapterMocks.router.history.back).toHaveBeenCalledOnce();
     onRendered?.({ toLocation: { state: { __TSR_key: "entry-2" } } });
