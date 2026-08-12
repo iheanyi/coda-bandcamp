@@ -22,3 +22,15 @@ test("branch CI keeps Linux packaging deterministic while releases build AppImag
   );
   assert.doesNotMatch(releaseWorkflow, /--bundles deb,rpm/);
 });
+
+test("release builds retry transient packaging and asset-upload failures in place", () => {
+  const tauriActionStep = releaseWorkflow.match(
+    /uses: tauri-apps\/tauri-action@[\s\S]*?(?=\n\s{2}[a-z][a-z-]+:|\n\s{6}- name:|$)/,
+  )?.[0];
+
+  assert.ok(
+    tauriActionStep,
+    "Release workflow is missing its Tauri action step",
+  );
+  assert.match(tauriActionStep, /retryAttempts: 2/);
+});

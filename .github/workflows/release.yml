@@ -255,6 +255,7 @@ jobs:
           uploadUpdaterJson: false
           uploadUpdaterSignatures: true
           updaterJsonPreferNsis: true
+          retryAttempts: 2
           args: --target ${{ matrix.target }}
 
   publish-release:
