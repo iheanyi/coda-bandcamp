@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
+import { isAppUpdaterEnabled } from "./appFlavor";
 import { isDesktop } from "./lib";
 import {
   type AppUpdate,
@@ -33,7 +34,7 @@ export interface AppUpdaterController {
 }
 
 export function useAppUpdater(): AppUpdaterController {
-  const supported = isDesktop();
+  const supported = isAppUpdaterEnabled() && isDesktop();
   const [dismissed, setDismissed] = useState(false);
   const [manualCheckState, setManualCheckState] =
     useState<ManualCheckState>("idle");

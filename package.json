@@ -11,12 +11,14 @@
     "web:dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "vitest run --dir src",
+    "test": "vitest run --dir src && npm run test:automation-build",
+    "test:automation-build": "node --test tools/build-macos-automation.test.mjs tools/coda-dev-runner.test.mjs",
     "test:coverage": "vitest run --coverage --dir src",
     "tauri": "tauri",
     "desktop:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "desktop:build": "tauri build",
-    "desktop:build:local": "node --env-file=.env ./node_modules/@tauri-apps/cli/tauri.js build"
+    "desktop:build:local": "node --env-file=.env ./node_modules/@tauri-apps/cli/tauri.js build",
+    "desktop:build:automation": "node tools/build-macos-automation.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
