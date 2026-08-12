@@ -7,7 +7,7 @@ export {
   type PlaylistsScreenProps,
 } from "@/SavedLibraryView";
 export {
-  SavedLibraryRuntimeProvider,
   type SavedLibraryRuntimeValue,
   useSavedLibraryRuntime,
 } from "./SavedLibraryRuntimeContext";
+export { SavedLibraryRuntimeProvider } from "./SavedLibraryRuntimeProvider";

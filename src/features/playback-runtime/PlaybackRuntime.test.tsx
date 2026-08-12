@@ -18,11 +18,11 @@ import type {
   Track,
 } from "@/types";
 
+import { PlaybackRuntimeProvider } from "./PlaybackRuntimeProvider";
 import {
-  PlaybackRuntimeProvider,
   usePlaybackQueueStatus,
   usePlaybackTransportModel,
-} from "./PlaybackRuntimeProvider";
+} from "./playbackRuntimeContext";
 import { collectDesktopListenerCleanup } from "./adapters";
 import { safePlaybackErrorDetail } from "./errors";
 import type {

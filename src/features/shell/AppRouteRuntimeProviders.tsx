@@ -1,12 +1,12 @@
 import type { ReactNode } from "react";
 
-import { DiscoverRuntimeProvider } from "@/features/discover/DiscoverRuntimeContext";
-import { LibraryRouteRuntimeProvider } from "@/features/library/LibraryRouteRuntime";
+import { DiscoverRuntimeProvider } from "@/features/discover/DiscoverRuntimeProvider";
+import { LibraryRouteRuntimeProvider } from "@/features/library/LibraryRouteRuntimeProvider";
 import { NowPlayingRuntimeProvider } from "@/features/now-playing/NowPlayingRuntimeContext";
 import { PlaybackRuntimeProvider } from "@/features/playback-runtime";
 import type { PlaybackRuntimeController } from "@/features/playback-runtime/types";
-import { RadioRuntimeProvider } from "@/features/radio/RadioRuntimeContext";
-import { SavedLibraryRuntimeProvider } from "@/features/saved-library/SavedLibraryRuntimeContext";
+import { RadioRuntimeProvider } from "@/features/radio/RadioRuntimeProvider";
+import { SavedLibraryRuntimeProvider } from "@/features/saved-library/SavedLibraryRuntimeProvider";
 
 import type { AppRouteRuntimes } from "./useAppRouteRuntimes";
 

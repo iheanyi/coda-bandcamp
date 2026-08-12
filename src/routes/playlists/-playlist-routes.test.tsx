@@ -4,10 +4,8 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  SavedLibraryRuntimeProvider,
-  type SavedLibraryRuntimeValue,
-} from "@/features/saved-library/SavedLibraryRuntimeContext";
+import { type SavedLibraryRuntimeValue } from "@/features/saved-library/SavedLibraryRuntimeContext";
+import { SavedLibraryRuntimeProvider } from "@/features/saved-library/SavedLibraryRuntimeProvider";
 import { createLibrarySessionController } from "@/features/library-session";
 import { createCodaMemoryRouter } from "@/router";
 import type { PlaylistDetail, PlaylistSummary, Track } from "@/types";

@@ -1,10 +1,8 @@
-import {
-  createContext,
-  useContext,
-  type ReactNode,
-} from "react";
+import { createContext, useContext } from "react";
+
 import type { AlbumId, ArtistKey } from "@/routing/routeContracts";
 import type { RouteResource } from "@/routing/routeResource";
+
 import type { AlbumScreenProps } from "./AlbumScreen";
 import type { ArtistScreenProps } from "./ArtistScreen";
 import type { CollectionScreenProps } from "./CollectionScreen";
@@ -18,34 +16,16 @@ export type ReadyLibraryScreenResource<Value> = Extract<
 export type LibraryRouteRuntime = Readonly<{
   getCollectionScreenProps: () => CollectionScreenProps;
   getRecentScreenProps: () => RecentScreenProps;
-  resolveAlbumScreen: (
-    albumId: AlbumId,
-  ) => RouteResource<AlbumScreenProps>;
+  resolveAlbumScreen: (albumId: AlbumId) => RouteResource<AlbumScreenProps>;
   resolveArtistScreen: (
     artistKey: ArtistKey,
     sourceAlbumId?: AlbumId,
   ) => RouteResource<ArtistScreenProps>;
 }>;
 
-export type LibraryRouteRuntimeProviderProps = Readonly<{
-  children: ReactNode;
-  runtime: LibraryRouteRuntime;
-}>;
-
-const LibraryRouteRuntimeContext = createContext<
+export const LibraryRouteRuntimeContext = createContext<
   LibraryRouteRuntime | undefined
 >(undefined);
-
-export function LibraryRouteRuntimeProvider({
-  children,
-  runtime,
-}: LibraryRouteRuntimeProviderProps) {
-  return (
-    <LibraryRouteRuntimeContext.Provider value={runtime}>
-      {children}
-    </LibraryRouteRuntimeContext.Provider>
-  );
-}
 
 function useLibraryRouteRuntime(): LibraryRouteRuntime {
   const runtime = useContext(LibraryRouteRuntimeContext);
@@ -75,8 +55,5 @@ export function useArtistRouteScreenResource(
   artistKey: ArtistKey,
   sourceAlbumId?: AlbumId,
 ): RouteResource<ArtistScreenProps> {
-  return useLibraryRouteRuntime().resolveArtistScreen(
-    artistKey,
-    sourceAlbumId,
-  );
+  return useLibraryRouteRuntime().resolveArtistScreen(artistKey, sourceAlbumId);
 }

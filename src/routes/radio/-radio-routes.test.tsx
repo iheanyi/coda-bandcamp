@@ -12,10 +12,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RadioSeriesNav } from "@/features/radio/RadioPresentation";
-import {
-  RadioRuntimeProvider,
-  type RadioRuntimeValue,
-} from "@/features/radio/RadioRuntimeContext";
+import { type RadioRuntimeValue } from "@/features/radio/RadioRuntimeContext";
+import { RadioRuntimeProvider } from "@/features/radio/RadioRuntimeProvider";
 import { CodaMotionProvider } from "@/MotionProvider";
 import { createPlaybackClock } from "@/playbackClock";
 import { createCodaMemoryRouter } from "@/router";

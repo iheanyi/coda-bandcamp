@@ -52,21 +52,11 @@ import {
 } from "@/routing/routeContracts";
 import type { RadioShow, RadioShowSummary, Track } from "@/types";
 
+import { showDate } from "./radioPresentationFormatting";
 import { radioSeriesId, radioShowId } from "./radioRouteIds";
-
-const dateFormatter = new Intl.DateTimeFormat(undefined, {
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-});
 
 const radioSeriesLayoutGroupId = "coda-radio-series-navigation";
 const radioSeriesIndicatorLayoutId = "coda-radio-series-selected-indicator";
-
-export function showDate(value: string): string {
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : dateFormatter.format(parsed);
-}
 
 export const RadioArtwork = memo(function RadioArtwork({
   show,

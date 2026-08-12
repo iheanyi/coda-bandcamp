@@ -1,45 +1,15 @@
-import { createContext, useContext, useMemo, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 
-import type { PlaybackClock } from "@/playbackClock";
-
-import type {
-  PlaybackQueueCommands,
-  PlaybackQueueStatus,
-  PlaybackRuntimeController,
-  PlaybackSessionCommands,
-  PlaybackShuffleCommands,
-  PlaybackTransportCommands,
-  PlaybackTransportModel,
-} from "./types";
-
-const PlaybackQueueStatusContext = createContext<
-  PlaybackQueueStatus | undefined
->(undefined);
-const PlaybackTransportModelContext = createContext<
-  PlaybackTransportModel | undefined
->(undefined);
-const PlaybackQueueCommandsContext = createContext<
-  PlaybackQueueCommands | undefined
->(undefined);
-const PlaybackTransportCommandsContext = createContext<
-  PlaybackTransportCommands | undefined
->(undefined);
-const PlaybackSessionCommandsContext = createContext<
-  PlaybackSessionCommands | undefined
->(undefined);
-const PlaybackShuffleContext = createContext<
-  PlaybackShuffleCommands | undefined
->(undefined);
-const PlaybackClockContext = createContext<PlaybackClock | undefined>(
-  undefined,
-);
-
-function requiredContext<Value>(value: Value | undefined, name: string): Value {
-  if (value === undefined) {
-    throw new Error(`${name} requires the Playback runtime provider`);
-  }
-  return value;
-}
+import {
+  PlaybackClockContext,
+  PlaybackQueueCommandsContext,
+  PlaybackQueueStatusContext,
+  PlaybackSessionCommandsContext,
+  PlaybackShuffleContext,
+  PlaybackTransportCommandsContext,
+  PlaybackTransportModelContext,
+} from "./playbackRuntimeContext";
+import type { PlaybackQueueStatus, PlaybackRuntimeController } from "./types";
 
 /**
  * Composes selector-oriented playback providers and mounts the single
@@ -99,51 +69,4 @@ export function PlaybackRuntimeProvider({
       </PlaybackSessionCommandsContext.Provider>
     </PlaybackClockContext.Provider>
   );
-}
-
-export function usePlaybackQueueStatus(): PlaybackQueueStatus {
-  return requiredContext(
-    useContext(PlaybackQueueStatusContext),
-    "usePlaybackQueueStatus",
-  );
-}
-
-export function usePlaybackTransportModel(): PlaybackTransportModel {
-  return requiredContext(
-    useContext(PlaybackTransportModelContext),
-    "usePlaybackTransportModel",
-  );
-}
-
-export function usePlaybackQueueCommands(): PlaybackQueueCommands {
-  return requiredContext(
-    useContext(PlaybackQueueCommandsContext),
-    "usePlaybackQueueCommands",
-  );
-}
-
-export function usePlaybackTransportCommands(): PlaybackTransportCommands {
-  return requiredContext(
-    useContext(PlaybackTransportCommandsContext),
-    "usePlaybackTransportCommands",
-  );
-}
-
-export function usePlaybackSessionCommands(): PlaybackSessionCommands {
-  return requiredContext(
-    useContext(PlaybackSessionCommandsContext),
-    "usePlaybackSessionCommands",
-  );
-}
-
-export function usePlaybackShuffle(): PlaybackShuffleCommands {
-  return requiredContext(
-    useContext(PlaybackShuffleContext),
-    "usePlaybackShuffle",
-  );
-}
-
-/** The clock is stable; subscribing to its position remains caller-local. */
-export function usePlaybackClock(): PlaybackClock {
-  return requiredContext(useContext(PlaybackClockContext), "usePlaybackClock");
 }

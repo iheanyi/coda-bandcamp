@@ -1,9 +1,9 @@
+export { LibrarySessionProvider } from "./LibrarySessionProvider";
 export {
-  LibrarySessionProvider,
   useLibrarySession,
   type LibrarySessionProviderProps,
   type LibrarySessionValue,
-} from "./LibrarySessionProvider";
+} from "./librarySessionContext";
 export {
   ARTWORK_REFRESH_CONCURRENCY,
   LIBRARY_METADATA_CONCURRENCY,

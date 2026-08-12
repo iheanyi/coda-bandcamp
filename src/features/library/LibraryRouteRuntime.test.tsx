@@ -21,12 +21,12 @@ import { CollectionRouteScreen } from "./CollectionRouteScreen";
 import type { CollectionScreenProps } from "./CollectionScreen";
 import {
   type LibraryRouteRuntime,
-  LibraryRouteRuntimeProvider,
   useAlbumRouteScreenResource,
   useArtistRouteScreenResource,
   useCollectionRouteScreenProps,
   useRecentRouteScreenProps,
 } from "./LibraryRouteRuntime";
+import { LibraryRouteRuntimeProvider } from "./LibraryRouteRuntimeProvider";
 import type {
   ArtistResultsActions,
   LibraryAvailabilityActions,
@@ -272,14 +272,9 @@ describe("library detail route resources", () => {
     const resolveAlbumScreen = vi.fn(
       (): RouteResource<AlbumScreenProps> => resource,
     );
-    const { result } = renderHook(
-      () => useAlbumRouteScreenResource(albumId),
-      {
-        wrapper: runtimeWrapper(
-          libraryRouteRuntime({ resolveAlbumScreen }),
-        ),
-      },
-    );
+    const { result } = renderHook(() => useAlbumRouteScreenResource(albumId), {
+      wrapper: runtimeWrapper(libraryRouteRuntime({ resolveAlbumScreen })),
+    });
 
     expect(result.current).toBe(resource);
     expect(resolveAlbumScreen).toHaveBeenCalledWith(albumId);
@@ -298,17 +293,12 @@ describe("library detail route resources", () => {
     const { result } = renderHook(
       () => useArtistRouteScreenResource(artistKey, sourceAlbumId),
       {
-        wrapper: runtimeWrapper(
-          libraryRouteRuntime({ resolveArtistScreen }),
-        ),
+        wrapper: runtimeWrapper(libraryRouteRuntime({ resolveArtistScreen })),
       },
     );
 
     expect(result.current).toBe(resource);
-    expect(resolveArtistScreen).toHaveBeenCalledWith(
-      artistKey,
-      sourceAlbumId,
-    );
+    expect(resolveArtistScreen).toHaveBeenCalledWith(artistKey, sourceAlbumId);
   });
 });
 
@@ -349,14 +339,8 @@ describe("library route screen adapters", () => {
 
     render(
       <>
-        <AlbumRouteScreen
-          className="route-album"
-          resource={albumResource}
-        />
-        <ArtistRouteScreen
-          className="route-artist"
-          resource={artistResource}
-        />
+        <AlbumRouteScreen className="route-album" resource={albumResource} />
+        <ArtistRouteScreen className="route-artist" resource={artistResource} />
       </>,
     );
 

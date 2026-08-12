@@ -1,5 +1,5 @@
+export { PlaybackRuntimeProvider } from "./PlaybackRuntimeProvider";
 export {
-  PlaybackRuntimeProvider,
   usePlaybackClock,
   usePlaybackQueueCommands,
   usePlaybackQueueStatus,
@@ -7,7 +7,7 @@ export {
   usePlaybackShuffle,
   usePlaybackTransportCommands,
   usePlaybackTransportModel,
-} from "./PlaybackRuntimeProvider";
+} from "./playbackRuntimeContext";
 export { usePlaybackRuntimeController } from "./usePlaybackRuntimeController";
 export type {
   DesktopPlaybackControlHandlers,

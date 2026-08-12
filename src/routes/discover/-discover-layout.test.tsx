@@ -3,10 +3,8 @@ import { RouterProvider } from "@tanstack/react-router";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  DiscoverRuntimeProvider,
-  type DiscoverRuntimeValue,
-} from "@/features/discover/DiscoverRuntimeContext";
+import { type DiscoverRuntimeValue } from "@/features/discover/DiscoverRuntimeContext";
+import { DiscoverRuntimeProvider } from "@/features/discover/DiscoverRuntimeProvider";
 import { createCodaMemoryRouter } from "@/router";
 import { parseDiscoverReleaseIdParam } from "@/routing/routeContracts";
 

@@ -118,10 +118,8 @@ vi.mock("@/lib", async (importOriginal) => {
   };
 });
 
-import {
-  DiscoverRuntimeProvider,
-  type DiscoverRuntimeValue,
-} from "@/features/discover/DiscoverRuntimeContext";
+import { type DiscoverRuntimeValue } from "@/features/discover/DiscoverRuntimeContext";
+import { DiscoverRuntimeProvider } from "@/features/discover/DiscoverRuntimeProvider";
 import {
   SavedLibraryRuntimeProvider,
   type SavedLibraryRuntimeValue,

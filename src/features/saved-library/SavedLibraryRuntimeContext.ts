@@ -1,4 +1,5 @@
-import { createContext, type ReactNode, useContext } from "react";
+import { createContext, useContext } from "react";
+
 import type { FavoritesScreenProps } from "@/SavedLibraryView";
 
 export type SavedLibraryRuntimeValue = Readonly<
@@ -7,23 +8,9 @@ export type SavedLibraryRuntimeValue = Readonly<
   }
 >;
 
-const SavedLibraryRuntimeContext = createContext<
+export const SavedLibraryRuntimeContext = createContext<
   SavedLibraryRuntimeValue | undefined
 >(undefined);
-
-export function SavedLibraryRuntimeProvider({
-  children,
-  value,
-}: Readonly<{
-  children: ReactNode;
-  value: SavedLibraryRuntimeValue;
-}>) {
-  return (
-    <SavedLibraryRuntimeContext.Provider value={value}>
-      {children}
-    </SavedLibraryRuntimeContext.Provider>
-  );
-}
 
 export function useSavedLibraryRuntime(): SavedLibraryRuntimeValue {
   const runtime = useContext(SavedLibraryRuntimeContext);

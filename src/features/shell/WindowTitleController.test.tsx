@@ -1,10 +1,8 @@
 import { render } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPlaybackClock } from "@/playbackClock";
-import {
-  applyCurrentNativeWindowTitle,
-  WindowTitleController,
-} from "./WindowTitleController";
+import { WindowTitleController } from "./WindowTitleController";
+import { applyCurrentNativeWindowTitle } from "./windowTitle";
 
 const mocks = vi.hoisted(() => ({
   desktop: false,
@@ -42,7 +40,9 @@ describe("WindowTitleController", () => {
   });
 
   it("ignores a stale native title load after a newer route renders", async () => {
-    let resolveOldWindow!: (window: { setTitle: typeof mocks.setTitle }) => void;
+    let resolveOldWindow!: (window: {
+      setTitle: typeof mocks.setTitle;
+    }) => void;
     const oldWindow = new Promise<{ setTitle: typeof mocks.setTitle }>(
       (resolve) => {
         resolveOldWindow = resolve;
