@@ -82,6 +82,12 @@ const chromeModel: LibraryScreenChromeProps["model"] = {
     loading: false,
     disabled: false,
   },
+  shuffle: {
+    available: true,
+    label: "Shuffle collection",
+    scopeName: "the collection",
+    disabled: false,
+  },
   artwork: {
     refreshing: false,
     disabled: false,
@@ -103,6 +109,7 @@ function chromeProps(
     actions: {
       onQueryChange: vi.fn(),
       onSurprise: vi.fn(),
+      onShuffle: vi.fn(),
       onRefreshArtwork: vi.fn(),
       onSync: vi.fn(),
       onConnect: vi.fn(),
@@ -182,6 +189,31 @@ beforeEach(() => {
 });
 
 describe("Collection browse tabs", () => {
+  it("exposes the contextual shuffle action without invoking a major view transition", async () => {
+    const user = userEvent.setup();
+    const onShuffle = vi.fn();
+    const viewTransition = installViewTransitionSpy();
+
+    try {
+      const props = chromeProps("releases", vi.fn());
+      renderWithMotion(
+        <LibraryScreenChrome
+          {...props}
+          actions={{ ...props.actions, onShuffle }}
+        />,
+      );
+
+      await user.click(
+        screen.getByRole("button", { name: "Shuffle collection" }),
+      );
+
+      expect(onShuffle).toHaveBeenCalledOnce();
+      expect(viewTransition.startViewTransition).not.toHaveBeenCalled();
+    } finally {
+      viewTransition.restore();
+    }
+  });
+
   it("renders selection from the controlled route model and keeps one shared indicator", async () => {
     const user = userEvent.setup();
     const onChooseMode = vi.fn();

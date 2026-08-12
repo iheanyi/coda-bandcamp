@@ -8,6 +8,7 @@ import {
   Radio,
   RefreshCw,
   Search,
+  Shuffle,
 } from "lucide-react";
 import { useId, type CSSProperties, type RefObject } from "react";
 import { LayoutGroup } from "motion/react";
@@ -45,6 +46,16 @@ export type LibraryChromeModel = Readonly<{
     loading: boolean;
     disabled: boolean;
   }>;
+  shuffle: Readonly<{
+    available: boolean;
+    label: string;
+    scopeName: string;
+    progress?: Readonly<{
+      done: number;
+      total: number;
+    }>;
+    disabled: boolean;
+  }>;
   artwork: Readonly<{
     refreshing: boolean;
     disabled: boolean;
@@ -54,6 +65,7 @@ export type LibraryChromeModel = Readonly<{
 export type LibraryChromeActions = Readonly<{
   onQueryChange: (query: string) => void;
   onSurprise: () => void;
+  onShuffle: () => void;
   onRefreshArtwork: () => void;
   onSync: () => void;
   onConnect: () => void;
@@ -224,6 +236,24 @@ export function LibraryScreenChrome({
                 <Dices size={15} />
               )}
               {model.surprise.loading ? "Picking…" : "Surprise me"}
+            </Button>
+          ) : null}
+          {model.connected && model.shuffle.available ? (
+            <Button
+              onClick={actions.onShuffle}
+              disabled={model.shuffle.disabled}
+              title={`${model.shuffle.label} and start playing from ${model.shuffle.scopeName}`}
+              aria-label={model.shuffle.label}
+              variant="artwork"
+            >
+              {model.shuffle.progress ? (
+                <Spinner aria-hidden="true" className="size-4" />
+              ) : (
+                <Shuffle size={15} />
+              )}
+              {model.shuffle.progress
+                ? `${model.shuffle.progress.done}/${model.shuffle.progress.total}`
+                : model.shuffle.label}
             </Button>
           ) : null}
           {model.connected ? (

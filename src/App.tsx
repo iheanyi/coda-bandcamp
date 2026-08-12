@@ -312,7 +312,9 @@ export default function App() {
     playback: {
       currentAlbumId: currentTrack?.albumId,
       playing,
+      shuffle: startLibraryShuffle,
       shuffleInProgress: Boolean(libraryShuffleProgress),
+      shuffleProgress: libraryShuffleProgress,
       toggle: togglePlayback,
     },
     routeInput: libraryRouteInput,

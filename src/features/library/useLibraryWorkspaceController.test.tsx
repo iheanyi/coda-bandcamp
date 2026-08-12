@@ -106,7 +106,9 @@ function workspaceOptions(
     playback: {
       currentAlbumId: undefined,
       playing: false,
+      shuffle: vi.fn(),
       shuffleInProgress: false,
+      shuffleProgress: undefined,
       toggle: vi.fn(),
     },
     routeInput,
@@ -147,6 +149,11 @@ describe("library workspace controller", () => {
         available: true,
         scopeName: "Ambient",
       },
+      shuffle: {
+        available: true,
+        label: "Shuffle genre",
+        scopeName: "Ambient",
+      },
     });
     expect(result.current.chrome?.browse?.model).toMatchObject({
       mode: "albums",
@@ -183,6 +190,13 @@ describe("library workspace controller", () => {
       "Ambient",
       undefined,
     );
+
+    act(() => result.current.chrome?.actions.onShuffle());
+    expect(options.playback.shuffle).toHaveBeenCalledWith(
+      [albums[0]],
+      "Ambient",
+      undefined,
+    );
   });
 
   it("keeps Recent release-only, bounded, and free of Collection browse tabs", () => {
@@ -197,11 +211,8 @@ describe("library workspace controller", () => {
       screen: "recent",
       search: search.state.search,
     });
-    const { result } = renderHook(() =>
-      useLibraryWorkspaceController(
-        workspaceOptions(albums, routeInput, search),
-      ),
-    );
+    const options = workspaceOptions(albums, routeInput, search);
+    const { result } = renderHook(() => useLibraryWorkspaceController(options));
 
     expect(result.current.chrome?.model.kind).toBe("recent");
     expect(result.current.chrome?.browse).toBeUndefined();
@@ -212,7 +223,74 @@ describe("library workspace controller", () => {
     expect(result.current.screens.browseMode).toBe("releases");
     expect(result.current.screens.releaseResultsModel.albums).toHaveLength(12);
     expect(result.current.state.surpriseScope.name).toBe("recent additions");
+    expect(result.current.chrome?.model.shuffle).toMatchObject({
+      label: "Shuffle recent",
+      scopeName: "recent additions",
+    });
+    act(() => result.current.chrome?.actions.onShuffle());
+    expect(options.playback.shuffle).toHaveBeenCalledWith(
+      result.current.screens.releaseResultsModel.albums,
+      "recent additions",
+      undefined,
+    );
   });
+
+  it.each([
+    {
+      expectedIds: ["single"],
+      label: "Shuffle singles",
+      search: { mode: "singles" },
+      scopeName: "the singles view",
+    },
+    {
+      expectedIds: ["album", "other"],
+      label: "Shuffle albums",
+      search: { mode: "albums" },
+      scopeName: "the albums view",
+    },
+    {
+      expectedIds: ["album", "single"],
+      label: "Shuffle results",
+      search: { mode: "releases", q: "night" },
+      scopeName: "the current results",
+    },
+    {
+      expectedIds: ["album", "single", "other"],
+      label: "Shuffle collection",
+      search: { mode: "releases" },
+      scopeName: "the collection",
+    },
+  ])(
+    "routes $label to the exact visible release scope",
+    ({ expectedIds, label, search: searchValue, scopeName }) => {
+      const albums = [
+        album("album", "Night Archive", 4),
+        album("single", "Night Archive", 1),
+        album("other", "Other Artist", 3),
+      ];
+      const search = searchController(searchValue);
+      const routeInput = deriveLibraryRouteInput({
+        screen: "collection",
+        search: search.state.search,
+      });
+      const options = workspaceOptions(albums, routeInput, search);
+      const { result } = renderHook(() =>
+        useLibraryWorkspaceController(options),
+      );
+
+      expect(result.current.chrome?.model.shuffle.label).toBe(label);
+      act(() => result.current.chrome?.actions.onShuffle());
+      expect(options.playback.shuffle).toHaveBeenCalledWith(
+        expect.arrayContaining(
+          albums.filter((item) => expectedIds.includes(item.id)),
+        ),
+        scopeName,
+        undefined,
+      );
+      const [scope] = vi.mocked(options.playback.shuffle).mock.calls[0];
+      expect(scope.map((item) => item.id)).toEqual(expectedIds);
+    },
+  );
 
   it("keeps genre and browse controls off album and artist detail routes", () => {
     const albums = [album("album-1", "Night Archive", 4)];
@@ -222,10 +300,13 @@ describe("library workspace controller", () => {
       screen: "artist",
       search: search.state.search,
     });
+    const artistOptions = workspaceOptions(albums, artistRoute, search);
     const { result, rerender } = renderHook(
       ({ routeInput }) =>
         useLibraryWorkspaceController(
-          workspaceOptions(albums, routeInput, search),
+          routeInput === artistRoute
+            ? artistOptions
+            : workspaceOptions(albums, routeInput, search),
         ),
       { initialProps: { routeInput: artistRoute } },
     );
@@ -234,16 +315,83 @@ describe("library workspace controller", () => {
     expect(result.current.chrome?.filter).toBeUndefined();
     expect(result.current.browse.activeArtist?.name).toBe("Night Archive");
     expect(result.current.screens.releaseResultsModel.title).toBe("Releases");
+    act(() => result.current.chrome?.actions.onShuffle());
+    expect(artistOptions.playback.shuffle).toHaveBeenCalledWith(
+      albums,
+      "Night Archive",
+      result.current.browse.activeArtist,
+    );
 
     const albumRoute = deriveLibraryRouteInput({
       albumId: "album-1",
       screen: "album",
       search: search.state.search,
     });
+    const albumOptions = workspaceOptions(albums, albumRoute, search);
     rerender({ routeInput: albumRoute });
 
     expect(result.current.chrome?.browse).toBeUndefined();
     expect(result.current.chrome?.filter).toBeUndefined();
+
+    const { result: albumResult } = renderHook(() =>
+      useLibraryWorkspaceController(albumOptions),
+    );
+    expect(albumResult.current.chrome?.model.shuffle).toMatchObject({
+      label: "Shuffle album",
+      scopeName: "Release album-1",
+    });
+    act(() => albumResult.current.chrome?.actions.onShuffle());
+    expect(albumOptions.playback.shuffle).toHaveBeenCalledWith(
+      albums,
+      "Release album-1",
+      undefined,
+    );
+  });
+
+  it("keeps direct detail shuffle route-authoritative while identities resolve", () => {
+    const albums = [
+      album("night", "Night Archive", 4),
+      album("other", "Other Artist", 3),
+    ];
+    const search = searchController({ mode: "releases" });
+    const artistRoute = deriveLibraryRouteInput({
+      artistKey: "night archive",
+      screen: "artist",
+      search: search.state.search,
+    });
+    const artistOptions = workspaceOptions(albums, artistRoute, search);
+    const { result } = renderHook(() =>
+      useLibraryWorkspaceController(artistOptions),
+    );
+
+    act(() => result.current.chrome?.actions.onShuffle());
+    expect(artistOptions.playback.shuffle).toHaveBeenCalledWith(
+      [albums[0]],
+      "Night Archive",
+      result.current.browse.activeArtist,
+    );
+
+    const unresolvedAlbumRoute = deriveLibraryRouteInput({
+      albumId: "missing-album",
+      screen: "album",
+      search: search.state.search,
+    });
+    const unresolvedOptions = workspaceOptions(
+      albums,
+      unresolvedAlbumRoute,
+      search,
+    );
+    const { result: unresolved } = renderHook(() =>
+      useLibraryWorkspaceController(unresolvedOptions),
+    );
+
+    expect(unresolved.current.chrome?.model.shuffle.available).toBe(false);
+    act(() => unresolved.current.chrome?.actions.onShuffle());
+    expect(unresolvedOptions.playback.shuffle).toHaveBeenCalledWith(
+      [],
+      "the collection",
+      undefined,
+    );
   });
 
   it("does not expose library chrome for non-library routes", () => {

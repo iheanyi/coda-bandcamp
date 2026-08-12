@@ -77,6 +77,15 @@ export type LibraryWorkspacePlayback = Readonly<{
   currentAlbumId?: string;
   playing: boolean;
   shuffleInProgress: boolean;
+  shuffleProgress?: Readonly<{
+    done: number;
+    total: number;
+  }>;
+  shuffle: (
+    albums: readonly Album[],
+    scopeName: string,
+    artistScope?: LibraryBrowseController["activeArtist"],
+  ) => void;
   toggle: () => void;
 }>;
 
@@ -155,6 +164,38 @@ function surpriseScopeName({
   }
 }
 
+function shuffleActionLabel({
+  activeArtist,
+  effectiveBrowseMode,
+  genre,
+  query,
+  recent,
+  selectedAlbum,
+}: Readonly<{
+  activeArtist: LibraryBrowseController["activeArtist"];
+  effectiveBrowseMode: LibraryBrowseController["effectiveBrowseMode"];
+  genre: string;
+  query: string;
+  recent: boolean;
+  selectedAlbum?: Album;
+}>): string {
+  if (selectedAlbum) return "Shuffle album";
+  if (activeArtist) return "Shuffle artist";
+  if (query.trim()) return "Shuffle results";
+  if (genre !== "All") return "Shuffle genre";
+  if (recent) return "Shuffle recent";
+  switch (effectiveBrowseMode) {
+    case "singles":
+      return "Shuffle singles";
+    case "albums":
+      return "Shuffle albums";
+    case "artists":
+      return "Shuffle artists";
+    case "releases":
+      return "Shuffle collection";
+  }
+}
+
 /**
  * Composes URL-owned browse state with the existing pure browse derivation and
  * exposes the complete Collection/Recent presentation contract. TanStack
@@ -206,10 +247,24 @@ export function useLibraryWorkspaceController({
     collectionSearch.genre !== "All" ||
     collectionSearch.mode !== "releases" ||
     Boolean(selectedArtist);
-  const selectedAlbum = libraryActions.state.selectedAlbum;
+  const selectedAlbum =
+    routeInput.kind === "album"
+      ? (albums.find((album) => album.id === routeInput.albumId) ??
+        (libraryActions.state.selectedAlbum?.id === routeInput.albumId
+          ? libraryActions.state.selectedAlbum
+          : undefined))
+      : undefined;
   const surpriseScope = useMemo<LibrarySurpriseScope>(() => {
-    const scopeAlbums = selectedAlbum ? [selectedAlbum] : browse.visibleAlbums;
-    const scopeArtist = selectedAlbum ? undefined : browse.activeArtist;
+    const scopeAlbums =
+      routeInput.kind === "album"
+        ? selectedAlbum
+          ? [selectedAlbum]
+          : []
+        : routeInput.kind === "artist"
+          ? (browse.activeArtist?.albums ?? [])
+          : browse.visibleAlbums;
+    const scopeArtist =
+      routeInput.kind === "artist" ? browse.activeArtist : undefined;
     return {
       albums: scopeAlbums,
       artist: scopeArtist,
@@ -229,6 +284,7 @@ export function useLibraryWorkspaceController({
     collectionSearch.genre,
     collectionSearch.q,
     recent,
+    routeInput.kind,
     selectedAlbum,
   ]);
   const releaseTitle = browse.activeArtist
@@ -244,6 +300,13 @@ export function useLibraryWorkspaceController({
       surpriseScope.artist,
     );
   }, [libraryActions.commands, surpriseScope]);
+  const shuffleVisible = useCallback(() => {
+    playback.shuffle(
+      surpriseScope.albums,
+      surpriseScope.name,
+      surpriseScope.artist,
+    );
+  }, [playback, surpriseScope]);
   const sync = useCallback(() => {
     void availability.commands.sync();
   }, [availability.commands]);
@@ -288,6 +351,23 @@ export function useLibraryWorkspaceController({
         playback.shuffleInProgress ||
         availability.state.syncState === "syncing",
     },
+    shuffle: {
+      available: Boolean(surpriseScope.albums.length),
+      label: shuffleActionLabel({
+        activeArtist: browse.activeArtist,
+        effectiveBrowseMode: browse.effectiveBrowseMode,
+        genre: collectionSearch.genre,
+        query: collectionSearch.q,
+        recent,
+        selectedAlbum,
+      }),
+      scopeName: surpriseScope.name,
+      progress: playback.shuffleProgress,
+      disabled:
+        playback.shuffleInProgress ||
+        libraryActions.state.randomPickLoading ||
+        availability.state.syncState === "syncing",
+    },
     artwork: {
       refreshing: availability.state.artworkRefreshing,
       disabled:
@@ -298,6 +378,7 @@ export function useLibraryWorkspaceController({
   const chromeActions: LibraryChromeActions = {
     onQueryChange: search.commands.changeQuery,
     onSurprise: playSurprise,
+    onShuffle: shuffleVisible,
     onRefreshArtwork: refreshArtwork,
     onSync: sync,
     onConnect: availability.commands.connect,

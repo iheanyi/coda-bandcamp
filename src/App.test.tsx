@@ -1997,8 +1997,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         .toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
       expect(await screen.findByText("1 track next")).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: "Shuffle collection" }))
-        .not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Shuffle collection" }),
+      ).toBeInTheDocument();
     } finally {
       random?.mockRestore();
     }
