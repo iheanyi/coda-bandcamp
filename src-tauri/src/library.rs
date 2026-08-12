@@ -95,6 +95,12 @@ fn clear_library_cache_file(app: &tauri::AppHandle) -> Result<(), String> {
     }
 }
 
+fn clear_album_metadata_cache_best_effort(app: &tauri::AppHandle, operation: &str) {
+    if let Err(error) = album_metadata_database(app).and_then(clear_persisted_album_tracks) {
+        eprintln!("{operation}: {error}");
+    }
+}
+
 #[tauri::command]
 pub(super) async fn has_connection() -> bool {
     run_blocking("Could not finish checking the Bandcamp connection", || {
@@ -108,8 +114,6 @@ fn disconnect_blocking(app: tauri::AppHandle) -> Result<(), String> {
     let _guard = LIBRARY_CACHE_LOCK
         .lock()
         .map_err(|_| "The library cache lock is unavailable.".to_string())?;
-    let database = album_metadata_database(&app)?;
-    clear_persisted_album_tracks(database)?;
     let path = library_cache_path(&app)?;
     match fs::remove_file(path) {
         Ok(()) => {}
@@ -121,6 +125,10 @@ fn disconnect_blocking(app: tauri::AppHandle) -> Result<(), String> {
             advance_connection_generation();
             advance_library_sync_generation();
             clear_album_refresh_generations();
+            clear_album_metadata_cache_best_effort(
+                &app,
+                "Could not clear the album metadata cache during disconnect",
+            );
             Ok(())
         }
         Err(error) => Err(format!("Could not remove credentials: {error}")),
@@ -371,8 +379,11 @@ pub(super) async fn connect(
     if connection_owner_changed(previous_credentials.as_ref(), &input) {
         let album_cache_app = app.clone();
         run_blocking("Could not finish resetting the album cache", move || {
-            let database = album_metadata_database(&album_cache_app)?;
-            clear_persisted_album_tracks(database)
+            clear_album_metadata_cache_best_effort(
+                &album_cache_app,
+                "Could not reset the album metadata cache",
+            );
+            Ok(())
         })
         .await?;
 
