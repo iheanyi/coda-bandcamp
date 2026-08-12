@@ -1,8 +1,16 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { RouterContextProvider } from "@tanstack/react-router";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPlaybackClock } from "./playbackClock";
+import { createCodaMemoryRouter } from "./router";
 import type { RadioShow, RadioShowSummary, Track } from "./types";
 
 const mocks = vi.hoisted(() => ({
@@ -106,6 +114,7 @@ function renderRadio(
   }
   const onTogglePlayback = playback.onTogglePlayback ?? vi.fn();
   const onToggleFavorite = vi.fn();
+  const router = createCodaMemoryRouter(client, ["/radio"]);
   function ControlledRadioView() {
     const [selectedSeriesId, setSelectedSeriesId] = useState<number>();
     const [requestedShowId, setRequestedShowId] = useState<number | undefined>(
@@ -131,12 +140,14 @@ function renderRadio(
   }
   render(
     <QueryClientProvider client={client}>
-      <div
-        data-coda-library-scroll
-        style={{ height: 600, overflowY: "auto" }}
-      >
-        <ControlledRadioView />
-      </div>
+      <RouterContextProvider router={router}>
+        <div
+          data-coda-library-scroll
+          style={{ height: 600, overflowY: "auto" }}
+        >
+          <ControlledRadioView />
+        </div>
+      </RouterContextProvider>
     </QueryClientProvider>,
   );
   return {
@@ -165,19 +176,25 @@ afterEach(() => {
 });
 
 describe("Bandcamp Radio", () => {
-  it("disables show actions and labels the request while loading playback", async () => {
+  it("disables playback actions but keeps semantic detail navigation available", async () => {
     let resolveShow!: (value: RadioShow) => void;
-    mocks.fetchRadioShow.mockReturnValue(new Promise((resolve) => {
-      resolveShow = resolve;
-    }));
+    mocks.fetchRadioShow.mockReturnValue(
+      new Promise((resolve) => {
+        resolveShow = resolve;
+      }),
+    );
     const { onPlay } = renderRadio();
 
     await screen.findByRole("heading", { name: "Kinrose" });
     fireEvent.click(screen.getByRole("button", { name: "Play latest show" }));
 
-    expect(await screen.findByRole("button", { name: "Loading show…" })).toBeDisabled();
+    expect(
+      await screen.findByRole("button", { name: "Loading show…" }),
+    ).toBeDisabled();
     expect(screen.getByRole("button", { name: "Add to queue" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "View tracklist" })).toBeDisabled();
+    expect(
+      screen.getByRole("link", { name: "View tracklist" }),
+    ).toHaveAttribute("href", "/radio/shows/979");
 
     resolveShow(show);
     await waitFor(() => expect(onPlay).toHaveBeenCalled());
@@ -191,13 +208,15 @@ describe("Bandcamp Radio", () => {
     fireEvent.click(screen.getByRole("button", { name: "Play latest show" }));
 
     await waitFor(() => expect(mocks.fetchRadioShow).toHaveBeenCalledWith(979));
-    expect(onPlay).toHaveBeenCalledWith(expect.objectContaining({
-      id: "radio:979",
-      artist: "Bandcamp Radio",
-      album: "The Hip Hop Show",
-      streamUrl: show.streamUrl,
-      radioChapters: show.chapters,
-    }));
+    expect(onPlay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "radio:979",
+        artist: "Bandcamp Radio",
+        album: "The Hip Hop Show",
+        streamUrl: show.streamUrl,
+        radioChapters: show.chapters,
+      }),
+    );
   });
 
   it("matches the latest show button to Now Playing and toggles it without reloading", async () => {
@@ -227,13 +246,17 @@ describe("Bandcamp Radio", () => {
       name: "Add The Best of 2026 to queue",
     });
     fireEvent.click(queueShow);
-    await waitFor(() => expect(onQueue).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "radio:978" }),
-    ));
+    await waitFor(() =>
+      expect(onQueue).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "radio:978" }),
+      ),
+    );
 
-    fireEvent.click(screen.getByRole("button", {
-      name: "Open The Best of 2026 on Bandcamp",
-    }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Open The Best of 2026 on Bandcamp",
+      }),
+    );
     expect(mocks.openBandcampUrl).toHaveBeenCalledWith(
       "https://bandcamp.com/radio?show=978",
     );
@@ -243,37 +266,78 @@ describe("Bandcamp Radio", () => {
     renderRadio();
 
     await screen.findByRole("heading", { name: "Kinrose" });
-    fireEvent.click(screen.getAllByRole("button", {
-      name: "Browse The Hip Hop Show episodes",
-    })[0]);
-    await waitFor(() => expect(mocks.fetchRadioShows).toHaveBeenCalledWith({
-      seriesId: 5,
-      cursor: undefined,
-    }));
+    fireEvent.click(
+      screen.getAllByRole("link", {
+        name: "Browse The Hip Hop Show episodes",
+      })[0],
+    );
+    await waitFor(() =>
+      expect(mocks.fetchRadioShows).toHaveBeenCalledWith({
+        seriesId: 5,
+        cursor: undefined,
+      }),
+    );
+  });
+
+  it("renders a native series supplement when Bandcamp omits archive membership", async () => {
+    const madlife: RadioShowSummary = {
+      ...shows[0],
+      id: 981,
+      subtitle: "MADLIFE",
+      publishedAt: "07 Aug 2026 00:00:00 GMT",
+    };
+    const seriesAnchor: RadioShowSummary = {
+      ...shows[0],
+      subtitle: "Series anchor",
+    };
+    mocks.fetchRadioShows.mockImplementation(({ seriesId }) =>
+      Promise.resolve({
+        results: seriesId === 5 ? [madlife, seriesAnchor] : [madlife],
+        hasMore: false,
+      }),
+    );
+    renderRadio();
+
+    await screen.findByRole("heading", { name: "MADLIFE" });
+    fireEvent.click(
+      screen.getAllByRole("link", {
+        name: "Browse The Hip Hop Show episodes",
+      })[0],
+    );
+
+    await screen.findByRole("heading", { name: "Series anchor" });
+    expect(
+      screen.getByRole("heading", { name: "MADLIFE" }),
+    ).toBeInTheDocument();
   });
 
   it("loads the next bounded Radio page automatically near the scroll edge", async () => {
-    vi.stubGlobal("IntersectionObserver", class {
-      private readonly callback: IntersectionObserverCallback;
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        private readonly callback: IntersectionObserverCallback;
 
-      constructor(callback: IntersectionObserverCallback) {
-        this.callback = callback;
-      }
+        constructor(callback: IntersectionObserverCallback) {
+          this.callback = callback;
+        }
 
-      observe() {
-        this.callback(
-          [{ isIntersecting: true } as IntersectionObserverEntry],
-          this as unknown as IntersectionObserver,
-        );
-      }
+        observe() {
+          this.callback(
+            [{ isIntersecting: true } as IntersectionObserverEntry],
+            this as unknown as IntersectionObserver,
+          );
+        }
 
-      disconnect() {}
-      unobserve() {}
-      takeRecords() { return []; }
-      root = null;
-      rootMargin = "420px 0px";
-      thresholds = [0];
-    });
+        disconnect() {}
+        unobserve() {}
+        takeRecords() {
+          return [];
+        }
+        root = null;
+        rootMargin = "420px 0px";
+        thresholds = [0];
+      },
+    );
     mocks.fetchRadioShows
       .mockResolvedValueOnce({
         results: shows,
@@ -281,18 +345,21 @@ describe("Bandcamp Radio", () => {
         hasMore: true,
       })
       .mockResolvedValueOnce({
-        results: [{
-          ...shows[1],
-          id: 977,
-          subtitle: "Next page",
-        }],
+        results: [
+          {
+            ...shows[1],
+            id: 977,
+            subtitle: "Next page",
+          },
+        ],
         hasMore: false,
       });
     renderRadio();
 
     await screen.findByRole("heading", { name: "Kinrose" });
-    expect(await screen.findByRole("heading", { name: "Next page" }))
-      .toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Next page" }),
+    ).toBeInTheDocument();
     expect(mocks.fetchRadioShows).toHaveBeenLastCalledWith({
       seriesId: undefined,
       cursor: "1770336000:901",
@@ -316,13 +383,18 @@ describe("Bandcamp Radio", () => {
           blockSize: bounds.height,
           inlineSize: bounds.width,
         };
-        this.callback([{
-          borderBoxSize: [size],
-          contentBoxSize: [size],
-          contentRect: bounds,
-          devicePixelContentBoxSize: [size],
-          target,
-        } as unknown as ResizeObserverEntry], this);
+        this.callback(
+          [
+            {
+              borderBoxSize: [size],
+              contentBoxSize: [size],
+              contentRect: bounds,
+              devicePixelContentBoxSize: [size],
+              target,
+            } as unknown as ResizeObserverEntry,
+          ],
+          this,
+        );
       }
 
       unobserve() {}
@@ -330,13 +402,9 @@ describe("Bandcamp Radio", () => {
     globalThis.ResizeObserver = ResizeObserverMock;
     const geometry = vi
       .spyOn(HTMLElement.prototype, "getBoundingClientRect")
-      .mockImplementation(function getBoundingClientRect(
-        this: HTMLElement,
-      ) {
+      .mockImplementation(function getBoundingClientRect(this: HTMLElement) {
         const isScrollRoot = this.hasAttribute("data-coda-library-scroll");
-        const isArchiveGrid = this.hasAttribute(
-          "data-responsive-virtual-grid",
-        );
+        const isArchiveGrid = this.hasAttribute("data-responsive-virtual-grid");
         return new DOMRect(
           0,
           isArchiveGrid ? 100 : 0,
@@ -384,9 +452,11 @@ describe("Bandcamp Radio", () => {
     const { onToggleFavorite } = renderRadio();
 
     await screen.findByRole("heading", { name: "Kinrose" });
-    fireEvent.click(screen.getByRole("button", {
-      name: "Add Kinrose to favorites",
-    }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Add Kinrose to favorites",
+      }),
+    );
 
     expect(onToggleFavorite).toHaveBeenCalledWith(shows[0]);
     expect(mocks.fetchRadioShow).not.toHaveBeenCalled();
@@ -397,7 +467,7 @@ describe("Bandcamp Radio", () => {
 
     await screen.findByRole("heading", { name: "Kinrose" });
     expect(mocks.fetchRadioShow).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "View tracklist" }));
+    fireEvent.click(screen.getByRole("link", { name: "View tracklist" }));
 
     await screen.findByRole("heading", {
       name: "Songs in this show",
@@ -406,11 +476,16 @@ describe("Bandcamp Radio", () => {
 
     expect(onPlayAt).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", {
-      name: "Play Mirage from 2:00",
-    }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Play Mirage from 2:00",
+      }),
+    );
     expect(onPlayAt).toHaveBeenCalledWith(
-      expect.objectContaining({ id: "radio:979", radioChapters: show.chapters }),
+      expect.objectContaining({
+        id: "radio:979",
+        radioChapters: show.chapters,
+      }),
       120,
     );
   });
@@ -419,7 +494,7 @@ describe("Bandcamp Radio", () => {
     renderRadio();
 
     await screen.findByRole("heading", { name: "Kinrose" });
-    const tracklistButton = screen.getByRole("button", {
+    const tracklistButton = screen.getByRole("link", {
       name: "View tracklist",
     });
     tracklistButton.focus();
@@ -436,9 +511,9 @@ describe("Bandcamp Radio", () => {
     ).toHaveLength(1);
     await waitFor(() => expect(detailHeading).toHaveFocus());
 
-    fireEvent.click(screen.getByRole("button", { name: "Back to Radio" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
-    const restoredTracklistButton = await screen.findByRole("button", {
+    const restoredTracklistButton = await screen.findByRole("link", {
       name: "View tracklist",
     });
     await waitFor(() => expect(restoredTracklistButton).toHaveFocus());
@@ -471,8 +546,9 @@ describe("Bandcamp Radio", () => {
       sourceTitleElement = document.querySelector(
         "[data-coda-radio-title-source]",
       );
-      const sourceTitleBefore = sourceTitleElement
-        ?.getAttribute("data-coda-radio-title-source");
+      const sourceTitleBefore = sourceTitleElement?.getAttribute(
+        "data-coda-radio-title-source",
+      );
       const sourceTitleCount = document.querySelectorAll(
         "[data-coda-radio-title-source]",
       ).length;
@@ -515,7 +591,7 @@ describe("Bandcamp Radio", () => {
       );
       expect(scrollRoot).not.toBeNull();
       if (scrollRoot) scrollRoot.scrollTop = 287;
-      const tracklistButton = screen.getByRole("button", {
+      const tracklistButton = screen.getByRole("link", {
         name: "View tracklist",
       });
       tracklistButton.focus();
@@ -525,10 +601,10 @@ describe("Bandcamp Radio", () => {
       await waitFor(() =>
         expect(sourceTitleElement).not.toHaveAttribute(
           "data-coda-radio-title-source",
-        )
+        ),
       );
       if (scrollRoot) scrollRoot.scrollTop = 0;
-      fireEvent.click(screen.getByRole("button", { name: "Back to Radio" }));
+      fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
       await screen.findByRole("heading", { name: "Kinrose" });
       expect(startViewTransition).toHaveBeenCalledTimes(2);
@@ -552,9 +628,11 @@ describe("Bandcamp Radio", () => {
         }),
       ]);
       await waitFor(() =>
-        expect(document.querySelector(
-          "[data-coda-radio-artwork-return], [data-coda-radio-title-return]",
-        )).not.toBeInTheDocument()
+        expect(
+          document.querySelector(
+            "[data-coda-radio-artwork-return], [data-coda-radio-title-return]",
+          ),
+        ).not.toBeInTheDocument(),
       );
     } finally {
       document.documentElement.classList.remove(
@@ -608,9 +686,8 @@ describe("Bandcamp Radio", () => {
       snapshots.push({
         sourceTitle,
         sourceTitleIsStatic:
-          detachedSourceTitle?.matches(
-            '[data-slot="overflow-marquee-text"]',
-          ) ?? false,
+          detachedSourceTitle?.matches('[data-slot="overflow-marquee-text"]') ??
+          false,
         sourceTitleCount,
         detailTitle: document
           .querySelector("[data-coda-radio-title-detail]")
@@ -619,9 +696,9 @@ describe("Bandcamp Radio", () => {
           .querySelector("[data-coda-radio-title-return]")
           ?.getAttribute("data-coda-radio-title-return"),
         returningTitleIsStatic:
-          document.querySelector("[data-coda-radio-title-return]")?.matches(
-            '[data-slot="overflow-marquee-text"]',
-          ) ?? false,
+          document
+            .querySelector("[data-coda-radio-title-return]")
+            ?.matches('[data-slot="overflow-marquee-text"]') ?? false,
         returningTitleCount: document.querySelectorAll(
           "[data-coda-radio-title-return]",
         ).length,
@@ -640,17 +717,19 @@ describe("Bandcamp Radio", () => {
       expect(document.querySelectorAll("[data-radio-show-title]")).toHaveLength(
         2,
       );
-      fireEvent.click(screen.getByRole("button", {
-        name: "View tracklist for The Best of 2026",
-      }));
+      fireEvent.click(
+        screen.getByRole("link", {
+          name: "View tracklist for The Best of 2026",
+        }),
+      );
 
       await screen.findByRole("heading", { name: "Songs in this show" });
       await waitFor(() =>
         expect(detachedSourceTitle).not.toHaveAttribute(
           "data-coda-radio-title-source",
-        )
+        ),
       );
-      fireEvent.click(screen.getByRole("button", { name: "Back to Radio" }));
+      fireEvent.click(screen.getByRole("button", { name: "Back" }));
       await screen.findByRole("heading", { name: "Kinrose" });
 
       expect(snapshots).toEqual([
@@ -671,9 +750,11 @@ describe("Bandcamp Radio", () => {
         }),
       ]);
       await waitFor(() =>
-        expect(document.querySelector(
-          "[data-coda-radio-title-source], [data-coda-radio-title-return]",
-        )).not.toBeInTheDocument()
+        expect(
+          document.querySelector(
+            "[data-coda-radio-title-source], [data-coda-radio-title-return]",
+          ),
+        ).not.toBeInTheDocument(),
       );
     } finally {
       document.documentElement.classList.remove(
@@ -694,6 +775,7 @@ describe("Bandcamp Radio", () => {
 
   it("falls back to page motion when the source Radio artwork is unavailable", async () => {
     const snapshots: Array<{
+      className: string;
       sourceBefore: boolean;
       sourceTitleBefore: boolean;
       returningAfter: boolean;
@@ -712,6 +794,7 @@ describe("Bandcamp Radio", () => {
       );
       update();
       snapshots.push({
+        className: document.documentElement.className,
         sourceBefore,
         sourceTitleBefore,
         returningAfter: Boolean(
@@ -735,18 +818,28 @@ describe("Bandcamp Radio", () => {
       document
         .querySelector('[data-radio-show-artwork="979"]')
         ?.removeAttribute("data-radio-show-artwork");
-      fireEvent.click(screen.getByRole("button", {
-        name: "View tracklist",
-      }));
+      fireEvent.click(
+        screen.getByRole("link", {
+          name: "View tracklist",
+        }),
+      );
 
       await screen.findByRole("heading", { name: "Songs in this show" });
-      fireEvent.click(screen.getByRole("button", { name: "Back to Radio" }));
+      fireEvent.click(screen.getByRole("button", { name: "Back" }));
       await screen.findByRole("heading", { name: "Kinrose" });
 
-      expect(startViewTransition).toHaveBeenCalledOnce();
+      expect(startViewTransition).toHaveBeenCalledTimes(2);
       expect(mocks.transitionKinds).toEqual(["page-forward", "page-back"]);
       expect(snapshots).toEqual([
         expect.objectContaining({
+          className: expect.stringContaining("coda-transition--page-forward"),
+          sourceBefore: false,
+          sourceTitleBefore: false,
+          returningAfter: false,
+          returningTitleAfter: false,
+        }),
+        expect.objectContaining({
+          className: expect.stringContaining("coda-transition--page-back"),
           sourceBefore: false,
           sourceTitleBefore: false,
           returningAfter: false,
@@ -783,9 +876,11 @@ describe("Bandcamp Radio", () => {
     });
 
     await screen.findByRole("heading", { name: "Kinrose" });
-    fireEvent.click(screen.getByRole("button", { name: "View tracklist" }));
+    fireEvent.click(screen.getByRole("link", { name: "View tracklist" }));
 
-    const pauseChapter = await screen.findByRole("button", { name: "Pause Mirage" });
+    const pauseChapter = await screen.findByRole("button", {
+      name: "Pause Mirage",
+    });
     expect(pauseChapter).toHaveAttribute("aria-pressed", "true");
     expect(pauseChapter.closest("li")).toHaveAttribute("aria-current", "true");
   });
@@ -797,28 +892,36 @@ describe("Bandcamp Radio", () => {
       subtitle: "Deep Focus",
     };
     let resolveShow!: (value: RadioShow) => void;
-    mocks.fetchRadioShow.mockReturnValue(new Promise((resolve) => {
-      resolveShow = resolve;
-    }));
+    mocks.fetchRadioShow.mockReturnValue(
+      new Promise((resolve) => {
+        resolveShow = resolve;
+      }),
+    );
 
     renderRadio(vi.fn(), vi.fn(), vi.fn(), {
       requestedShowId: requestedShow.id,
       warmArchive: true,
     });
 
-    expect(await screen.findByRole("status", {
-      name: "Loading Radio show details",
-    })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("status", {
+        name: "Loading Radio show details",
+      }),
+    ).toBeInTheDocument();
 
     resolveShow(requestedShow);
 
-    expect(await screen.findByRole("heading", {
-      name: "Deep Focus",
-    })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", {
+        name: "Deep Focus",
+      }),
+    ).toBeInTheDocument();
     await waitFor(() =>
-      expect(screen.queryByRole("status", {
-        name: "Loading Radio show details",
-      })).not.toBeInTheDocument()
+      expect(
+        screen.queryByRole("status", {
+          name: "Loading Radio show details",
+        }),
+      ).not.toBeInTheDocument(),
     );
   });
 });
