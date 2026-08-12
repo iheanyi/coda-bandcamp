@@ -81,6 +81,7 @@ type NativeLibrarySyncEvent = {
 type RuntimeCacheEntry<T> = {
   promise: Promise<T>;
   expiresAt: number;
+  value?: T;
 };
 
 const coverUrlCache = new Map<string, RuntimeCacheEntry<string>>();
@@ -161,12 +162,18 @@ function rememberPromise<T>(
   }
 
   let request: Promise<T>;
-  request = load().catch((error) => {
-    if (cache.get(key)?.promise === request) {
-      cache.delete(key);
-    }
-    throw error;
-  });
+  request = load()
+    .then((value) => {
+      const entry = cache.get(key);
+      if (entry?.promise === request) entry.value = value;
+      return value;
+    })
+    .catch((error) => {
+      if (cache.get(key)?.promise === request) {
+        cache.delete(key);
+      }
+      throw error;
+    });
   cache.set(key, {
     promise: request,
     expiresAt: now + ttlMs,
@@ -176,6 +183,19 @@ function rememberPromise<T>(
     if (oldest) cache.delete(oldest);
   }
   return request;
+}
+
+function readRememberedValue<T>(
+  cache: Map<string, RuntimeCacheEntry<T>>,
+  key: string,
+): T | undefined {
+  const entry = cache.get(key);
+  if (!entry) return undefined;
+  if (entry.expiresAt <= Date.now()) {
+    cache.delete(key);
+    return undefined;
+  }
+  return entry.value;
 }
 
 function isCachedAlbum(value: unknown): value is Album {
@@ -289,6 +309,10 @@ export function clearRuntimeCaches(): void {
 
 export function invalidateCoverUrl(coverArtId: string): void {
   coverUrlCache.delete(coverArtId);
+}
+
+export function readCachedCoverUrl(coverArtId: string): string | undefined {
+  return readRememberedValue(coverUrlCache, coverArtId);
 }
 
 export function invalidateStreamUrl(trackId: string): void {

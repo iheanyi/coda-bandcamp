@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-
+import { codaViewTransitionMotion } from "./motion";
 import { transitionCodaViewWithMotion } from "./motionViewTransitions";
 
 function deferred() {
@@ -108,6 +108,22 @@ afterEach(() => {
 });
 
 describe("Motion-backed route View Transitions", () => {
+  it("resolves shared artwork geometry through Motion's spring generator", () => {
+    const { type, ...options } = codaViewTransitionMotion.detailArtwork;
+
+    expect(type).toEqual(expect.any(Function));
+    if (typeof type !== "function" || !type.applyToOptions) {
+      throw new Error("Expected Motion's spring generator");
+    }
+    const timing = type.applyToOptions(options);
+    expect(timing).toMatchObject({
+      duration: 450,
+      type: "keyframes",
+      visualDuration: 0.3,
+    });
+    expect(timing.ease).not.toBe("easeOut");
+  });
+
   it("keeps the browser update pending until an async album destination mounts", async () => {
     const source = albumSource();
     const routeRendered = deferred();
@@ -271,6 +287,86 @@ describe("Motion-backed route View Transitions", () => {
     expect(browserUpdateFinished).toBe(true);
     expect(destinationPresentAtCapture).toBe(true);
     expect(destinationNameAtCapture).not.toBe("none");
+  });
+
+  it("waits for the async artist artwork return that mounts during Back", async () => {
+    const artistKey = "artist-1";
+    const detail = document.createElement("section");
+    const detailArtwork = document.createElement("div");
+    detailArtwork.dataset.codaArtistArtworkDetail = artistKey;
+    detailArtwork.dataset.slot = "cover";
+    detailArtwork.append(document.createElement("img"));
+    const detailName = document.createElement("span");
+    detailName.dataset.codaArtistNameDetail = artistKey;
+    detail.append(detailArtwork, detailName);
+    document.body.append(detail);
+    const routeRendered = deferred();
+    const imageDecoded = deferred();
+    const decodeImage = vi.fn(() => imageDecoded.promise);
+    let browserUpdateFinished = false;
+    let artworkPresentAtCapture = false;
+    let artworkNameAtCapture = "";
+
+    Object.defineProperty(document, "getAnimations", {
+      configurable: true,
+      value: () => [],
+    });
+
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: vi.fn((update: () => void | Promise<void>) => {
+        const updateCallbackDone = Promise.resolve(update()).then(() => {
+          browserUpdateFinished = true;
+          const artwork = document.querySelector<HTMLElement>(
+            `[data-coda-artist-artwork-return="${artistKey}"]`,
+          );
+          artworkPresentAtCapture = Boolean(artwork);
+          artworkNameAtCapture = artwork
+            ? getComputedStyle(artwork).viewTransitionName
+            : "";
+        });
+        return {
+          finished: updateCallbackDone,
+          ready: updateCallbackDone,
+          skipTransition: vi.fn(),
+          updateCallbackDone,
+        };
+      }),
+    });
+
+    const transition = transitionCodaViewWithMotion(async () => {
+      await routeRendered.promise;
+      detail.remove();
+      const returnArtwork = document.createElement("div");
+      returnArtwork.dataset.codaArtistArtworkReturn = artistKey;
+      returnArtwork.dataset.slot = "cover";
+      const image = document.createElement("img");
+      Object.defineProperty(image, "decode", {
+        configurable: true,
+        value: decodeImage,
+      });
+      returnArtwork.append(image);
+      document.body.append(returnArtwork);
+    }, "artist-detail-close");
+
+    await vi.waitFor(() =>
+      expect(document.startViewTransition).toHaveBeenCalledOnce(),
+    );
+    routeRendered.resolve();
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector("[data-coda-artist-artwork-return]"),
+      ).not.toBeNull(),
+    );
+    await vi.waitFor(() => expect(decodeImage).toHaveBeenCalledOnce());
+    expect(browserUpdateFinished).toBe(false);
+
+    imageDecoded.resolve();
+    await transition;
+
+    expect(browserUpdateFinished).toBe(true);
+    expect(artworkPresentAtCapture).toBe(true);
+    expect(artworkNameAtCapture).not.toBe("none");
   });
 
   it("keeps Discover detail identity shared until its exact return card mounts", async () => {

@@ -1,5 +1,11 @@
 import { type CSSProperties, useEffect, useRef, useState } from "react";
-import { fetchCoverUrl, initials, invalidateCoverUrl, isDesktop } from "@/lib";
+import {
+  fetchCoverUrl,
+  initials,
+  invalidateCoverUrl,
+  isDesktop,
+  readCachedCoverUrl,
+} from "@/lib";
 import { cn } from "@/lib/utils";
 import type { Album } from "@/types";
 
@@ -27,7 +33,12 @@ export function CoverArt({
   artistArtworkDetail,
   className,
 }: CoverArtProps) {
-  const [url, setUrl] = useState<string>();
+  const [url, setUrl] = useState<string | undefined>(
+    () =>
+      album.artworkUrl ||
+      fallbackArtworkUrl ||
+      (album.coverArt ? readCachedCoverUrl(album.coverArt) : undefined),
+  );
   const [requestVersion, setRequestVersion] = useState(0);
   const retryCountRef = useRef(0);
   const coverIdRef = useRef(album.coverArt);
@@ -83,6 +94,11 @@ export function CoverArt({
     }
     if (!album.coverArt || !isDesktop()) {
       setUrl(undefined);
+      return;
+    }
+    const cachedUrl = readCachedCoverUrl(album.coverArt);
+    if (cachedUrl && !failedImageUrlsRef.current.has(cachedUrl)) {
+      setUrl(cachedUrl);
       return;
     }
     fetchCoverUrl(album.coverArt)
@@ -156,27 +172,31 @@ export function CoverArt({
           decoding="async"
           draggable={false}
           onError={retryImage}
-          className="block size-full object-cover"
+          className="relative z-10 block size-full object-cover"
         />
-      ) : (
-        <>
-          <span className="absolute top-[12%] left-[9%] h-1 w-[31%] bg-(--cover-accent)" />
-          <span
-            className={cn(
-              "absolute left-[9%] font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] leading-none font-semibold tracking-[-0.08em]",
-              size === "small"
-                ? "top-[22%] text-xs"
-                : "top-[24%] text-[clamp(18px,4vw,38px)]",
-            )}
-          >
-            {initials(album.title)}
-          </span>
-          {size === "small" ? null : (
-            <span className="absolute right-[8%] bottom-[8%] left-[9%] truncate text-left text-[clamp(6px,0.75vw,9px)] font-bold tracking-widest uppercase">
-              {album.artist}
-            </span>
-          )}
-        </>
+      ) : null}
+      <span
+        aria-hidden="true"
+        className="absolute top-[12%] left-[9%] h-1 w-[31%] bg-(--cover-accent)"
+      />
+      <span
+        aria-hidden="true"
+        className={cn(
+          "absolute left-[9%] font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] leading-none font-semibold tracking-[-0.08em]",
+          size === "small"
+            ? "top-[22%] text-xs"
+            : "top-[24%] text-[clamp(18px,4vw,38px)]",
+        )}
+      >
+        {initials(album.title)}
+      </span>
+      {size === "small" ? null : (
+        <span
+          aria-hidden="true"
+          className="absolute right-[8%] bottom-[8%] left-[9%] truncate text-left text-[clamp(6px,0.75vw,9px)] font-bold tracking-widest uppercase"
+        >
+          {album.artist}
+        </span>
       )}
     </div>
   );

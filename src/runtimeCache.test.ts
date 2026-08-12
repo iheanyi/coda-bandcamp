@@ -20,6 +20,7 @@ import {
   fetchLibrary,
   fetchStreamUrl,
   invalidateStreamUrl,
+  readCachedCoverUrl,
 } from "./lib";
 
 describe("runtime media caches", () => {
@@ -44,6 +45,19 @@ describe("runtime media caches", () => {
 
     expect(first).toBe(second);
     expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it("exposes only resolved, unexpired cover URLs to remounted artwork", async () => {
+    mocks.invoke.mockResolvedValue("https://bandcamp.com/cover/cached");
+
+    expect(readCachedCoverUrl("cover-1")).toBeUndefined();
+    await fetchCoverUrl("cover-1");
+    expect(readCachedCoverUrl("cover-1")).toBe(
+      "https://bandcamp.com/cover/cached",
+    );
+
+    vi.advanceTimersByTime(60 * 60 * 1_000 + 1);
+    expect(readCachedCoverUrl("cover-1")).toBeUndefined();
   });
 
   it("refreshes cached media URLs after their bounded TTL", async () => {

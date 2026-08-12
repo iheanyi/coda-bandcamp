@@ -5,7 +5,11 @@ import {
   type ViewTransitionBuilder,
 } from "motion";
 import { flushSync } from "react-dom";
-import { codaMotion, codaViewForwardMotion } from "./motion";
+import {
+  codaMotion,
+  codaViewForwardMotion,
+  codaViewTransitionMotion,
+} from "./motion";
 import type {
   CodaViewTransitionKind,
   CodaViewTransitionUpdate,
@@ -15,7 +19,7 @@ const SHARED_ARTWORK_CLASS = "coda-motion-shared-artwork";
 const SHARED_IDENTITY_CLASS = "coda-motion-shared-identity";
 const SHARED_TITLE_CLASS = "coda-motion-shared-title";
 const DETAIL_SURFACE_CLASS = "coda-motion-detail-surface";
-const SHARED_SNAPSHOT_IMAGE_READY_TIMEOUT_MS = 250;
+const SHARED_SNAPSHOT_IMAGE_READY_TIMEOUT_MS = 150;
 const SHARED_SNAPSHOT_PAINT_TIMEOUT_MS = 50;
 const MOTION_VIEW_TRANSITION_READY_WATCHDOG_MS = 5_000;
 // Production transitions finish in well under one second. If the platform
@@ -59,6 +63,9 @@ function identityDestination(
   return fallback;
 }
 
+// Candidate selectors are derived while the old route is still mounted, but
+// their existence is resolved only after the Router has committed the new
+// route. Return markers cannot exist before that commit.
 function sharedSnapshotDestination(kind: CodaViewTransitionKind) {
   switch (kind) {
     case "album-detail":
@@ -96,13 +103,10 @@ function sharedSnapshotDestination(kind: CodaViewTransitionKind) {
             "[data-coda-artist-artwork-return]",
           )
         : undefined;
-      if (artworkDestination && document.querySelector(artworkDestination)) {
-        return artworkDestination;
-      }
       const nameSource = document.querySelector(
         "[data-coda-artist-name-detail]",
       );
-      return nameSource
+      const nameDestination = nameSource
         ? identityDestination(
             nameSource,
             ["data-coda-artist-name-detail"],
@@ -110,6 +114,9 @@ function sharedSnapshotDestination(kind: CodaViewTransitionKind) {
             "[data-coda-artist-name-return]",
           )
         : undefined;
+      return [artworkDestination, nameDestination].filter(
+        (destination): destination is string => Boolean(destination),
+      );
     }
     case "discover-detail": {
       const source = document.querySelector(
@@ -216,6 +223,15 @@ function sharedSnapshotDestination(kind: CodaViewTransitionKind) {
   }
 }
 
+function sharedSnapshotDestinations(kind: CodaViewTransitionKind) {
+  const destination = sharedSnapshotDestination(kind);
+  return Array.isArray(destination)
+    ? destination
+    : destination
+      ? [destination]
+      : [];
+}
+
 function sharedSnapshotSourceHasImage(kind: CodaViewTransitionKind) {
   let source: Element | null = null;
   switch (kind) {
@@ -289,18 +305,17 @@ function imagesWithin(target: HTMLElement) {
     : Array.from(target.querySelectorAll("img"));
 }
 
-function waitForImages(target: HTMLElement, timeoutMs: number) {
+function waitForCoverImage(target: HTMLElement, timeoutMs: number) {
   const existing = imagesWithin(target);
-  if (existing.length > 0 || typeof MutationObserver === "undefined") {
+  if (
+    existing.length > 0 ||
+    typeof MutationObserver === "undefined" ||
+    !target.matches("[data-slot='cover']")
+  ) {
     return Promise.resolve(existing);
   }
   return new Promise<HTMLImageElement[]>((resolve) => {
     let settled = false;
-    const observer = new MutationObserver(() => {
-      const images = imagesWithin(target);
-      if (images.length > 0) settle(images);
-    });
-    const timeoutId = window.setTimeout(() => settle([]), timeoutMs);
     const settle = (images: HTMLImageElement[]) => {
       if (settled) return;
       settled = true;
@@ -308,6 +323,11 @@ function waitForImages(target: HTMLElement, timeoutMs: number) {
       window.clearTimeout(timeoutId);
       resolve(images);
     };
+    const observer = new MutationObserver(() => {
+      const images = imagesWithin(target);
+      if (images.length > 0) settle(images);
+    });
+    const timeoutId = window.setTimeout(() => settle([]), timeoutMs);
     observer.observe(target, { childList: true, subtree: true });
   });
 }
@@ -325,48 +345,42 @@ async function waitBounded(promise: Promise<unknown>, timeoutMs: number) {
 
 async function nextPaint() {
   if (typeof requestAnimationFrame !== "function") return;
-  await new Promise<void>((resolve) => {
-    let settled = false;
-    const settle = () => {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timeoutId);
-      if (frameId !== undefined) cancelAnimationFrame(frameId);
-      resolve();
-    };
-    const timeoutId = window.setTimeout(
-      settle,
-      SHARED_SNAPSHOT_PAINT_TIMEOUT_MS,
-    );
-    const frameId = requestAnimationFrame(settle);
-  });
+  await waitBounded(
+    new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+    SHARED_SNAPSHOT_PAINT_TIMEOUT_MS,
+  );
 }
 
 async function awaitSharedSnapshotReady(
-  destination: string | undefined,
+  destinations: readonly string[],
   sourceHadImage: boolean,
 ) {
+  const destination = destinations.find((selector) =>
+    document.querySelector(selector),
+  );
   if (!destination) return;
   const target = document.querySelector<HTMLElement>(destination);
   if (!target) return;
 
-  const images = sourceHadImage
-    ? await waitForImages(
-        target,
-        Math.floor(SHARED_SNAPSHOT_IMAGE_READY_TIMEOUT_MS / 2),
-      )
-    : imagesWithin(target);
-  if (images.length > 0) {
-    await waitBounded(
-      Promise.all(images.map(imageReady)),
-      Math.floor(SHARED_SNAPSHOT_IMAGE_READY_TIMEOUT_MS / 2),
+  if (sourceHadImage) {
+    const startedAt = Date.now();
+    const readyImages = await waitForCoverImage(
+      target,
+      SHARED_SNAPSHOT_IMAGE_READY_TIMEOUT_MS,
     );
+    const remainingMs = Math.max(
+      0,
+      SHARED_SNAPSHOT_IMAGE_READY_TIMEOUT_MS - (Date.now() - startedAt),
+    );
+    await waitBounded(Promise.all(readyImages.map(imageReady)), remainingMs);
+    if (
+      readyImages.some(
+        (image) => getComputedStyle(image).visibility === "hidden",
+      )
+    ) {
+      await nextPaint();
+    }
   }
-
-  // Reading layout and yielding one frame gives WebKit a paint opportunity for
-  // a just-remounted, formerly lazy image before it captures the new snapshot.
-  target.getBoundingClientRect();
-  await nextPaint();
 }
 
 function configurePageTransition(
@@ -447,7 +461,7 @@ function configureSharedTitle(
     .class(SHARED_TITLE_CLASS)
     .group(false)
     .crop(false)
-    .layout(codaMotion.detailTitle)
+    .layout(codaViewTransitionMotion.detailTitle)
     .old({ opacity: [1, 0] }, codaMotion.detailIdentityFade)
     .new({ opacity: [0, 1] }, codaMotion.detailIdentityFade);
 }
@@ -474,7 +488,7 @@ function configureNowPlayingTransition(
       opening ? ".now-playing__artwork" : ".player__art-link",
       opening ? ".now-playing__artwork" : ".player__art-link",
     ),
-    codaMotion.detailArtwork,
+    codaViewTransitionMotion.detailArtwork,
   );
   configureSharedTitle(
     transition,
@@ -547,7 +561,7 @@ function configureMotionTransition(
         transition,
         document.querySelector(".coda-album-artwork-source"),
         ".album-detail__artwork [data-slot='cover']",
-        codaMotion.detailArtwork,
+        codaViewTransitionMotion.detailArtwork,
       );
       configureDetailSurface(transition, "[data-coda-album-detail-surface]");
       configureSharedTitle(
@@ -572,7 +586,7 @@ function configureMotionTransition(
           "data-coda-album-artwork-return",
           "[data-coda-album-artwork-return]",
         ),
-        codaMotion.detailArtwork,
+        codaViewTransitionMotion.detailArtwork,
       );
       configureSharedTitle(
         transition,
@@ -596,7 +610,7 @@ function configureMotionTransition(
             "[data-coda-artist-artwork-source][data-slot='cover']",
           ),
         ":is([data-coda-artist-artwork-detail][data-slot='cover'], [data-coda-artist-artwork-detail] [data-slot='cover'])",
-        codaMotion.detailArtwork,
+        codaViewTransitionMotion.detailArtwork,
       );
       configureDetailSurface(transition, "[data-coda-artist-detail-surface]");
       configureSharedTitle(
@@ -621,7 +635,7 @@ function configureMotionTransition(
           "data-coda-artist-artwork-return",
           "[data-coda-artist-artwork-return]",
         ),
-        codaMotion.detailArtwork,
+        codaViewTransitionMotion.detailArtwork,
       );
       configureSharedTitle(
         transition,
@@ -651,7 +665,7 @@ function configureMotionTransition(
           "data-coda-discover-artwork-detail",
           "[data-coda-discover-artwork-detail]",
         ),
-        codaMotion.detailArtwork,
+        codaViewTransitionMotion.detailArtwork,
       );
       configureDetailSurface(transition, "[data-coda-discover-detail-surface]");
       configureSharedTitle(
@@ -682,7 +696,7 @@ function configureMotionTransition(
           "data-coda-discover-artwork-return",
           "[data-coda-discover-artwork-return]",
         ),
-        codaMotion.detailArtwork,
+        codaViewTransitionMotion.detailArtwork,
       );
       configureSharedTitle(
         transition,
@@ -712,7 +726,7 @@ function configureMotionTransition(
           "data-coda-radio-artwork-detail",
           "[data-coda-radio-artwork-detail]",
         ),
-        codaMotion.detailArtwork,
+        codaViewTransitionMotion.detailArtwork,
       );
       configureDetailSurface(transition, "[data-coda-radio-detail-surface]");
       configureSharedTitle(
@@ -743,7 +757,7 @@ function configureMotionTransition(
           "data-coda-radio-artwork-return",
           "[data-coda-radio-artwork-return]",
         ),
-        codaMotion.detailArtwork,
+        codaViewTransitionMotion.detailArtwork,
       );
       configureSharedTitle(
         transition,
@@ -773,7 +787,7 @@ function configureMotionTransition(
           "data-coda-playlist-identity-detail",
           "[data-coda-playlist-identity-detail]",
         ),
-        codaMotion.detailIdentity,
+        codaViewTransitionMotion.detailIdentity,
         SHARED_IDENTITY_CLASS,
       );
       configureDetailSurface(transition, "[data-coda-playlist-detail-surface]");
@@ -805,7 +819,7 @@ function configureMotionTransition(
           "data-coda-playlist-identity-return",
           "[data-coda-playlist-identity-return]",
         ),
-        codaMotion.detailIdentity,
+        codaViewTransitionMotion.detailIdentity,
         SHARED_IDENTITY_CLASS,
       );
       configureSharedTitle(
@@ -842,7 +856,7 @@ export async function transitionCodaViewWithMotion(
   kind: CodaViewTransitionKind,
 ): Promise<void> {
   const transitionId = ++latestMotionTransitionId;
-  const snapshotDestination = sharedSnapshotDestination(kind);
+  const snapshotDestinations = sharedSnapshotDestinations(kind);
   const sourceHadImage = sharedSnapshotSourceHasImage(kind);
   let updated = false;
 
@@ -852,7 +866,7 @@ export async function transitionCodaViewWithMotion(
         if (transitionId !== latestMotionTransitionId || updated) return;
         updated = true;
         await flushSync(update);
-        await awaitSharedSnapshotReady(snapshotDestination, sourceHadImage);
+        await awaitSharedSnapshotReady(snapshotDestinations, sourceHadImage);
       },
       {
         // Motion 12.43 rewrites an "immediate" update with a synchronous

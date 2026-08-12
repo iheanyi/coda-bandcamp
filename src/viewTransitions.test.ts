@@ -2,10 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const motionMocks = vi.hoisted(() => ({
   animateView: vi.fn(),
+  spring: vi.fn(),
 }));
 
 vi.mock("motion", () => ({
   animateView: motionMocks.animateView,
+  spring: motionMocks.spring,
 }));
 
 import {
@@ -376,9 +378,7 @@ describe("transitionCodaView", () => {
       );
     expect(skipTransitions.at(-1)).not.toHaveBeenCalled();
     expect(source.style.viewTransitionName).toBe("player-artwork");
-    expect(document.documentElement).not.toHaveClass(
-      "coda-view-transitioning",
-    );
+    expect(document.documentElement).not.toHaveClass("coda-view-transitioning");
   });
 
   it("commits once and clears support when browser lifecycle promises reject", async () => {
@@ -829,6 +829,7 @@ describe("transitionCodaView with Motion view transitions", () => {
     document.body.append(source);
     const imageMounted = deferred();
     const imageDecoded = deferred();
+    const decodeImage = vi.fn(() => imageDecoded.promise);
     const builder = motionBuilder();
     let capturedCommit: void | Promise<void>;
     motionMocks.animateView.mockImplementation(
@@ -841,8 +842,9 @@ describe("transitionCodaView with Motion view transitions", () => {
     const transition = transitionCodaView(() => {
       const destination = document.createElement("div");
       destination.dataset.codaAlbumArtworkReturn = "album-1";
+      destination.dataset.slot = "cover";
       const image = document.createElement("img");
-      image.decode = vi.fn(() => imageDecoded.promise);
+      image.decode = decodeImage;
       document.body.append(destination);
       void imageMounted.promise.then(() => destination.append(image));
     }, "album-detail-close");
@@ -856,8 +858,7 @@ describe("transitionCodaView with Motion view transitions", () => {
     expect(commitSettled).toBe(false);
 
     imageMounted.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.waitFor(() => expect(decodeImage).toHaveBeenCalledOnce());
     expect(commitSettled).toBe(false);
 
     imageDecoded.resolve();
@@ -912,9 +913,9 @@ describe("transitionCodaView with Motion view transitions", () => {
     expect(builder.class).toHaveBeenCalledWith("coda-motion-shared-artwork");
     expect(builder.layout).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: "spring",
-        visualDuration: 0.46,
-        bounce: 0.08,
+        type: motionMocks.spring,
+        visualDuration: 0.3,
+        bounce: 0.06,
       }),
     );
     expect(builder.new).not.toHaveBeenCalled();
@@ -1008,9 +1009,9 @@ describe("transitionCodaView with Motion view transitions", () => {
       expect(builder.class).toHaveBeenCalledWith(transitionClass);
       expect(builder.layout).toHaveBeenCalledWith(
         expect.objectContaining({
-          type: "spring",
+          type: motionMocks.spring,
           bounce:
-            transitionClass === "coda-motion-shared-artwork" ? 0.08 : 0.04,
+            transitionClass === "coda-motion-shared-artwork" ? 0.06 : 0.04,
         }),
       );
     },
@@ -1238,8 +1239,8 @@ describe("transitionCodaView with Motion view transitions", () => {
       expect(builder.crop).toHaveBeenCalledWith(false);
       expect(builder.layout).toHaveBeenCalledWith(
         expect.objectContaining({
-          type: "spring",
-          visualDuration: 0.44,
+          type: motionMocks.spring,
+          visualDuration: 0.26,
           bounce: 0,
         }),
       );
@@ -1316,9 +1317,9 @@ describe("transitionCodaView with Motion view transitions", () => {
     expect(builder.class).toHaveBeenCalledWith("coda-motion-shared-artwork");
     expect(builder.layout).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: "spring",
-        visualDuration: 0.46,
-        bounce: 0.08,
+        type: motionMocks.spring,
+        visualDuration: 0.3,
+        bounce: 0.06,
       }),
     );
   });
@@ -1344,9 +1345,9 @@ describe("transitionCodaView with Motion view transitions", () => {
     expect(builder.class).toHaveBeenCalledWith("coda-motion-shared-artwork");
     expect(builder.layout).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: "spring",
-        visualDuration: 0.46,
-        bounce: 0.08,
+        type: motionMocks.spring,
+        visualDuration: 0.3,
+        bounce: 0.06,
       }),
     );
   });
@@ -1372,9 +1373,9 @@ describe("transitionCodaView with Motion view transitions", () => {
     expect(builder.class).toHaveBeenCalledWith("coda-motion-shared-artwork");
     expect(builder.layout).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: "spring",
-        visualDuration: 0.46,
-        bounce: 0.08,
+        type: motionMocks.spring,
+        visualDuration: 0.3,
+        bounce: 0.06,
       }),
     );
   });

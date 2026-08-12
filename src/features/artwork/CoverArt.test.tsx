@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   fetchCoverUrl: vi.fn<(coverArtId: string) => Promise<string>>(),
   invalidateCoverUrl: vi.fn<(coverArtId: string) => void>(),
+  readCachedCoverUrl: vi.fn<(coverArtId: string) => string | undefined>(),
 }));
 
 vi.mock("@/lib", () => ({
@@ -12,6 +13,7 @@ vi.mock("@/lib", () => ({
   initials: (value: string) => value.slice(0, 2),
   invalidateCoverUrl: mocks.invalidateCoverUrl,
   isDesktop: () => true,
+  readCachedCoverUrl: mocks.readCachedCoverUrl,
 }));
 
 import { CoverArt, type CoverArtAlbum } from "./CoverArt";
@@ -35,9 +37,21 @@ function album(artworkUrl: string): CoverArtAlbum {
 beforeEach(() => {
   mocks.fetchCoverUrl.mockReset();
   mocks.invalidateCoverUrl.mockReset();
+  mocks.readCachedCoverUrl.mockReset();
 });
 
 describe("CoverArt", () => {
+  it("renders a resolved runtime URL on the first remount commit", () => {
+    mocks.readCachedCoverUrl.mockReturnValue(resolvedB);
+    mocks.fetchCoverUrl.mockImplementation(() => new Promise(() => {}));
+
+    render(<CoverArt album={album("")} />);
+
+    expect(
+      screen.getByRole("img", { name: "Test Album cover" }),
+    ).toHaveAttribute("src", resolvedB);
+  });
+
   it("recovers a failed prop URL through the cover cache and resets failure scope for a later prop URL", async () => {
     mocks.fetchCoverUrl
       .mockResolvedValueOnce(resolvedB)
