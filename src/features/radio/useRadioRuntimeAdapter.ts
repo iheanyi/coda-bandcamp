@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 
-import type { LocalFavoritesController } from "@/features/favorites/useLocalFavoritesController";
+import type { FavoritesController } from "@/features/favorites/useLocalFavoritesController";
 
 import type { RadioRuntimeValue } from "./RadioRuntimeContext";
 
@@ -16,7 +16,7 @@ export type RadioPlaybackRuntime = Pick<
 >;
 
 type RadioFavoritesRuntime = Pick<
-  LocalFavoritesController,
+  FavoritesController,
   "favoriteRadioShowIds" | "toggleRadioFavorite"
 >;
 

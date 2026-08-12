@@ -40,10 +40,22 @@ Treat these behaviors as product requirements, not implementation details:
 - The queue is a floating, non-reflowing Show/Hide drawer with observable state
   and accessible labels. Its single entry point is the dedicated player control
   at bottom right; do not duplicate it in primary navigation.
-- Favorites are explicitly device-local because Bandcamp's Subsonic beta does
-  not return a valid Favorites response. Persist only bounded IDs and display
-  metadata, never signed artwork/stream URLs. Playlists still use Bandcamp's
-  official Subsonic playlist endpoints and sync to Bandcamp.
+- Authenticated album and track Favorites use Bandcamp's Subsonic `getStarred`,
+  `star`, and `unstar` endpoints. `getStarred` is authoritative for albums, but
+  Bandcamp can omit or delay individual track stars in that global response;
+  reconcile known tracks through live `getAlbum` responses as albums hydrate
+  and on explicit Refresh.
+  Persist a bounded, stripped local track-star reconciliation index so accepted
+  Bandcamp writes survive refresh and restart, but never describe that cache as
+  device-local favorite truth or claim complete cross-device enumeration. Do
+  not imply that Subsonic stars appear in Bandcamp's website UI or wishlist.
+  The tested stars were visible to Subsonic clients only. Do not substitute the
+  invalid `getStarred2` response or unreliable
+  `getAlbumList2?type=starred` filter. Visibly roll back rejected writes, and
+  remove a track only after `getAlbum` explicitly confirms its star is absent.
+  Radio Favorites remain device-local because Radio is anonymous and outside
+  Subsonic. Persist only bounded safe display metadata, never signed artwork or
+  stream URLs. Playlists continue to sync to Bandcamp.
 - Discover is anonymous and isolated from authenticated library credentials.
 - Bandcamp Radio is anonymous and isolated too. Its public feed is not a
   supported developer-API contract, so validate it defensively and fail without
@@ -223,9 +235,11 @@ overhead should not exceed the work being parallelized.
   Give the sibling a distinct basename rather than pairing `Thing.ts` with
   `Thing.tsx`, because TypeScript resolution can shadow the component module on
   case-insensitive filesystems.
-- TanStack Query owns album metadata, Discover, Radio, and playlist server
-  state. Local Favorites, the player, and the queue remain React/local
-  application state; authenticated credentials never enter the query cache.
+- TanStack Query owns album metadata, Bandcamp album Favorites, Discover,
+  Radio, and playlist server state. The bounded Bandcamp track-star
+  reconciliation index, device-local Radio Favorites, player, and queue remain
+  React/local application state; authenticated credentials never enter the
+  query cache.
 - Preserve lazy loading for Discover, Radio, and other code that is not needed
   for the initial library/player view.
 - Use `useMemo`, `useCallback`, and `memo` where they prevent measured or

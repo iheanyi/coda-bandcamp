@@ -10,7 +10,7 @@ import { isItemDate, parseLibraryDate } from "./libraryDates";
 
 export const LOCAL_FAVORITES_KEY = "coda.local-favorites.v1";
 
-export const LOCAL_FAVORITES_VERSION = 2;
+export const LOCAL_FAVORITES_VERSION = 3;
 export const MAX_FAVORITE_ALBUMS = 5_000;
 export const MAX_FAVORITE_TRACKS = 25_000;
 export const MAX_FAVORITE_RADIO_SHOWS = 5_000;
@@ -100,6 +100,9 @@ function palette(value: unknown): [string, string] | undefined {
 function sanitizeTrack(value: unknown): Track | undefined {
   if (!isRecord(value)) return undefined;
   const colors = palette(value.palette);
+  const starredAt = isAbsent(value.starredAt)
+    ? undefined
+    : sanitizeDateText(value.starredAt);
   if (
     !isText(value.id) ||
     !isText(value.title) ||
@@ -112,6 +115,7 @@ function sanitizeTrack(value: unknown): Track | undefined {
     (!isAbsent(value.albumArtist) && !isText(value.albumArtist, false)) ||
     (!isAbsent(value.musicBrainzId) && !isMusicBrainzId(value.musicBrainzId)) ||
     (!isAbsent(value.coverArt) && !isText(value.coverArt, false)) ||
+    (!isAbsent(value.starredAt) && starredAt === undefined) ||
     !colors
   ) {
     return undefined;
@@ -128,7 +132,25 @@ function sanitizeTrack(value: unknown): Track | undefined {
     ...(isAbsent(value.albumArtist) ? {} : { albumArtist: value.albumArtist }),
     ...(isAbsent(value.musicBrainzId) ? {} : { musicBrainzId: value.musicBrainzId }),
     ...(isAbsent(value.coverArt) ? {} : { coverArt: value.coverArt }),
+    ...(starredAt === undefined ? {} : { starredAt }),
     palette: colors,
+  };
+}
+
+/**
+ * Durable local Favorites state contains only Bandcamp track-star reconciliation
+ * metadata plus anonymous Radio favorites. Album stars are always enumerated by
+ * getStarred and must never be reconstructed from this cache.
+ */
+export function localTrackStarIndexAndRadio(
+  favorites: LocalFavoriteCollection,
+): LocalFavoriteCollection {
+  return {
+    ...emptyLocalFavorites(),
+    songIds: favorites.songIds,
+    tracks: favorites.tracks,
+    radioShowIds: favorites.radioShowIds,
+    radioShows: favorites.radioShows,
   };
 }
 
@@ -392,17 +414,28 @@ export function parseLocalFavoritesSnapshot(
 ): LocalFavoriteCollection | undefined {
   if (
     !isRecord(value) ||
-    (value.version !== 1 && value.version !== LOCAL_FAVORITES_VERSION)
+    ![1, 2, LOCAL_FAVORITES_VERSION].includes(Number(value.version))
   ) {
     return undefined;
   }
-  return sanitizeLocalFavorites(value);
+  const sanitized = sanitizeLocalFavorites(value);
+  if (!sanitized) return undefined;
+  if (value.version === LOCAL_FAVORITES_VERSION) {
+    return localTrackStarIndexAndRadio(sanitized);
+  }
+  return {
+    ...emptyLocalFavorites(),
+    radioShowIds: sanitized.radioShowIds,
+    radioShows: sanitized.radioShows,
+  };
 }
 
 export function createLocalFavoritesSnapshot(
   favorites: LocalFavoriteCollection,
 ): LocalFavoritesSnapshot {
-  const sanitized = sanitizeLocalFavorites(favorites);
+  const sanitized = sanitizeLocalFavorites(
+    localTrackStarIndexAndRadio(favorites),
+  );
   if (!sanitized) throw new Error("Local favorites contain invalid music metadata.");
   return {
     version: LOCAL_FAVORITES_VERSION,
@@ -463,6 +496,40 @@ export function updateLocalFavorites(
     albumIds: [input.id, ...albumIds],
     albums: album ? [album, ...albums] : albums,
   };
+}
+
+export function reconcileLocalTrackStarIndex(
+  current: LocalFavoriteCollection,
+  confirmedStarred: readonly Track[],
+  confirmedUnstarredIds: readonly string[] = [],
+): LocalFavoriteCollection {
+  const unstarredIds = new Set(confirmedUnstarredIds);
+  const songIds = current.songIds.filter((id) => !unstarredIds.has(id));
+  const tracks = current.tracks.filter((track) => !unstarredIds.has(track.id));
+  let next: LocalFavoriteCollection =
+    songIds.length === current.songIds.length &&
+      tracks.length === current.tracks.length
+      ? current
+      : { ...current, songIds, tracks };
+  for (const candidate of confirmedStarred) {
+    if (candidate.starredAt === undefined) continue;
+    const track = sanitizeTrack(candidate);
+    if (!track) continue;
+    const existing = next.tracks.find((item) => item.id === track.id);
+    if (
+      next.songIds.includes(track.id) &&
+      existing !== undefined &&
+      JSON.stringify(existing) === JSON.stringify(track)
+    ) {
+      continue;
+    }
+    next = updateLocalFavorites(
+      next,
+      { id: track.id, kind: "song", favorite: true, albumId: track.albumId },
+      track,
+    );
+  }
+  return next;
 }
 
 export function updateLocalRadioFavorite(

@@ -44,7 +44,15 @@ Native tests mirror those feature boundaries under `src-tauri/src/tests/`. Tests
 
 ## Renderer direction
 
-TanStack Query remains the owner of remote album, playlist, Discover, and Radio state. React/local state remains the owner of navigation, the queue, playback, and local Favorites. New renderer decomposition should follow behavior rather than visual fragments:
+TanStack Query remains the owner of remote album, Bandcamp album Favorites,
+playlist, Discover, and Radio state. React/local state remains the owner of
+navigation, the queue, playback, device-local Radio favorites, and the bounded
+track-star reconciliation index required because Bandcamp persists song stars
+but can delay or omit them from `getStarred`. The index stores only IDs and safe
+display metadata; a live `getAlbum` response is the verification source and
+signed URLs are never persisted. These Subsonic stars are separate from the
+Bandcamp website UI and must not be presented as wishlist state. New renderer
+decomposition should follow behavior rather than visual fragments:
 
 1. Extract a library controller hook around connection, cached startup, synchronization, and Query updates.
 2. Model queue/current-track invariants in a playback reducer and controller hook while keeping the high-frequency playback clock isolated.

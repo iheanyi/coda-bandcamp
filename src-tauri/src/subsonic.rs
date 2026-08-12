@@ -12,6 +12,7 @@ use crate::validation::{
     MAX_METADATA_TEXT_LENGTH, MAX_TRACK_NUMBER,
 };
 use keyring::Entry;
+use quick_xml::{events::Event, Reader, XmlVersion};
 use rand::{distributions::Alphanumeric, Rng};
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -251,6 +252,32 @@ pub(super) async fn request_mutation_json(
     parse_subsonic_response(response).await
 }
 
+pub(super) async fn request_empty_mutation(
+    endpoint: &str,
+    credentials: &ConnectionInput,
+    extra: &[(String, String)],
+) -> Result<(), String> {
+    let url = authenticated_url(endpoint, credentials, &[])?;
+    let response = send_bandcamp_request(
+        http_client()?.post(url).form(extra),
+        "Bandcamp",
+        BandcampRetryPolicy::Never,
+    )
+    .await?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Bandcamp returned HTTP {}.",
+            response.status().as_u16()
+        ));
+    }
+    let bytes = read_bounded_response(response, MAX_JSON_RESPONSE_BYTES, "Bandcamp").await?;
+    run_blocking(
+        "Could not finish parsing the Bandcamp response",
+        move || parse_subsonic_empty_response_bytes(&bytes),
+    )
+    .await
+}
+
 pub(super) async fn parse_subsonic_response(response: reqwest::Response) -> Result<Value, String> {
     if !response.status().is_success() {
         return Err(format!(
@@ -279,6 +306,10 @@ pub(super) async fn parse_subsonic_response(response: reqwest::Response) -> Resu
 
 pub(super) fn subsonic_error_message(envelope: &Value) -> String {
     let code = envelope.pointer("/error/code").and_then(number_value);
+    subsonic_error_code_message(code)
+}
+
+fn subsonic_error_code_message(code: Option<u64>) -> String {
     match code {
         Some(40 | 50) => {
             "Bandcamp rejected the generated credentials. Generate a new pair in Fan Settings and try again."
@@ -286,6 +317,70 @@ pub(super) fn subsonic_error_message(envelope: &Value) -> String {
         }
         Some(code) => format!("Bandcamp rejected the request (error code {code})."),
         None => "Bandcamp rejected the request.".into(),
+    }
+}
+
+pub(super) fn parse_subsonic_empty_response_bytes(bytes: &[u8]) -> Result<(), String> {
+    if let Ok(body) = serde_json::from_slice::<Value>(bytes) {
+        let envelope = body
+            .get("subsonic-response")
+            .ok_or_else(|| "Bandcamp returned an unexpected response.".to_string())?;
+        return match envelope.get("status").and_then(Value::as_str) {
+            Some("ok") => Ok(()),
+            Some("failed") => Err(subsonic_error_message(envelope)),
+            _ => Err("Bandcamp returned an unexpected response.".into()),
+        };
+    }
+
+    let mut reader = Reader::from_reader(bytes);
+    reader.config_mut().trim_text(true);
+    let mut response_status = None;
+    let mut error_code = None;
+    loop {
+        let event = reader
+            .read_event()
+            .map_err(|_| "Bandcamp returned an unreadable response.".to_string())?;
+        match event {
+            Event::Start(element) | Event::Empty(element) => {
+                let name = element.local_name();
+                if name.as_ref() == b"subsonic-response" {
+                    for attribute in element.attributes().with_checks(true) {
+                        let attribute = attribute
+                            .map_err(|_| "Bandcamp returned an unreadable response.".to_string())?;
+                        if attribute.key.as_ref() == b"status" {
+                            response_status = Some(
+                                attribute
+                                    .normalized_value(XmlVersion::Implicit1_0)
+                                    .map_err(|_| {
+                                        "Bandcamp returned an unreadable response.".to_string()
+                                    })?
+                                    .into_owned(),
+                            );
+                        }
+                    }
+                } else if name.as_ref() == b"error" {
+                    for attribute in element.attributes().with_checks(true) {
+                        let attribute = attribute
+                            .map_err(|_| "Bandcamp returned an unreadable response.".to_string())?;
+                        if attribute.key.as_ref() == b"code" {
+                            error_code = attribute
+                                .normalized_value(XmlVersion::Implicit1_0)
+                                .ok()
+                                .and_then(|value| value.parse::<u64>().ok());
+                        }
+                    }
+                }
+            }
+            Event::DocType(_) => return Err("Bandcamp returned an unreadable response.".into()),
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+
+    match response_status.as_deref() {
+        Some("ok") => Ok(()),
+        Some("failed") => Err(subsonic_error_code_message(error_code)),
+        _ => Err("Bandcamp returned an unexpected response.".into()),
     }
 }
 
@@ -468,6 +563,8 @@ pub(super) fn track_from_value(value: &Value, fallback_album_id: &str) -> Option
         music_brainz_id: string_field(value, &["musicBrainzId"])
             .filter(|identifier| valid_musicbrainz_id(identifier)),
         cover_art: string_field(value, &["coverArt"]),
+        starred_at: bounded_optional_field(value, &["starred"], MAX_METADATA_TEXT_LENGTH)
+            .filter(|date| valid_library_date(date)),
     })
 }
 
@@ -531,6 +628,10 @@ pub(super) fn bounded_track_from_value(value: &Value, fallback_album_id: &str) -
             .cover_art
             .as_deref()
             .is_some_and(|cover| validate_subsonic_id(cover, "cover artwork").is_err())
+        || track
+            .starred_at
+            .as_deref()
+            .is_some_and(|date| !valid_library_date(date))
     {
         return None;
     }

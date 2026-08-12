@@ -2,6 +2,7 @@
 fn every_tauri_command_enters_through_the_async_runtime() {
     let sources = [
         ("discover", include_str!("../discover.rs")),
+        ("favorites", include_str!("../favorites.rs")),
         ("lastfm", include_str!("../lastfm.rs")),
         ("library", include_str!("../library.rs")),
         ("media_session", include_str!("../media_session.rs")),
@@ -31,7 +32,7 @@ fn every_tauri_command_enters_through_the_async_runtime() {
         }
     }
     assert_eq!(
-        command_count, 31,
+        command_count, 34,
         "the registered command inventory changed"
     );
 }
@@ -72,6 +73,7 @@ fn production_modules_declare_their_dependencies_explicitly() {
         ("bandcamp_http", include_str!("../bandcamp_http.rs")),
         ("desktop", include_str!("../desktop.rs")),
         ("discover", include_str!("../discover.rs")),
+        ("favorites", include_str!("../favorites.rs")),
         ("lastfm", include_str!("../lastfm.rs")),
         ("library", include_str!("../library.rs")),
         ("library_cache", include_str!("../library_cache.rs")),
@@ -99,6 +101,7 @@ fn production_modules_declare_their_dependencies_explicitly() {
         "bandcamp_http",
         "desktop",
         "discover",
+        "favorites",
         "lastfm",
         "library",
         "library_cache",

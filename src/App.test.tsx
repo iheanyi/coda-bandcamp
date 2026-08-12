@@ -12,7 +12,13 @@ import {
   writeLocalFavorites,
 } from "./localFavorites";
 import { LIBRARY_STARTUP_STEP_TIMEOUT_MS } from "./libraryStartup";
-import type { Album, LocalFavoriteCollection, Track } from "./types";
+import type {
+  Album,
+  FavoriteCollection,
+  FavoriteInput,
+  LocalFavoriteCollection,
+  Track,
+} from "./types";
 import { createCodaMemoryRouter } from "./router";
 
 const mocks = vi.hoisted(() => ({
@@ -41,6 +47,7 @@ const mocks = vi.hoisted(() => ({
   openBandcampUrl: vi.fn(),
   readLibraryCache: vi.fn(),
   readLocalFavoritesAsync: vi.fn(),
+  reconcileFavoriteTracks: vi.fn(),
   scrobbleLastFm: vi.fn(),
   savePlayerState: vi.fn(),
   setFavorite: vi.fn(),
@@ -81,6 +88,7 @@ vi.mock("./lib", async (importOriginal) => {
     openBandcampUrl: mocks.openBandcampUrl,
     loadPlayerState: mocks.loadPlayerState,
     readLibraryCache: mocks.readLibraryCache,
+    reconcileFavoriteTracks: mocks.reconcileFavoriteTracks,
     scrobbleLastFm: mocks.scrobbleLastFm,
     savePlayerState: mocks.savePlayerState,
     setFavorite: mocks.setFavorite,
@@ -184,6 +192,20 @@ const album: Album = {
   genre: "Ambient",
   tracks,
   palette: ["#777", "#222"],
+};
+
+const albumFavorites: FavoriteCollection = {
+  albumIds: [album.id],
+  songIds: [],
+  albums: [album],
+  tracks: [],
+};
+
+const trackFavorites: FavoriteCollection = {
+  albumIds: [],
+  songIds: [tracks[0].id],
+  albums: [],
+  tracks: [tracks[0]],
 };
 
 const single: Album = {
@@ -308,7 +330,26 @@ beforeEach(() => {
     .mockImplementation(async () => readLocalFavorites());
   mocks.scrobbleLastFm.mockReset().mockResolvedValue(undefined);
   mocks.savePlayerState.mockReset().mockResolvedValue(undefined);
-  mocks.setFavorite.mockReset().mockResolvedValue(undefined);
+  mocks.reconcileFavoriteTracks.mockReset().mockResolvedValue({
+    tracks: [],
+    unstarredIds: [],
+    unavailableTrackCount: 0,
+  });
+  mocks.setFavorite.mockReset().mockImplementation(async (input: FavoriteInput) => ({
+    accepted: true,
+    verification: input.kind === "album" ? "notRequired" : "verified",
+    favorite: input.favorite,
+    ...(input.kind === "song"
+      ? {
+          track: {
+            ...(tracks.find((track) => track.id === input.id) ?? tracks[0]),
+            ...(input.favorite
+              ? { starredAt: "2026-08-12T18:01:00Z" }
+              : {}),
+          },
+        }
+      : {}),
+  }));
   mocks.updateLastFmNowPlaying.mockReset().mockResolvedValue(undefined);
   mocks.writeLocalFavoritesAsync
     .mockReset()
@@ -3936,11 +3977,19 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([largeAlbum]);
     mocks.fetchAlbum.mockResolvedValue(largeTracks);
+    mocks.fetchFavorites
+      .mockResolvedValueOnce({ albumIds: [], songIds: [], albums: [], tracks: [] })
+      .mockResolvedValue({
+        albumIds: [],
+        songIds: [largeTracks[0].id],
+        albums: [],
+        tracks: [largeTracks[0]],
+      });
     try {
       renderApp();
 
       await screen.findByText("Soft Focus");
-    fireEvent.click(screen.getByRole("link", { name: "Open Soft Focus" }));
+      fireEvent.click(screen.getByRole("link", { name: "Open Soft Focus" }));
       const albumPage = await screen.findByRole("article", {
         name: "Soft Focus release details",
       });
@@ -4694,9 +4743,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(mocks.fetchAlbum).not.toHaveBeenCalled();
   });
 
-  it("does not overwrite durable Favorites when a mutation beats hydration", async () => {
-    const favoritesRequest = deferred<LocalFavoriteCollection>();
-    mocks.readLocalFavoritesAsync.mockReturnValueOnce(favoritesRequest.promise);
+  it("does not mutate Bandcamp Favorites before their initial hydration", async () => {
+    const favoritesRequest = deferred<FavoriteCollection>();
+    mocks.fetchFavorites.mockReturnValueOnce(favoritesRequest.promise);
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
     renderApp();
@@ -4708,27 +4757,25 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
     fireEvent.click(within(albumPage).getByRole("button", { name: "Favorite" }));
 
-    expect(mocks.writeLocalFavoritesAsync).not.toHaveBeenCalled();
+    expect(mocks.setFavorite).not.toHaveBeenCalled();
     expect((await screen.findAllByText(
       "Favorites are still loading. Try again in a moment.",
     )).length).toBeGreaterThan(0);
 
-    const storedFavorites: LocalFavoriteCollection = {
-      ...emptyLocalFavorites(),
-      albumIds: [album.id],
-      albums: [{ ...album, tracks: undefined }],
-    };
-    await act(async () => favoritesRequest.resolve(storedFavorites));
+    await act(async () => favoritesRequest.resolve(albumFavorites));
 
     expect(await within(albumPage).findByRole("button", {
       name: "Favorited",
     })).toHaveAttribute("aria-pressed", "true");
-    expect(mocks.writeLocalFavoritesAsync).not.toHaveBeenCalled();
+    expect(mocks.setFavorite).not.toHaveBeenCalled();
   });
 
-  it("saves favorites locally and opens their internal release page", async () => {
+  it("syncs music favorites with Bandcamp and opens their internal release page", async () => {
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
+    mocks.fetchFavorites
+      .mockResolvedValueOnce({ albumIds: [], songIds: [], albums: [], tracks: [] })
+      .mockResolvedValue(albumFavorites);
     renderApp();
 
     await screen.findByText("Soft Focus");
@@ -4738,14 +4785,17 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
     fireEvent.click(within(albumPage).getByRole("button", { name: "Favorite" }));
 
-    await waitFor(() =>
-      expect(window.localStorage.getItem("coda.local-favorites.v1"))
-        .toContain("album-1"),
-    );
-    expect(mocks.setFavorite).not.toHaveBeenCalled();
+    await waitFor(() => expect(mocks.setFavorite).toHaveBeenCalledWith({
+      id: album.id,
+      kind: "album",
+      favorite: true,
+    }));
+    expect(mocks.writeLocalFavoritesAsync).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("link", { name: "Favorites" }));
-    expect(await screen.findByText("On this device")).toBeInTheDocument();
+    expect(await screen.findByText(
+      "Music favorites sync through Bandcamp’s Subsonic service, separate from the Bandcamp website. Track listings can lag, so Coda confirms them as albums load and on Refresh. Radio shows stay on this device.",
+    )).toBeInTheDocument();
     expect(screen.getByText("Soft Focus")).toBeInTheDocument();
     const favoriteAlbumTrigger = screen.getByRole("link", {
       name: "Soft Focus",
@@ -4761,18 +4811,20 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       name: "Back",
     }));
 
-    expect(await screen.findByText("On this device")).toBeInTheDocument();
+    expect(await screen.findByText(
+      "Music favorites sync through Bandcamp’s Subsonic service, separate from the Bandcamp website. Track listings can lag, so Coda confirms them as albums load and on Refresh. Radio shows stay on this device.",
+    )).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByRole("link", { name: "Soft Focus" }))
         .toHaveFocus(),
     );
   });
 
-  it("rolls back an optimistic Favorite and withholds success when persistence fails", async () => {
-    const writeRequest = deferred<LocalFavoriteCollection>();
+  it("rolls back an optimistic Favorite and withholds success when Bandcamp rejects it", async () => {
+    const writeRequest = deferred<void>();
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
-    mocks.writeLocalFavoritesAsync.mockReturnValueOnce(writeRequest.promise);
+    mocks.setFavorite.mockReturnValueOnce(writeRequest.promise);
     renderApp();
 
     await screen.findByText("Soft Focus");
@@ -4782,17 +4834,17 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
     fireEvent.click(within(albumPage).getByRole("button", { name: "Favorite" }));
 
-    expect(within(albumPage).getByRole("button", { name: "Favorited" }))
+    expect(await within(albumPage).findByRole("button", { name: "Favorited" }))
       .toHaveAttribute("aria-pressed", "true");
     await act(async () => {
-      writeRequest.reject(new Error("Local Favorites could not be saved."));
+      writeRequest.reject(new Error("Bandcamp Favorites could not be saved."));
     });
     expect((await screen.findAllByText(
-      "Local Favorites could not be saved.",
+      "Bandcamp Favorites could not be saved.",
     )).length).toBeGreaterThan(0);
     expect(await within(albumPage).findByRole("button", { name: "Favorite" }))
       .toHaveAttribute("aria-pressed", "false");
-    expect(screen.queryByText("Saved to Favorites on this device"))
+    expect(screen.queryByText("Saved to Bandcamp Subsonic Favorites"))
       .not.toBeInTheDocument();
   });
 
@@ -4803,21 +4855,17 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     };
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([coveredAlbum]);
+    mocks.fetchFavorites.mockResolvedValue({
+      ...albumFavorites,
+      albums: [coveredAlbum],
+    });
     renderApp();
 
     await screen.findByText("Soft Focus");
-    fireEvent.click(screen.getByRole("link", { name: "Open Soft Focus" }));
-    let albumPage = await screen.findByRole("article", {
-      name: "Soft Focus release details",
-    });
-    fireEvent.click(within(albumPage).getByRole("button", {
-      name: "Favorite",
-    }));
-    fireEvent.click(within(albumPage).getByRole("button", {
-      name: "Back",
-    }));
     fireEvent.click(screen.getByRole("link", { name: "Favorites" }));
-    await screen.findByText("On this device");
+    await screen.findByText(
+      "Music favorites sync through Bandcamp’s Subsonic service, separate from the Bandcamp website. Track listings can lag, so Coda confirms them as albums load and on Refresh. Radio shows stay on this device.",
+    );
     await waitFor(() =>
       expect(
         document.querySelector(
@@ -4879,7 +4927,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         artworkDetailAfterUpdate: 1,
         titleDetailAfterUpdate: 1,
       }]));
-      albumPage = await screen.findByRole("article", {
+      const albumPage = await screen.findByRole("article", {
         name: "Soft Focus release details",
       });
       fireEvent.click(within(albumPage).getByRole("button", {
@@ -4904,25 +4952,16 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
   });
 
   it("restores the exact favorite-track album link after album Back", async () => {
-    window.localStorage.setItem(
-      "coda.local-favorites.v1",
-      JSON.stringify({
-        version: 2,
-        albumIds: [],
-        songIds: [tracks[0].id],
-        albums: [],
-        tracks: [tracks[0]],
-        radioShowIds: [],
-        radioShows: [],
-      }),
-    );
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
+    mocks.fetchFavorites.mockResolvedValue(trackFavorites);
     renderApp();
 
     await screen.findByText("Soft Focus");
     fireEvent.click(screen.getByRole("link", { name: "Favorites" }));
-    await screen.findByText("On this device");
+    await screen.findByText(
+      "Music favorites sync through Bandcamp’s Subsonic service, separate from the Bandcamp website. Track listings can lag, so Coda confirms them as albums load and on Refresh. Radio shows stay on this device.",
+    );
 
     const favoriteTrackAlbumLink = getNavigationSlotLink(
       "Open Soft Focus album",
@@ -4952,7 +4991,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         name: "Back",
       }));
 
-      await screen.findByText("On this device");
+      await screen.findByText(
+      "Music favorites sync through Bandcamp’s Subsonic service, separate from the Bandcamp website. Track listings can lag, so Coda confirms them as albums load and on Refresh. Radio shows stay on this device.",
+      );
 
       await act(async () => transitionFinished.resolve());
       await waitFor(() =>
@@ -4974,27 +5015,54 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     }
   });
 
-  it("shares a favorite track album title when artwork is unavailable", async () => {
-    window.localStorage.setItem(
-      "coda.local-favorites.v1",
-      JSON.stringify({
-        version: 2,
-        albumIds: [],
-        songIds: [tracks[0].id],
-        albums: [],
-        tracks: [tracks[0]],
-        radioShowIds: [],
-        radioShows: [],
-      }),
-    );
+  it("renders the persisted Bandcamp track-star index after restart and opens Now Playing", async () => {
+    const indexedTrack = {
+      ...tracks[0],
+      starredAt: "2026-08-12T18:01:00Z",
+    };
+    writeLocalFavorites({
+      ...emptyLocalFavorites(),
+      songIds: [indexedTrack.id],
+      tracks: [indexedTrack],
+    });
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
+    mocks.fetchFavorites.mockResolvedValue({
+      albumIds: [],
+      songIds: [],
+      albums: [],
+      tracks: [],
+    });
+    renderApp();
+
+    await screen.findByText("Soft Focus");
+    fireEvent.click(screen.getByRole("link", { name: "Favorites" }));
+    const favoriteTracks = await screen.findByLabelText("Favorite tracks");
+    fireEvent.click(within(favoriteTracks).getByRole("button", {
+      name: "Play First Light",
+    }));
+
+    const nowPlayingLink = await screen.findByRole("link", {
+      name: "Open Now Playing",
+    });
+    fireEvent.click(nowPlayingLink);
+
+    expect(await screen.findByRole("article", { name: "First Light" }))
+      .toBeInTheDocument();
+  });
+
+  it("shares a favorite track album title when artwork is unavailable", async () => {
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([album]);
+    mocks.fetchFavorites.mockResolvedValue(trackFavorites);
     const { queryClient } = renderApp();
 
     await screen.findByText("Soft Focus");
     queryClient.setQueryData(albumQueryKey(album.id), tracks);
     fireEvent.click(screen.getByRole("link", { name: "Favorites" }));
-    await screen.findByText("On this device");
+    await screen.findByText(
+      "Music favorites sync through Bandcamp’s Subsonic service, separate from the Bandcamp website. Track listings can lag, so Coda confirms them as albums load and on Refresh. Radio shows stay on this device.",
+    );
     const albumLink = getNavigationSlotLink(
       "Open Soft Focus album",
       "favorite-track:track-1",
@@ -5104,7 +5172,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
       await screen.findByText("Soft Focus");
       fireEvent.click(screen.getByRole("link", { name: "Favorites" }));
-      await screen.findByText("On this device");
+      await screen.findByText(
+      "Music favorites sync through Bandcamp’s Subsonic service, separate from the Bandcamp website. Track listings can lag, so Coda confirms them as albums load and on Refresh. Radio shows stay on this device.",
+      );
       startViewTransition.mockClear();
       transitionClasses.length = 0;
 
@@ -5132,19 +5202,17 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     }
   });
 
-  it("renders a favorite album tracklist locally when its detail transition applies late", async () => {
+  it("renders a favorite album tracklist when its detail transition applies late", async () => {
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
+    mocks.fetchFavorites.mockResolvedValue(albumFavorites);
     renderApp();
 
     await screen.findByText("Soft Focus");
-    fireEvent.click(screen.getByRole("link", { name: "Open Soft Focus" }));
-    let albumPage = await screen.findByRole("article", {
-      name: "Soft Focus release details",
-    });
-    fireEvent.click(within(albumPage).getByRole("button", { name: "Favorite" }));
     fireEvent.click(screen.getByRole("link", { name: "Favorites" }));
-    await screen.findByText("On this device");
+    await screen.findByText(
+      "Music favorites sync through Bandcamp’s Subsonic service, separate from the Bandcamp website. Track listings can lag, so Coda confirms them as albums load and on Refresh. Radio shows stay on this device.",
+    );
 
     mocks.fetchAlbum.mockClear();
     const originalDescriptor = Object.getOwnPropertyDescriptor(
@@ -5164,7 +5232,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       fireEvent.click(screen.getByRole("link", { name: "Soft Focus" }));
       applyTransitionUpdate?.();
 
-      albumPage = await screen.findByRole("article", {
+      const albumPage = await screen.findByRole("article", {
         name: "Soft Focus release details",
       });
       expect(within(albumPage).getByText("First Light")).toBeInTheDocument();

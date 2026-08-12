@@ -22,6 +22,7 @@ const track: Track = {
   albumArtist: "Sweeps",
   musicBrainzId: "189002e7-3285-4e2e-92a3-7f6c30d407a2",
   coverArt: "cover-1",
+  starredAt: "2025-07-01T12:01:00Z",
   artworkUrl: "https://bandcamp.com/api/subsonic/rest/getCoverArt.view?t=signed",
   streamUrl: "https://bandcamp.com/api/subsonic/rest/stream.view?t=signed",
   palette: ["#a66", "#222"],
@@ -63,7 +64,7 @@ beforeEach(() => {
 });
 
 describe("local favorites", () => {
-  it("persists bounded track metadata without signed media URLs", () => {
+  it("persists a bounded track-star index without signed media URLs", () => {
     let favorites = updateLocalFavorites(
       emptyLocalFavorites(),
       { id: album.id, kind: "album", favorite: true },
@@ -81,25 +82,18 @@ describe("local favorites", () => {
     expect(serialized).not.toContain("stream.view");
     expect(serialized).not.toContain("getCoverArt.view");
     expect(readLocalFavorites()).toMatchObject({
-      albumIds: ["album-1"],
+      albumIds: [],
       songIds: ["song-1"],
-      albums: [{
-        id: "album-1",
-        coverArt: "cover-1",
-        addedAt: "30 Jun 2025 12:00:00 GMT",
-        starredAt: "2025-07-01T12:00:00Z",
-        playedAt: "2025-07-02T12:00:00Z",
-        originalReleaseDate: { year: 2001 },
-        releaseDate: { year: 2025, month: 6, day: 30 },
-      }],
+      albums: [],
       tracks: [{
         id: "song-1",
         coverArt: "cover-1",
         albumArtist: "Sweeps",
         musicBrainzId: "189002e7-3285-4e2e-92a3-7f6c30d407a2",
+        starredAt: "2025-07-01T12:01:00Z",
       }],
     });
-    expect(readLocalFavorites().albums[0].tracks).toBeUndefined();
+    expect(readLocalFavorites().albums).toEqual([]);
   });
 
   it("removes favorites and discards malformed storage", () => {
@@ -231,7 +225,7 @@ describe("local favorites", () => {
     )).toBe(repaired);
   });
 
-  it("migrates version-one favorites without losing music metadata", () => {
+  it("drops legacy device-local music while migrating version-one favorites", () => {
     window.localStorage.setItem(
       LOCAL_FAVORITES_KEY,
       JSON.stringify({
@@ -244,12 +238,28 @@ describe("local favorites", () => {
     );
 
     const migrated = readLocalFavorites();
-    expect(migrated).toMatchObject({
-      albumIds: ["album-1"],
-      radioShowIds: [],
-      radioShows: [],
+    expect(migrated).toEqual(emptyLocalFavorites());
+  });
+
+  it("does not reinterpret version-two device-local tracks as Bandcamp stars", () => {
+    window.localStorage.setItem(
+      LOCAL_FAVORITES_KEY,
+      JSON.stringify({
+        version: 2,
+        albumIds: [album.id],
+        songIds: [track.id],
+        albums: [album],
+        tracks: [track],
+        radioShowIds: [radioShow.id],
+        radioShows: [radioShow],
+      }),
+    );
+
+    expect(readLocalFavorites()).toEqual({
+      ...emptyLocalFavorites(),
+      radioShowIds: [radioShow.id],
+      radioShows: [{ ...radioShow, artworkUrl: undefined }],
     });
-    expect(migrated.albums[0].tracks).toBeUndefined();
   });
 
   it("persists radio-show favorites without remote artwork URLs", () => {

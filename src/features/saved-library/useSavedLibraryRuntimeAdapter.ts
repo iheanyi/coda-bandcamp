@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 
 import type { ToastNotifier } from "@/components/ui/toastManager";
-import type { LocalFavoritesController } from "@/features/favorites/useLocalFavoritesController";
+import type { FavoritesController } from "@/features/favorites/useLocalFavoritesController";
 import type { Album, RadioShowSummary, Track } from "@/types";
 
 import type { SavedLibraryRuntimeValue } from "./SavedLibraryRuntimeContext";
@@ -26,8 +26,13 @@ export type SavedLibraryNavigationRuntime = Readonly<{
 }>;
 
 type SavedLibraryFavoritesRuntime = Pick<
-  LocalFavoritesController,
-  "collection" | "ready" | "refresh" | "toggleFavorite" | "toggleRadioFavorite"
+  FavoritesController,
+  | "collection"
+  | "loadError"
+  | "ready"
+  | "refresh"
+  | "toggleFavorite"
+  | "toggleRadioFavorite"
 >;
 
 export type SavedLibraryRuntimeAdapterOptions = Readonly<{
@@ -50,8 +55,14 @@ export function useSavedLibraryRuntimeAdapter({
   notify,
   playback,
 }: SavedLibraryRuntimeAdapterOptions): SavedLibraryRuntimeValue {
-  const { collection, ready, refresh, toggleFavorite, toggleRadioFavorite } =
-    favorites;
+  const {
+    collection,
+    loadError,
+    ready,
+    refresh,
+    toggleFavorite,
+    toggleRadioFavorite,
+  } = favorites;
   const {
     onOpenAlbum,
     onOpenArtist,
@@ -74,8 +85,9 @@ export function useSavedLibraryRuntimeAdapter({
       connected,
       currentTrackId,
       favorites: collection,
+      favoritesError: loadError,
       favoritesLoading: !ready,
-      favoritesLocal: true,
+      favoritesLocal: false,
       loadingAlbumId,
       onAddToPlaylist,
       onNotify: notify,
@@ -101,6 +113,7 @@ export function useSavedLibraryRuntimeAdapter({
       collection,
       connected,
       currentTrackId,
+      loadError,
       loadingAlbumId,
       notify,
       onAddToPlaylist,

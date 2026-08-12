@@ -2153,7 +2153,7 @@ function SavedLibraryController({
                 <HardDrive size={12} /> On this device
               </>
             ) : (
-              "Your keepers"
+              "Bandcamp Subsonic + this device"
             )}
           </Eyebrow>
           <div className="flex flex-col gap-2">
@@ -2163,7 +2163,7 @@ function SavedLibraryController({
             <p className="m-0 max-w-xl text-xs text-muted-foreground">
               {favoritesLocal
                 ? "Your personal shortlist, saved only in Coda on this computer."
-                : "Starred releases and tracks from your Bandcamp collection."}
+                : "Music favorites sync through Bandcamp’s Subsonic service, separate from the Bandcamp website. Track listings can lag, so Coda confirms them as albums load and on Refresh. Radio shows stay on this device."}
             </p>
           </div>
         </div>
@@ -2187,7 +2187,7 @@ function SavedLibraryController({
         <SavedEmpty
           icon={<Spinner aria-hidden="true" className="size-7 text-current" />}
           title="Loading favorites"
-          detail="Looking through your starred Bandcamp music…"
+          detail="Syncing your favorites from Bandcamp…"
         />
       ) : favoritesError ? (
         <SavedEmpty
@@ -2214,11 +2214,11 @@ function SavedLibraryController({
         !favoriteRadioShowCount ? (
         <SavedEmpty
           icon={<Heart size={28} />}
-          title="Nothing starred yet"
+          title="No favorites yet"
           detail={
             favoritesLocal
               ? "Use the heart on any release, track, or Radio show. Favorites stay on this device."
-              : "Use the heart on a release or track. Your favorites sync through Bandcamp’s Subsonic library."
+              : "Heart an album or track to save it to Bandcamp Subsonic Favorites. They stay separate from the Bandcamp website; Radio shows stay on this device."
           }
         />
       ) : (
@@ -2310,7 +2310,7 @@ function SavedLibraryController({
               </div>
               <VirtualizedSavedTrackList
                 aria-label="Favorite tracks"
-                className="border-y border-white/7"
+                className="overflow-hidden rounded-xl border border-white/8 bg-black/10 shadow-[0_14px_36px_rgba(0,0,0,0.16)]"
                 getItemKey={favoriteTrackKey}
                 items={favoriteTracks}
                 renderItem={(track, { index }, rowProps) => {
@@ -2322,9 +2322,9 @@ function SavedLibraryController({
                     <div
                       {...rowProps}
                       className={cn(
-                        "group relative grid h-14 grid-cols-[2rem_2.5rem_minmax(0,1fr)_3rem_repeat(3,2rem)] items-center gap-x-1.5 overflow-hidden border-b border-white/7 pr-2 pl-1 transition-colors last:border-b-0 hover:bg-white/3 lg:grid-cols-[2rem_2.5rem_minmax(0,1fr)_4rem_repeat(3,2rem)] lg:gap-x-2 lg:pr-3",
+                        "group relative grid h-14 grid-cols-[2rem_2.5rem_minmax(0,1fr)_3rem_repeat(3,2rem)] items-center gap-x-1.5 overflow-hidden border-b border-white/6 bg-white/[0.012] pr-2 pl-1 transition-colors last:border-b-0 hover:bg-white/[0.045] lg:grid-cols-[2rem_2.5rem_minmax(0,1fr)_4rem_repeat(3,2rem)] lg:gap-x-2 lg:pr-3",
                         activeTrack &&
-                          "bg-primary/5 before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-primary before:content-['']",
+                          "bg-primary/[0.065] before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-primary before:content-['']",
                       )}
                       data-album-card={track.albumId}
                     >
@@ -2507,7 +2507,7 @@ function SavedLibraryController({
                         <ListPlus size={15} />
                       </Button>
                       <Button
-                        className="text-coda-favorite"
+                        className="rounded-full bg-primary/10 text-coda-favorite ring-1 ring-primary/20 ring-inset hover:bg-primary/[0.18] hover:text-coda-favorite"
                         onClick={() =>
                           onToggleFavorite(track.id, "song", false)
                         }

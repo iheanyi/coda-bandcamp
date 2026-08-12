@@ -245,7 +245,11 @@ export function AlbumDetailPage({
                       return (
                         <div
                           {...rowProps}
-                          className={`group grid h-14 grid-cols-[2.5rem_minmax(0,1fr)_3.5rem_7rem] items-center rounded-sm border-b border-white/4.5 hover:bg-white/[0.035] ${activeTrack ? "bg-primary/[0.075]" : ""}`}
+                          className={cn(
+                            "group grid h-14 grid-cols-[2.5rem_minmax(0,1fr)_3.5rem_7rem] items-center rounded-sm border-b border-white/4.5 transition-colors hover:bg-white/[0.035]",
+                            favoriteTrack && !activeTrack && "bg-primary/[0.025]",
+                            activeTrack && "bg-primary/[0.075]",
+                          )}
                         >
                           <Button
                             className={`h-full rounded-none p-0 text-xs text-[#777a76] hover:bg-transparent ${activeTrack ? "text-[#e88c75]" : ""}`}
@@ -356,7 +360,10 @@ export function AlbumDetailPage({
                               <ListPlus size={16} />
                             </Button>
                             <Button
-                              className={favoriteTrack ? "text-coda-favorite" : ""}
+                              className={cn(
+                                favoriteTrack &&
+                                  "rounded-full bg-primary/10 text-coda-favorite ring-1 ring-primary/20 ring-inset hover:bg-primary/[0.18] hover:text-coda-favorite",
+                              )}
                               onClick={() => onToggleFavoriteTrack(track)}
                               size="icon"
                               title={

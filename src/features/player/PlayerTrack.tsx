@@ -52,7 +52,11 @@ export const PlayerTrack = memo(function PlayerTrack({
   const releaseTitle = track ? normalizedReleaseTitle(track.album) : "";
   const favoriteControl = track ? (
     <Button
-      className={`size-7 shrink-0 ${favorite ? "text-coda-favorite" : ""}`}
+      className={cn(
+        "size-7 shrink-0",
+        favorite &&
+          "rounded-full bg-primary/10 text-coda-favorite ring-1 ring-primary/20 ring-inset hover:bg-primary/[0.18] hover:text-coda-favorite",
+      )}
       onClick={onToggleFavorite}
       size="icon-compact"
       title={favorite ? "Remove from favorites" : "Add to favorites"}

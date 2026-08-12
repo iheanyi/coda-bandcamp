@@ -2,7 +2,7 @@ import { useMemo, type RefObject } from "react";
 
 import type { ToastNotifier } from "@/components/ui/toastManager";
 import { CoverArt } from "@/features/artwork/CoverArt";
-import type { LocalFavoritesController } from "@/features/favorites/useLocalFavoritesController";
+import type { FavoritesController } from "@/features/favorites/useLocalFavoritesController";
 import type { LibraryRouteRuntime } from "@/features/library/LibraryRouteRuntime";
 import type { LibraryWorkspaceController } from "@/features/library/useLibraryWorkspaceController";
 import { useLibraryRouteRuntimeAdapter } from "@/features/library/useLibraryRouteRuntimeAdapter";
@@ -38,7 +38,7 @@ type AppRouteLibraryRuntime = Readonly<{
 }>;
 
 type AppRouteFavoritesRuntime = Readonly<{
-  controller: LocalFavoritesController;
+  controller: FavoritesController;
   onAddToPlaylist: (tracks: Track[]) => void;
   onToggleCurrent: () => void;
 }>;

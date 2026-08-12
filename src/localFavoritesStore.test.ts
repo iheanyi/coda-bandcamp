@@ -13,6 +13,29 @@ import {
 import { serializeLocalFavorites } from "./localFavoritesPreparation";
 import type { Album, Track } from "./types";
 
+function indexedTrack(id: string): Track {
+  return {
+    id,
+    title: "Archive",
+    artist: "Night Index",
+    album: "Archive",
+    albumId: "album-index",
+    duration: 180,
+    track: 1,
+    starredAt: "2026-08-12T18:01:00Z",
+    palette: ["#111", "#eee"],
+  };
+}
+
+function trackIndex(id: string) {
+  const track = indexedTrack(id);
+  return {
+    ...emptyLocalFavorites(),
+    songIds: [track.id],
+    tracks: [track],
+  };
+}
+
 function memoryStorage(initial?: unknown) {
   let value = initial;
   const writes: unknown[] = [];
@@ -59,8 +82,7 @@ describe("asynchronous local Favorites storage", () => {
 
   it("migrates the legacy synchronous snapshot once", async () => {
     const legacy = {
-      ...emptyLocalFavorites(),
-      albumIds: ["album-legacy"],
+      ...trackIndex("track-legacy"),
     };
     writeLocalFavorites(legacy);
     const memory = memoryStorage();
@@ -73,8 +95,7 @@ describe("asynchronous local Favorites storage", () => {
   it("defers validation and persistence past the urgent interaction", async () => {
     const memory = memoryStorage();
     const favorites = {
-      ...emptyLocalFavorites(),
-      albumIds: ["album-next"],
+      ...trackIndex("track-next"),
     };
 
     const pending = writeLocalFavoritesAsync(favorites, memory.storage);
@@ -83,7 +104,7 @@ describe("asynchronous local Favorites storage", () => {
     expect(memory.writes).toHaveLength(1);
   });
 
-  it("returns the sanitized persisted value with release metadata intact", async () => {
+  it("returns a sanitized track-star index and drops release cache metadata", async () => {
     const memory = memoryStorage();
     const track: Track = {
       id: "track-dated",
@@ -93,6 +114,7 @@ describe("asynchronous local Favorites storage", () => {
       albumId: "album-dated",
       duration: 180,
       track: 1,
+      starredAt: "2026-08-12T18:01:00Z",
       artworkUrl: "https://t4.bcbits.com/signed-artwork",
       streamUrl: "https://t4.bcbits.com/signed-stream",
       palette: ["#111", "#eee"],
@@ -121,18 +143,15 @@ describe("asynchronous local Favorites storage", () => {
 
     const persisted = await writeLocalFavoritesAsync(favorites, memory.storage);
 
-    expect(persisted.albums[0]).toMatchObject({
-      addedAt: album.addedAt,
-      starredAt: album.starredAt,
-      playedAt: album.playedAt,
-      originalReleaseDate: album.originalReleaseDate,
-      releaseDate: album.releaseDate,
-    });
-    expect(persisted.albums[0].artworkUrl).toBeUndefined();
+    expect(persisted.albumIds).toEqual([]);
+    expect(persisted.albums).toEqual([]);
     expect(persisted.tracks[0].artworkUrl).toBeUndefined();
     expect(persisted.tracks[0].streamUrl).toBeUndefined();
+    expect(persisted.tracks[0].starredAt).toBe(track.starredAt);
     expect(memory.writes[0]).toMatchObject({
-      albums: [{ releaseDate: { year: 2025, month: 6, day: 30 } }],
+      albumIds: [],
+      albums: [],
+      tracks: [{ id: track.id, starredAt: track.starredAt }],
     });
   });
 
@@ -156,18 +175,16 @@ describe("asynchronous local Favorites storage", () => {
   it("serializes overlapping writes in user-action order", async () => {
     const memory = memoryStorage();
     const first = writeLocalFavoritesAsync({
-      ...emptyLocalFavorites(),
-      albumIds: ["album-first"],
+      ...trackIndex("track-first"),
     }, memory.storage);
     const second = writeLocalFavoritesAsync({
-      ...emptyLocalFavorites(),
-      albumIds: ["album-second"],
+      ...trackIndex("track-second"),
     }, memory.storage);
 
     await Promise.all([first, second]);
     expect(memory.writes.map((snapshot) => (
-      snapshot as { albumIds: string[] }
-    ).albumIds)).toEqual([["album-first"], ["album-second"]]);
+      snapshot as { songIds: string[] }
+    ).songIds)).toEqual([["track-first"], ["track-second"]]);
   });
 
   it("clears an invalid async snapshot before migrating safe empty state", async () => {
@@ -182,12 +199,10 @@ describe("asynchronous local Favorites storage", () => {
 
   it("orders a refresh behind an in-flight write so stale data cannot win", async () => {
     const before = {
-      ...emptyLocalFavorites(),
-      albumIds: ["album-before"],
+      ...trackIndex("track-before"),
     };
     const after = {
-      ...emptyLocalFavorites(),
-      albumIds: ["album-after"],
+      ...trackIndex("track-after"),
     };
     let stored: unknown = serializeLocalFavorites(before).serialized;
     let reads = 0;

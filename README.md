@@ -21,7 +21,9 @@ Discover, and Last.fm scrobbling in a focused native app.
 - Use Surprise Me for one weighted track or a complete album without loading
   every release in the collection.
 - Queue, reorder, shuffle, search, and resume playback across app restarts.
-- Keep device-local favorites and manage Bandcamp-synced playlists.
+- Sync album stars through Bandcamp's Subsonic service and reconcile its
+  sometimes-delayed track stars as albums load or Favorites refreshes, while
+  keeping Radio favorites device-local and managing Bandcamp-synced playlists.
 - Explore Bandcamp Discover and complete Bandcamp Radio show archives.
 - See chapter-aware Radio metadata and seek through broadcast tracklists.
 - Scrobble library tracks and eligible Radio chapters with Last.fm.

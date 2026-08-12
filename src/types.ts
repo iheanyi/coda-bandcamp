@@ -35,6 +35,7 @@ export type Track = {
   albumArtist?: string;
   musicBrainzId?: string;
   coverArt?: string;
+  starredAt?: string;
   artworkUrl?: string;
   streamUrl?: string;
   radioChapters?: RadioChapter[];
@@ -79,6 +80,31 @@ export type FavoriteInput = {
   id: string;
   kind: "song" | "album";
   favorite: boolean;
+  albumId?: string;
+};
+
+export type FavoriteVerification =
+  | "notRequired"
+  | "verified"
+  | "unavailable"
+  | "mismatch";
+
+export type FavoriteMutationResult = {
+  accepted: true;
+  verification: FavoriteVerification;
+  favorite?: boolean;
+  track?: Track;
+};
+
+export type FavoriteTrackLocator = {
+  id: string;
+  albumId: string;
+};
+
+export type FavoriteTrackReconciliation = {
+  tracks: Track[];
+  unstarredIds: string[];
+  unavailableTrackCount: number;
 };
 
 export type ConnectionInput = {

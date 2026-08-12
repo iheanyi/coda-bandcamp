@@ -90,6 +90,65 @@ pub(crate) struct Track {
     pub(crate) album_artist: Option<String>,
     pub(crate) music_brainz_id: Option<String>,
     pub(crate) cover_art: Option<String>,
+    pub(crate) starred_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FavoriteCollection {
+    pub(crate) album_ids: Vec<String>,
+    pub(crate) song_ids: Vec<String>,
+    pub(crate) albums: Vec<Album>,
+    pub(crate) tracks: Vec<Track>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum FavoriteKind {
+    Album,
+    Song,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct FavoriteInput {
+    pub(crate) id: String,
+    pub(crate) kind: FavoriteKind,
+    pub(crate) favorite: bool,
+    pub(crate) album_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum FavoriteVerification {
+    NotRequired,
+    Verified,
+    Unavailable,
+    Mismatch,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FavoriteMutationResult {
+    pub(crate) accepted: bool,
+    pub(crate) verification: FavoriteVerification,
+    pub(crate) favorite: Option<bool>,
+    pub(crate) track: Option<Track>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct FavoriteTrackLocator {
+    pub(crate) id: String,
+    pub(crate) album_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FavoriteTrackReconciliation {
+    pub(crate) tracks: Vec<Track>,
+    pub(crate) unstarred_ids: Vec<String>,
+    pub(crate) unavailable_track_count: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

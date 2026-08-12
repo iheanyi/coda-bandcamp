@@ -833,7 +833,8 @@ function NowPlayingViewComponent({
                   size="compact"
                   className={cn(
                     "bg-white/2.5 px-2",
-                    favorite && "text-coda-favorite",
+                    favorite &&
+                      "bg-primary/10 text-coda-favorite ring-1 ring-primary/20 ring-inset hover:bg-primary/[0.18] hover:text-coda-favorite",
                   )}
                   onClick={onToggleFavorite}
                   aria-pressed={favorite}

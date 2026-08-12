@@ -6,10 +6,10 @@ import { radioShowQueryOptions } from "@/queries/radioQueries";
 import { radioShowIdFromTrackId } from "@/radioPlayback";
 import type { Track } from "@/types";
 
-import type { LocalFavoritesController } from "./useLocalFavoritesController";
+import type { FavoritesController } from "./useLocalFavoritesController";
 
 type CurrentFavoriteActions = Pick<
-  LocalFavoritesController,
+  FavoritesController,
   "ensureReady" | "toggleFavorite" | "toggleRadioFavorite"
 >;
 
@@ -19,7 +19,7 @@ export type CurrentFavoriteControllerOptions = Readonly<{
   notify: ToastNotifier;
 }>;
 
-/** Resolves the current queue item's device-local favorite identity. */
+/** Resolves the current queue item's Bandcamp or device-local Radio favorite identity. */
 export function useCurrentFavoriteController({
   currentTrack,
   favorites,

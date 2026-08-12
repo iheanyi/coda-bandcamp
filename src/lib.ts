@@ -14,6 +14,11 @@ import type {
   ConnectionInput,
   DiscoverFilters,
   DiscoverPage,
+  FavoriteCollection,
+  FavoriteInput,
+  FavoriteMutationResult,
+  FavoriteTrackLocator,
+  FavoriteTrackReconciliation,
   LastFmAuthorization,
   LastFmStatus,
   LastFmTrackInput,
@@ -528,6 +533,56 @@ export async function fetchAlbum(
     forceRefresh: options.forceRefresh ?? false,
   });
   return tracks.map((track) => hydrateTrack(track, album.palette));
+}
+
+export async function fetchFavorites(): Promise<FavoriteCollection> {
+  const favorites = await invoke<{
+    albumIds: string[];
+    songIds: string[];
+    albums: Omit<Album, "palette">[];
+    tracks: Omit<Track, "palette">[];
+  }>("fetch_favorites");
+  const albums = favorites.albums.map(hydrateAlbum);
+  const albumPalettes = new Map(
+    albums.map((album) => [album.id, album.palette] as const),
+  );
+  return {
+    ...favorites,
+    albums,
+    tracks: favorites.tracks.map((track) =>
+      hydrateTrack(track, albumPalettes.get(track.albumId))),
+  };
+}
+
+export async function setFavorite(
+  input: FavoriteInput,
+): Promise<FavoriteMutationResult> {
+  const result = await invoke<
+    Omit<FavoriteMutationResult, "track"> & {
+      track?: Omit<Track, "palette">;
+    }
+  >("set_favorite", { input });
+  const { track, ...mutation } = result;
+  return {
+    ...mutation,
+    ...(track === undefined
+      ? {}
+      : { track: hydrateTrack(track) }),
+  };
+}
+
+export async function reconcileFavoriteTracks(
+  tracks: FavoriteTrackLocator[],
+): Promise<FavoriteTrackReconciliation> {
+  const result = await invoke<
+    Omit<FavoriteTrackReconciliation, "tracks"> & {
+      tracks: Omit<Track, "palette">[];
+    }
+  >("reconcile_favorite_tracks", { tracks });
+  return {
+    ...result,
+    tracks: result.tracks.map((track) => hydrateTrack(track)),
+  };
 }
 
 function hydratePlaylist(

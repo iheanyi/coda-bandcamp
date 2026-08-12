@@ -9,6 +9,7 @@ mod app_identity;
 mod bandcamp_http;
 mod desktop;
 mod discover;
+mod favorites;
 mod lastfm;
 mod library;
 mod library_cache;
@@ -31,6 +32,7 @@ use desktop::{
     toggle_mini_player,
 };
 use discover::discover;
+use favorites::{fetch_favorites, reconcile_favorite_tracks, set_favorite};
 use lastfm::{
     lastfm_begin_auth, lastfm_complete_auth, lastfm_disconnect, lastfm_scrobble, lastfm_status,
     lastfm_update_now_playing,
@@ -77,6 +79,10 @@ fn with_window_state_plugin<R: tauri::Runtime>(builder: tauri::Builder<R>) -> ta
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(debug_assertions)]
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .try_init();
     let _ = system_media::set_process_app_user_model_id();
     let builder = tauri::Builder::default();
     #[cfg(desktop)]
@@ -245,6 +251,9 @@ pub fn run() {
             lastfm_scrobble,
             fetch_library,
             fetch_album,
+            fetch_favorites,
+            set_favorite,
+            reconcile_favorite_tracks,
             fetch_playlists,
             fetch_playlist,
             create_playlist,

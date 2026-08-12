@@ -353,6 +353,20 @@ describe("saved Bandcamp library views", () => {
     expect(mocks.fetchPlaylists).not.toHaveBeenCalled();
   });
 
+  it("distinguishes synced music stars from device-local Radio favorites", () => {
+    withQueryClient(
+      <SavedLibraryView
+        mode="favorites"
+        {...commonProps}
+        favoritesLocal={false}
+      />,
+    );
+
+    expect(screen.getByText(
+      "Music favorites sync through Bandcamp’s Subsonic service, separate from the Bandcamp website. Track listings can lag, so Coda confirms them as albums load and on Refresh. Radio shows stay on this device.",
+    )).toBeInTheDocument();
+  });
+
   it("emits validated playlist identity from the route list screen", async () => {
     const onOpenPlaylist = vi.fn();
     withQueryClient(

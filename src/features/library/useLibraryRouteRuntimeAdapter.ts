@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import type { LocalFavoritesController } from "@/features/favorites/useLocalFavoritesController";
+import type { FavoritesController } from "@/features/favorites/useLocalFavoritesController";
 import {
   artistKey,
   type ArtistGroup,
@@ -30,7 +30,7 @@ import type {
 import type { LibraryRouteRuntime } from "./LibraryRouteRuntime";
 
 type LibraryFavoritesRuntime = Pick<
-  LocalFavoritesController,
+  FavoritesController,
   "collection" | "favoriteAlbumIds" | "favoriteTrackIds" | "toggleFavorite"
 >;
 

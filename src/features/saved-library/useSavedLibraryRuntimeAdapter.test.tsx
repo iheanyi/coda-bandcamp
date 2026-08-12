@@ -34,6 +34,7 @@ it("adapts the Favorites controller and discards async navigation results", () =
       connected: true,
       favorites: {
         collection: favorites,
+        loadError: "Bandcamp Favorites could not load",
         ready: false,
         refresh,
         toggleFavorite,
@@ -65,8 +66,9 @@ it("adapts the Favorites controller and discards async navigation results", () =
     connected: true,
     currentTrackId: "track-1",
     favorites,
+    favoritesError: "Bandcamp Favorites could not load",
     favoritesLoading: true,
-    favoritesLocal: true,
+    favoritesLocal: false,
     loadingAlbumId: album.id,
     onNotify,
     playing: true,

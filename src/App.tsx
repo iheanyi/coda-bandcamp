@@ -208,6 +208,7 @@ export default function App() {
   });
   const localFavoritesController = useLocalFavoritesController({
     albums,
+    connected,
     notify: notifyToast,
     queue,
     selectedAlbum,
