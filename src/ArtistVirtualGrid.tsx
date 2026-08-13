@@ -18,6 +18,8 @@ const ARTIST_GRID_LAYOUTS = [
   },
 ] as const;
 
+const artistGroupKey = (group: ArtistGroup) => group.key;
+
 export default function ArtistVirtualGrid({
   items,
   renderItem,
@@ -31,7 +33,7 @@ export default function ArtistVirtualGrid({
     <ResponsiveVirtualGrid
       aria-label="Artists"
       className="w-full"
-      getItemKey={(group) => group.key}
+      getItemKey={artistGroupKey}
       items={items}
       layouts={ARTIST_GRID_LAYOUTS}
       renderItem={renderItem}

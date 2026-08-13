@@ -24,7 +24,7 @@
     "@base-ui/react": "^1.6.0",
     "@tanstack/react-query": "^5.101.4",
     "@tanstack/react-router": "^1.170.25",
-    "@tanstack/react-virtual": "^3.14.8",
+    "@tanstack/react-virtual": "^3.14.9",
     "@tauri-apps/api": "^2.8.0",
     "@tauri-apps/plugin-opener": "^2.5.4",
     "@tauri-apps/plugin-process": "^2.3.1",
@@ -63,6 +63,6 @@
     "fast-uri": "3.1.5",
     "hono": "4.12.34",
     "js-yaml": "4.3.1",
-    "nanoid": "3.3.17"
+    "nanoid": "3.3.18"
   }
 }

@@ -79,6 +79,8 @@ const DISCOVER_GRID_LAYOUTS = [
   },
 ] as const;
 
+const discoverReleaseKey = (release: DiscoverRelease) => release.id;
+
 const DiscoverCard = memo(function DiscoverCard({
   release,
   releaseSearch,
@@ -152,7 +154,7 @@ const DiscoverCard = memo(function DiscoverCard({
 
   return (
     <article
-      className="group/card grid h-full min-w-0 grid-cols-[--spacing(28)_minmax(0,1fr)] overflow-hidden rounded-lg border border-(--line) bg-white/[0.018] [contain-intrinsic-size:--spacing(28)_--spacing(75)] [content-visibility:auto] hover:border-(--line-strong) hover:bg-white/3"
+      className="group/card grid h-full min-w-0 grid-cols-[--spacing(28)_minmax(0,1fr)] overflow-hidden rounded-lg border border-(--line) bg-white/[0.018] hover:border-(--line-strong) hover:bg-white/3"
       data-discover-release-card={release.id}
     >
       <div
@@ -610,7 +612,7 @@ export function DiscoverScreen({
           <ResponsiveVirtualGrid
             aria-label="Discover releases"
             className="w-full"
-            getItemKey={(release) => release.id}
+            getItemKey={discoverReleaseKey}
             items={releases}
             layouts={DISCOVER_GRID_LAYOUTS}
             scrollElementRef={discoverScrollElementRef}

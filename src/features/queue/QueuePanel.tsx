@@ -52,6 +52,9 @@ import { QueueCurrentPresence } from "./QueueCurrentPresence";
 import { QueueRadioChapters } from "./QueueRadioChapters";
 
 const TrackQueueList = lazy(() => import("@/TrackQueueList"));
+const queueTrackKey = (track: Track, absoluteIndex: number) =>
+  `${track.id}-${absoluteIndex}`;
+const queueTrackLabel = (track: Track) => track.title;
 
 export type QueuePanelProps = {
   open: boolean;
@@ -430,8 +433,8 @@ export const QueuePanel = memo(function QueuePanel({
           aria-label="Upcoming tracks"
           className="min-h-0 flex-1 [touch-action:pan-y] [scrollbar-color:#343738_transparent] scrollbar-thin overflow-x-hidden overflow-y-auto overscroll-y-contain bg-coda-queue px-2 pt-0.5 pb-2.5 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary/60"
           empty={emptyQueue}
-          getItemKey={(track, absoluteIndex) => `${track.id}-${absoluteIndex}`}
-          getItemLabel={(track) => track.title}
+          getItemKey={queueTrackKey}
+          getItemLabel={queueTrackLabel}
           items={upcoming}
           onMove={onMove}
           renderItem={(track, { absoluteIndex, index: upcomingIndex }) => (

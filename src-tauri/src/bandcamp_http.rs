@@ -8,8 +8,12 @@ use reqwest::{
 };
 use serde::de::DeserializeOwned;
 use std::num::NonZeroU32;
-use std::sync::OnceLock;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    OnceLock,
+};
 use std::time::{Duration, SystemTime};
+use tokio::sync::Mutex as AsyncMutex;
 use url::Url;
 
 use crate::url_policy::{allowed_url, UrlKind};
@@ -24,11 +28,34 @@ const BANDCAMP_RATE_LIMIT_JITTER: Duration = Duration::from_millis(80);
 
 static HTTP_CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
 static BANDCAMP_RATE_LIMITER: OnceLock<DefaultDirectRateLimiter> = OnceLock::new();
+static BANDCAMP_REQUEST_START_LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
+static BANDCAMP_FOREGROUND_WAITERS: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum BandcampRetryPolicy {
     Never,
     SafeRead,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum BandcampRequestPriority {
+    Foreground,
+    Background,
+}
+
+struct ForegroundWaiter;
+
+impl ForegroundWaiter {
+    fn register() -> Self {
+        BANDCAMP_FOREGROUND_WAITERS.fetch_add(1, Ordering::AcqRel);
+        Self
+    }
+}
+
+impl Drop for ForegroundWaiter {
+    fn drop(&mut self) {
+        BANDCAMP_FOREGROUND_WAITERS.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 pub(super) fn bandcamp_rate_limiter() -> &'static DefaultDirectRateLimiter {
@@ -40,10 +67,37 @@ pub(super) fn bandcamp_rate_limiter() -> &'static DefaultDirectRateLimiter {
     })
 }
 
-pub(super) async fn wait_for_bandcamp_request_slot() {
-    bandcamp_rate_limiter()
-        .until_ready_with_jitter(Jitter::up_to(BANDCAMP_RATE_LIMIT_JITTER))
-        .await;
+fn bandcamp_request_start_lock() -> &'static AsyncMutex<()> {
+    BANDCAMP_REQUEST_START_LOCK.get_or_init(|| AsyncMutex::new(()))
+}
+
+pub(super) async fn wait_for_bandcamp_request_slot(priority: BandcampRequestPriority) {
+    match priority {
+        BandcampRequestPriority::Foreground => {
+            // Register before waiting for the start lock so a background
+            // revalidation that reaches the lock first still yields.
+            let _waiter = ForegroundWaiter::register();
+            let _start_guard = bandcamp_request_start_lock().lock().await;
+            bandcamp_rate_limiter()
+                .until_ready_with_jitter(Jitter::up_to(BANDCAMP_RATE_LIMIT_JITTER))
+                .await;
+        }
+        BandcampRequestPriority::Background => loop {
+            let start_guard = bandcamp_request_start_lock().lock().await;
+            if BANDCAMP_FOREGROUND_WAITERS.load(Ordering::Acquire) != 0 {
+                drop(start_guard);
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                continue;
+            }
+            bandcamp_rate_limiter()
+                .until_ready_with_jitter(Jitter::up_to(BANDCAMP_RATE_LIMIT_JITTER))
+                .await;
+            if BANDCAMP_FOREGROUND_WAITERS.load(Ordering::Acquire) == 0 {
+                break;
+            }
+            drop(start_guard);
+        },
+    }
 }
 
 pub(super) fn retry_after_duration(headers: &HeaderMap, now: SystemTime) -> Option<Duration> {
@@ -88,9 +142,24 @@ pub(super) async fn send_bandcamp_request(
     context: &str,
     retry_policy: BandcampRetryPolicy,
 ) -> Result<Response, String> {
+    send_bandcamp_request_with_priority(
+        request,
+        context,
+        retry_policy,
+        BandcampRequestPriority::Foreground,
+    )
+    .await
+}
+
+pub(super) async fn send_bandcamp_request_with_priority(
+    request: RequestBuilder,
+    context: &str,
+    retry_policy: BandcampRetryPolicy,
+    priority: BandcampRequestPriority,
+) -> Result<Response, String> {
     let mut retry_number = 0;
     loop {
-        wait_for_bandcamp_request_slot().await;
+        wait_for_bandcamp_request_slot(priority).await;
         let attempt = request
             .try_clone()
             .ok_or_else(|| format!("Could not prepare a retry-safe request for {context}."))?;

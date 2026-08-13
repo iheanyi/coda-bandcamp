@@ -27,11 +27,11 @@ const mocks = vi.hoisted(() => ({
   clearPlayerState: vi.fn(),
   completeLastFmAuthorization: vi.fn(),
   connectBandcamp: vi.fn(),
+  coverArtSource: vi.fn(),
   createSystemArtworkDataUrl: vi.fn(),
   disconnect: vi.fn(),
   disconnectLastFm: vi.fn(),
   fetchAlbum: vi.fn(),
-  fetchCoverUrl: vi.fn(),
   fetchDiscover: vi.fn(),
   fetchLibrary: vi.fn(),
   fetchFavorites: vi.fn(),
@@ -60,6 +60,11 @@ vi.mock("./systemArtwork", () => ({
   createSystemArtworkDataUrl: mocks.createSystemArtworkDataUrl,
 }));
 
+vi.mock("./coverArtSource", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./coverArtSource")>();
+  return { ...actual, coverArtSource: mocks.coverArtSource };
+});
+
 vi.mock("./lib", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./lib")>();
   return {
@@ -72,7 +77,6 @@ vi.mock("./lib", async (importOriginal) => {
     disconnect: mocks.disconnect,
     disconnectLastFm: mocks.disconnectLastFm,
     fetchAlbum: mocks.fetchAlbum,
-    fetchCoverUrl: mocks.fetchCoverUrl,
     fetchDiscover: mocks.fetchDiscover,
     fetchLibrary: mocks.fetchLibrary,
     fetchFavorites: mocks.fetchFavorites,
@@ -246,15 +250,18 @@ beforeEach(() => {
   mocks.clearPlayerState.mockReset().mockResolvedValue(undefined);
   mocks.completeLastFmAuthorization.mockReset();
   mocks.connectBandcamp.mockReset();
+  mocks.coverArtSource
+    .mockReset()
+    .mockImplementation(
+      (coverArtId: string) =>
+        `coda-cover://localhost/v1/600/${encodeURIComponent(coverArtId)}?v=0&s=0123456789abcdef0123456789abcdef`,
+    );
   mocks.createSystemArtworkDataUrl
     .mockReset()
     .mockReturnValue("data:image/png;base64,Y29kYS1jb3Zlcg==");
   mocks.disconnect.mockReset().mockResolvedValue(undefined);
   mocks.disconnectLastFm.mockReset();
   mocks.fetchAlbum.mockReset().mockResolvedValue(tracks);
-  mocks.fetchCoverUrl
-    .mockReset()
-    .mockResolvedValue("https://t4.bcbits.com/img/restored-cover.jpg");
   mocks.fetchDiscover.mockReset().mockResolvedValue({
     results: [{
       id: "discover:release-1",
@@ -1513,13 +1520,11 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
           artist: "Night Archive",
           album: "Soft Focus",
           artwork: [{
-            src: "https://t4.bcbits.com/img/restored-cover.jpg",
+            src: "coda-cover://localhost/v1/600/ca%3A496796527?v=0&s=0123456789abcdef0123456789abcdef",
           }],
         }),
       );
-      expect(mocks.fetchCoverUrl).toHaveBeenCalledExactlyOnceWith(
-        "ca:496796527",
-      );
+      expect(mocks.coverArtSource).toHaveBeenCalledWith("ca:496796527");
       expect(setPositionState).toHaveBeenCalledWith({
         duration: 180,
         playbackRate: 1,

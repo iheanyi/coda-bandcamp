@@ -173,6 +173,20 @@ fn connection_change_guard_excludes_overlapping_credential_mutations() {
 }
 
 #[test]
+fn connection_changes_cross_the_cover_publication_barrier_before_generation_advance() {
+    let source = include_str!("../library.rs");
+    let begin = source.find("impl ConnectionChangeGuard").unwrap();
+    let barrier = source[begin..]
+        .find("cover_cache_publication_guard()")
+        .unwrap();
+    let advance = source[begin..]
+        .find("advance_album_cache_connection_generation()")
+        .unwrap();
+    let revoke = source[begin..].find("revoke_cover_art_access(").unwrap();
+    assert!(barrier < advance && advance < revoke);
+}
+
+#[test]
 fn failed_album_cache_clear_stays_durably_invalidated_until_retry_succeeds() {
     let path = temporary_album_metadata_cache_path("failed-clear-invalidation");
     let marker_path = path
@@ -249,26 +263,46 @@ fn album_cache_reset_rejects_when_neither_clear_nor_invalidation_can_succeed() {
 #[test]
 fn disconnect_cleanup_reports_partial_failure_without_implying_credentials_remain() {
     assert_eq!(
-        finish_disconnect_cache_cleanup(Ok(()), Ok(AlbumMetadataCacheReset::Cleared)),
+        finish_disconnect_cache_cleanup(
+            Ok(()),
+            Ok(AlbumMetadataCacheReset::Cleared),
+            Ok(CoverCacheReset::Cleared),
+        ),
         None
     );
-    assert_eq!(
-        finish_disconnect_cache_cleanup(Ok(()), Ok(AlbumMetadataCacheReset::Invalidated)),
-        None
-    );
+    let invalidated_cover_warning = finish_disconnect_cache_cleanup(
+        Ok(()),
+        Ok(AlbumMetadataCacheReset::Invalidated),
+        Ok(CoverCacheReset::Invalidated),
+    )
+    .unwrap();
+    assert!(invalidated_cover_warning.contains("cover artwork"));
 
-    let album_warning =
-        finish_disconnect_cache_cleanup(Ok(()), Err("cache reset failed".into())).unwrap();
+    let album_warning = finish_disconnect_cache_cleanup(
+        Ok(()),
+        Err("cache reset failed".into()),
+        Ok(CoverCacheReset::Cleared),
+    )
+    .unwrap();
     assert!(album_warning.contains("credentials were removed"));
     assert!(!album_warning.contains("Could not remove credentials"));
 
     let library_warning = finish_disconnect_cache_cleanup(
         Err("library reset failed".into()),
         Ok(AlbumMetadataCacheReset::Cleared),
+        Ok(CoverCacheReset::Cleared),
     )
     .unwrap();
     assert!(library_warning.contains("credentials were removed"));
     assert!(!library_warning.contains("Could not remove credentials"));
+
+    let cover_warning = finish_disconnect_cache_cleanup(
+        Ok(()),
+        Ok(AlbumMetadataCacheReset::Cleared),
+        Err("artwork reset failed".into()),
+    )
+    .unwrap();
+    assert!(cover_warning.contains("cover artwork"));
 }
 
 #[test]

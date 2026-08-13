@@ -8,7 +8,6 @@ import { createLibrarySessionController } from "@/features/library-session"
 import { createCodaMemoryRouter } from "@/router"
 
 const mocks = vi.hoisted(() => ({
-  fetchCoverUrl: vi.fn(),
   fetchPlaylist: vi.fn(),
   fetchPlaylists: vi.fn(),
   fetchRadioShows: vi.fn(),
@@ -20,7 +19,6 @@ vi.mock("@/lib", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib")>()
   return {
     ...actual,
-    fetchCoverUrl: mocks.fetchCoverUrl,
     fetchPlaylist: mocks.fetchPlaylist,
     fetchPlaylists: mocks.fetchPlaylists,
     fetchRadioShows: mocks.fetchRadioShows,
@@ -62,7 +60,6 @@ async function renderSidebar(connected: boolean) {
 }
 
 beforeEach(() => {
-  mocks.fetchCoverUrl.mockReset()
   mocks.fetchPlaylist.mockReset()
   mocks.fetchPlaylists.mockReset().mockResolvedValue([])
   mocks.fetchRadioShows.mockReset().mockResolvedValue({
@@ -102,7 +99,6 @@ describe("Coda sidebar intent preloading", () => {
         expect(router.state.location.pathname).toBe("/radio")
       })
       expect(mocks.fetchRadioShows).toHaveBeenCalledOnce()
-      expect(mocks.fetchCoverUrl).not.toHaveBeenCalled()
       expect(mocks.fetchStreamUrl).not.toHaveBeenCalled()
     },
   )
@@ -120,7 +116,6 @@ describe("Coda sidebar intent preloading", () => {
     expect(mocks.fetchPlaylists).not.toHaveBeenCalled()
     expect(mocks.fetchPlaylist).not.toHaveBeenCalled()
     expect(mocks.readLocalFavoritesAsync).not.toHaveBeenCalled()
-    expect(mocks.fetchCoverUrl).not.toHaveBeenCalled()
     expect(mocks.fetchStreamUrl).not.toHaveBeenCalled()
     expect(onConnect).not.toHaveBeenCalled()
   })
@@ -145,7 +140,6 @@ describe("Coda sidebar intent preloading", () => {
     expect(mocks.fetchPlaylists).toHaveBeenCalledOnce()
     expect(mocks.fetchPlaylist).not.toHaveBeenCalled()
     expect(mocks.readLocalFavoritesAsync).not.toHaveBeenCalled()
-    expect(mocks.fetchCoverUrl).not.toHaveBeenCalled()
     expect(mocks.fetchStreamUrl).not.toHaveBeenCalled()
   })
 })

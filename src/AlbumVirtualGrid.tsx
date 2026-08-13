@@ -25,6 +25,8 @@ const ALBUM_GRID_LAYOUTS = [
   },
 ] as const;
 
+const albumKey = (album: Album) => album.id;
+
 export default function AlbumVirtualGrid({
   ariaLabel,
   items,
@@ -40,7 +42,7 @@ export default function AlbumVirtualGrid({
     <ResponsiveVirtualGrid
       aria-label={ariaLabel}
       className="w-full"
-      getItemKey={(album) => album.id}
+      getItemKey={albumKey}
       items={items}
       layouts={ALBUM_GRID_LAYOUTS}
       renderItem={renderItem}

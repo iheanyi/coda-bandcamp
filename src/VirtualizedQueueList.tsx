@@ -100,7 +100,7 @@ export function VirtualizedQueueList<Item>({
       const absoluteIndex = startIndex + index;
       return getItemKey?.(items[index], absoluteIndex) ?? absoluteIndex;
     },
-    [getItemKey, items, startIndex],
+    [estimateSize, getItemKey, items, startIndex],
   );
 
   const rangeExtractor = useCallback(

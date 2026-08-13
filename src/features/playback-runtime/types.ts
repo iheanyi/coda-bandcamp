@@ -58,7 +58,7 @@ export type DesktopPlaybackControlHandlers = {
 };
 
 export type PlaybackSystemMediaAdapters = {
-  fetchCoverUrl: (coverArtId: string) => Promise<string>;
+  coverArtSource: (coverArtId: string) => string | undefined;
   createArtworkDataUrl: (input: {
     title: string;
     artist: string;

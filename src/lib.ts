@@ -1,4 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { clearCoverArtRendererState } from "./coverArtSource";
 import { normalizeGenre } from "./genres";
 import {
   createPlayerStateCheckpoint,
@@ -46,7 +47,6 @@ const LIBRARY_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_CACHED_ALBUMS = 5_000;
 const MAX_MEDIA_URLS = 512;
 const STREAM_URL_CACHE_TTL_MS = 10 * 60 * 1_000;
-const COVER_URL_CACHE_TTL_MS = 60 * 60 * 1_000;
 
 type LibraryCache = {
   savedAt: number;
@@ -69,9 +69,20 @@ export type SystemMediaMetadataInput = {
   title: string;
   artist: string;
   album: string;
-  artworkUrl?: string;
+  artwork?:
+    | { kind: "cover"; coverArtId: string }
+    | { kind: "remote"; url: string };
   canPrevious: boolean;
   canNext: boolean;
+};
+
+export type CoverCacheDiagnostics = {
+  entryCount: number;
+  totalBytes: number;
+  hitCount: number;
+  missCount: number;
+  staleCount: number;
+  cleanupPending: boolean;
 };
 
 export type SystemMediaControlEvent = {
@@ -92,7 +103,6 @@ type RuntimeCacheEntry<T> = {
   value?: T;
 };
 
-const coverUrlCache = new Map<string, RuntimeCacheEntry<string>>();
 const streamUrlCache = new Map<string, RuntimeCacheEntry<string>>();
 let playerStateContractVersionRequest: Promise<number> | undefined;
 
@@ -306,7 +316,7 @@ export function readLibraryCache(now = Date.now()): Album[] {
 }
 
 export function clearRuntimeCaches(): void {
-  coverUrlCache.clear();
+  clearCoverArtRendererState();
   streamUrlCache.clear();
   try {
     window.localStorage.removeItem(LIBRARY_CACHE_KEY);
@@ -315,20 +325,8 @@ export function clearRuntimeCaches(): void {
   }
 }
 
-export function invalidateCoverUrl(coverArtId: string): void {
-  coverUrlCache.delete(coverArtId);
-}
-
-export function readCachedCoverUrl(coverArtId: string): string | undefined {
-  return readRememberedValue(coverUrlCache, coverArtId);
-}
-
 export function invalidateStreamUrl(trackId: string): void {
   streamUrlCache.delete(trackId);
-}
-
-export function clearCoverUrlCache(): void {
-  coverUrlCache.clear();
 }
 
 export async function hasConnection(): Promise<boolean> {
@@ -382,7 +380,7 @@ export async function connectBandcamp(
     input,
     onProgress,
   });
-  coverUrlCache.clear();
+  clearCoverArtRendererState();
   streamUrlCache.clear();
   return albums.map(hydrateAlbum);
 }
@@ -650,14 +648,8 @@ export async function fetchStreamUrl(trackId: string): Promise<string> {
   );
 }
 
-export async function fetchCoverUrl(coverArtId: string): Promise<string> {
-  return rememberPromise(
-    coverUrlCache,
-    coverArtId,
-    () => invoke<string>("get_cover_url", { coverArtId }),
-    MAX_MEDIA_URLS,
-    COVER_URL_CACHE_TTL_MS,
-  );
+export async function coverCacheDiagnostics(): Promise<CoverCacheDiagnostics> {
+  return invoke<CoverCacheDiagnostics>("cover_cache_diagnostics");
 }
 
 export async function fetchDiscover(

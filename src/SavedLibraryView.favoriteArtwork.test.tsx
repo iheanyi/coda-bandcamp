@@ -1,6 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterContextProvider } from "@tanstack/react-router";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 
 import { CodaMotionProvider } from "@/MotionProvider";
@@ -8,25 +14,32 @@ import { createCodaMemoryRouter } from "@/router";
 import type { LocalFavoriteCollection } from "@/types";
 
 const mocks = vi.hoisted(() => ({
-  fetchCoverUrl: vi.fn(),
-  invalidateCoverUrl: vi.fn(),
-  readCachedCoverUrl: vi.fn(),
+  convertFileSrc: vi.fn(
+    (path: string, protocol: string) => `${protocol}:${path}`,
+  ),
+  invoke: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+  listen: vi.fn(() => Promise.resolve(() => undefined)),
 }));
 
-vi.mock("@/lib", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib")>();
+vi.mock("@tauri-apps/api/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@tauri-apps/api/core")>();
   return {
     ...actual,
-    fetchCoverUrl: mocks.fetchCoverUrl,
-    invalidateCoverUrl: mocks.invalidateCoverUrl,
-    readCachedCoverUrl: mocks.readCachedCoverUrl,
+    convertFileSrc: mocks.convertFileSrc,
+    invoke: mocks.invoke,
   };
 });
 
+vi.mock("@tauri-apps/api/event", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@tauri-apps/api/event")>();
+  return { ...actual, listen: mocks.listen };
+});
+
+import { clearCoverArtRendererState } from "@/coverArtSource";
+import { CoverArt } from "@/features/artwork/CoverArt";
 import { FavoritesScreen } from "@/features/saved-library";
 
 const directArtworkUrl = "https://bandcamp.com/direct-expired.jpg";
-const refreshedArtworkUrl = "https://bandcamp.com/refreshed-cover.jpg";
 const laterArtworkUrl = "https://bandcamp.com/later-direct-cover.jpg";
 
 function favoriteCollection(artworkUrl?: string): LocalFavoriteCollection {
@@ -81,49 +94,12 @@ function screenFor(favorites: LocalFavoriteCollection) {
   );
 }
 
-beforeEach(() => {
-  mocks.fetchCoverUrl.mockReset().mockResolvedValue(refreshedArtworkUrl);
-  mocks.invalidateCoverUrl.mockReset();
-  mocks.readCachedCoverUrl.mockReset().mockReturnValue(undefined);
-  Object.values(actions).forEach((action) => action.mockReset());
-});
-
-it("exposes a stable return endpoint from the resolved cover cache on remount", () => {
-  const cachedArtworkUrl = "https://bandcamp.com/cached-cover.jpg";
-  mocks.readCachedCoverUrl.mockReturnValue(cachedArtworkUrl);
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+function testTree(
+  queryClient: QueryClient,
+  favorites: LocalFavoriteCollection,
+) {
   const router = createCodaMemoryRouter(queryClient, ["/favorites"]);
-
-  render(
-    <CodaMotionProvider>
-      <QueryClientProvider client={queryClient}>
-        <RouterContextProvider router={router}>
-          {screenFor(favoriteCollection())}
-        </RouterContextProvider>
-      </QueryClientProvider>
-    </CodaMotionProvider>,
-  );
-
-  const artwork = screen
-    .getByRole("link", { name: "Open Mirage" })
-    .querySelector<HTMLElement>("[data-slot=cover]");
-  const image = artwork?.querySelector("img");
-  expect(artwork).toBeInTheDocument();
-  expect(image).toHaveAttribute("src", cachedArtworkUrl);
-  expect(image).not.toHaveClass("invisible");
-  expect(
-    artwork?.querySelector("[data-favorite-artwork-fallback]"),
-  ).not.toBeInTheDocument();
-});
-
-it("does not reselect failed direct Favorite artwork and recovers through refreshed URLs", async () => {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  const router = createCodaMemoryRouter(queryClient, ["/favorites"]);
-  const tree = (favorites: LocalFavoriteCollection) => (
+  return (
     <CodaMotionProvider>
       <QueryClientProvider client={queryClient}>
         <RouterContextProvider router={router}>
@@ -132,66 +108,133 @@ it("does not reselect failed direct Favorite artwork and recovers through refres
       </QueryClientProvider>
     </CodaMotionProvider>
   );
-  const view = render(tree(favoriteCollection(directArtworkUrl)));
-  const releaseLink = screen.getByRole("link", { name: "Open Mirage" });
-  expect(releaseLink).toHaveAttribute(
-    "href",
-    "/collection/albums/album-1?q=&genre=All&sort=recent&mode=releases",
-  );
-  let artwork = releaseLink.querySelector<HTMLElement>("[aria-hidden=true]");
-  const expiredImage = artwork?.querySelector("img");
-  expect(expiredImage).toHaveAttribute("src", directArtworkUrl);
-  if (!expiredImage) throw new Error("Expected direct Favorite artwork.");
+}
 
-  fireEvent.error(expiredImage);
-  expect(mocks.invalidateCoverUrl).toHaveBeenCalledWith("album-cover-id");
-  await waitFor(
-    () => expect(mocks.fetchCoverUrl).toHaveBeenCalledWith("album-cover-id"),
-    { timeout: 500 },
-  );
-  await waitFor(() => {
-    artwork = screen
-      .getByRole("link", { name: "Open Mirage" })
-      .querySelector<HTMLElement>("[aria-hidden=true]");
-    expect(artwork?.querySelector("img")).toHaveAttribute(
-      "src",
-      refreshedArtworkUrl,
-    );
+beforeEach(() => {
+  Object.defineProperty(window, "__TAURI_INTERNALS__", {
+    configurable: true,
+    value: {},
   });
-  expect(
-    artwork?.querySelector(`[src="${directArtworkUrl}"]`),
-  ).not.toBeInTheDocument();
-  const refreshedImage = artwork?.querySelector("img");
-  expect(refreshedImage).toHaveClass("invisible");
+  act(() => clearCoverArtRendererState());
+  mocks.convertFileSrc.mockClear();
+  mocks.invoke.mockClear().mockResolvedValue(undefined);
+  Object.values(actions).forEach((action) => action.mockReset());
+});
+
+it("reveals cold authenticated Favorite artwork over its base color", () => {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+
+  render(testTree(queryClient, favoriteCollection()));
+
+  const artwork = screen
+    .getByRole("link", { name: "Open Mirage" })
+    .querySelector<HTMLElement>("[data-slot=cover]");
+  const image = artwork?.querySelector("img");
+  expect(image?.getAttribute("src")).toMatch(
+    /^coda-cover:\/v1\/600\/album-cover-id\?v=0&s=[a-f0-9]{32}$/,
+  );
+  expect(image).not.toHaveClass("invisible");
+  expect(image).toHaveAttribute("decoding", "async");
+  expect(image).toHaveAttribute("data-cover-art-pending");
+  expect(image).not.toHaveAttribute("data-cover-art-reveal");
   expect(
     artwork?.querySelector("[data-favorite-artwork-fallback]"),
-  ).toBeInTheDocument();
-  if (!refreshedImage) throw new Error("Expected refreshed Favorite artwork.");
-
-  fireEvent.load(refreshedImage);
-  expect(refreshedImage).not.toHaveClass("invisible");
-  expect(
-    artwork?.querySelector("[data-favorite-artwork-fallback]"),
   ).not.toBeInTheDocument();
 
-  view.rerender(tree(favoriteCollection(laterArtworkUrl)));
+  if (!image) throw new Error("Expected local Favorite artwork.");
+  fireEvent.load(image);
+  expect(image).not.toHaveAttribute("data-cover-art-pending");
+  expect(image).toHaveAttribute("data-cover-art-reveal");
+  fireEvent.animationEnd(image);
+  expect(image).not.toHaveAttribute("data-cover-art-reveal");
+});
+
+it("shares painted local sources across collection and Favorite remounts", () => {
+  const sourceAlbum = favoriteCollection().albums[0];
+  const primer = render(<CoverArt album={sourceAlbum} size="small" />);
+  const primerImage = screen.getByRole("img", { name: "Mirage cover" });
+  fireEvent.load(primerImage);
+  primer.unmount();
+
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(testTree(queryClient, favoriteCollection()));
+
+  const image = screen
+    .getByRole("link", { name: "Open Mirage" })
+    .querySelector("img");
+  expect(image).toHaveAttribute("loading", "eager");
+  expect(image).toHaveAttribute("decoding", "sync");
+  expect(image).not.toHaveAttribute("data-cover-art-pending");
+  expect(image).not.toHaveAttribute("data-cover-art-reveal");
+});
+
+it("invalidates failed Favorite artwork once, then falls back without a loop", async () => {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const view = render(
+    testTree(queryClient, favoriteCollection(directArtworkUrl)),
+  );
+  const releaseLink = screen.getByRole("link", { name: "Open Mirage" });
+  let artwork = releaseLink.querySelector<HTMLElement>("[data-slot=cover]");
+  const directImage = artwork?.querySelector("img");
+  const initialSource = directImage?.getAttribute("src");
+  expect(initialSource).toMatch(
+    /^coda-cover:\/v1\/600\/album-cover-id\?v=0&s=[a-f0-9]{32}$/,
+  );
+  if (!directImage) throw new Error("Expected local Favorite artwork.");
+
+  fireEvent.error(directImage);
+
+  await waitFor(() => expect(mocks.invoke).toHaveBeenCalledOnce());
+  expect(mocks.invoke).toHaveBeenCalledWith("invalidate_cover_art", {
+    coverArtId: "album-cover-id",
+  });
   artwork = screen
     .getByRole("link", { name: "Open Mirage" })
-    .querySelector<HTMLElement>("[aria-hidden=true]");
-  const laterImage = artwork?.querySelector("img");
-  expect(laterImage).toHaveAttribute("src", laterArtworkUrl);
-  expect(laterImage).toHaveClass("invisible");
-  expect(
-    artwork?.querySelector("[data-favorite-artwork-fallback]"),
-  ).toBeInTheDocument();
-  if (!laterImage) throw new Error("Expected later Favorite artwork.");
-
-  fireEvent.load(laterImage);
-  expect(laterImage).not.toHaveClass("invisible");
+    .querySelector<HTMLElement>("[data-slot=cover]");
+  const retriedImage = artwork?.querySelector("img");
+  expect(retriedImage).toHaveAttribute(
+    "src",
+    expect.stringMatching(
+      /^coda-cover:\/v1\/600\/album-cover-id\?v=retry-\d+&s=[a-f0-9]{32}$/,
+    ),
+  );
+  expect(retriedImage).not.toHaveClass("invisible");
+  expect(retriedImage).toHaveAttribute("data-cover-art-pending");
   expect(
     artwork?.querySelector("[data-favorite-artwork-fallback]"),
   ).not.toBeInTheDocument();
+  if (!retriedImage) throw new Error("Expected retried Favorite artwork.");
+
+  fireEvent.error(retriedImage);
+
+  expect(artwork?.querySelector("img")).not.toBeInTheDocument();
+  expect(mocks.invoke).toHaveBeenCalledOnce();
+  expect(
+    artwork?.querySelector("[data-favorite-artwork-fallback]"),
+  ).toBeInTheDocument();
+
+  view.rerender(testTree(queryClient, favoriteCollection(laterArtworkUrl)));
+  artwork = screen
+    .getByRole("link", { name: "Open Mirage" })
+    .querySelector<HTMLElement>("[data-slot=cover]");
+  expect(artwork?.querySelector("img")).not.toBeInTheDocument();
   expect(
     view.container.querySelector("a a, a button, button a"),
   ).not.toBeInTheDocument();
+
+  act(() => clearCoverArtRendererState());
+  await waitFor(() =>
+    expect(artwork?.querySelector("img")?.getAttribute("src")).toMatch(
+      /^coda-cover:\/v1\/600\/album-cover-id\?v=0&s=[a-f0-9]{32}$/,
+    ),
+  );
+  expect(artwork?.querySelector("img")?.getAttribute("src")).not.toBe(
+    initialSource,
+  );
 });

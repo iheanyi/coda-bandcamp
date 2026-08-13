@@ -126,7 +126,7 @@ export function VirtualizedSavedTrackList<Item>({
 
   const itemKey = useCallback(
     (index: number) => getItemKey(items[index], index),
-    [getItemKey, items],
+    [getItemKey, items, rowHeight],
   );
 
   const rangeExtractor = useCallback(

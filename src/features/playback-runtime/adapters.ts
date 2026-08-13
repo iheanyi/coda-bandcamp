@@ -1,7 +1,6 @@
 import {
   checkpointPlayerState,
   clearPlayerState,
-  fetchCoverUrl,
   fetchRadioShow,
   fetchStreamUrl,
   invalidateStreamUrl,
@@ -16,6 +15,7 @@ import {
   updateSystemMediaTimeline,
   type SystemMediaControlEvent,
 } from "@/lib";
+import { coverArtSource } from "@/coverArtSource";
 import { refreshDailyTrack } from "@/daily";
 import {
   installMediaSessionTrackHandlers,
@@ -120,7 +120,7 @@ async function installDesktopControls(
 }
 
 export const defaultPlaybackSystemMediaAdapters: PlaybackSystemMediaAdapters = {
-  fetchCoverUrl,
+  coverArtSource,
   createArtworkDataUrl: createSystemArtworkDataUrl,
   syncBrowserPlayback: syncMediaSessionPlayback,
   installBrowserHandlers: installMediaSessionTrackHandlers,

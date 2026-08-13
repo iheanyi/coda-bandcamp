@@ -88,7 +88,9 @@ describe("main-to-mini player bridge", () => {
       canPrevious: true,
       canNext: false,
     });
-    expect(JSON.stringify(eventBridge.snapshots[0])).not.toContain("signed.mp3");
+    expect(JSON.stringify(eventBridge.snapshots[0])).not.toContain(
+      "signed.mp3",
+    );
 
     act(() => playbackClock.updateFromMedia(43.4));
     await waitFor(() =>
@@ -122,9 +124,9 @@ describe("main-to-mini player bridge", () => {
 
   it("resolves album cover IDs when restored tracks omit artwork", async () => {
     const eventBridge = new MemoryMiniPlayerBridge();
-    const loadArtworkUrl = vi.fn().mockResolvedValue(
-      "https://t4.bcbits.com/img/restored-cover.jpg",
-    );
+    const localArtworkSource =
+      "coda-cover://localhost/v1/600/ca%3A496796527?v=0&s=0123456789abcdef0123456789abcdef";
+    const createArtworkSource = vi.fn(() => localArtworkSource);
     const restoredTrack: Track = {
       ...track,
       artworkUrl: undefined,
@@ -148,16 +150,16 @@ describe("main-to-mini player bridge", () => {
         onSeek={vi.fn()}
         onSetVolume={vi.fn()}
         onShowMain={vi.fn()}
-        loadArtworkUrl={loadArtworkUrl}
+        createArtworkSource={createArtworkSource}
       />,
     );
 
     await waitFor(() =>
       expect(eventBridge.snapshots.at(-1)?.track?.artworkUrl).toBe(
-        "https://t4.bcbits.com/img/restored-cover.jpg",
+        localArtworkSource,
       ),
     );
-    expect(loadArtworkUrl).toHaveBeenCalledExactlyOnceWith("ca:496796527");
+    expect(createArtworkSource).toHaveBeenCalledExactlyOnceWith("ca:496796527");
 
     view.unmount();
   });

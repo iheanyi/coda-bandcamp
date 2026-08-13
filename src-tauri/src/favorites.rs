@@ -1,3 +1,4 @@
+use crate::cover_cache::{authorize_albums, authorize_tracks};
 use crate::library::fetch_album_from_bandcamp;
 use crate::models::{
     FavoriteCollection, FavoriteInput, FavoriteKind, FavoriteMutationResult, FavoriteTrackLocator,
@@ -5,8 +6,9 @@ use crate::models::{
 };
 use crate::storage::run_blocking;
 use crate::subsonic::{
-    beta_feature_error, bounded_album_from_value, bounded_track_from_value, load_credentials_async,
-    playlist_track_album_id, request_empty_mutation, request_json, validate_subsonic_id,
+    beta_feature_error, bounded_album_from_value, bounded_track_from_value,
+    current_connection_generation, load_credentials_async, playlist_track_album_id,
+    request_empty_mutation, request_json, validate_subsonic_id,
 };
 use futures_util::{stream, StreamExt};
 use serde_json::Value;
@@ -90,6 +92,7 @@ pub(super) fn favorites_from_response(body: &Value) -> Result<FavoriteCollection
 #[tauri::command]
 pub(super) async fn fetch_favorites() -> Result<FavoriteCollection, String> {
     let started = Instant::now();
+    let generation = current_connection_generation();
     let credentials = load_credentials_async().await?;
     let body = match request_json("getStarred", &credentials, &[]).await {
         Ok(body) => body,
@@ -116,12 +119,15 @@ pub(super) async fn fetch_favorites() -> Result<FavoriteCollection, String> {
         enumerated_track_count = favorites.song_ids.len(),
         elapsed_ms = started.elapsed().as_millis(),
     );
+    authorize_albums(generation, &credentials, &favorites.albums)?;
+    authorize_tracks(generation, &credentials, &favorites.tracks)?;
     Ok(favorites)
 }
 
 #[tauri::command]
 pub(super) async fn set_favorite(input: FavoriteInput) -> Result<FavoriteMutationResult, String> {
     let started = Instant::now();
+    let generation = current_connection_generation();
     let (endpoint, key, id) = favorite_mutation_request(&input)?;
     let album_id = match input.kind {
         FavoriteKind::Album => None,
@@ -199,6 +205,7 @@ pub(super) async fn set_favorite(input: FavoriteInput) -> Result<FavoriteMutatio
             track: None,
         });
     };
+    authorize_tracks(generation, &credentials, std::slice::from_ref(&track))?;
     let favorite = track.starred_at.is_some();
     let verification = if favorite == input.favorite {
         FavoriteVerification::Verified
@@ -272,6 +279,7 @@ pub(super) async fn reconcile_favorite_tracks(
     }
 
     let started = Instant::now();
+    let generation = current_connection_generation();
     let album_count = albums.len();
     let track_count = albums.values().map(BTreeSet::len).sum::<usize>();
     let credentials = load_credentials_async().await?;
@@ -323,5 +331,6 @@ pub(super) async fn reconcile_favorite_tracks(
         concurrency_limit = FAVORITE_RECONCILIATION_CONCURRENCY,
         elapsed_ms = started.elapsed().as_millis(),
     );
+    authorize_tracks(generation, &credentials, &reconciliation.tracks)?;
     Ok(reconciliation)
 }

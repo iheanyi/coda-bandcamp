@@ -101,10 +101,10 @@ function useResolvedAdapters(
         )(),
     },
     systemMedia: {
-      fetchCoverUrl: (coverArtId) =>
+      coverArtSource: (coverArtId) =>
         (
-          overridesRef.current?.systemMedia?.fetchCoverUrl ??
-          defaultPlaybackSystemMediaAdapters.fetchCoverUrl
+          overridesRef.current?.systemMedia?.coverArtSource ??
+          defaultPlaybackSystemMediaAdapters.coverArtSource
         )(coverArtId),
       createArtworkDataUrl: (input) =>
         (

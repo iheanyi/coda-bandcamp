@@ -4,6 +4,10 @@ use crate::album_cache::{
     read_persisted_album_tracks, reset_album_metadata_cache, write_persisted_album_tracks,
     AlbumMetadataCacheReset,
 };
+use crate::cover_cache::{
+    authorize_albums, authorize_tracks, cover_cache_publication_guard, reset_cover_art_cache,
+    revoke_cover_art_access, CoverCacheReset,
+};
 use crate::library_cache::{
     library_cache_path, load_library_cache_or_clear_invalid, write_library_cache,
     LIBRARY_CACHE_LOCK, LIBRARY_FULL_RECONCILE_INTERVAL_MS, MAX_LIBRARY_ALBUMS,
@@ -53,7 +57,16 @@ impl ConnectionChangeGuard {
             .map_err(|_| {
                 "Another Bandcamp connection change is already in progress.".to_string()
             })?;
+        let cover_publication_guard = match cover_cache_publication_guard() {
+            Ok(guard) => guard,
+            Err(error) => {
+                CONNECTION_CHANGE_IN_PROGRESS.store(false, Ordering::Release);
+                return Err(error);
+            }
+        };
         let album_cache_generation = advance_album_cache_connection_generation();
+        revoke_cover_art_access(album_cache_generation);
+        drop(cover_publication_guard);
         Ok(Self {
             album_cache_generation,
         })
@@ -143,15 +156,17 @@ fn cancel_pending_album_cache_writes() {
 pub(super) fn finish_disconnect_cache_cleanup(
     library_result: Result<(), String>,
     album_result: Result<AlbumMetadataCacheReset, String>,
+    cover_result: Result<CoverCacheReset, String>,
 ) -> Option<&'static str> {
-    if library_result.is_ok() && album_result.is_ok() {
+    let cover_cleanup_finished = matches!(cover_result, Ok(CoverCacheReset::Cleared));
+    if library_result.is_ok() && album_result.is_ok() && cover_cleanup_finished {
         if matches!(album_result, Ok(AlbumMetadataCacheReset::Invalidated)) {
             eprintln!("The album metadata cache remains disabled while local cleanup retries.");
         }
         return None;
     }
     Some(
-        "Bandcamp credentials were removed, but Coda could not finish clearing local library metadata. No credentials remain; retry connecting later and Coda will retry cleanup before saving credentials."
+        "Bandcamp credentials were removed, but Coda could not finish clearing local library metadata or cover artwork. No credentials remain; retry connecting later and Coda will retry cleanup before saving credentials."
     )
 }
 
@@ -171,7 +186,9 @@ fn disconnect_blocking_with_guard(app: &tauri::AppHandle) -> Result<Option<Strin
             cancel_pending_album_cache_writes();
             let library_result = clear_library_cache_file(app);
             let album_result = reset_album_metadata_cache(app);
-            let warning = finish_disconnect_cache_cleanup(library_result, album_result);
+            let cover_result = reset_cover_art_cache(app);
+            let warning =
+                finish_disconnect_cache_cleanup(library_result, album_result, cover_result);
             if let Some(warning) = &warning {
                 eprintln!("Could not finish disconnect cleanup: {warning}");
             }
@@ -198,15 +215,20 @@ pub(super) async fn disconnect(app: tauri::AppHandle) -> Result<Option<String>, 
 pub(super) async fn load_library_cache(
     app: tauri::AppHandle,
 ) -> Result<Option<LibraryCacheSnapshot>, String> {
-    load_credentials_async().await?;
-    tauri::async_runtime::spawn_blocking(move || {
+    let credentials = load_credentials_async().await?;
+    let generation = current_connection_generation();
+    let snapshot = tauri::async_runtime::spawn_blocking(move || {
         let _guard = LIBRARY_CACHE_LOCK
             .lock()
             .map_err(|_| "The library cache lock is unavailable.".to_string())?;
         load_library_cache_or_clear_invalid(&library_cache_path(&app)?, timestamp_ms()?)
     })
     .await
-    .map_err(|error| format!("Could not load the saved library: {error}"))?
+    .map_err(|error| format!("Could not load the saved library: {error}"))??;
+    if let Some(snapshot) = &snapshot {
+        authorize_albums(generation, &credentials, &snapshot.albums)?;
+    }
+    Ok(snapshot)
 }
 
 pub(super) async fn fetch_library_page(
@@ -450,6 +472,15 @@ pub(super) async fn connect(
             clear_library_cache_file(&library_cache_app)
         })
         .await?;
+
+        let cover_cache_app = app.clone();
+        let cover_reset = run_blocking("Could not finish resetting the artwork cache", move || {
+            reset_cover_art_cache(&cover_cache_app)
+        })
+        .await?;
+        if cover_reset == CoverCacheReset::Invalidated {
+            eprintln!("The prior cover artwork cache remains disabled while cleanup retries.");
+        }
     }
     ensure_library_sync_current(sync_generation, None)?;
     store_credentials_async(input.clone()).await?;
@@ -487,6 +518,7 @@ pub(super) async fn connect(
     }
 
     drop(connection_change_guard);
+    authorize_albums(connection_generation, &input, &albums)?;
     let cache_app = app.clone();
     let cached_albums = albums.clone();
     let cached_credentials = input.clone();
@@ -556,6 +588,7 @@ pub(super) async fn fetch_library(
                 .await
                 .map_err(|error| format!("Could not refresh the library cache: {error}"))?;
                 finish_library_cache_write(cache_result, "Could not refresh the library cache")?;
+                authorize_albums(connection_generation, &credentials, &response_albums)?;
                 return Ok(response_albums);
             }
         }
@@ -585,6 +618,7 @@ pub(super) async fn fetch_library(
     .await
     .map_err(|error| format!("Could not save the library cache: {error}"))?;
     finish_library_cache_write(cache_result, "Could not save the library cache")?;
+    authorize_albums(connection_generation, &credentials, &albums)?;
     Ok(albums)
 }
 
@@ -773,6 +807,7 @@ pub(super) async fn fetch_album(
     if force_refresh {
         let tracks = fetch_album_from_bandcamp(&album_id, &credentials).await?;
         ensure_album_request_current(connection_generation, &album_id, refresh_generation)?;
+        authorize_tracks(connection_generation, &credentials, &tracks)?;
         schedule_persist_album_tracks(
             app,
             persistent_key,
@@ -789,11 +824,13 @@ pub(super) async fn fetch_album(
         load_persisted_album_tracks(app.clone(), persistent_key.clone(), album_id.clone()).await
     {
         ensure_album_request_current(connection_generation, &album_id, refresh_generation)?;
+        authorize_tracks(connection_generation, &credentials, &tracks)?;
         return Ok(tracks);
     }
 
     let tracks = fetch_album_from_bandcamp(&album_id, &credentials).await?;
     ensure_album_request_current(connection_generation, &album_id, refresh_generation)?;
+    authorize_tracks(connection_generation, &credentials, &tracks)?;
     schedule_persist_album_tracks(
         app,
         persistent_key,

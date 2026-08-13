@@ -2,6 +2,7 @@
 fn every_tauri_command_enters_through_the_async_runtime() {
     let sources = [
         ("daily", include_str!("../daily.rs")),
+        ("cover_cache", include_str!("../cover_cache.rs")),
         ("discover", include_str!("../discover.rs")),
         ("favorites", include_str!("../favorites.rs")),
         ("lastfm", include_str!("../lastfm.rs")),
@@ -33,7 +34,7 @@ fn every_tauri_command_enters_through_the_async_runtime() {
         }
     }
     assert_eq!(
-        command_count, 36,
+        command_count, 37,
         "the registered command inventory changed"
     );
 }
@@ -72,6 +73,7 @@ fn production_modules_declare_their_dependencies_explicitly() {
     let sources = [
         ("album_cache", include_str!("../album_cache.rs")),
         ("bandcamp_http", include_str!("../bandcamp_http.rs")),
+        ("cover_cache", include_str!("../cover_cache.rs")),
         ("daily", include_str!("../daily.rs")),
         ("desktop", include_str!("../desktop.rs")),
         ("discover", include_str!("../discover.rs")),
@@ -101,6 +103,7 @@ fn production_modules_declare_their_dependencies_explicitly() {
     for module in [
         "album_cache",
         "bandcamp_http",
+        "cover_cache",
         "daily",
         "desktop",
         "discover",
@@ -123,6 +126,57 @@ fn production_modules_declare_their_dependencies_explicitly() {
             "the composition root imports all of {module}"
         );
     }
+}
+
+#[test]
+fn cover_protocol_csp_is_image_only_and_does_not_enable_filesystem_assets() {
+    let config = include_str!("../../tauri.conf.json");
+    let parsed: serde_json::Value = serde_json::from_str(config).unwrap();
+    let csp = parsed
+        .pointer("/app/security/csp")
+        .and_then(serde_json::Value::as_str)
+        .unwrap();
+
+    let image_sources = csp
+        .split(';')
+        .map(str::trim)
+        .find(|directive| directive.starts_with("img-src "))
+        .unwrap();
+    assert!(image_sources.contains("coda-cover:"));
+    assert!(image_sources.contains("http://coda-cover.localhost"));
+    for directive in csp
+        .split(';')
+        .map(str::trim)
+        .filter(|directive| !directive.starts_with("img-src "))
+    {
+        assert!(!directive.contains("coda-cover"));
+    }
+    assert!(!config.contains("assetProtocol"));
+
+    let cover_cache = include_str!("../cover_cache.rs");
+    assert!(cover_cache.contains(".redirect(Policy::custom("));
+    assert!(cover_cache.contains("UrlKind::BandcampMedia"));
+    assert!(cover_cache.contains("MAX_COVER_REDIRECTS"));
+    assert!(!cover_cache.contains("foreground_fetches"));
+    assert!(cover_cache.contains("header::CACHE_CONTROL, \"no-store\""));
+    assert!(cover_cache.contains("private, max-age=31536000, immutable"));
+
+    let resolver = cover_cache
+        .split("pub(crate) async fn resolve_cover_art(")
+        .nth(1)
+        .unwrap()
+        .split("#[cfg(test)]")
+        .next()
+        .unwrap();
+    assert!(!resolver.contains("load_credentials_async"));
+    let authenticated_fetch = cover_cache
+        .split("async fn fetch_and_publish(")
+        .nth(1)
+        .unwrap()
+        .split("async fn revalidate_cover(")
+        .next()
+        .unwrap();
+    assert!(authenticated_fetch.contains("load_credentials_async"));
 }
 
 #[test]

@@ -10,7 +10,6 @@ import type { Album, LocalFavoriteCollection, Track } from "@/types";
 const nativeMocks = vi.hoisted(() => ({
   checkpointPlayerState: vi.fn(),
   fetchAlbum: vi.fn(),
-  fetchCoverUrl: vi.fn(),
   fetchLibrary: vi.fn(),
   fetchRadioShow: vi.fn(),
   fetchStreamUrl: vi.fn(),
@@ -28,7 +27,6 @@ vi.mock("@/lib", async (importOriginal) => {
     ...actual,
     checkpointPlayerState: nativeMocks.checkpointPlayerState,
     fetchAlbum: nativeMocks.fetchAlbum,
-    fetchCoverUrl: nativeMocks.fetchCoverUrl,
     fetchLibrary: nativeMocks.fetchLibrary,
     fetchRadioShow: nativeMocks.fetchRadioShow,
     fetchStreamUrl: nativeMocks.fetchStreamUrl,
@@ -91,9 +89,6 @@ beforeEach(() => {
 
   nativeMocks.checkpointPlayerState.mockReset().mockResolvedValue(true);
   nativeMocks.fetchAlbum.mockReset();
-  nativeMocks.fetchCoverUrl
-    .mockReset()
-    .mockResolvedValue("https://example.test/test-cover.jpg");
   nativeMocks.fetchLibrary.mockReset().mockResolvedValue([]);
   nativeMocks.fetchRadioShow.mockReset();
   nativeMocks.fetchStreamUrl

@@ -224,6 +224,22 @@ describe("ResponsiveVirtualGrid", () => {
     expect(renderedNames.length).toBeLessThan(40);
   });
 
+  it("recomputes fixed row geometry when width changes within one column count", async () => {
+    const cards = Array.from({ length: 1_000 }, (_, index) => card(index));
+    render(<Grid cards={cards} />);
+    const grid = screen.getByRole("list", { name: "Collection" });
+    await waitFor(() => expect(grid).toHaveAttribute("data-columns", "4"));
+    const initialHeight = Number.parseFloat(grid.style.height);
+
+    containerWidth = 590;
+    ResizeObserverMock.resizeAll();
+
+    await waitFor(() => {
+      expect(grid).toHaveAttribute("data-columns", "4");
+      expect(Number.parseFloat(grid.style.height)).toBeLessThan(initialHeight);
+    });
+  });
+
   it("pins the focused row while scrolling to distant cards", async () => {
     const cards = Array.from({ length: 1_000 }, (_, index) => card(index));
     render(<Grid cards={cards} />);

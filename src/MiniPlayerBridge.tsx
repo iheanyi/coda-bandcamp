@@ -2,13 +2,10 @@ import {
   useEffect,
   useMemo,
   useRef,
-  useState,
   useSyncExternalStore,
 } from "react";
-import {
-  fetchCoverUrl,
-  isDesktop,
-} from "./lib";
+import { useCoverArtSource } from "./coverArtSource";
+import { isDesktop } from "./lib";
 import {
   createMiniPlayerSnapshot,
   MINI_PLAYER_COMMAND_EVENT,
@@ -48,7 +45,7 @@ type MiniPlayerBridgeProps = {
   onSeek: (positionSeconds: number) => void;
   onSetVolume: (volume: number) => void;
   onShowMain: () => void;
-  loadArtworkUrl?: (coverArt: string) => Promise<string>;
+  createArtworkSource?: (coverArt: string) => string;
 };
 
 let nativeEventBridgeRequest: Promise<MiniPlayerEventBridge> | undefined;
@@ -89,7 +86,7 @@ export function MiniPlayerBridge({
   onSeek,
   onSetVolume,
   onShowMain,
-  loadArtworkUrl = fetchCoverUrl,
+  createArtworkSource,
 }: MiniPlayerBridgeProps) {
   const bridgeEnabled = Boolean(eventBridge) || isDesktop();
   const positionSeconds = useSyncExternalStore(
@@ -104,36 +101,18 @@ export function MiniPlayerBridge({
   const currentChapter = currentIndex >= 0
     ? radioTimeline[currentIndex]
     : undefined;
-  const directArtworkUrl =
-    currentChapter?.artworkUrl ?? track?.artworkUrl ?? artwork?.artworkUrl;
-  const coverArtId = track?.coverArt ?? artwork?.coverArt;
-  const [resolvedArtworkUrl, setResolvedArtworkUrl] = useState(directArtworkUrl);
-
-  useEffect(() => {
-    let active = true;
-    setResolvedArtworkUrl(directArtworkUrl);
-    if (!bridgeEnabled || directArtworkUrl || !coverArtId) {
-      return () => {
-        active = false;
-      };
-    }
-    loadArtworkUrl(coverArtId)
-      .then((url) => {
-        if (active) setResolvedArtworkUrl(url);
-      })
-      .catch(() => {
-        if (active) setResolvedArtworkUrl(undefined);
-      });
-    return () => {
-      active = false;
-    };
-  }, [
-    bridgeEnabled,
-    coverArtId,
-    directArtworkUrl,
-    loadArtworkUrl,
-    track?.id,
-  ]);
+  const coverArtId = radioTimeline.length > 0
+    ? undefined
+    : (track?.coverArt ?? artwork?.coverArt);
+  const directArtworkUrl = currentChapter?.artworkUrl ?? (
+    coverArtId ? undefined : (track?.artworkUrl ?? artwork?.artworkUrl)
+  );
+  const subscribedArtworkUrl = useCoverArtSource(coverArtId);
+  const resolvedArtworkUrl = directArtworkUrl ?? (
+    bridgeEnabled && coverArtId
+      ? (createArtworkSource?.(coverArtId) ?? subscribedArtworkUrl)
+      : undefined
+  );
 
   const snapshot = useMemo(
     () =>

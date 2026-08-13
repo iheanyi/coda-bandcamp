@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { normalizedReleaseTitle } from "@/playerState";
 import { radioAiringIndexesAt } from "@/radioPlayback";
 import type { Album, RadioChapter, Track } from "@/types";
+import { useCoverArtSource } from "@/coverArtSource";
 
 import type { PlaybackCoreController } from "./core";
 import { safePlaybackErrorDetail } from "./errors";
@@ -27,6 +28,7 @@ type SystemMediaEnvironment = {
   track?: Track;
   timeline: readonly RadioChapter[];
   album?: Album;
+  coverArtworkUrl?: string;
   playing: boolean;
   canNext: boolean;
 };
@@ -45,7 +47,9 @@ type SystemMediaDisplay = {
 type CurrentSystemMedia = {
   display?: SystemMediaDisplay;
   browserArtworkUrl?: string;
-  nativeArtworkUrl?: string;
+  nativeArtwork?:
+    | { kind: "cover"; coverArtId: string }
+    | { kind: "remote"; url: string };
 };
 
 function displayAt(
@@ -60,9 +64,14 @@ function displayAt(
   ).currentIndex;
   const chapter =
     currentIndex >= 0 ? environment.timeline[currentIndex] : undefined;
-  const directArtworkUrl =
-    chapter?.artworkUrl ?? track.artworkUrl ?? environment.album?.artworkUrl;
-  const coverArtId = track.coverArt ?? environment.album?.coverArt;
+  const coverArtId = environment.timeline.length > 0
+    ? undefined
+    : (track.coverArt ?? environment.album?.coverArt);
+  const directArtworkUrl = chapter?.artworkUrl ?? (
+    coverArtId
+      ? environment.coverArtworkUrl
+      : (track.artworkUrl ?? environment.album?.artworkUrl)
+  );
   return {
     identity: [
       track.id,
@@ -133,7 +142,7 @@ function createSystemMediaCoordinator({
         title: display.title,
         artist: display.artist,
         album: display.album,
-        artworkUrl: current.nativeArtworkUrl,
+        artwork: current.nativeArtwork,
         canPrevious: true,
         canNext: display.nativeCanNext,
       })
@@ -156,12 +165,16 @@ function createSystemMediaCoordinator({
     current = {
       display,
       browserArtworkUrl: display.artworkUrl,
-      nativeArtworkUrl: display.artworkUrl,
+      nativeArtwork: display.coverArtId
+        ? { kind: "cover", coverArtId: display.coverArtId }
+        : display.artworkUrl
+          ? { kind: "remote", url: display.artworkUrl }
+          : undefined,
     };
     syncBrowser(positionSeconds);
     syncNativeMetadata();
 
-    if (!display.artworkUrl) {
+    if (!current.browserArtworkUrl) {
       let active = true;
       const generateArtwork = () => {
         if (
@@ -207,28 +220,6 @@ function createSystemMediaCoordinator({
         };
       }
     }
-
-    if (display.artworkUrl || !display.coverArtId) return;
-    void adapters
-      .fetchCoverUrl(display.coverArtId)
-      .then((artworkUrl) => {
-        if (
-          generation !== artworkGeneration ||
-          current.display?.identity !== display.identity
-        ) {
-          return;
-        }
-        current = {
-          ...current,
-          browserArtworkUrl: artworkUrl,
-          nativeArtworkUrl: artworkUrl,
-        };
-        syncBrowser(positionSeconds);
-        syncNativeMetadata();
-      })
-      .catch(() => {
-        // Generated browser artwork remains available when signed cover lookup fails.
-      });
   };
 
   const syncAt = (positionSeconds: number, force = false) => {
@@ -298,10 +289,18 @@ export function usePlaybackSystemMediaController({
         : undefined,
     [albums, core.queueModel.currentTrack],
   );
+  const currentCoverArtId = core.queueModel.currentRadioTimeline.length > 0
+    ? undefined
+    : (core.queueModel.currentTrack?.coverArt ?? currentAlbum?.coverArt);
+  const subscribedCoverArtworkUrl = useCoverArtSource(currentCoverArtId);
+  const coverArtworkUrl = currentCoverArtId
+    ? (subscribedCoverArtworkUrl ?? adapters.coverArtSource(currentCoverArtId))
+    : undefined;
   const environmentRef = useRef<SystemMediaEnvironment>({
     track: core.queueModel.currentTrack,
     timeline: core.queueModel.currentRadioTimeline,
     album: currentAlbum,
+    coverArtworkUrl,
     playing: core.transportModel.playing,
     canNext: core.transportModel.canNext,
   });
@@ -309,6 +308,7 @@ export function usePlaybackSystemMediaController({
     track: core.queueModel.currentTrack,
     timeline: core.queueModel.currentRadioTimeline,
     album: currentAlbum,
+    coverArtworkUrl,
     playing: core.transportModel.playing,
     canNext: core.transportModel.canNext,
   };
@@ -344,6 +344,7 @@ export function usePlaybackSystemMediaController({
     core.queueModel.currentRadioTimeline,
     core.queueModel.currentTrack,
     core.transportModel.canNext,
+    coverArtworkUrl,
     currentAlbum,
   ]);
 

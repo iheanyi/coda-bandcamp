@@ -27,7 +27,7 @@ export const ArtistCard = memo(function ArtistCard({
     <Link
       aria-label={`Browse ${group.name}`}
       className={cn(
-        "group grid w-full min-w-0 grid-cols-[2.5rem_minmax(0,1fr)_auto] items-center gap-3 rounded-lg border border-border bg-[#171a1c] p-2 text-left text-inherit outline-none [contain-intrinsic-size:62px] [content-visibility:auto] hover:border-(--line-strong) hover:bg-popover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+        "group grid w-full min-w-0 grid-cols-[2.5rem_minmax(0,1fr)_auto] items-center gap-3 rounded-lg border border-border bg-[#171a1c] p-2 text-left text-inherit outline-none hover:border-(--line-strong) hover:bg-popover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
         className,
       )}
       data-artist-open={group.key}

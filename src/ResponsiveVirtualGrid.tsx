@@ -197,7 +197,7 @@ export function ResponsiveVirtualGrid<Item>({
         ? `${metrics.columns}:${rowIndex}`
         : `${metrics.columns}:${String(getItemKey(item, itemIndex))}`;
     },
-    [getItemKey, items, metrics.columns],
+    [getItemKey, items, metrics.columns, metrics.rowHeight],
   );
 
   const rangeExtractor = useCallback(

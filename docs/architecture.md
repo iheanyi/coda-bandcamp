@@ -16,7 +16,8 @@ Classic MVC is not the governing pattern. React already supplies one-way renderi
 | `library` | Connection lifecycle, library synchronization, album fetching, and progress events |
 | `library_cache` | Stripped library snapshot persistence |
 | `album_cache` | Restart-safe redb album metadata cache and stale-write generation guards |
-| `playlists` | Playlist commands and signed stream/cover URL commands |
+| `cover_cache` | Authorized, restart-safe Subsonic cover bytes, index-gated protocol serving, validation, and eviction |
+| `playlists` | Playlist commands and signed stream URL command |
 | `player_state` | Player snapshot/checkpoint validation, persistence, diagnostics, and commands |
 | `lastfm` | Last.fm desktop authorization, keyring session storage, request validation, now-playing, and scrobbling |
 | `discover` | Anonymous Discover input validation, response parsing, and command |
@@ -37,6 +38,7 @@ Native tests mirror those feature boundaries under `src-tauri/src/tests/`. Tests
 - Authenticated library features depend on the Subsonic and Bandcamp transport boundaries. The transport layer never depends on a library feature.
 - Discover and Radio remain anonymous and must not import authenticated credentials or Subsonic session state.
 - Persisted models must never gain signed media URLs or credentials. Cache and player-state validation remains deny-by-default.
+- Authorized cover-cache hits are local-file reads gated by the current connection generation, validated cover-ID set, invalidation state, and native index. Only a cache miss or stale revalidation may enter Keychain-backed Subsonic authentication and Bandcamp networking.
 - Album cache locking, database initialization, connection generations, and per-album refresh generations form one concurrency protocol and must move together if ownership changes.
 - Player snapshots and lightweight checkpoints share one persistence lock and validation boundary.
 - Platform-specific code keeps a matching no-op or unavailable implementation on unsupported targets.

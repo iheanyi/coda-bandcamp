@@ -181,7 +181,10 @@ function createAdapterHarness(
     nowSeconds: vi.fn(() => 1_000),
   };
   const systemMedia = {
-    fetchCoverUrl: vi.fn(async () => "https://example.test/cover.jpg"),
+    coverArtSource: vi.fn(
+      (coverArtId: string) =>
+        `coda-cover://localhost/v1/600/${encodeURIComponent(coverArtId)}?v=0&s=0123456789abcdef0123456789abcdef`,
+    ),
     createArtworkDataUrl: vi.fn<
       PlaybackSystemMediaAdapters["createArtworkDataUrl"]
     >(() => undefined),
@@ -1024,6 +1027,42 @@ describe("Playback runtime", () => {
         Reflect.deleteProperty(window, "cancelIdleCallback");
       }
     }
+  });
+
+  it("uses local cover sources in the browser and cover IDs in native media", async () => {
+    const harness = createAdapterHarness();
+    const view = renderRuntime({
+      connected: true,
+      lastFmConnected: false,
+      adapters: harness.adapters,
+    });
+    await waitFor(() =>
+      expect(controllerFrom(view.current).queue.ready).toBe(true),
+    );
+    const coveredTrack: Track = {
+      ...tracks[1],
+      coverArt: "ca:496796527",
+    };
+
+    act(() =>
+      controllerFrom(view.current).queueCommands.playTrack(coveredTrack),
+    );
+
+    const localSource =
+      "coda-cover://localhost/v1/600/ca%3A496796527?v=0&s=0123456789abcdef0123456789abcdef";
+    await waitFor(() =>
+      expect(harness.systemMedia.syncBrowserPlayback).toHaveBeenLastCalledWith(
+        expect.objectContaining({ artworkUrl: localSource }),
+      ),
+    );
+    expect(harness.systemMedia.coverArtSource).toHaveBeenCalledWith(
+      "ca:496796527",
+    );
+    expect(harness.systemMedia.updateNativeMetadata).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        artwork: { kind: "cover", coverArtId: "ca:496796527" },
+      }),
+    );
   });
 
   it("cleans up a native listener when its sibling registration fails", async () => {

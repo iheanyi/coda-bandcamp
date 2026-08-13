@@ -1,24 +1,13 @@
 import { type CSSProperties, useEffect, useRef, useState } from "react";
-import {
-  fetchCoverUrl,
-  initials,
-  invalidateCoverUrl,
-  isDesktop,
-  readCachedCoverUrl,
-} from "@/lib";
+import { invalidateCoverArt, useCoverArtSource } from "@/coverArtSource";
+import { initials } from "@/lib";
 import { cn } from "@/lib/utils";
+import {
+  forgetPaintedCoverSource,
+  hasPaintedCoverSource,
+  rememberPaintedCoverSource,
+} from "@/paintedCoverSources";
 import type { Album } from "@/types";
-
-const MAX_WARM_COVER_URLS = 512;
-const warmCoverUrls = new Set<string>();
-
-function rememberWarmCoverUrl(url: string) {
-  warmCoverUrls.delete(url);
-  warmCoverUrls.add(url);
-  if (warmCoverUrls.size <= MAX_WARM_COVER_URLS) return;
-  const oldest = warmCoverUrls.values().next().value;
-  if (oldest) warmCoverUrls.delete(oldest);
-}
 
 export type CoverArtAlbum = Pick<
   Album,
@@ -44,15 +33,14 @@ export function CoverArt({
   artistArtworkDetail,
   className,
 }: CoverArtProps) {
-  const [url, setUrl] = useState<string | undefined>(
-    () =>
-      album.artworkUrl ||
-      fallbackArtworkUrl ||
-      (album.coverArt ? readCachedCoverUrl(album.coverArt) : undefined),
-  );
-  const [requestVersion, setRequestVersion] = useState(0);
+  const localArtworkUrl = useCoverArtSource(album.coverArt);
+  const [, setFailureVersion] = useState(0);
+  const [loadedUrl, setLoadedUrl] = useState<string>();
+  const [revealingUrl, setRevealingUrl] = useState<string>();
+  const mountedRef = useRef(false);
   const retryCountRef = useRef(0);
-  const coverIdRef = useRef(album.coverArt);
+  const retryPendingRef = useRef(false);
+  const retryRequestRef = useRef(0);
   const failedImageUrlsRef = useRef(new Set<string>());
   const sourceConfigurationRef = useRef({
     albumId: album.id,
@@ -62,89 +50,71 @@ export function CoverArt({
   });
 
   useEffect(() => {
+    mountedRef.current = true;
     const refresh = () => {
+      retryRequestRef.current += 1;
       retryCountRef.current = 0;
-      setRequestVersion((version) => version + 1);
+      retryPendingRef.current = false;
+      failedImageUrlsRef.current.clear();
+      setFailureVersion((version) => version + 1);
     };
     window.addEventListener("coda:refresh-artwork", refresh);
-    return () => window.removeEventListener("coda:refresh-artwork", refresh);
+    return () => {
+      mountedRef.current = false;
+      window.removeEventListener("coda:refresh-artwork", refresh);
+    };
   }, []);
 
-  useEffect(() => {
-    let active = true;
-    const sourceConfiguration = sourceConfigurationRef.current;
-    if (
-      sourceConfiguration.albumId !== album.id ||
-      sourceConfiguration.artworkUrl !== album.artworkUrl ||
-      sourceConfiguration.coverArt !== album.coverArt ||
-      sourceConfiguration.fallbackArtworkUrl !== fallbackArtworkUrl
-    ) {
-      sourceConfigurationRef.current = {
-        albumId: album.id,
-        artworkUrl: album.artworkUrl,
-        coverArt: album.coverArt,
-        fallbackArtworkUrl,
-      };
-      failedImageUrlsRef.current.clear();
-      retryCountRef.current = 0;
-    }
-    if (coverIdRef.current !== album.coverArt) {
-      coverIdRef.current = album.coverArt;
-      retryCountRef.current = 0;
-    }
-    if (album.artworkUrl && !failedImageUrlsRef.current.has(album.artworkUrl)) {
-      setUrl(album.artworkUrl);
-      return;
-    }
-    if (
-      fallbackArtworkUrl &&
-      !failedImageUrlsRef.current.has(fallbackArtworkUrl)
-    ) {
-      setUrl(fallbackArtworkUrl);
-      return;
-    }
-    if (!album.coverArt || !isDesktop()) {
-      setUrl(undefined);
-      return;
-    }
-    const cachedUrl = readCachedCoverUrl(album.coverArt);
-    if (cachedUrl && !failedImageUrlsRef.current.has(cachedUrl)) {
-      setUrl(cachedUrl);
-      return;
-    }
-    fetchCoverUrl(album.coverArt)
-      .then((value) => {
-        if (active) setUrl(value);
-      })
-      .catch(() => {
-        if (active) setUrl(undefined);
-      });
-    return () => {
-      active = false;
+  if (
+    sourceConfigurationRef.current.albumId !== album.id ||
+    sourceConfigurationRef.current.coverArt !== album.coverArt ||
+    (!album.coverArt &&
+      (sourceConfigurationRef.current.artworkUrl !== album.artworkUrl ||
+        sourceConfigurationRef.current.fallbackArtworkUrl !==
+          fallbackArtworkUrl))
+  ) {
+    sourceConfigurationRef.current = {
+      albumId: album.id,
+      artworkUrl: album.artworkUrl,
+      coverArt: album.coverArt,
+      fallbackArtworkUrl,
     };
-  }, [
-    album.artworkUrl,
-    album.coverArt,
-    album.id,
-    fallbackArtworkUrl,
-    requestVersion,
-  ]);
+    retryRequestRef.current += 1;
+    failedImageUrlsRef.current.clear();
+    retryCountRef.current = 0;
+    retryPendingRef.current = false;
+  }
+
+  const url = (
+    album.coverArt ? [localArtworkUrl] : [album.artworkUrl, fallbackArtworkUrl]
+  ).find((candidate) =>
+    Boolean(candidate && !failedImageUrlsRef.current.has(candidate)),
+  );
 
   const retryImage = () => {
-    if (url) failedImageUrlsRef.current.add(url);
-    if (
-      fallbackArtworkUrl &&
-      url !== fallbackArtworkUrl &&
-      !failedImageUrlsRef.current.has(fallbackArtworkUrl)
-    ) {
-      setUrl(fallbackArtworkUrl);
+    if (!url) return;
+    failedImageUrlsRef.current.add(url);
+    forgetPaintedCoverSource(url);
+
+    if (!album.coverArt || retryCountRef.current >= 1) {
+      retryPendingRef.current = false;
+      setFailureVersion((version) => version + 1);
       return;
     }
-    setUrl(undefined);
-    if (!album.coverArt || retryCountRef.current >= 1) return;
     retryCountRef.current += 1;
-    invalidateCoverUrl(album.coverArt);
-    setRequestVersion((version) => version + 1);
+    const retryRequest = ++retryRequestRef.current;
+    retryPendingRef.current = true;
+    if (localArtworkUrl) failedImageUrlsRef.current.add(localArtworkUrl);
+    setFailureVersion((version) => version + 1);
+    void invalidateCoverArt(album.coverArt)
+      .catch(() => undefined)
+      .finally(() => {
+        if (!mountedRef.current || retryRequestRef.current !== retryRequest) {
+          return;
+        }
+        retryPendingRef.current = false;
+        setFailureVersion((version) => version + 1);
+      });
   };
 
   const sizeClassName =
@@ -153,7 +123,12 @@ export function CoverArt({
       : size === "small"
         ? "size-10 rounded-sm"
         : "size-52 rounded-md shadow-[0_20px_42px_rgba(0,0,0,0.35)]";
-  const warm = Boolean(url && warmCoverUrls.has(url));
+  const warm = Boolean(url && hasPaintedCoverSource(url));
+  const revealPending = Boolean(
+    url && (animateChanges || !warm) && loadedUrl !== url,
+  );
+  const revealing = Boolean(url && revealingUrl === url);
+  const showFallback = !url && !retryPendingRef.current;
 
   return (
     <div
@@ -164,8 +139,6 @@ export function CoverArt({
       className={cn(
         "relative isolate shrink-0 overflow-hidden bg-(--cover-base) text-[#f7f3e8]",
         sizeClassName,
-        animateChanges &&
-          "[&>img]:animate-[cover-artwork-in_var(--duration-coda-standard)_var(--ease-coda-enter)]",
         className,
       )}
       style={
@@ -180,40 +153,53 @@ export function CoverArt({
           key={url}
           src={url}
           alt={`${album.title} cover`}
-          loading={size === "card" && !warm ? "lazy" : "eager"}
+          loading="eager"
           decoding={warm ? "sync" : "async"}
           draggable={false}
-          onError={() => {
-            warmCoverUrls.delete(url);
-            retryImage();
+          onError={retryImage}
+          onLoad={() => {
+            const shouldReveal = animateChanges || !hasPaintedCoverSource(url);
+            rememberPaintedCoverSource(url);
+            setLoadedUrl(url);
+            setRevealingUrl(shouldReveal ? url : undefined);
           }}
-          onLoad={() => rememberWarmCoverUrl(url)}
+          onAnimationEnd={() => {
+            setRevealingUrl((current) =>
+              current === url ? undefined : current,
+            );
+          }}
+          data-cover-art-pending={revealPending ? "" : undefined}
+          data-cover-art-reveal={revealing ? "" : undefined}
           className="relative z-10 block size-full object-cover"
         />
       ) : null}
-      <span
-        aria-hidden="true"
-        className="absolute top-[12%] left-[9%] h-1 w-[31%] bg-(--cover-accent)"
-      />
-      <span
-        aria-hidden="true"
-        className={cn(
-          "absolute left-[9%] font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] leading-none font-semibold tracking-[-0.08em]",
-          size === "small"
-            ? "top-[22%] text-xs"
-            : "top-[24%] text-[clamp(18px,4vw,38px)]",
-        )}
-      >
-        {initials(album.title)}
-      </span>
-      {size === "small" ? null : (
-        <span
-          aria-hidden="true"
-          className="absolute right-[8%] bottom-[8%] left-[9%] truncate text-left text-[clamp(6px,0.75vw,9px)] font-bold tracking-widest uppercase"
-        >
-          {album.artist}
-        </span>
-      )}
+      {showFallback ? (
+        <>
+          <span
+            aria-hidden="true"
+            className="absolute top-[12%] left-[9%] h-1 w-[31%] bg-(--cover-accent)"
+          />
+          <span
+            aria-hidden="true"
+            className={cn(
+              "absolute left-[9%] font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] leading-none font-semibold tracking-[-0.08em]",
+              size === "small"
+                ? "top-[22%] text-xs"
+                : "top-[24%] text-[clamp(18px,4vw,38px)]",
+            )}
+          >
+            {initials(album.title)}
+          </span>
+          {size === "small" ? null : (
+            <span
+              aria-hidden="true"
+              className="absolute right-[8%] bottom-[8%] left-[9%] truncate text-left text-[clamp(6px,0.75vw,9px)] font-bold tracking-widest uppercase"
+            >
+              {album.artist}
+            </span>
+          )}
+        </>
+      ) : null}
     </div>
   );
 }

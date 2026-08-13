@@ -1,100 +1,219 @@
-# Local Cover Artwork Cache Plan
+# Coda Local Cover Artwork Cache
 
-## Problem Statement
+## Summary
 
-Coda currently remembers up to 512 signed cover URLs in memory for one hour, but it does not retain the image bytes across route remounts or application restarts. The browser cache often helps, yet it is not an application-owned contract: artwork can decode again during reverse navigation, large libraries repeat authenticated image requests, and an expired signed URL can no longer address bytes the user already viewed.
+Build an application-owned, restart-safe cache for authenticated Subsonic
+`getCoverArt` bytes. Artwork is served through an index-gated `coda-cover`
+native protocol, never through arbitrary filesystem paths or persisted
+credential-bearing URLs.
 
-The goal is to make authenticated Collection artwork feel immediate while preserving Coda's security boundary. Coda must never persist signed URLs, credentials, or an unbounded mirror of Bandcamp content.
+The cache ships enabled after verification, covers artwork IDs obtained from
+validated authenticated responses or validated persisted Coda state, and
+excludes Discover, Radio, and Bandcamp Daily.
 
-## Solution
+## Architecture and Interfaces
 
-Add a native, bounded, restart-safe cache for cover image bytes obtained through Bandcamp's official Subsonic `getCoverArt` endpoint. Entries are keyed by the stable validated cover-art identifier, never by the signed request URL. The native layer owns fetching, response validation, atomic writes, indexing, eviction, and cleanup. The renderer receives only a safe local image address scoped to the dedicated cache directory.
+- Register one asynchronous `coda-cover` protocol for the main and mini-player
+  webviews. Generate platform-correct sources synchronously with Tauri's
+  `convertFileSrc`, enabling cached `<img>` elements on the first render after
+  restart.
+- Use the logical route
+  `/v1/600/<encoded-cover-id>?v=<bounded-revision>&s=<session-scope>`.
+  Accept only `GET` and `HEAD`, the fixed version and size, valid IDs, bounded
+  revision tokens, an exact renderer-session scope, and the `main` or
+  `mini-player` webview.
+- On every request that reaches the protocol, native code verifies connection
+  generation, authorization, invalidation state, index membership, file
+  metadata, and a serving lease before reading a cached file. A warm disk hit
+  never opens the credential store or waits on the network. Cache misses and
+  stale revalidation load current credentials before authenticated network
+  work. Successful responses are immutable within their renderer-session URL
+  so virtualized remounts can use WebView caching without another native read.
+- Add only `coda-cover:` and its Windows localhost form to `img-src`. Do not
+  enable the asset protocol, add filesystem permissions, or broaden other CSP
+  directives.
+- Replace `fetchCoverUrl(): Promise<string>` with a synchronous renderer source
+  helper, a random per-app-session scope, and a revision subscription. Native
+  emits the bounded `coda://cover-art-updated` event only when validated content
+  changes.
+- Replace the native system-media artwork URL with a tagged input:
+  - `{ kind: "cover", coverArtId }` reads or fetches validated bytes through
+    the native cache.
+  - `{ kind: "remote", url }` retains the existing Bandcamp and bcbits
+    allowlist for anonymous artwork.
+- Permit the exact local cover source in mini-player snapshot validation.
+  Browser Media Session uses the local source; Windows native media receives
+  the cover identifier instead of a local URL.
+- Remove `get_cover_url`. Add narrow commands for single-entry invalidation and
+  non-sensitive diagnostics. Update the static command and module inventories.
 
-Initial policy:
+## Native Cache Implementation
 
-- Cache only authenticated artwork belonging to the user's library. Anonymous Discover, Radio, and Bandcamp Daily artwork remain network-backed until separately reviewed.
-- Store at most 5,000 entries and 256 MiB, with least-recently-used eviction. Both limits apply; the byte limit is authoritative.
-- Treat entries as fresh for 30 days. Serve an intact stale entry immediately and revalidate in the background when connected.
-- Cap each response at 8 MiB and accept only validated JPEG, PNG, or WebP bytes. Reject redirects or responses outside Bandcamp's fixed authenticated endpoint.
-- Keep the asset protocol read-only and scoped to one dedicated cache directory. Do not grant general filesystem access or broaden media/network permissions.
-- Delete or fail-closed invalidate the artwork cache on Disconnect, matching Coda's authenticated durable-cache contract.
-- Never persist a signed URL, Subsonic token, salt, password, response header containing credentials, or user account identifier in the cache or index.
+### Storage and Index
 
-Bandcamp's current Terms grant users a personal, non-commercial license to reproduce service content and expressly contemplate reproducing artwork on devices they own or control. Bandcamp also officially supports streaming and downloading a user's collection through Subsonic clients. A bounded cache of the connected user's library artwork appears consistent with those terms, but this is an engineering assessment rather than legal advice. Recheck the live terms before implementation and stop for review if Bandcamp adds client-specific restrictions.
+- Store files under `app_cache_dir/cover-art-v1`; operating-system eviction is
+  expected and recoverable.
+- Keep a versioned atomic JSON index capped at 4 MiB and 5,000 entries. Each
+  entry contains only a domain-separated SHA-256 key for
+  `v1/getCoverArt/600/<id>`, content revision, media type, extension, byte
+  length, dimensions, validation time, and last-access time.
+- Store immutable files as `<key>-<content-revision>.<ext>`. Never store raw
+  IDs, account identifiers, URLs, headers, tokens, salts, or credentials.
+- Bound committed payload bytes to 256 MiB. Index and temporary-file headroom
+  are excluded; one operation may require at most one additional 5 MiB
+  temporary file.
+- Publish in order: atomic image write, atomic index replacement, then old-file
+  cleanup. Reuse Coda's cross-platform atomic helper.
 
-## Commits
+### Validation and Fetching
 
-1. **Document and test the cache contract**
-   - Add pure contract tests for identifier-derived keys, byte and entry bounds, supported media types, freshness, stale behavior, and LRU ordering.
-   - Add security assertions that serialized metadata cannot contain URL query strings, credentials, salts, tokens, or arbitrary paths.
-   - Leave production behavior unchanged.
+- Fetch only
+  `https://bandcamp.com/api/subsonic/rest/getCoverArt.view?size=600` with current
+  Subsonic token and salt authentication, the existing timeouts, and a
+  dedicated client. Foreground WebView requests start immediately; background
+  revalidation continues through the shared request coordinator.
+- Follow up to ten redirects through HTTPS Bandcamp and `bcbits.com` hosts.
+  Reject credential-bearing, non-default-port, non-HTTPS, and unrelated
+  targets. Never expose request URLs to the renderer or persist them.
+- Require a success status and JPEG, PNG, or WebP MIME. Enforce a 5 MiB declared
+  and streamed limit; a missing length is allowed, while a present length must
+  equal the received byte count.
+- Require MIME and signature agreement, parse valid container dimensions, and
+  reject width or height above 4,096 pixels or total dimensions above
+  16,777,216 pixels. WebView decoding remains the final compatibility check;
+  decode failure invalidates and retries once.
+- Deduplicate same-key work. Failed work leaves no in-flight entry and remains
+  retryable.
 
-2. **Introduce the native cache index and atomic storage**
-   - Add a dedicated cache directory and versioned index containing only stable cover identifier hashes, media type, byte length, freshness timestamps, and access timestamps.
-   - Write image bytes through a temporary file plus atomic rename.
-   - Recover from a missing, partially written, incompatible, or corrupt index by discarding only the disposable artwork cache.
-   - Enforce the per-entry, total-byte, and entry-count bounds before and after every write.
+### Authorization and Lifecycle
 
-3. **Fetch and validate artwork natively**
-   - Replace URL-only cover resolution with a native cache lookup that fetches the fixed Subsonic cover endpoint on a miss.
-   - Validate status, declared length, actual length, content type, and file signature before committing bytes.
-   - Deduplicate concurrent requests for the same cover identifier and evict failed in-flight work so Retry Artwork can recover.
-   - Preserve the existing six-request bulk-hydration ceiling; artwork fetching gets its own small bounded concurrency budget and must not compete with playback.
+- Maintain an in-memory, connection-generation-scoped set of cover IDs,
+  registered only while native code validates authenticated library, album,
+  favorite, playlist, player-session, or durable-cache data.
+- Protocol requests and fetches require authorization in that set. Index
+  membership alone is insufficient.
+- Capture connection generation and expected credentials for every fetch or
+  revalidation. Recheck them under the publication lock immediately before
+  committing.
+- Do not add a renderer or native authenticated-session epoch for cached reads.
+  A validated cover ID, current connection generation, authorization-set
+  membership, clean invalidation state, and a valid indexed file are the full
+  warm-read authority. A cover ID alone never authorizes disk or network work.
+- On Disconnect or username change: advance generation, revoke protocol access,
+  cancel queued work, clear authorization, then clear or fail-closed invalidate
+  the cache. Include artwork cleanup in the existing cleanup warning.
+- Store the fail-closed marker in application data so operating-system eviction
+  of the cache directory cannot re-enable access. Retry cleanup before later
+  access or writes.
 
-4. **Expose a narrowly scoped local image source**
-   - Enable read-only local asset delivery for only the dedicated artwork cache directory and only as an image source.
-   - Return a local source only after the native layer verifies that the requested identifier maps to a valid indexed file.
-   - Add integration coverage proving path traversal, symlinks, unsupported extensions, arbitrary local files, and mismatched identifiers are rejected.
+### Freshness, LRU, and Scheduling
 
-5. **Adopt cache-first artwork in the renderer**
-   - Keep the current in-memory promise deduplication, but let its resolved value be the local cached source.
-   - Render a known cached source on the first commit and keep the current fallback palette visible until a new network image is valid.
-   - Preserve eager restoration for artwork already painted during the current session, reduced-motion behavior, and View Transition identity markers.
-   - Ensure failed local sources invalidate one cache entry and retry the authenticated endpoint once rather than looping.
+- Entries are fresh for 30 days. Serve intact stale bytes immediately and
+  enqueue one low-priority revalidation.
+- If bytes are unchanged, update freshness without changing the source
+  revision. If changed, publish a new immutable file and emit the update event.
+  Failed revalidation retains the previous bytes.
+- Count a successful protocol or native system-media read as access. Keep exact
+  ordering in memory and atomically flush access times every 30 seconds, after
+  128 touches, and during explicit Quit. Lost batches may affect eviction order
+  only.
+- Resolve equal access times by stable key order. Reserve capacity under the
+  cache lock before publication and evict unleased least-recently-used entries
+  until both limits pass. If nothing is evictable, serve validated network
+  bytes without persisting them.
+- Start foreground artwork requests immediately when the WebView asks for them,
+  without a native FIFO concurrency or rate gate. Allow at most one background
+  revalidation, and keep background work on the shared Bandcamp request
+  coordinator.
 
-6. **Add stale-while-revalidate and deterministic eviction**
-   - Serve intact stale bytes immediately, schedule revalidation outside the navigation/playback critical path, and atomically replace the file only after validation succeeds.
-   - Update access metadata in batches so scrolling through Collection does not write to disk per card.
-   - Evict least-recently-used entries until both limits are satisfied, never evicting a file currently being served or written.
+## Renderer Behavior
 
-7. **Wire privacy and lifecycle cleanup**
-   - Clear the cache and its in-memory local-source map on Disconnect.
-   - Add startup cleanup for abandoned temporary files and files not referenced by the index.
-   - Add a bounded, non-sensitive cache summary for diagnostics: entry count, total bytes, hit/miss/stale counts, and cleanup outcome only.
+- `CoverArt`, Favorites, playlists, queue, player, Now Playing, and mini-player
+  construct the local source synchronously whenever they have an authorized
+  cover ID.
+- Request every mounted local source eagerly. The existing TanStack Virtual
+  viewport and overscan window bound collection-card mounting, so adding the
+  browser's lazy-image gate would only delay just-in-time native cache reads.
+- Remember at most 512 recently painted sources, keyed by source plus revision,
+  so virtualized remounts request eager synchronous decoding. Do not retain
+  detached image elements: WebKit may still discard their decoded pixels, and
+  retaining 600px images can consume hundreds of MiB without preventing a
+  repaint.
+- While a valid source is loading or retrying, show only the album's base color
+  behind the image. Render initials and artist text only after the source is
+  absent or the single native retry fails, avoiding both a blank hole and a
+  misleading full fallback card during decoding.
+- Let the WebView cache a successful local source as immutable within the
+  current random session scope. Rotate that scope on restart, Disconnect,
+  account replacement, and explicit renderer cache clearing so prior-session
+  sources are no longer addressable by normal application state.
+- On image failure, invalidate exactly that native entry and retry once with a
+  new cache-busting revision. A second failure shows the existing fallback
+  without looping.
+- The Artwork action continues recovering missing cover IDs, clears renderer
+  failure state, and retries entries that failed. It does not revalidate every
+  fresh cached entry.
+- Disconnect clears renderer revision and failure state and rotates the session
+  scope immediately after native revocation succeeds. Account replacement does
+  the same before showing replacement-account data.
+- Anonymous direct artwork URLs retain their current behavior and never enter
+  this cache.
 
-8. **Measure and roll out**
-   - Compare cold start, warm start, Collection scroll, card-to-detail, detail-to-card, network request count, decode time, disk use, and memory retention before and after.
-   - Native-smoke at least a 2,000-release library, artwork refresh, offline restart, corrupted cache recovery, Disconnect, and rapid forward/back navigation.
-   - Keep the feature behind an internal rollout switch until the security tests, full frontend and Rust suites, cross-platform build matrix, and native smoke paths are green.
+## Test and Acceptance Plan
 
-## Decision Document
+- Pure native tests: key derivation, index bounds and serialization, freshness,
+  deterministic LRU, reservations, leases, revision changes, authorization,
+  generation races, and credential or URL absence.
+- HTTP tests through an injected private transport: exact endpoint and
+  parameters, bounded allowlisted redirect chains and rejection of untrusted
+  redirect targets, redacted errors, supported MIME and signatures, dimensions,
+  exact 5 MiB boundary, missing or mismatched length, chunk overflow,
+  truncation, retries, and failed in-flight eviction.
+- Filesystem tests on Linux, Windows, and macOS: atomic replacement, corrupt or
+  oversized index, orphan and missing files, abandoned temporary files,
+  symlinks, traversal, mismatched IDs, cleanup failure, and fail-closed
+  recovery. Essential cache tests stay independent of Tauri's mock runtime.
+- Protocol tests: allowed methods, route parsing, both webviews, CSP sources,
+  revision and session-scope handling, immutable successful responses,
+  non-cacheable errors, warm disk hits that never enter authenticated fetching,
+  misses that enter authenticated fetching exactly once, revocation after
+  Disconnect, and inability to read arbitrary files.
+- Renderer tests: cold-start source exists on first commit, same-session remount
+  remains eager, Back does not flash fallback, stale update changes revision,
+  failed update retains old bytes, single-entry retry does not loop,
+  mini-player accepts only the dedicated local source, and native media receives
+  a cover ID.
+- Race tests: fetch completion after Disconnect or account replacement, cleanup
+  failure, reconnect cleanup, concurrent writes crossing capacity, and eviction
+  while serving.
+- Verification: `npm run test:coverage`, `npm run build`, Rust formatting,
+  tests, clippy, `git diff --check`, and the cross-platform build matrix.
+- Native QA: warm a 2,000-release library; restart offline without Disconnect;
+  verify cached fresh and stale artwork; exercise forward and back navigation,
+  mini-player, browser and native media metadata, failed revalidation,
+  reconnection replacement, corrupted-cache recovery, account replacement, and
+  Disconnect revocation.
 
-- The cache stores validated image bytes, not signed URLs.
-- Stable cover-art identifiers are hashed for filenames; artist names, album titles, and account identifiers are not part of paths.
-- The native layer owns all disk and authenticated-network behavior.
-- The renderer gets narrowly scoped local image sources and never arbitrary filesystem paths.
-- The cache is disposable, bounded, versioned, and cleared on Disconnect.
-- Initial scope is authenticated Collection artwork only.
-- Stale-while-revalidate is preferred over blocking a warm render on network freshness.
-- Network and disk work must remain outside playback and navigation critical paths.
+## Locked Assumptions
 
-## Testing Decisions
-
-- Pure tests cover bounds, LRU ordering, key derivation, freshness, and serialization invariants.
-- Native tests use temporary directories and mock HTTP responses; they must never contact a live Bandcamp account.
-- Boundary tests assert fixed-origin fetching, content validation, traversal rejection, atomic recovery, and credential/signed-URL absence.
-- Renderer tests assert observable behavior: a cached cover appears on the first commit, Back does not flash the fallback, refresh recovers a bad entry, and Disconnect removes cached access.
-- Native Computer Use QA remains required because DOM tests cannot prove image decode timing, View Transition snapshots, filesystem cleanup, or offline restart behavior.
+- Limits are 5,000 entries, 256 MiB payload, 5 MiB per image, 30-day freshness,
+  and fixed 600px Subsonic artwork.
+- The feature ships enabled with no rollout switch or permanent legacy URL
+  path.
+- No eager whole-library artwork download is added.
+- Current Bandcamp Terms and official Subsonic support must be rechecked before
+  implementation; any new client or caching restriction pauses the work.
 
 ## Out of Scope
 
-- Caching audio streams or Radio shows.
-- Persisting signed image or media URLs.
-- Pre-downloading the entire library without the user's normal browsing/sync activity.
-- Caching anonymous Discover, Radio, or Bandcamp Daily imagery in the first release.
-- Image transcoding, responsive thumbnail generation, or quality changes before byte-cache measurements establish a need.
-- A user-facing cache-size preference in the first implementation.
+- Audio, Discover, Radio, and Bandcamp Daily byte caching.
+- Persisting signed artwork or media URLs.
+- Image transcoding, thumbnail generation, or quality changes.
+- A user-facing cache-size preference.
 
-## Further Notes
+## References
 
-The current session-level warm-image set should remain as the fastest path even after disk caching lands. The durable cache solves restart and repeated-network work; it should not replace the zero-I/O remount path that keeps reverse navigation smooth.
+- [Tauri custom protocols](https://v2.tauri.app/develop/calling-rust/)
+- [Tauri JavaScript API](https://v2.tauri.app/reference/javascript/api/namespacecore/)
+- [Bandcamp Subsonic announcement](https://blog.bandcamp.com/2026/07/16/discover-improvements-and-subsonic-implementation/)
+- [Bandcamp Terms](https://bandcamp.com/terms_of_use)

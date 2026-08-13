@@ -2,7 +2,6 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { ToastNotifier } from "@/components/ui/toastManager";
 import { countLabel } from "@/countLabel";
 import {
-  clearCoverUrlCache,
   clearRuntimeCaches,
   disconnect,
   fetchLibrary,
@@ -10,6 +9,7 @@ import {
   type LibraryCacheSnapshot,
   type LibrarySyncProgress,
 } from "@/lib";
+import { clearCoverArtRendererState } from "@/coverArtSource";
 import {
   albumQueryKey,
   cachedAlbumTracks,
@@ -192,7 +192,7 @@ const INITIAL_STATE: LibrarySessionState = Object.freeze({
 
 const defaultDependencies: LibrarySessionDependencies = {
   checkConnection: hasConnection,
-  clearArtworkUrls: clearCoverUrlCache,
+  clearArtworkUrls: clearCoverArtRendererState,
   clearRuntimeData: clearRuntimeCaches,
   disconnect,
   emitArtworkRefresh: () => {

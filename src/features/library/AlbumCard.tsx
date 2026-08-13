@@ -51,7 +51,7 @@ export const AlbumCard = memo(function AlbumCard({
   return (
     <article
       className={cn(
-        "group/card relative min-w-0 [contain-intrinsic-size:170px_235px] [content-visibility:auto]",
+        "group/card relative min-w-0",
         className,
       )}
       data-album-card={album.id}

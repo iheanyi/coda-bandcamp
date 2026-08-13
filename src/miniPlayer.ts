@@ -8,7 +8,11 @@ export const MINI_PLAYER_REQUEST_STATE_EVENT = "coda://mini-player-request-state
 
 const MAX_MINI_PLAYER_TEXT_LENGTH = 512;
 const MAX_ARTWORK_URL_LENGTH = 4_096;
+const MAX_COVER_ART_ID_BYTES = 512;
+const MAX_COVER_ART_REVISION_LENGTH = 128;
 const HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+const COVER_ART_REVISION = /^[a-z0-9_-]+$/i;
+const COVER_ART_SESSION_SCOPE = /^[a-f0-9]{32}$/;
 
 export type MiniPlayerTrack = {
   id: string;
@@ -86,7 +90,48 @@ function isArtworkUrl(value: unknown): value is string {
     return false;
   }
   try {
-    return new URL(value).protocol === "https:";
+    const url = new URL(value);
+    if (url.protocol === "https:") return true;
+    const allowedOrigin =
+      (url.protocol === "coda-cover:" && url.hostname === "localhost") ||
+      (url.protocol === "http:" && url.hostname === "coda-cover.localhost");
+    if (
+      !allowedOrigin ||
+      url.port ||
+      url.username ||
+      url.password ||
+      url.hash
+    ) {
+      return false;
+    }
+    const prefix = "/v1/600/";
+    if (!url.pathname.startsWith(prefix)) return false;
+    const encodedCoverArtId = url.pathname.slice(prefix.length);
+    if (!encodedCoverArtId || encodedCoverArtId.includes("/")) return false;
+    let coverArtId: string;
+    try {
+      coverArtId = decodeURIComponent(encodedCoverArtId);
+    } catch {
+      return false;
+    }
+    if (
+      encodeURIComponent(coverArtId) !== encodedCoverArtId ||
+      new TextEncoder().encode(coverArtId).length > MAX_COVER_ART_ID_BYTES ||
+      coverArtId.trim() !== coverArtId ||
+      Array.from(coverArtId).some((character) => /\p{Cc}/u.test(character))
+    ) {
+      return false;
+    }
+    const revisionValues = url.searchParams.getAll("v");
+    const scopeValues = url.searchParams.getAll("s");
+    return (
+      [...url.searchParams.keys()].length === 2 &&
+      revisionValues.length === 1 &&
+      scopeValues.length === 1 &&
+      revisionValues[0].length <= MAX_COVER_ART_REVISION_LENGTH &&
+      COVER_ART_REVISION.test(revisionValues[0]) &&
+      COVER_ART_SESSION_SCOPE.test(scopeValues[0])
+    );
   } catch {
     return false;
   }

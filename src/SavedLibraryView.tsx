@@ -70,17 +70,20 @@ import {
   combineMarkerReleases,
 } from "@/features/navigation/temporaryDomMarkers";
 import { radioSeriesId, radioShowId } from "@/features/radio/radioRouteIds";
+import { invalidateCoverArt, useCoverArtSource } from "@/coverArtSource";
 import {
   createPlaylist,
   deletePlaylist,
-  fetchCoverUrl,
   formatTime,
-  invalidateCoverUrl,
   paletteFor,
-  readCachedCoverUrl,
   updatePlaylist,
 } from "@/lib";
 import { cn } from "@/lib/utils";
+import {
+  forgetPaintedCoverSource,
+  hasPaintedCoverSource,
+  rememberPaintedCoverSource,
+} from "@/paintedCoverSources";
 import { artistKey } from "@/libraryBrowse";
 import {
   createNavigationTransactionState,
@@ -219,6 +222,8 @@ type SavedLibraryControllerProps = Partial<
 const playlistTrackKey = (track: Track, index: number) =>
   `${track.id}-${index}`;
 const favoriteTrackKey = (track: Track) => track.id;
+const favoriteRadioShowKey = (show: RadioShowSummary) => show.id;
+const favoriteAlbumKey = (album: Album) => album.id;
 const radioDateFormatter = new Intl.DateTimeFormat(undefined, {
   month: "short",
   day: "numeric",
@@ -428,65 +433,84 @@ function FavoriteArtwork({
   fallback?: React.ReactNode;
   item: Pick<Album, "title" | "coverArt" | "artworkUrl" | "palette">;
 }) {
-  const initialCachedUrl = item.coverArt
-    ? readCachedCoverUrl(item.coverArt)
-    : undefined;
-  const initialUrl = item.artworkUrl || initialCachedUrl;
-  const [url, setUrl] = useState(initialUrl);
-  const [loadedUrl, setLoadedUrl] = useState(initialCachedUrl);
-  const [requestVersion, setRequestVersion] = useState(0);
+  const localArtworkUrl = useCoverArtSource(item.coverArt);
+  const [loadedUrl, setLoadedUrl] = useState<string>();
+  const [revealingUrl, setRevealingUrl] = useState<string>();
+  const [, setFailureVersion] = useState(0);
+  const mountedRef = useRef(false);
   const coverIdRef = useRef(item.coverArt);
   const directArtworkUrlRef = useRef(item.artworkUrl);
   const failedUrlsRef = useRef<Set<string>>(new Set());
   const retryCountRef = useRef(0);
+  const retryPendingRef = useRef(false);
+  const retryRequestRef = useRef(0);
 
   useEffect(() => {
-    let active = true;
-    if (
-      coverIdRef.current !== item.coverArt ||
-      directArtworkUrlRef.current !== item.artworkUrl
-    ) {
-      coverIdRef.current = item.coverArt;
-      directArtworkUrlRef.current = item.artworkUrl;
+    mountedRef.current = true;
+    const refresh = () => {
+      retryRequestRef.current += 1;
+      failedUrlsRef.current.clear();
       retryCountRef.current = 0;
-    }
-    if (item.artworkUrl && !failedUrlsRef.current.has(item.artworkUrl)) {
-      setUrl(item.artworkUrl);
-      return;
-    }
-    const cachedUrl = item.coverArt
-      ? readCachedCoverUrl(item.coverArt)
-      : undefined;
-    if (cachedUrl && !failedUrlsRef.current.has(cachedUrl)) {
-      setLoadedUrl(cachedUrl);
-      setUrl(cachedUrl);
-      return;
-    }
-    setUrl(undefined);
-    if (!item.coverArt) {
-      return;
-    }
-    fetchCoverUrl(item.coverArt)
-      .then((nextUrl) => {
-        if (active && !failedUrlsRef.current.has(nextUrl)) setUrl(nextUrl);
-      })
-      .catch(() => {
-        if (active) setUrl(undefined);
-      });
-    return () => {
-      active = false;
+      retryPendingRef.current = false;
+      setFailureVersion((version) => version + 1);
     };
-  }, [item.artworkUrl, item.coverArt, requestVersion]);
+    window.addEventListener("coda:refresh-artwork", refresh);
+    return () => {
+      mountedRef.current = false;
+      window.removeEventListener("coda:refresh-artwork", refresh);
+    };
+  }, []);
+
+  if (
+    coverIdRef.current !== item.coverArt ||
+    (!item.coverArt && directArtworkUrlRef.current !== item.artworkUrl)
+  ) {
+    coverIdRef.current = item.coverArt;
+    directArtworkUrlRef.current = item.artworkUrl;
+    retryRequestRef.current += 1;
+    failedUrlsRef.current.clear();
+    retryCountRef.current = 0;
+    retryPendingRef.current = false;
+  }
+
+  const url = (item.coverArt ? [localArtworkUrl] : [item.artworkUrl]).find(
+    (candidate) => Boolean(candidate && !failedUrlsRef.current.has(candidate)),
+  );
 
   const retryImage = (failedUrl: string) => {
     failedUrlsRef.current.add(failedUrl);
+    forgetPaintedCoverSource(failedUrl);
     setLoadedUrl((current) => (current === failedUrl ? undefined : current));
-    setUrl((current) => (current === failedUrl ? undefined : current));
-    if (!item.coverArt || retryCountRef.current >= 1) return;
+    if (!item.coverArt || retryCountRef.current >= 1) {
+      retryPendingRef.current = false;
+      setFailureVersion((version) => version + 1);
+      return;
+    }
     retryCountRef.current += 1;
-    invalidateCoverUrl(item.coverArt);
-    setRequestVersion((version) => version + 1);
+    const retryRequest = ++retryRequestRef.current;
+    retryPendingRef.current = true;
+    if (localArtworkUrl) failedUrlsRef.current.add(localArtworkUrl);
+    setFailureVersion((version) => version + 1);
+    void invalidateCoverArt(item.coverArt)
+      .catch(() => undefined)
+      .finally(() => {
+        if (!mountedRef.current || retryRequestRef.current !== retryRequest) {
+          return;
+        }
+        retryPendingRef.current = false;
+        setFailureVersion((version) => version + 1);
+      });
   };
+
+  const localSource = Boolean(item.coverArt && url === localArtworkUrl);
+  const warm = Boolean(localSource && url && hasPaintedCoverSource(url));
+  const revealPending = Boolean(
+    localSource && url && !warm && loadedUrl !== url,
+  );
+  const revealing = Boolean(localSource && url && revealingUrl === url);
+  const showFallback = item.coverArt
+    ? !url && !retryPendingRef.current
+    : !url || loadedUrl !== url;
 
   return (
     <span
@@ -505,16 +529,31 @@ function FavoriteArtwork({
           key={url}
           className={cn(
             "col-start-1 row-start-1 size-full object-cover",
-            loadedUrl !== url && "invisible",
+            !localSource && loadedUrl !== url && "invisible",
           )}
           src={url}
           alt=""
-          loading="lazy"
+          loading="eager"
+          decoding={warm ? "sync" : localSource ? "async" : undefined}
           onError={() => retryImage(url)}
-          onLoad={() => setLoadedUrl(url)}
+          onLoad={() => {
+            if (localSource) {
+              const shouldReveal = !hasPaintedCoverSource(url);
+              rememberPaintedCoverSource(url);
+              setRevealingUrl(shouldReveal ? url : undefined);
+            }
+            setLoadedUrl(url);
+          }}
+          onAnimationEnd={() => {
+            setRevealingUrl((current) =>
+              current === url ? undefined : current,
+            );
+          }}
+          data-cover-art-pending={revealPending ? "" : undefined}
+          data-cover-art-reveal={revealing ? "" : undefined}
         />
       ) : null}
-      {loadedUrl !== url || !url ? (
+      {showFallback ? (
         <span
           className="col-start-1 row-start-1 grid place-items-center"
           data-favorite-artwork-fallback=""
@@ -2508,7 +2547,7 @@ function SavedLibraryController({
               <ResponsiveVirtualGrid
                 aria-label="Favorite radio shows"
                 className="w-full"
-                getItemKey={(show) => show.id}
+                getItemKey={favoriteRadioShowKey}
                 items={favoriteRadioShows}
                 layouts={FAVORITE_RADIO_GRID_LAYOUTS}
                 scrollElementRef={favoriteScrollElementRef}
@@ -2720,7 +2759,7 @@ function SavedLibraryController({
               <ResponsiveVirtualGrid
                 aria-label="Favorite releases"
                 className="w-full"
-                getItemKey={(album) => album.id}
+                getItemKey={favoriteAlbumKey}
                 items={favoriteAlbums}
                 layouts={FAVORITE_ALBUM_GRID_LAYOUTS}
                 scrollElementRef={favoriteScrollElementRef}

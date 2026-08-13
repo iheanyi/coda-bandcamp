@@ -1,7 +1,9 @@
+use crate::cover_cache::authorize_player_tracks;
 use crate::models::{
     LastFmPlaybackProgress, PlayerStateCheckpoint, PlayerStateSnapshot, RadioScrobbleProgress,
 };
 use crate::storage::{run_blocking, timestamp_ms, write_bytes_atomically};
+use crate::subsonic::{current_connection_generation, load_credentials, validate_identifier};
 use crate::validation::{MAX_MEDIA_SECONDS, MAX_RADIO_CHAPTERS, MAX_TRACK_NUMBER};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
@@ -238,10 +240,9 @@ pub(super) fn validate_player_state(state: &PlayerStateSnapshot) -> Result<(), S
             || track.duration as f64 > MAX_MEDIA_SECONDS
             || track.track > MAX_TRACK_NUMBER
             || track.disc.is_some_and(|disc| disc > MAX_TRACK_NUMBER)
-            || track
-                .cover_art
-                .as_deref()
-                .is_some_and(|value| !valid_player_text(value, false))
+            || track.cover_art.as_deref().is_some_and(|value| {
+                !valid_player_text(value, false) || validate_identifier(value).is_err()
+            })
             || track.palette.iter().any(|color| {
                 color.is_empty() || color.len() > 64 || color.chars().any(char::is_control)
             })
@@ -652,6 +653,15 @@ pub(super) async fn load_player_state(
         if let Err(error) = &result {
             let event = format!("native.load.error.{}", player_state_error_kind(error));
             append_player_state_diagnostic(&app, &event, None, None, "none", None);
+        }
+        if let Ok(Some(state)) = &result {
+            if let Ok(credentials) = load_credentials() {
+                authorize_player_tracks(
+                    current_connection_generation(),
+                    &credentials,
+                    &state.queue,
+                )?;
+            }
         }
         result
     })

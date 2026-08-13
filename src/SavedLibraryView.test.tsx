@@ -30,14 +30,25 @@ import type {
 } from "./types";
 
 const mocks = vi.hoisted(() => ({
+  coverArtRevisions: new Map<string, string>(),
   createPlaylist: vi.fn(),
   deletePlaylist: vi.fn(),
-  fetchCoverUrl: vi.fn(),
   fetchPlaylist: vi.fn(),
   fetchPlaylists: vi.fn(),
   fetchRadioShow: vi.fn(),
-  invalidateCoverUrl: vi.fn(),
+  invalidateCoverArt: vi.fn<(coverArtId: string) => Promise<void>>(),
   updatePlaylist: vi.fn(),
+}));
+
+vi.mock("@/coverArtSource", () => ({
+  clearCoverArtRendererState: () => mocks.coverArtRevisions.clear(),
+  coverArtSource: (coverArtId: string) =>
+    `coda-cover:/v1/600/${encodeURIComponent(coverArtId)}?v=${mocks.coverArtRevisions.get(coverArtId) ?? "0"}&s=0123456789abcdef0123456789abcdef`,
+  invalidateCoverArt: mocks.invalidateCoverArt,
+  useCoverArtSource: (coverArtId: string | undefined) =>
+    coverArtId
+      ? `coda-cover:/v1/600/${encodeURIComponent(coverArtId)}?v=${mocks.coverArtRevisions.get(coverArtId) ?? "0"}&s=0123456789abcdef0123456789abcdef`
+      : undefined,
 }));
 
 vi.mock("./lib", async (importOriginal) => {
@@ -46,11 +57,9 @@ vi.mock("./lib", async (importOriginal) => {
     ...actual,
     createPlaylist: mocks.createPlaylist,
     deletePlaylist: mocks.deletePlaylist,
-    fetchCoverUrl: mocks.fetchCoverUrl,
     fetchPlaylist: mocks.fetchPlaylist,
     fetchPlaylists: mocks.fetchPlaylists,
     fetchRadioShow: mocks.fetchRadioShow,
-    invalidateCoverUrl: mocks.invalidateCoverUrl,
     updatePlaylist: mocks.updatePlaylist,
   };
 });
@@ -319,10 +328,16 @@ const commonProps = {
 };
 
 beforeEach(() => {
-  Object.values(mocks).forEach((mock) => mock.mockReset());
+  Object.values(mocks).forEach((mock) => {
+    if (typeof mock === "function" && "mockReset" in mock) mock.mockReset();
+  });
   mocks.fetchPlaylists.mockResolvedValue([summary]);
   mocks.fetchPlaylist.mockResolvedValue(detail);
-  mocks.fetchCoverUrl.mockResolvedValue("https://bandcamp.com/cover.jpg");
+  mocks.coverArtRevisions.clear();
+  mocks.invalidateCoverArt.mockReset().mockImplementation((coverArtId) => {
+    mocks.coverArtRevisions.set(coverArtId, "retry");
+    return Promise.resolve();
+  });
   mocks.fetchRadioShow.mockResolvedValue({
     ...favorites.radioShows[0],
     chapters: [],
@@ -363,9 +378,11 @@ describe("saved Bandcamp library views", () => {
       />,
     );
 
-    expect(screen.getByText(
-      "Music favorites sync through Bandcamp’s Subsonic service, separate from the Bandcamp website. Track listings can lag, so Coda confirms them as albums load and on Refresh. Radio shows stay on this device.",
-    )).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Music favorites sync through Bandcamp’s Subsonic service, separate from the Bandcamp website. Track listings can lag, so Coda confirms them as albums load and on Refresh. Radio shows stay on this device.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("emits validated playlist identity from the route list screen", async () => {
@@ -892,23 +909,14 @@ describe("saved Bandcamp library views", () => {
     fireEvent.click(await screen.findByRole("link", { name: /Night drive/ }));
 
     await waitFor(() =>
-      expect(mocks.fetchCoverUrl).toHaveBeenCalledWith("first-track-cover"),
-    );
-    expect(container.querySelector("header img")).toHaveAttribute(
-      "src",
-      "https://bandcamp.com/cover.jpg",
+      expect(container.querySelector("header img")).toHaveAttribute(
+        "src",
+        "coda-cover:/v1/600/first-track-cover?v=0&s=0123456789abcdef0123456789abcdef",
+      ),
     );
   });
 
-  it("clears replaced playlist artwork while the next first-track cover loads", async () => {
-    const nextCover = deferred<string>();
-    mocks.fetchCoverUrl
-      .mockReset()
-      .mockImplementation((coverArtId: string) =>
-        coverArtId === "first-track-cover"
-          ? Promise.resolve("https://bandcamp.com/first-cover.jpg")
-          : nextCover.promise,
-      );
+  it("keeps replaced playlist artwork pending over its base color until load", async () => {
     mocks.fetchPlaylist.mockResolvedValueOnce({
       ...detail,
       tracks: [{ ...track, coverArt: "first-track-cover" }],
@@ -921,7 +929,7 @@ describe("saved Bandcamp library views", () => {
     await waitFor(() =>
       expect(container.querySelector("header img")).toHaveAttribute(
         "src",
-        "https://bandcamp.com/first-cover.jpg",
+        "coda-cover:/v1/600/first-track-cover?v=0&s=0123456789abcdef0123456789abcdef",
       ),
     );
 
@@ -931,36 +939,27 @@ describe("saved Bandcamp library views", () => {
         tracks: [{ ...track, id: "song-2", coverArt: "next-track-cover" }],
       });
     });
-    await waitFor(() =>
-      expect(container.querySelector("header img")).not.toBeInTheDocument(),
-    );
-
-    await act(async () => {
-      nextCover.resolve("https://bandcamp.com/next-cover.jpg");
-      await nextCover.promise;
-    });
-    await waitFor(() =>
-      expect(container.querySelector("header img")).toHaveAttribute(
+    const nextImage = await waitFor(() => {
+      const image = container.querySelector<HTMLImageElement>("header img");
+      if (!image) throw new Error("Expected replacement playlist artwork");
+      expect(image).toHaveAttribute(
         "src",
-        "https://bandcamp.com/next-cover.jpg",
-      ),
-    );
+        "coda-cover:/v1/600/next-track-cover?v=0&s=0123456789abcdef0123456789abcdef",
+      );
+      expect(image).not.toHaveClass("invisible");
+      expect(image).toHaveAttribute("data-cover-art-pending");
+      expect(
+        container.querySelector("header [data-favorite-artwork-fallback]"),
+      ).not.toBeInTheDocument();
+      return image;
+    });
+
+    fireEvent.load(nextImage);
+    expect(nextImage).not.toHaveAttribute("data-cover-art-pending");
+    expect(nextImage).toHaveAttribute("data-cover-art-reveal");
   });
 
   it("invalidates and retries a broken playlist cover once", async () => {
-    let invalidated = false;
-    mocks.fetchCoverUrl
-      .mockReset()
-      .mockImplementation(() =>
-        Promise.resolve(
-          invalidated
-            ? "https://bandcamp.com/refreshed-cover.jpg"
-            : "https://bandcamp.com/expired-cover.jpg",
-        ),
-      );
-    mocks.invalidateCoverUrl.mockImplementation(() => {
-      invalidated = true;
-    });
     mocks.fetchPlaylist.mockResolvedValueOnce({
       ...detail,
       tracks: [{ ...track, coverArt: "first-track-cover" }],
@@ -975,24 +974,29 @@ describe("saved Bandcamp library views", () => {
       if (!image) throw new Error("Expected playlist artwork");
       expect(image).toHaveAttribute(
         "src",
-        "https://bandcamp.com/expired-cover.jpg",
+        "coda-cover:/v1/600/first-track-cover?v=0&s=0123456789abcdef0123456789abcdef",
       );
       return image;
     });
     fireEvent.error(expired);
 
     await waitFor(() =>
-      expect(mocks.invalidateCoverUrl).toHaveBeenCalledWith(
+      expect(mocks.invalidateCoverArt).toHaveBeenCalledWith(
         "first-track-cover",
       ),
     );
-    await waitFor(() =>
-      expect(container.querySelector("header img")).toHaveAttribute(
+    const retried = await waitFor(() => {
+      const image = container.querySelector<HTMLImageElement>("header img");
+      if (!image) throw new Error("Expected retried playlist artwork");
+      expect(image).toHaveAttribute(
         "src",
-        "https://bandcamp.com/refreshed-cover.jpg",
-      ),
-    );
-    expect(mocks.invalidateCoverUrl).toHaveBeenCalledOnce();
+        "coda-cover:/v1/600/first-track-cover?v=retry&s=0123456789abcdef0123456789abcdef",
+      );
+      return image;
+    });
+    fireEvent.error(retried);
+    expect(container.querySelector("header img")).not.toBeInTheDocument();
+    expect(mocks.invalidateCoverArt).toHaveBeenCalledOnce();
   });
 
   it("moves focus into playlist details and restores the opening row on Back", async () => {

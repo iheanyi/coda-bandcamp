@@ -12,7 +12,6 @@ import { parsePlaylistIdParam } from "@/routing/routeContracts";
 import type { PlaylistDetail, PlaylistSummary, Track } from "@/types";
 
 const mocks = vi.hoisted(() => ({
-  fetchCoverUrl: vi.fn(),
   fetchPlaylist: vi.fn(),
   fetchPlaylists: vi.fn(),
   fetchStreamUrl: vi.fn(),
@@ -28,7 +27,6 @@ vi.mock("@/lib", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib")>();
   return {
     ...actual,
-    fetchCoverUrl: mocks.fetchCoverUrl,
     fetchPlaylist: mocks.fetchPlaylist,
     fetchPlaylists: mocks.fetchPlaylists,
     fetchStreamUrl: mocks.fetchStreamUrl,
@@ -133,7 +131,6 @@ const originalStartViewTransition = Object.getOwnPropertyDescriptor(
 
 beforeEach(() => {
   vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
-  mocks.fetchCoverUrl.mockReset();
   mocks.fetchPlaylist.mockReset().mockResolvedValue(detail);
   mocks.fetchPlaylists.mockReset().mockResolvedValue([summary]);
   mocks.fetchStreamUrl.mockReset();
@@ -199,7 +196,6 @@ describe("Playlist file routes", () => {
       expect(mocks.fetchPlaylists).not.toHaveBeenCalled();
       expect(mocks.fetchPlaylist).not.toHaveBeenCalled();
       expect(mocks.readLocalFavoritesAsync).not.toHaveBeenCalled();
-      expect(mocks.fetchCoverUrl).not.toHaveBeenCalled();
       expect(mocks.fetchStreamUrl).not.toHaveBeenCalled();
       deactivate?.();
     },
@@ -267,7 +263,6 @@ describe("Playlist file routes", () => {
     expect(mocks.fetchPlaylists).toHaveBeenCalledOnce();
     expect(mocks.fetchPlaylist).toHaveBeenCalledOnce();
     expect(mocks.readLocalFavoritesAsync).not.toHaveBeenCalled();
-    expect(mocks.fetchCoverUrl).not.toHaveBeenCalled();
     expect(mocks.fetchStreamUrl).not.toHaveBeenCalled();
   });
 

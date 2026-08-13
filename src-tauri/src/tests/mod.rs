@@ -2,9 +2,10 @@ use super::*;
 // Child test modules import this module as a shared, test-only prelude.
 #[allow(unused_imports)]
 use crate::{
-    album_cache::*, app_identity::*, bandcamp_http::*, daily::*, desktop::*, discover::*,
-    favorites::*, lastfm::*, library::*, library_cache::*, media_session::*, models::*,
-    player_state::*, playlists::*, radio::*, storage::*, subsonic::*, url_policy::*, validation::*,
+    album_cache::*, app_identity::*, bandcamp_http::*, cover_cache::*, daily::*, desktop::*,
+    discover::*, favorites::*, lastfm::*, library::*, library_cache::*, media_session::*,
+    models::*, player_state::*, playlists::*, radio::*, storage::*, subsonic::*, url_policy::*,
+    validation::*,
 };
 use rand::{distributions::Alphanumeric, Rng};
 use reqwest::{
@@ -21,6 +22,7 @@ use std::{
 };
 
 mod command_boundaries;
+mod cover_cache;
 mod daily;
 mod desktop;
 mod discover;

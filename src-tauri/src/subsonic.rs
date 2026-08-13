@@ -602,7 +602,8 @@ pub(super) fn playlist_summary_from_value(value: &Value) -> Option<PlaylistSumma
             .filter(|date| valid_library_date(date)),
         changed_at: bounded_optional_field(value, &["changed"], MAX_METADATA_TEXT_LENGTH)
             .filter(|date| valid_library_date(date)),
-        cover_art: bounded_optional_field(value, &["coverArt"], MAX_IDENTIFIER_LENGTH),
+        cover_art: bounded_optional_field(value, &["coverArt"], MAX_IDENTIFIER_LENGTH)
+            .filter(|cover| validate_subsonic_id(cover, "cover artwork").is_ok()),
     })
 }
 

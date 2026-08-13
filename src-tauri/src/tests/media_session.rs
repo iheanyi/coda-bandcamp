@@ -6,21 +6,95 @@ fn system_media_metadata_is_bounded_and_keeps_artwork_allowlisted() {
         title: "Afterimage".into(),
         artist: "Night Archive".into(),
         album: "Soft Focus".into(),
-        artwork_url: Some("https://f4.bcbits.com/img/a123_10.jpg".into()),
+        artwork: Some(SystemMediaArtworkInput::Remote {
+            url: "https://f4.bcbits.com/img/a123_10.jpg".into(),
+        }),
         can_previous: true,
         can_next: true,
     };
     assert_eq!(
-        validate_system_media_metadata(&valid).unwrap().as_deref(),
-        Some("https://f4.bcbits.com/img/a123_10.jpg")
+        validate_system_media_metadata(&valid).unwrap(),
+        valid.artwork
     );
 
     let mut invalid = valid.clone();
     invalid.title = "bad\nmetadata".into();
     assert!(validate_system_media_metadata(&invalid).is_err());
     invalid = valid;
-    invalid.artwork_url = Some("https://evil.example/cover.jpg".into());
+    invalid.artwork = Some(SystemMediaArtworkInput::Remote {
+        url: "https://evil.example/cover.jpg".into(),
+    });
     assert!(validate_system_media_metadata(&invalid).is_err());
+}
+
+#[test]
+fn system_media_metadata_accepts_only_valid_cover_identifiers() {
+    let valid = SystemMediaMetadataInput {
+        title: "Afterimage".into(),
+        artist: "Night Archive".into(),
+        album: "Soft Focus".into(),
+        artwork: Some(SystemMediaArtworkInput::Cover {
+            cover_art_id: "ca:496796527".into(),
+        }),
+        can_previous: true,
+        can_next: true,
+    };
+    assert_eq!(
+        validate_system_media_metadata(&valid).unwrap(),
+        valid.artwork
+    );
+
+    let mut invalid = valid;
+    invalid.artwork = Some(SystemMediaArtworkInput::Cover {
+        cover_art_id: " bad-cover-id".into(),
+    });
+    assert!(validate_system_media_metadata(&invalid).is_err());
+}
+
+#[test]
+fn system_media_metadata_deserializes_only_the_tagged_artwork_contract() {
+    let cover: SystemMediaMetadataInput = serde_json::from_value(serde_json::json!({
+        "title": "Afterimage",
+        "artist": "Night Archive",
+        "album": "Soft Focus",
+        "artwork": { "kind": "cover", "coverArtId": "ca:496796527" },
+        "canPrevious": true,
+        "canNext": true
+    }))
+    .unwrap();
+    assert_eq!(
+        cover.artwork,
+        Some(SystemMediaArtworkInput::Cover {
+            cover_art_id: "ca:496796527".into()
+        })
+    );
+
+    assert!(
+        serde_json::from_value::<SystemMediaMetadataInput>(serde_json::json!({
+            "title": "Afterimage",
+            "artist": "Night Archive",
+            "album": "Soft Focus",
+            "artworkUrl": "https://f4.bcbits.com/img/a123_10.jpg",
+            "canPrevious": true,
+            "canNext": true
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<SystemMediaMetadataInput>(serde_json::json!({
+            "title": "Afterimage",
+            "artist": "Night Archive",
+            "album": "Soft Focus",
+            "artwork": {
+                "kind": "cover",
+                "coverArtId": "ca:496796527",
+                "url": "https://evil.example/cover.jpg"
+            },
+            "canPrevious": true,
+            "canNext": true
+        }))
+        .is_err()
+    );
 }
 
 #[test]
@@ -58,5 +132,9 @@ fn playback_blocking_commands_are_dispatched_off_the_window_thread() {
 
     let playlist_source = include_str!("../playlists.rs").replace("\r\n", "\n");
     assert!(playlist_source.contains("#[tauri::command]\npub(super) async fn get_stream_url"));
-    assert!(playlist_source.contains("#[tauri::command]\npub(super) async fn get_cover_url"));
+
+    let cover_cache_source = include_str!("../cover_cache.rs").replace("\r\n", "\n");
+    assert!(
+        cover_cache_source.contains("#[tauri::command]\npub(super) async fn invalidate_cover_art")
+    );
 }

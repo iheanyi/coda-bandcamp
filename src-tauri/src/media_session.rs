@@ -1,7 +1,8 @@
 use crate::bandcamp_http::{
     http_client, read_bounded_response, send_bandcamp_request, BandcampRetryPolicy,
 };
-use crate::models::SystemMediaMetadataInput;
+use crate::models::{SystemMediaArtworkInput, SystemMediaMetadataInput};
+use crate::subsonic::validate_identifier;
 use crate::system_media;
 use crate::url_policy::{allowed_url, UrlKind};
 use crate::validation::{valid_bounded_text, MAX_MEDIA_SECONDS, MAX_METADATA_TEXT_LENGTH};
@@ -38,7 +39,7 @@ impl SystemMediaState {
 
 pub(super) fn validate_system_media_metadata(
     input: &SystemMediaMetadataInput,
-) -> Result<Option<String>, String> {
+) -> Result<Option<SystemMediaArtworkInput>, String> {
     for (label, value) in [
         ("title", input.title.as_str()),
         ("artist", input.artist.as_str()),
@@ -48,11 +49,18 @@ pub(super) fn validate_system_media_metadata(
             return Err(format!("The system media {label} is invalid."));
         }
     }
-    match input.artwork_url.as_deref() {
-        Some(value) => allowed_url(value, UrlKind::BandcampMedia)
-            .or_else(|| allowed_url(value, UrlKind::BandcampPage))
-            .map(Some)
+    match input.artwork.as_ref() {
+        Some(SystemMediaArtworkInput::Remote { url }) => allowed_url(url, UrlKind::BandcampMedia)
+            .or_else(|| allowed_url(url, UrlKind::BandcampPage))
+            .map(|url| Some(SystemMediaArtworkInput::Remote { url }))
             .ok_or_else(|| "The system media artwork URL is invalid.".into()),
+        Some(SystemMediaArtworkInput::Cover { cover_art_id }) => {
+            validate_identifier(cover_art_id)
+                .map_err(|_| "The system media cover identifier is invalid.".to_string())?;
+            Ok(Some(SystemMediaArtworkInput::Cover {
+                cover_art_id: cover_art_id.clone(),
+            }))
+        }
         None => Ok(None),
     }
 }
@@ -83,9 +91,14 @@ pub(super) async fn update_system_media_metadata(
         })
         .await;
     };
-    let artwork_url = validate_system_media_metadata(&input)?;
-    let artwork = match artwork_url.as_deref() {
-        Some(url) => Some(resolve_system_media_artwork(&app, url).await?),
+    let artwork_input = validate_system_media_metadata(&input)?;
+    let artwork = match artwork_input.as_ref() {
+        Some(SystemMediaArtworkInput::Remote { url }) => {
+            Some(resolve_system_media_artwork(&app, url).await?)
+        }
+        Some(SystemMediaArtworkInput::Cover { cover_art_id }) => {
+            Some(resolve_cached_system_media_artwork(&app, cover_art_id).await?)
+        }
         None => None,
     };
     spawn_system_media_blocking(app, move |app, state| {
@@ -111,18 +124,42 @@ pub(super) async fn update_system_media_metadata(
     .await
 }
 
+async fn resolve_cached_system_media_artwork(
+    app: &tauri::AppHandle,
+    cover_art_id: &str,
+) -> Result<system_media::SystemMediaArtwork, String> {
+    let resolved = crate::cover_cache::resolve_cover_art(app, cover_art_id).await?;
+    resolve_system_media_artwork_bytes(
+        app,
+        format!("cover:{cover_art_id}:{}", resolved.revision),
+        resolved.bytes,
+    )
+    .await
+}
+
 pub(super) async fn resolve_system_media_artwork(
     app: &tauri::AppHandle,
     url: &str,
 ) -> Result<system_media::SystemMediaArtwork, String> {
+    let cache_key = format!("remote:{url}");
+    if let Some(artwork) = lookup_system_media_artwork(app, cache_key.clone()).await? {
+        return Ok(artwork);
+    }
+    let bytes = fetch_system_media_artwork(url).await?;
+    resolve_system_media_artwork_bytes(app, cache_key, bytes).await
+}
+
+async fn lookup_system_media_artwork(
+    app: &tauri::AppHandle,
+    cache_key: String,
+) -> Result<Option<system_media::SystemMediaArtwork>, String> {
     let cache_app = app.clone();
-    let lookup_url = url.to_string();
-    if let Some(artwork) = spawn_system_media_blocking(cache_app, move |_, state| {
+    spawn_system_media_blocking(cache_app, move |_, state| {
         let mut cache = state
             .artwork_cache
             .lock()
             .map_err(|_| "The Windows artwork cache is unavailable.".to_string())?;
-        if let Some(index) = cache.iter().position(|(key, _)| key == &lookup_url) {
+        if let Some(index) = cache.iter().position(|(key, _)| key == &cache_key) {
             if let Some(entry) = cache.remove(index) {
                 let artwork = entry.1.clone();
                 cache.push_back(entry);
@@ -131,18 +168,23 @@ pub(super) async fn resolve_system_media_artwork(
         }
         Ok(None)
     })
-    .await?
-    {
+    .await
+}
+
+async fn resolve_system_media_artwork_bytes(
+    app: &tauri::AppHandle,
+    cache_key: String,
+    bytes: Vec<u8>,
+) -> Result<system_media::SystemMediaArtwork, String> {
+    if let Some(artwork) = lookup_system_media_artwork(app, cache_key.clone()).await? {
         return Ok(artwork);
     }
 
-    let bytes = fetch_system_media_artwork(url).await?;
     let artwork =
         tauri::async_runtime::spawn_blocking(move || system_media::artwork_from_bytes(&bytes))
             .await
             .map_err(|error| format!("Could not prepare system media artwork: {error}"))??;
     let cache_app = app.clone();
-    let cached_url = url.to_string();
     let cached_artwork = artwork.clone();
     spawn_system_media_blocking(cache_app, move |_, state| {
         let mut cache = state
@@ -152,7 +194,7 @@ pub(super) async fn resolve_system_media_artwork(
         if cache.len() >= MAX_SYSTEM_MEDIA_ARTWORK_CACHE {
             cache.pop_front();
         }
-        cache.push_back((cached_url, cached_artwork));
+        cache.push_back((cache_key, cached_artwork));
         Ok(())
     })
     .await?;

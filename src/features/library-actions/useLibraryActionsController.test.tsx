@@ -87,7 +87,9 @@ function createSession(
 
 function renderController(
   options: Readonly<{
+    albums?: readonly Album[];
     autoCommitNavigation?: boolean;
+    navigationFinish?: Promise<void>;
     queryClient?: QueryClient;
     selectedAlbumId?: string;
     session?: LibrarySessionCommands;
@@ -104,11 +106,12 @@ function renderController(
   const detailNavigation = {
     open: vi.fn(async (request) => {
       if (options.autoCommitNavigation !== false) request.beforeCommit?.();
+      await options.navigationFinish;
       return "navigated" as const;
     }),
   } satisfies LibraryActionsControllerOptions["detailNavigation"];
   const queryClient = options.queryClient ?? new QueryClient();
-  let catalog = [album];
+  let catalog = [...(options.albums ?? [album])];
   const updateAlbums = vi.fn((update: (albums: Album[]) => Album[]) => {
     catalog = update(catalog);
   });
@@ -138,6 +141,44 @@ function renderController(
 }
 
 describe("useLibraryActionsController", () => {
+  it("commits an out-of-catalog album shell before its transition finishes", async () => {
+    const externalAlbum = {
+      ...album,
+      id: "external-album",
+      title: "Outside the Collection",
+    };
+    const navigationFinish = deferred<void>();
+    const hydration = deferred<Album | undefined>();
+    const session = createSession({
+      ensureAlbum: vi.fn(() => hydration.promise),
+    });
+    const { detailNavigation, result } = renderController({
+      albums: [],
+      autoCommitNavigation: false,
+      navigationFinish: navigationFinish.promise,
+      selectedAlbumId: externalAlbum.id,
+      session,
+    });
+
+    let openPromise!: Promise<void>;
+    act(() => {
+      openPromise = result.current.commands.openAlbum(externalAlbum);
+    });
+
+    expect(result.current.state.selectedAlbum).toBeUndefined();
+    const request = detailNavigation.open.mock.calls[0]?.[0];
+    act(() => request?.beforeCommit?.());
+    expect(result.current.state.selectedAlbum).toEqual(externalAlbum);
+    expect(result.current.state.loadingAlbumId).toBe(externalAlbum.id);
+
+    await act(async () => {
+      navigationFinish.resolve();
+      hydration.resolve({ ...externalAlbum, tracks: [track] });
+      await openPromise;
+    });
+    expect(result.current.state.loadingAlbumId).toBeUndefined();
+  });
+
   it("defers cold album loading state until the detail transition commits", async () => {
     const pendingAlbum = deferred<Album | undefined>();
     const session = createSession({

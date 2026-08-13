@@ -13,9 +13,21 @@ pub(crate) struct SystemMediaMetadataInput {
     pub(crate) title: String,
     pub(crate) artist: String,
     pub(crate) album: String,
-    pub(crate) artwork_url: Option<String>,
+    pub(crate) artwork: Option<SystemMediaArtworkInput>,
     pub(crate) can_previous: bool,
     pub(crate) can_next: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub(crate) enum SystemMediaArtworkInput {
+    Remote { url: String },
+    Cover { cover_art_id: String },
 }
 
 #[cfg(target_os = "windows")]

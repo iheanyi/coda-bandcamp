@@ -2,156 +2,237 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({
-  fetchCoverUrl: vi.fn<(coverArtId: string) => Promise<string>>(),
-  invalidateCoverUrl: vi.fn<(coverArtId: string) => void>(),
-  readCachedCoverUrl: vi.fn<(coverArtId: string) => string | undefined>(),
+const mocks = vi.hoisted(() => {
+  const eventHandlers = new Set<(event: { payload: unknown }) => void>();
+  return {
+    convertFileSrc: vi.fn(
+      (path: string, protocol: string) => `${protocol}:${path}`,
+    ),
+    eventHandlers,
+    invoke: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+    listen: vi.fn(
+      (_event: string, handler: (event: { payload: unknown }) => void) => {
+        eventHandlers.add(handler);
+        return Promise.resolve(() => eventHandlers.delete(handler));
+      },
+    ),
+  };
+});
+
+vi.mock("@tauri-apps/api/core", () => ({
+  convertFileSrc: mocks.convertFileSrc,
+  invoke: mocks.invoke,
 }));
+
+vi.mock("@tauri-apps/api/event", () => ({ listen: mocks.listen }));
 
 vi.mock("@/lib", () => ({
-  fetchCoverUrl: mocks.fetchCoverUrl,
   initials: (value: string) => value.slice(0, 2),
-  invalidateCoverUrl: mocks.invalidateCoverUrl,
-  isDesktop: () => true,
-  readCachedCoverUrl: mocks.readCachedCoverUrl,
 }));
 
+import { clearCoverArtRendererState } from "@/coverArtSource";
 import { CoverArt, type CoverArtAlbum } from "./CoverArt";
 
-const sourceA = "https://bandcamp.com/cover-a.jpg";
-const resolvedB = "https://bandcamp.com/cover-b.jpg";
-const sourceC = "https://bandcamp.com/cover-c.jpg";
-const resolvedD = "https://bandcamp.com/cover-d.jpg";
-
-function album(artworkUrl: string): CoverArtAlbum {
+function album({
+  artworkUrl,
+  coverArt = "cover-1",
+}: {
+  artworkUrl?: string;
+  coverArt?: string;
+} = {}): CoverArtAlbum {
   return {
     artist: "Test Artist",
     artworkUrl,
-    coverArt: "cover-1",
+    coverArt,
     id: "album-1",
     palette: ["#c46f59", "#17191b"],
     title: "Test Album",
   };
 }
 
+function coverImage(): HTMLImageElement {
+  return screen.getByRole("img", {
+    name: "Test Album cover",
+  });
+}
+
 beforeEach(() => {
-  mocks.fetchCoverUrl.mockReset();
-  mocks.invalidateCoverUrl.mockReset();
-  mocks.readCachedCoverUrl.mockReset();
+  Object.defineProperty(window, "__TAURI_INTERNALS__", {
+    configurable: true,
+    value: {},
+  });
+  clearCoverArtRendererState();
+  mocks.convertFileSrc.mockClear();
+  mocks.invoke.mockClear().mockResolvedValue(undefined);
 });
 
 describe("CoverArt", () => {
-  it("restores a previously painted cover eagerly on remount", () => {
-    const warmUrl = "https://bandcamp.com/warm-cover.jpg";
-    const first = render(<CoverArt album={album(warmUrl)} />);
-    const firstImage = screen.getByRole("img", { name: "Test Album cover" });
+  it("renders an authenticated local source on the first commit", () => {
+    render(<CoverArt album={album()} />);
 
-    expect(firstImage).toHaveAttribute("loading", "lazy");
-    expect(firstImage).toHaveAttribute("decoding", "async");
-    fireEvent.load(firstImage);
+    expect(coverImage().getAttribute("src")).toMatch(
+      /^coda-cover:\/v1\/600\/cover-1\?v=0&s=[a-f0-9]{32}$/,
+    );
+    expect(coverImage().parentElement).toHaveClass("bg-(--cover-base)");
+    expect(coverImage().parentElement).not.toHaveTextContent("Test Artist");
+    expect(mocks.convertFileSrc).toHaveBeenCalledWith("", "coda-cover");
+    expect(coverImage()).toHaveAttribute("data-cover-art-pending");
+    expect(coverImage()).not.toHaveAttribute("data-cover-art-reveal");
+
+    fireEvent.load(coverImage());
+
+    expect(coverImage()).not.toHaveAttribute("data-cover-art-pending");
+    expect(coverImage()).toHaveAttribute("data-cover-art-reveal");
+  });
+
+  it("restores a previously painted local source eagerly on remount", () => {
+    const first = render(
+      <CoverArt album={album({ coverArt: "warm-cover" })} />,
+    );
+    expect(coverImage()).toHaveAttribute("loading", "eager");
+    expect(coverImage()).toHaveAttribute("decoding", "async");
+    expect(coverImage()).toHaveAttribute("data-cover-art-pending");
+    expect(coverImage()).not.toHaveAttribute("data-cover-art-reveal");
+    fireEvent.load(coverImage());
+    expect(coverImage()).not.toHaveAttribute("data-cover-art-pending");
+    expect(coverImage()).toHaveAttribute("data-cover-art-reveal");
+    fireEvent.animationEnd(coverImage());
+    expect(coverImage()).not.toHaveAttribute("data-cover-art-reveal");
     first.unmount();
 
-    render(<CoverArt album={album(warmUrl)} />);
-    const restoredImage = screen.getByRole("img", {
-      name: "Test Album cover",
-    });
-    expect(restoredImage).toHaveAttribute("loading", "eager");
-    expect(restoredImage).toHaveAttribute("decoding", "sync");
+    render(<CoverArt album={album({ coverArt: "warm-cover" })} />);
+    expect(coverImage()).toHaveAttribute("loading", "eager");
+    expect(coverImage()).toHaveAttribute("decoding", "sync");
+    expect(coverImage()).not.toHaveAttribute("data-cover-art-pending");
+    expect(coverImage()).not.toHaveAttribute("data-cover-art-reveal");
   });
 
-  it("renders a resolved runtime URL on the first remount commit", () => {
-    mocks.readCachedCoverUrl.mockReturnValue(resolvedB);
-    mocks.fetchCoverUrl.mockImplementation(() => new Promise(() => {}));
+  it("animates an explicit artwork change even when its source is warm", () => {
+    const first = render(
+      <CoverArt album={album({ coverArt: "animated-cover" })} />,
+    );
+    fireEvent.load(coverImage());
+    first.unmount();
 
-    render(<CoverArt album={album("")} />);
-
-    expect(
-      screen.getByRole("img", { name: "Test Album cover" }),
-    ).toHaveAttribute("src", resolvedB);
-  });
-
-  it("recovers a failed prop URL through the cover cache and resets failure scope for a later prop URL", async () => {
-    mocks.fetchCoverUrl
-      .mockResolvedValueOnce(resolvedB)
-      .mockResolvedValueOnce(resolvedD);
-    const { rerender } = render(
+    render(
       <CoverArt
-        album={album(sourceA)}
-        albumArtworkDetail="album-1"
-        artistArtworkDetail="artist-1"
+        album={album({ coverArt: "animated-cover" })}
+        animateChanges
       />,
     );
 
-    const wrapper = screen.getByRole("img", {
-      name: "Test Album cover",
-    }).parentElement;
-    expect(wrapper).toHaveAttribute(
-      "data-coda-album-artwork-detail",
-      "album-1",
-    );
-    expect(wrapper).toHaveAttribute(
-      "data-coda-artist-artwork-detail",
-      "artist-1",
-    );
-    expect(
-      screen.getByRole("img", { name: "Test Album cover" }),
-    ).toHaveAttribute("src", sourceA);
+    expect(coverImage()).toHaveAttribute("decoding", "sync");
+    expect(coverImage()).toHaveAttribute("data-cover-art-pending");
+    expect(coverImage()).not.toHaveAttribute("data-cover-art-reveal");
 
-    fireEvent.error(screen.getByRole("img", { name: "Test Album cover" }));
+    fireEvent.load(coverImage());
 
-    await waitFor(() =>
-      expect(
-        screen.getByRole("img", { name: "Test Album cover" }),
-      ).toHaveAttribute("src", resolvedB),
-    );
-    expect(mocks.invalidateCoverUrl).toHaveBeenCalledExactlyOnceWith("cover-1");
-    expect(mocks.fetchCoverUrl).toHaveBeenCalledExactlyOnceWith("cover-1");
-
-    rerender(
-      <CoverArt
-        album={album(sourceC)}
-        albumArtworkDetail="album-1"
-        artistArtworkDetail="artist-1"
-      />,
-    );
-    await waitFor(() =>
-      expect(
-        screen.getByRole("img", { name: "Test Album cover" }),
-      ).toHaveAttribute("src", sourceC),
-    );
-
-    fireEvent.error(screen.getByRole("img", { name: "Test Album cover" }));
-    await waitFor(() =>
-      expect(
-        screen.getByRole("img", { name: "Test Album cover" }),
-      ).toHaveAttribute("src", resolvedD),
-    );
-    expect(mocks.invalidateCoverUrl).toHaveBeenCalledTimes(2);
-    expect(mocks.fetchCoverUrl).toHaveBeenCalledTimes(2);
+    expect(coverImage()).not.toHaveAttribute("data-cover-art-pending");
+    expect(coverImage()).toHaveAttribute("data-cover-art-reveal");
   });
 
-  it("keeps one artwork-refresh listener through Strict Mode remounts", async () => {
-    mocks.fetchCoverUrl.mockResolvedValue(resolvedB);
-    const { unmount } = render(
+  it("updates the source revision after native content changes", async () => {
+    render(
       <StrictMode>
-        <CoverArt album={album("")} />
+        <CoverArt album={album({ coverArt: "revision-cover" })} />
       </StrictMode>,
     );
 
-    await waitFor(() =>
-      expect(
-        screen.getByRole("img", { name: "Test Album cover" }),
-      ).toHaveAttribute("src", resolvedB),
+    const initialSource = coverImage().getAttribute("src");
+    const sessionScope = initialSource?.match(/&s=([a-f0-9]{32})$/)?.[1];
+    expect(initialSource).toMatch(
+      /^coda-cover:\/v1\/600\/revision-cover\?v=0&s=[a-f0-9]{32}$/,
     );
-    mocks.fetchCoverUrl.mockClear();
+    expect(sessionScope).toBeDefined();
+    expect(mocks.listen).toHaveBeenCalledTimes(1);
+
+    for (const handler of mocks.eventHandlers) {
+      handler({
+        payload: { coverArtId: "revision-cover", revision: "sha256_A1" },
+      });
+    }
+
+    await waitFor(() =>
+      expect(coverImage()).toHaveAttribute(
+        "src",
+        `coda-cover:/v1/600/revision-cover?v=sha256_A1&s=${sessionScope}`,
+      ),
+    );
+    expect(mocks.listen).toHaveBeenCalledTimes(1);
+  });
+
+  it("invalidates one broken local entry, retries once, then falls back", async () => {
+    let finishInvalidation: () => void = () => undefined;
+    mocks.invoke.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishInvalidation = resolve;
+        }),
+    );
+    const view = render(
+      <CoverArt album={album({ coverArt: "broken-cover" })} />,
+    );
+    const artwork = view.container.querySelector('[data-slot="cover"]');
+    const firstSource = coverImage().getAttribute("src");
+
+    fireEvent.error(coverImage());
+
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledOnce());
+    expect(mocks.invoke).toHaveBeenCalledWith("invalidate_cover_art", {
+      coverArtId: "broken-cover",
+    });
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(artwork).not.toHaveTextContent("Test Artist");
+
+    finishInvalidation();
+    await waitFor(() =>
+      expect(coverImage().getAttribute("src")).not.toBe(firstSource),
+    );
+
+    fireEvent.error(coverImage());
+
+    expect(
+      screen.queryByRole("img", { name: "Test Album cover" }),
+    ).not.toBeInTheDocument();
+    expect(artwork).toHaveTextContent("Test Artist");
+    expect(mocks.invoke).toHaveBeenCalledOnce();
+  });
+
+  it("preserves direct artwork and transition markers", () => {
+    render(
+      <CoverArt
+        album={album({
+          artworkUrl: "https://bandcamp.com/direct.jpg",
+          coverArt: "",
+        })}
+        albumArtworkDetail="album-1"
+        artistArtworkDetail="artist-1"
+      />,
+    );
+
+    expect(coverImage()).toHaveAttribute(
+      "src",
+      "https://bandcamp.com/direct.jpg",
+    );
+    expect(coverImage().parentElement).toHaveAttribute(
+      "data-coda-album-artwork-detail",
+      "album-1",
+    );
+    expect(coverImage().parentElement).toHaveAttribute(
+      "data-coda-artist-artwork-detail",
+      "artist-1",
+    );
+  });
+
+  it("clears a failed source when artwork refresh is requested", async () => {
+    render(<CoverArt album={album({ coverArt: "refresh-cover" })} />);
+    fireEvent.error(coverImage());
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledOnce());
+    fireEvent.error(coverImage());
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
 
     window.dispatchEvent(new CustomEvent("coda:refresh-artwork"));
-    await waitFor(() => expect(mocks.fetchCoverUrl).toHaveBeenCalledOnce());
 
-    unmount();
-    mocks.fetchCoverUrl.mockClear();
-    window.dispatchEvent(new CustomEvent("coda:refresh-artwork"));
-    await Promise.resolve();
-    expect(mocks.fetchCoverUrl).not.toHaveBeenCalled();
+    await waitFor(() => expect(coverImage()).toBeInTheDocument());
   });
 });

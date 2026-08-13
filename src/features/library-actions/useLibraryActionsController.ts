@@ -183,6 +183,7 @@ export function useLibraryActionsController({
       let albumForDetail = coldLoad
         ? album
         : albumWithTracks(album, cachedTracks);
+      let hydrationPending = coldLoad;
 
       void detailNavigation
         .open({
@@ -190,14 +191,16 @@ export function useLibraryActionsController({
           albumId: parseAlbumIdParam(album.id),
           coldLoad,
           sourceTrigger,
-          beforeCommit: () =>
-            setLoadingAlbumId(coldLoad ? album.id : undefined),
+          beforeCommit: () => {
+            if (!session.generation.isCurrent(sessionGeneration)) return;
+            setLoadingAlbumId(hydrationPending ? album.id : undefined);
+            setSelectedAlbumSnapshot(albumForDetail);
+          },
         })
-        .then(() => {
+        .catch((cause) => {
           if (!session.generation.isCurrent(sessionGeneration)) return;
-          setSelectedAlbumSnapshot(albumForDetail);
-        })
-        .catch((cause) => notify(String(cause), "bad"));
+          notify(String(cause), "bad");
+        });
 
       try {
         const ready = await ensureTracks(album, sessionGeneration);
@@ -232,6 +235,7 @@ export function useLibraryActionsController({
           notify(String(cause), "bad");
         }
       } finally {
+        hydrationPending = false;
         if (coldLoad) {
           setLoadingAlbumId((current) =>
             current === album.id ? undefined : current,

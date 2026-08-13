@@ -7,6 +7,7 @@ use tauri::{
 mod album_cache;
 mod app_identity;
 mod bandcamp_http;
+mod cover_cache;
 mod daily;
 mod desktop;
 mod discover;
@@ -27,6 +28,7 @@ mod system_media;
 mod url_policy;
 mod validation;
 
+use cover_cache::{cover_cache_diagnostics, invalidate_cover_art, CoverCacheState};
 use daily::{daily_article, daily_articles};
 #[cfg(desktop)]
 use desktop::{
@@ -52,8 +54,8 @@ use player_state::{
     record_player_state_diagnostic, save_player_state,
 };
 use playlists::{
-    create_playlist, delete_playlist, fetch_playlist, fetch_playlists, get_cover_url,
-    get_stream_url, update_playlist,
+    create_playlist, delete_playlist, fetch_playlist, fetch_playlists, get_stream_url,
+    update_playlist,
 };
 use radio::{radio_show, radio_shows};
 
@@ -86,7 +88,18 @@ pub fn run() {
         .with_max_level(tracing::Level::INFO)
         .try_init();
     let _ = system_media::set_process_app_user_model_id();
-    let builder = tauri::Builder::default();
+    let builder = tauri::Builder::default().register_asynchronous_uri_scheme_protocol(
+        "coda-cover",
+        |context, request, responder| {
+            let app = context.app_handle().clone();
+            let webview_label = context.webview_label().to_string();
+            tauri::async_runtime::spawn(async move {
+                responder.respond(
+                    cover_cache::cover_protocol_response(&app, &webview_label, request).await,
+                );
+            });
+        },
+    );
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
         show_main_window(app);
@@ -107,6 +120,7 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            app.manage(CoverCacheState::initialize(app.handle())?);
             #[cfg(desktop)]
             {
                 if updater_enabled_for_app_identifier(&app.config().identifier) {
@@ -199,6 +213,9 @@ pub fn run() {
                         }
                         "quit" => {
                             show_main_window(app);
+                            if let Err(error) = cover_cache::flush_cover_art_accesses(app) {
+                                eprintln!("Could not flush cover artwork access times: {error}");
+                            }
                             let _ = app.save_window_state(
                                 StateFlags::POSITION
                                     | StateFlags::SIZE
@@ -262,7 +279,8 @@ pub fn run() {
             update_playlist,
             delete_playlist,
             get_stream_url,
-            get_cover_url,
+            invalidate_cover_art,
+            cover_cache_diagnostics,
             daily_articles,
             daily_article,
             discover,

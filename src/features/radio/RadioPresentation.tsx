@@ -520,7 +520,7 @@ export const RadioCard = memo(function RadioCard({
   return (
     <m.article
       className={cn(
-        "group/card relative min-w-0 overflow-hidden rounded-lg border border-(--line) bg-[#151719] transition-[border-color,background-color,box-shadow] duration-(--duration-coda-standard) ease-coda-enter [contain-intrinsic-size:24rem_15rem] [content-visibility:auto] motion-reduce:transition-none",
+        "group/card relative min-w-0 overflow-hidden rounded-lg border border-(--line) bg-[#151719] transition-[border-color,background-color,box-shadow] duration-(--duration-coda-standard) ease-coda-enter motion-reduce:transition-none",
         actionsExpanded &&
           "border-(--line-strong) bg-[#181b1d] shadow-[0_12px_30px_rgba(0,0,0,0.3)]",
       )}

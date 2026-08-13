@@ -10,7 +10,6 @@ import type { LocalFavoriteCollection, PlayerStateSnapshot } from "@/types";
 
 const nativeMocks = vi.hoisted(() => ({
   checkpointPlayerState: vi.fn(),
-  fetchCoverUrl: vi.fn(),
   fetchLibrary: vi.fn(),
   fetchStreamUrl: vi.fn(),
   getLastFmStatus: vi.fn(),
@@ -26,7 +25,6 @@ vi.mock("@/lib", async (importOriginal) => {
   return {
     ...actual,
     checkpointPlayerState: nativeMocks.checkpointPlayerState,
-    fetchCoverUrl: nativeMocks.fetchCoverUrl,
     fetchLibrary: nativeMocks.fetchLibrary,
     fetchStreamUrl: nativeMocks.fetchStreamUrl,
     getLastFmStatus: nativeMocks.getLastFmStatus,
@@ -78,9 +76,6 @@ beforeEach(() => {
   window.localStorage.clear();
 
   nativeMocks.checkpointPlayerState.mockReset().mockResolvedValue(true);
-  nativeMocks.fetchCoverUrl
-    .mockReset()
-    .mockResolvedValue("https://example.test/test-cover.jpg");
   nativeMocks.fetchLibrary.mockReset().mockResolvedValue([]);
   nativeMocks.fetchStreamUrl
     .mockReset()
