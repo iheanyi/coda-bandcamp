@@ -17,13 +17,13 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { LayoutGroup, useReducedMotionConfig } from "motion/react";
+import { AnimatePresence, useReducedMotionConfig } from "motion/react";
 import * as m from "motion/react-m";
-
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { OverflowMarquee } from "@/components/ui/overflow-marquee";
 import { PlaybackIcon } from "@/components/ui/playback-icon";
+import { ScrollableLinkSelectionRail } from "@/components/ScrollableLinkSelectionRail";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Tooltip,
@@ -44,7 +44,6 @@ import { radioAiringIndexesAt } from "@/radioPlayback";
 import { BANDCAMP_RADIO_SERIES, radioEpisodeUrl } from "@/radioSeries";
 import { radioTrackFromShow } from "@/radioTrack";
 import { handleCodaLinkActivation } from "@/routing/linkActivation";
-import { useDistanceAwareSelectionPill } from "@/selectionMotion";
 import {
   stringifyRadioSeriesIdParam,
   stringifyRadioShowIdParam,
@@ -56,7 +55,43 @@ import { showDate } from "./radioPresentationFormatting";
 import { radioSeriesId, radioShowId } from "./radioRouteIds";
 
 const radioSeriesLayoutGroupId = "coda-radio-series-navigation";
-const radioSeriesIndicatorLayoutId = "coda-radio-series-selected-indicator";
+const radioSeriesNavItems = [
+  { label: "All shows", value: "all" },
+  ...BANDCAMP_RADIO_SERIES.map((series) => ({
+    label: series.title,
+    value: String(series.id),
+  })),
+];
+
+const hoverCapabilityQuery = "(hover: hover) and (pointer: fine)";
+
+function getHoverCapability() {
+  return (
+    typeof window === "undefined" ||
+    typeof window.matchMedia !== "function" ||
+    window.matchMedia(hoverCapabilityQuery).matches
+  );
+}
+
+function subscribeToHoverCapability(onChange: () => void) {
+  if (
+    typeof window === "undefined" ||
+    typeof window.matchMedia !== "function"
+  ) {
+    return () => undefined;
+  }
+  const query = window.matchMedia(hoverCapabilityQuery);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+
+function useHoverCapability() {
+  return useSyncExternalStore(
+    subscribeToHoverCapability,
+    getHoverCapability,
+    () => true,
+  );
+}
 
 export const RadioArtwork = memo(function RadioArtwork({
   show,
@@ -189,37 +224,8 @@ export const RadioSeriesNav = memo(function RadioSeriesNav({
   onSelect: (seriesId?: RadioSeriesId) => void;
   seriesTravelSteps?: number;
 }) {
-  const selectedIndex =
-    selectedSeriesId === undefined
-      ? 0
-      : Math.max(
-          0,
-          BANDCAMP_RADIO_SERIES.findIndex(
-            (series) => series.id === selectedSeriesId,
-          ) + 1,
-        );
-  const indicatorMotion = useDistanceAwareSelectionPill(
-    selectedIndex,
-    seriesTravelSteps,
-  );
-  const reduceMotion = useReducedMotionConfig() === true;
-  const activeIndicator = (
-    <m.span
-      aria-hidden="true"
-      className="pointer-events-none absolute inset-0 rounded-md border border-primary/20 bg-accent"
-      data-radio-series-active-indicator=""
-      data-radio-series-indicator-motion={reduceMotion ? "snap" : "spring"}
-      data-selection-travel-steps={indicatorMotion.travelSteps}
-      layoutId={radioSeriesIndicatorLayoutId}
-      transition={indicatorMotion.transition}
-    />
-  );
-
   return (
-    <nav
-      className="mb-4 flex items-end justify-between gap-6 max-xl:flex-col max-xl:items-start max-xl:gap-2.5"
-      aria-label={`${BANDCAMP_RADIO_PROVIDER} shows`}
-    >
+    <div className="mb-4 flex items-end justify-between gap-6 max-xl:flex-col max-xl:items-start max-xl:gap-2.5">
       <div className="grid shrink-0 gap-1">
         <Badge
           variant="artwork"
@@ -231,53 +237,70 @@ export const RadioSeriesNav = memo(function RadioSeriesNav({
           {BANDCAMP_RADIO_PROVIDER}
         </strong>
       </div>
-      <LayoutGroup id={radioSeriesLayoutGroupId}>
-        <div
-          aria-busy={pending || undefined}
-          className="flex min-w-0 scrollbar-none gap-1 overflow-x-auto p-0.5 max-xl:w-full [&::-webkit-scrollbar]:hidden"
-          data-radio-series-layout-group={radioSeriesLayoutGroupId}
-        >
-          <Link
-            activeOptions={{ exact: true }}
-            className={cn(
-              buttonVariants({ variant: "ghost", size: "compact" }),
-              "relative isolate h-8 shrink-0 overflow-hidden rounded-md border border-transparent px-2.5 text-xs text-[#858984] hover:border-(--line) hover:bg-white/2.5 hover:text-[#c8c8c2]",
-              selectedSeriesId === undefined &&
-                "border-transparent text-accent-foreground hover:border-transparent hover:bg-transparent hover:text-accent-foreground",
-            )}
-            onClick={(event) =>
-              handleCodaLinkActivation(event, () => onSelect())
-            }
-            to="/radio"
-          >
-            {selectedSeriesId === undefined ? activeIndicator : null}
-            <span className="relative z-10">All shows</span>
-          </Link>
-          {BANDCAMP_RADIO_SERIES.map((series) => (
+      <ScrollableLinkSelectionRail
+        aria-label={`${BANDCAMP_RADIO_PROVIDER} shows`}
+        busy={pending}
+        className="min-w-0 max-xl:w-full"
+        indicatorDataAttributes={{
+          "data-radio-series-active-indicator": "",
+        }}
+        indicatorMotionDataAttribute="data-radio-series-indicator-motion"
+        items={radioSeriesNavItems}
+        layoutGroupId={radioSeriesLayoutGroupId}
+        linkClassName="text-[#858984] hover:text-[#c8c8c2]"
+        navClassName="p-0.5"
+        navDataAttributes={{
+          "data-radio-series-layout-group": radioSeriesLayoutGroupId,
+        }}
+        renderLink={(item, state) => {
+          if (item.value === "all") {
+            return (
+              <Link
+                activeOptions={{ exact: true }}
+                aria-current={state.selected ? "page" : undefined}
+                className={state.className}
+                key={item.value}
+                onClick={(event) =>
+                  handleCodaLinkActivation(event, () => onSelect())
+                }
+                preload="intent"
+                ref={state.ref}
+                to="/radio"
+              >
+                {state.children}
+              </Link>
+            );
+          }
+          const series = BANDCAMP_RADIO_SERIES.find(
+            (candidate) => String(candidate.id) === item.value,
+          );
+          if (!series) return null;
+          return (
             <Link
               activeOptions={{ exact: true }}
-              key={series.id}
-              className={cn(
-                buttonVariants({ variant: "ghost", size: "compact" }),
-                "relative isolate h-8 shrink-0 overflow-hidden rounded-md border border-transparent px-2.5 text-xs text-[#858984] hover:border-(--line) hover:bg-white/2.5 hover:text-[#c8c8c2]",
-                selectedSeriesId === series.id &&
-                  "border-transparent text-accent-foreground hover:border-transparent hover:bg-transparent hover:text-accent-foreground",
-              )}
+              aria-current={state.selected ? "page" : undefined}
+              className={state.className}
+              key={item.value}
               onClick={(event) =>
                 handleCodaLinkActivation(event, () => onSelect(series.id))
               }
               params={{
                 seriesId: stringifyRadioSeriesIdParam(series.id),
               }}
+              preload="intent"
+              ref={state.ref}
               to="/radio/series/$seriesId"
             >
-              {selectedSeriesId === series.id ? activeIndicator : null}
-              <span className="relative z-10">{series.title}</span>
+              {state.children}
             </Link>
-          ))}
-        </div>
-      </LayoutGroup>
-    </nav>
+          );
+        }}
+        travelSteps={seriesTravelSteps}
+        value={
+          selectedSeriesId === undefined ? "all" : String(selectedSeriesId)
+        }
+      />
+    </div>
   );
 });
 
@@ -312,19 +335,221 @@ export const RadioCard = memo(function RadioCard({
 }) {
   const showId = radioShowId(show.id);
   const showIdParam = showId ? stringifyRadioShowIdParam(showId) : undefined;
+  const canHover = useHoverCapability();
+  const reduceMotion = useReducedMotionConfig() === true;
+  const [hovered, setHovered] = useState(false);
+  const [keyboardFocusWithin, setKeyboardFocusWithin] = useState(false);
+  const actionsExpanded =
+    canHover && (hovered || keyboardFocusWithin || Boolean(busyAction));
+  const motionTransition = reduceMotion
+    ? { duration: 0 }
+    : { type: "spring" as const, bounce: 0.06, visualDuration: 0.32 };
   const openDetails = (event: MouseEvent<HTMLAnchorElement>) => {
     if (!showId) return;
     handleCodaLinkActivation(event, (trigger) => onDetails(show, trigger));
   };
 
+  const playbackControl = (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-compact"
+            className={cn(
+              "group/action size-8 rounded-md text-[#f09a83] hover:text-[#ffc0b0]",
+              active && "bg-primary/20 text-[#ffc0b0]",
+            )}
+            onClick={active ? onTogglePlayback : () => onPlay(show)}
+            disabled={Boolean(busyAction)}
+            aria-label={
+              active
+                ? `${playing ? "Pause" : "Resume"} ${show.subtitle}`
+                : `Play ${show.subtitle}`
+            }
+            aria-pressed={active && playing}
+          />
+        }
+      >
+        {busyAction === "play" ? (
+          <Spinner
+            aria-hidden="true"
+            className="size-4 text-current motion-reduce:animate-none"
+          />
+        ) : (
+          <PlaybackIcon
+            className="size-4 transition-transform duration-300 ease-out group-hover/action:scale-110 group-focus-visible/action:scale-110 group-active/action:scale-90 motion-reduce:transform-none motion-reduce:transition-none"
+            playing={active && playing}
+          />
+        )}
+      </TooltipTrigger>
+      <TooltipContent>
+        {active ? (playing ? "Pause" : "Resume") : "Play show"}
+      </TooltipContent>
+    </Tooltip>
+  );
+
+  const auxiliaryActionControls = (
+    <>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon-compact"
+              className={cn(
+                "group/action size-8 rounded-md",
+                favorite && "text-coda-favorite",
+              )}
+              onClick={() => onToggleFavorite(show)}
+              disabled={Boolean(busyAction)}
+              aria-label={
+                favorite
+                  ? `Remove ${show.subtitle} from favorites`
+                  : `Add ${show.subtitle} to favorites`
+              }
+              aria-pressed={favorite}
+            />
+          }
+        >
+          <Heart
+            className="transition-transform duration-300 ease-out group-hover/action:-rotate-6 group-hover/action:scale-110 group-focus-visible/action:-rotate-6 group-focus-visible/action:scale-110 group-active/action:scale-90 motion-reduce:transform-none motion-reduce:transition-none"
+            size={15}
+            fill={favorite ? "currentColor" : "none"}
+          />
+        </TooltipTrigger>
+        <TooltipContent>
+          {favorite ? "Remove from favorites" : "Add to favorites"}
+        </TooltipContent>
+      </Tooltip>
+      {showIdParam ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Link
+                aria-label={`View tracklist for ${show.subtitle}`}
+                className={cn(
+                  buttonVariants({
+                    variant: "ghost",
+                    size: "icon-compact",
+                  }),
+                  "group/action size-8 rounded-md",
+                )}
+                data-radio-show-navigation-slot="tracklist"
+                data-radio-show-open={show.id}
+                onClick={openDetails}
+                params={{ showId: showIdParam }}
+                to="/radio/shows/$showId"
+              />
+            }
+          >
+            {busyAction === "detail" ? (
+              <Spinner
+                aria-hidden="true"
+                className="size-4 text-current motion-reduce:animate-none"
+              />
+            ) : (
+              <ListMusic
+                className="transition-transform duration-300 ease-out group-hover/action:-translate-y-0.5 group-focus-visible/action:-translate-y-0.5 group-active/action:translate-y-0 motion-reduce:transform-none motion-reduce:transition-none"
+                size={15}
+              />
+            )}
+          </TooltipTrigger>
+          <TooltipContent>View tracklist</TooltipContent>
+        </Tooltip>
+      ) : null}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon-compact"
+              className="group/action size-8 rounded-md"
+              onClick={() => onQueue(show)}
+              disabled={Boolean(busyAction)}
+              aria-label={`Add ${show.subtitle} to queue`}
+            />
+          }
+        >
+          {busyAction === "queue" ? (
+            <Spinner
+              aria-hidden="true"
+              className="size-4 text-current motion-reduce:animate-none"
+            />
+          ) : (
+            <ListPlus
+              className="transition-transform duration-300 ease-out group-hover/action:rotate-6 group-hover/action:scale-110 group-focus-visible/action:rotate-6 group-focus-visible/action:scale-110 group-active/action:scale-90 motion-reduce:transform-none motion-reduce:transition-none"
+              size={15}
+            />
+          )}
+        </TooltipTrigger>
+        <TooltipContent>Add show to queue</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon-compact"
+              className="group/action size-8 rounded-md"
+              onClick={() => onOpenItem(radioEpisodeUrl(show.id))}
+              aria-label={`Open ${show.subtitle} on Bandcamp`}
+            />
+          }
+        >
+          <ExternalLink
+            className="transition-transform duration-300 ease-out group-hover/action:translate-x-0.5 group-hover/action:-translate-y-0.5 group-focus-visible/action:translate-x-0.5 group-focus-visible/action:-translate-y-0.5 group-active/action:translate-x-0 group-active/action:translate-y-0 motion-reduce:transform-none motion-reduce:transition-none"
+            size={14}
+          />
+        </TooltipTrigger>
+        <TooltipContent>Open on Bandcamp</TooltipContent>
+      </Tooltip>
+    </>
+  );
+
+  const actionControls = (
+    <div
+      className="flex items-center justify-between gap-0.5"
+      data-radio-card-actions=""
+    >
+      {playbackControl}
+      {auxiliaryActionControls}
+    </div>
+  );
+
   return (
-    <article className="group/card min-w-0 overflow-hidden rounded-lg border border-(--line) bg-white/2 transition-[transform,border-color,background-color] duration-(--duration-coda-standard) ease-coda-enter [contain-intrinsic-size:24rem_15rem] [content-visibility:auto] hover:-translate-y-0.5 hover:border-(--line-strong) hover:bg-white/4 motion-reduce:transition-none">
-      <div className="relative">
-        <RadioArtwork
-          show={show}
-          className="rounded-none border-x-0 border-t-0 text-3xl"
-          returning={returningArtwork}
-        />
+    <m.article
+      className={cn(
+        "group/card relative min-w-0 overflow-hidden rounded-lg border border-(--line) bg-[#151719] transition-[border-color,background-color,box-shadow] duration-(--duration-coda-standard) ease-coda-enter [contain-intrinsic-size:24rem_15rem] [content-visibility:auto] motion-reduce:transition-none",
+        actionsExpanded &&
+          "border-(--line-strong) bg-[#181b1d] shadow-[0_12px_30px_rgba(0,0,0,0.3)]",
+      )}
+      data-radio-card=""
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setKeyboardFocusWithin(false);
+        }
+      }}
+      onFocusCapture={(event) =>
+        setKeyboardFocusWithin(event.target.matches(":focus-visible"))
+      }
+      onHoverEnd={() => setHovered(false)}
+      onHoverStart={() => setHovered(true)}
+    >
+      <div className="relative overflow-hidden">
+        <m.div
+          animate={{
+            transform: actionsExpanded ? "scale(1.018)" : "scale(1)",
+          }}
+          initial={false}
+          transition={motionTransition}
+        >
+          <RadioArtwork
+            show={show}
+            className="rounded-none border-x-0 border-t-0 text-3xl"
+            returning={returningArtwork}
+          />
+        </m.div>
         {showIdParam ? (
           <Link
             aria-label={`Open ${show.subtitle}`}
@@ -336,8 +561,74 @@ export const RadioCard = memo(function RadioCard({
             to="/radio/shows/$showId"
           />
         ) : null}
+        {canHover ? (
+          <>
+            <m.div
+              animate={{ opacity: actionsExpanded ? 1 : 0 }}
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,transparent_46%,rgba(7,8,9,0.78)_100%)]"
+              initial={false}
+              transition={
+                reduceMotion
+                  ? { duration: 0 }
+                  : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }
+              }
+            />
+            <m.div
+              animate={{
+                opacity: actionsExpanded ? 1 : 0,
+                transform: actionsExpanded
+                  ? "translateY(0px)"
+                  : "translateY(10px)",
+              }}
+              className={cn(
+                "absolute bottom-2 left-2 z-10 overflow-hidden rounded-lg border border-white/10 bg-[#101214]/92 p-1.5 shadow-[0_8px_22px_rgba(0,0,0,0.34)] backdrop-blur-md transition-[width] duration-300 ease-coda-enter motion-reduce:transition-none",
+                actionsExpanded ? "pointer-events-auto" : "pointer-events-none",
+              )}
+              initial={false}
+              style={{
+                width: actionsExpanded ? "calc(100% - 1rem)" : "2.75rem",
+              }}
+              transition={motionTransition}
+            >
+              <div
+                className="flex items-center gap-0.5"
+                data-radio-card-actions=""
+                data-radio-card-actions-expanded={actionsExpanded}
+              >
+                {playbackControl}
+                <AnimatePresence initial={false}>
+                  {actionsExpanded ? (
+                    <m.div
+                      animate={{
+                        opacity: 1,
+                        transform: "translateX(0px)",
+                      }}
+                      className="flex min-w-0 flex-1 items-center justify-between gap-0.5"
+                      exit={{
+                        opacity: 0,
+                        transform: "translateX(-8px)",
+                      }}
+                      initial={{
+                        opacity: 0,
+                        transform: "translateX(-8px)",
+                      }}
+                      transition={
+                        reduceMotion
+                          ? { duration: 0 }
+                          : { duration: 0.2, ease: [0.22, 1, 0.36, 1] }
+                      }
+                    >
+                      {auxiliaryActionControls}
+                    </m.div>
+                  ) : null}
+                </AnimatePresence>
+              </div>
+            </m.div>
+          </>
+        ) : null}
       </div>
-      <div className="flex min-h-44 flex-col p-3.5">
+      <div className="relative flex min-h-44 flex-col p-3.5">
         <div className="min-h-3.5 text-xs font-bold tracking-widest text-[#cb7560] uppercase">
           <RadioSeriesLink show={show} onBrowse={onBrowseSeries} />
         </div>
@@ -370,133 +661,17 @@ export const RadioCard = memo(function RadioCard({
         <time className="text-xs text-[#737772]" dateTime={show.publishedAt}>
           {showDate(show.publishedAt)}
         </time>
-        <p className="mt-2.5 mb-3.5 line-clamp-3 min-h-11 text-xs/normal text-[#8d918b]">
+        <p
+          className={cn(
+            "mt-2.5 text-xs/normal text-[#8d918b]",
+            canHover ? "mb-0 line-clamp-4" : "mb-3.5 line-clamp-3 min-h-11",
+          )}
+        >
           {show.description}
         </p>
-        <div className="mt-auto flex items-center gap-1">
-          <Button
-            variant="text"
-            size="compact"
-            className={cn(
-              "h-8 gap-1.5 rounded-md bg-accent px-2.5 text-xs font-bold text-accent-foreground hover:bg-primary/20 hover:text-[#ffc0b0]",
-              active && "bg-primary/20 text-[#ffc0b0]",
-            )}
-            onClick={active ? onTogglePlayback : () => onPlay(show)}
-            disabled={Boolean(busyAction)}
-            aria-label={
-              active
-                ? `${playing ? "Pause" : "Resume"} ${show.subtitle}`
-                : `Play ${show.subtitle}`
-            }
-            aria-pressed={active && playing}
-          >
-            {busyAction === "play" ? (
-              <Spinner
-                aria-hidden="true"
-                className="size-4 text-current motion-reduce:animate-none"
-              />
-            ) : (
-              <PlaybackIcon className="size-4" playing={active && playing} />
-            )}
-            {active ? (playing ? "Pause" : "Resume") : "Play"}
-          </Button>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-compact"
-                  className={cn("size-8", favorite && "text-coda-favorite")}
-                  onClick={() => onToggleFavorite(show)}
-                  disabled={Boolean(busyAction)}
-                  aria-label={
-                    favorite
-                      ? `Remove ${show.subtitle} from favorites`
-                      : `Add ${show.subtitle} to favorites`
-                  }
-                  aria-pressed={favorite}
-                />
-              }
-            >
-              <Heart size={15} fill={favorite ? "currentColor" : "none"} />
-            </TooltipTrigger>
-            <TooltipContent>
-              {favorite ? "Remove from favorites" : "Add to favorites"}
-            </TooltipContent>
-          </Tooltip>
-          {showIdParam ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Link
-                    aria-label={`View tracklist for ${show.subtitle}`}
-                    className={buttonVariants({
-                      variant: "ghost",
-                      size: "icon",
-                    })}
-                    data-radio-show-navigation-slot="tracklist"
-                    data-radio-show-open={show.id}
-                    onClick={openDetails}
-                    params={{ showId: showIdParam }}
-                    to="/radio/shows/$showId"
-                  />
-                }
-              >
-                {busyAction === "detail" ? (
-                  <Spinner
-                    aria-hidden="true"
-                    className="size-4 text-current motion-reduce:animate-none"
-                  />
-                ) : (
-                  <ListMusic size={15} />
-                )}
-              </TooltipTrigger>
-              <TooltipContent>View tracklist</TooltipContent>
-            </Tooltip>
-          ) : null}
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-compact"
-                  className="size-8"
-                  onClick={() => onQueue(show)}
-                  disabled={Boolean(busyAction)}
-                  aria-label={`Add ${show.subtitle} to queue`}
-                />
-              }
-            >
-              {busyAction === "queue" ? (
-                <Spinner
-                  aria-hidden="true"
-                  className="size-4 text-current motion-reduce:animate-none"
-                />
-              ) : (
-                <ListPlus size={15} />
-              )}
-            </TooltipTrigger>
-            <TooltipContent>Add show to queue</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-compact"
-                  className="size-8"
-                  onClick={() => onOpenItem(radioEpisodeUrl(show.id))}
-                  aria-label={`Open ${show.subtitle} on Bandcamp`}
-                />
-              }
-            >
-              <ExternalLink size={14} />
-            </TooltipTrigger>
-            <TooltipContent>Open on Bandcamp</TooltipContent>
-          </Tooltip>
-        </div>
+        {!canHover ? <div className="mt-auto">{actionControls}</div> : null}
       </div>
-    </article>
+    </m.article>
   );
 });
 
