@@ -471,7 +471,9 @@ fn first_opening_tag_with_id<'a>(html: &'a str, id: &str) -> Option<&'a str> {
 }
 
 fn decode_html_entities(value: &str) -> Option<String> {
-    let xml_compatible = value.replace("&nbsp;", "&#160;");
+    let xml_compatible = value
+        .replace("&nbsp;", "&#160;")
+        .replace("&middot;", "&#183;");
     unescape(&xml_compatible)
         .ok()
         .map(|value| value.into_owned())
@@ -504,8 +506,24 @@ fn text_from_html(value: &str, maximum: usize) -> Option<String> {
     clean_daily_text(&decode_html_entities(&text)?, maximum)
 }
 
-fn daily_article_identity(value: &str) -> Option<(String, String, String)> {
-    if !value.starts_with('/') && !value.starts_with("https://") {
+fn raw_url_path(value: &str) -> Option<&str> {
+    if let Some(path) = value.strip_prefix('/') {
+        return (!path.starts_with('/') && !path.contains(['?', '#'])).then_some(path);
+    }
+    let authority_and_path = value.strip_prefix("https://")?;
+    let (_, path) = authority_and_path.split_once('/')?;
+    (!path.contains(['?', '#'])).then_some(path)
+}
+
+pub(super) fn daily_article_identity(value: &str) -> Option<(String, String, String)> {
+    let raw_path = raw_url_path(value)?;
+    let mut raw_segments = raw_path.split('/');
+    let raw_article_section = raw_segments.next()?;
+    let raw_slug = raw_segments.next()?;
+    if raw_segments.next().is_some()
+        || validate_daily_article_section(raw_article_section).is_err()
+        || validate_daily_slug(raw_slug).is_err()
+    {
         return None;
     }
     let base = Url::parse(&format!("{DAILY_ORIGIN}/")).ok()?;
@@ -520,18 +538,12 @@ fn daily_article_identity(value: &str) -> Option<(String, String, String)> {
     {
         return None;
     }
-    let mut segments = url.path_segments()?;
-    let article_section = segments.next()?;
-    let slug = segments.next()?;
-    if segments.next().is_some()
-        || validate_daily_article_section(article_section).is_err()
-        || validate_daily_slug(slug).is_err()
-    {
+    if url.path() != format!("/{raw_article_section}/{raw_slug}") {
         return None;
     }
     Some((
-        article_section.to_string(),
-        slug.to_string(),
+        raw_article_section.to_string(),
+        raw_slug.to_string(),
         url.to_string(),
     ))
 }
@@ -638,6 +650,19 @@ fn has_next_daily_page(html: &str, section: &str, page: u32) -> bool {
         let Some(href) = attribute_value(tag.opening, "href") else {
             continue;
         };
+        let path_and_query = href
+            .strip_prefix('/')
+            .filter(|value| !value.starts_with('/'))
+            .or_else(|| href.strip_prefix("https://daily.bandcamp.com/"));
+        let Some((raw_path, raw_query)) = path_and_query.and_then(|value| value.split_once('?'))
+        else {
+            continue;
+        };
+        if raw_path != expected_path.trim_start_matches('/')
+            || raw_query != format!("page={next_page}")
+        {
+            continue;
+        }
         let Ok(base) = Url::parse(&format!("{DAILY_ORIGIN}{expected_path}")) else {
             return false;
         };

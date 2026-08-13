@@ -176,7 +176,7 @@ fn parses_bounded_daily_listing_summaries_without_player_data() {
           </a>
           <div class="article-info-text">
             <a class="franchise" href="/features">FEATURES</a>
-            <span class="middot">·</span>
+            <span class="middot">&middot;</span>
             August 11, 2026
           </div>
           <div class="title-wrapper">
@@ -326,6 +326,8 @@ fn daily_article_paths_fail_closed() {
         "relative-section/slug",
         "/features",
         "/features/slug/extra",
+        "/features/./slug",
+        "/other/../features/slug",
         "/Features/slug",
         "/features/Uppercase",
         "/features/slug?query=1",
@@ -348,6 +350,31 @@ fn daily_article_paths_fail_closed() {
             "https://daily.bandcamp.com/underground-medicine/underground-medicine-6".into(),
         ))
     );
+}
+
+#[test]
+fn daily_next_page_links_must_match_the_selected_section_exactly() {
+    let listing = r#"
+      <articles-list>
+        <div class="list-article"><div>August 12, 2026</div><a class="title" href="/features/example">Example</a></div>
+      </articles-list>
+    "#;
+    for rejected_link in [
+        "/ambient?page=2",
+        "/genres/ambient?page=3",
+        "/genres/ambient?page=2&extra=1",
+        "/genres/ambient/../ambient?page=2",
+        "https://evil.example/genres/ambient?page=2",
+    ] {
+        let html = format!("{listing}<a href=\"{rejected_link}\">Older</a>");
+        assert!(
+            !parse_daily_articles_html("genre-ambient", 1, &html).has_more,
+            "accepted {rejected_link}"
+        );
+    }
+
+    let html = format!("{listing}<a href=\"/genres/ambient?page=2\">Older</a>");
+    assert!(parse_daily_articles_html("genre-ambient", 1, &html).has_more);
 }
 
 #[test]
