@@ -204,16 +204,29 @@ describe("Discover", () => {
       name: "Add Glass Lines to queue",
     });
     expect(queueButton).toHaveAttribute("data-coda-discover-queue-action");
-    expect(queueButton).toHaveAttribute("title", "Add to queue");
+    expect(queueButton).not.toHaveAttribute("title");
+    expect(queueButton.querySelector(".lucide-plus")).toBeInTheDocument();
     expect(
       queueButton.closest('[data-slot="card-action-overlay"]'),
-    ).toBeInTheDocument();
-    expect(queueButton.querySelector(".lucide-plus")).toBeInTheDocument();
+    ).not.toBeInTheDocument();
+    const actionOverlay = releaseCard.querySelector(
+      '[data-slot="card-action-overlay"]',
+    );
+    expect(actionOverlay).toBeInTheDocument();
+    expect(
+      within(actionOverlay as HTMLElement).getAllByRole("button"),
+    ).toHaveLength(1);
+    expect(
+      within(releaseCard).queryByRole("button", {
+        name: "Open Blue Hours on Bandcamp",
+      }),
+    ).not.toBeInTheDocument();
     expect(queueButton).toHaveAttribute("data-confirmed", "false");
+    await user.hover(queueButton);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Add to queue");
     await user.click(queueButton);
     expect(onQueue).toHaveBeenCalledTimes(1);
     expect(queueButton).toHaveAccessibleName("Glass Lines added to queue");
-    expect(queueButton).toHaveAttribute("title", "Added");
     expect(queueButton).toHaveAttribute("data-confirmed", "true");
     expect(queueButton.querySelector(".lucide-check")).toBeInTheDocument();
 

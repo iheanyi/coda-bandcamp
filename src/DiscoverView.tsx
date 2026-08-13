@@ -2,7 +2,6 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
   ArrowDownUp,
-  ArrowUpRight,
   Check,
   Disc3,
   Plus,
@@ -37,10 +36,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { countLabel } from "@/countLabel";
 import { discoverPreviewTrack } from "@/discover";
 import { DISCOVER_GENRES, normalizeGenre } from "@/genres";
-import { initials, openBandcampUrl, paletteFor } from "@/lib";
+import { initials, paletteFor } from "@/lib";
 import { cn } from "@/lib/utils";
 import { discoverInfiniteQueryOptions } from "@/queries/discoverQueries";
 import { ResponsiveVirtualGrid } from "@/ResponsiveVirtualGrid";
@@ -212,10 +216,7 @@ const DiscoverCard = memo(function DiscoverCard({
           />
         )}
         {track ? (
-          <CardActionOverlay
-            contentClassName="flex items-center gap-1.5"
-            visible={active}
-          >
+          <CardActionOverlay visible={active}>
             <Button
               variant="primary"
               size="icon"
@@ -229,36 +230,6 @@ const DiscoverCard = memo(function DiscoverCard({
               aria-pressed={active && playing}
             >
               <PlaybackIcon playing={active && playing} />
-            </Button>
-            <Button
-              variant={queueConfirmed ? "primary" : "artwork"}
-              size="icon"
-              className="relative size-9 rounded-full p-0 shadow-[0_5px_17px_rgba(0,0,0,0.42)]"
-              onClick={queueTrack}
-              data-coda-discover-queue-action
-              data-confirmed={queueConfirmed}
-              aria-label={
-                queueConfirmed
-                  ? `${track.title} added to queue`
-                  : `Add ${track.title} to queue`
-              }
-              title={queueConfirmed ? "Added" : "Add to queue"}
-            >
-              <Plus
-                aria-hidden="true"
-                className="absolute inset-0 m-auto"
-                data-coda-queue-plus
-                size={15}
-              />
-              <Check
-                aria-hidden="true"
-                className="absolute inset-0 m-auto"
-                data-coda-queue-check
-                size={15}
-              />
-              <span className="sr-only" aria-live="polite">
-                {queueConfirmed ? `${track.title} added to queue` : ""}
-              </span>
             </Button>
           </CardActionOverlay>
         ) : null}
@@ -319,21 +290,48 @@ const DiscoverCard = memo(function DiscoverCard({
             "Independent release"}
         </p>
         <div className="mt-auto flex min-h-7 items-center gap-1">
-          {!track ? (
+          {track ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant={queueConfirmed ? "primary" : "ghost"}
+                    size="icon-compact"
+                    className="relative ml-auto size-7"
+                    onClick={queueTrack}
+                    data-coda-discover-queue-action
+                    data-confirmed={queueConfirmed}
+                    aria-label={
+                      queueConfirmed
+                        ? `${track.title} added to queue`
+                        : `Add ${track.title} to queue`
+                    }
+                  />
+                }
+              >
+                <Plus
+                  aria-hidden="true"
+                  className="absolute inset-0 m-auto"
+                  data-coda-queue-plus
+                  size={15}
+                />
+                <Check
+                  aria-hidden="true"
+                  className="absolute inset-0 m-auto"
+                  data-coda-queue-check
+                  size={14}
+                />
+                <span className="sr-only" aria-live="polite">
+                  {queueConfirmed ? `${track.title} added to queue` : ""}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {queueConfirmed ? "Added" : "Add to queue"}
+              </TooltipContent>
+            </Tooltip>
+          ) : (
             <span className="text-xs text-[#666a65]">No preview available</span>
-          ) : null}
-          {/* Keep this imperative: the native opener validates the external
-              Bandcamp URL instead of exposing it to in-app routing. */}
-          <Button
-            variant="ghost"
-            size="icon-compact"
-            className="ml-auto size-7 text-muted-foreground"
-            onClick={() => void openBandcampUrl(release.itemUrl)}
-            aria-label={`Open ${release.title} on Bandcamp`}
-            title="Open on Bandcamp"
-          >
-            <ArrowUpRight size={16} />
-          </Button>
+          )}
         </div>
       </div>
     </article>
