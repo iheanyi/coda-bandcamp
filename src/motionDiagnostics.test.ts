@@ -11,8 +11,13 @@ import {
   updateMotionDiagnostic,
 } from "./motionDiagnostics";
 
-function pseudoAnimation(pseudoElement: string, endTime: number) {
+function pseudoAnimation(
+  pseudoElement: string,
+  endTime: number,
+  playState: AnimationPlayState = "running",
+) {
   return {
+    playState,
     effect: {
       pseudoElement,
       getComputedTiming: () => ({ endTime }),
@@ -61,6 +66,28 @@ describe("Motion diagnostics", () => {
     expect(result.actualDurationMs).toBe(450);
     expect(pseudoLayersPair(result.layers, ["motion-view-8"])).toBe(true);
     expect(pseudoLayersPair(result.layers, ["missing-name"])).toBe(false);
+  });
+
+  it("ignores finished and cancelled pseudo layers retained by the browser", () => {
+    Object.defineProperty(document, "getAnimations", {
+      configurable: true,
+      value: vi.fn(() => [
+        pseudoAnimation("::view-transition-group(stale)", 450, "finished"),
+        pseudoAnimation("::view-transition-old(stale)", 450, "idle"),
+        pseudoAnimation("::view-transition-group(current)", 180),
+        pseudoAnimation("::view-transition-old(current)", 120),
+        pseudoAnimation("::view-transition-new(current)", 120),
+      ]),
+    });
+
+    expect(inspectMotionPseudoLayers()).toEqual({
+      layers: {
+        group: ["current"],
+        old: ["current"],
+        new: ["current"],
+      },
+      actualDurationMs: 180,
+    });
   });
 
   it("publishes observable endpoint and fallback state", () => {

@@ -149,6 +149,9 @@ export function inspectMotionPseudoLayers(
     return { layers, actualDurationMs };
   }
   for (const animation of document.getAnimations()) {
+    if (animation.playState === "finished" || animation.playState === "idle") {
+      continue;
+    }
     const effect = animation.effect as KeyframeEffect | null;
     const pseudo = effect?.pseudoElement;
     if (!pseudo?.startsWith("::view-transition")) continue;

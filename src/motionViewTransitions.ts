@@ -25,7 +25,46 @@ const SHARED_ARTWORK_CLASS = "coda-motion-shared-artwork";
 const SHARED_IDENTITY_CLASS = "coda-motion-shared-identity";
 const SHARED_TITLE_CLASS = "coda-motion-shared-title";
 const DETAIL_SURFACE_CLASS = "coda-motion-detail-surface";
+const NOW_PLAYING_ARTWORK_DURATION_MS = 180;
+const NOW_PLAYING_TITLE_DURATION_MS = 160;
+const NOW_PLAYING_FADE_DURATION_MS = 120;
+const NOW_PLAYING_COMPONENT_ENTER_DURATION_MS = 120;
+const NOW_PLAYING_COMPONENT_EXIT_DURATION_MS = 90;
+const NOW_PLAYING_HEADER_DELAY_MS = 10;
+const NOW_PLAYING_DETAILS_DELAY_MS = 20;
+const NOW_PLAYING_EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
+const MOTION_OWNED_VIEW_TRANSITION_NAME = /^motion-view-\d+$/;
 let latestMotionTransitionId = 0;
+
+function cappedDurationMs(durationMs: number, maximumMs: number) {
+  return Math.min(durationMs, maximumMs);
+}
+
+function nowPlayingTween(
+  durationMs: number,
+  maximumMs: number,
+  motion: ResolvedMotionProfile,
+): Transition {
+  return {
+    duration:
+      cappedDurationMs(durationMs, maximumMs) / motion.profile.speed / 1_000,
+    ease: NOW_PLAYING_EASE,
+  };
+}
+
+function clearStaleMotionViewTransitionNames() {
+  document
+    .querySelectorAll<HTMLElement>("[style*='view-transition-name']")
+    .forEach((element) => {
+      const name = element.style
+        .getPropertyValue("view-transition-name")
+        .trim();
+      if (!MOTION_OWNED_VIEW_TRANSITION_NAME.test(name)) return;
+      element.style.removeProperty("view-transition-name");
+      element.style.removeProperty("view-transition-class");
+      element.style.removeProperty("view-transition-group");
+    });
+}
 
 function cssAttributeValue(value: string) {
   let escaped = "";
@@ -433,6 +472,7 @@ function configureSharedElement(
   layoutTransition: Transition = motion.viewTransition.detailArtwork,
   transitionClass = SHARED_ARTWORK_CLASS,
   preserveSourceVisual = false,
+  fadeTransition: Transition = motion.detailIdentityFade,
 ) {
   if (!source) return;
 
@@ -460,14 +500,14 @@ function configureSharedElement(
           opacity: motion.profile.shared.opacityFrom,
           transform: `scale(${motion.profile.shared.scaleFrom})`,
         },
-        motion.detailIdentityFade,
+        fadeTransition,
       )
       .new(
         {
           opacity: [motion.profile.shared.opacityFrom, 1],
           transform: [`scale(${motion.profile.shared.scaleFrom})`, "scale(1)"],
         },
-        motion.detailIdentityFade,
+        fadeTransition,
       );
     return;
   }
@@ -508,6 +548,8 @@ function configureSharedTitle(
   source: Element | null,
   destination: string,
   motion: ResolvedMotionProfile,
+  layoutTransition: Transition = motion.viewTransition.detailTitle,
+  fadeTransition: Transition = motion.detailIdentityFade,
 ) {
   if (!source) return;
 
@@ -516,15 +558,9 @@ function configureSharedTitle(
     .class(SHARED_TITLE_CLASS)
     .group(false)
     .crop(false)
-    .layout(motion.viewTransition.detailTitle)
-    .old(
-      { opacity: [1, motion.profile.shared.opacityFrom] },
-      motion.detailIdentityFade,
-    )
-    .new(
-      { opacity: [motion.profile.shared.opacityFrom, 1] },
-      motion.detailIdentityFade,
-    );
+    .layout(layoutTransition)
+    .old({ opacity: [1, motion.profile.shared.opacityFrom] }, fadeTransition)
+    .new({ opacity: [motion.profile.shared.opacityFrom, 1] }, fadeTransition);
 }
 
 function configureNowPlayingTransition(
@@ -532,6 +568,31 @@ function configureNowPlayingTransition(
   opening: boolean,
   motion: ResolvedMotionProfile,
 ) {
+  const artworkTransition = nowPlayingTween(
+    motion.profile.shared.artwork.durationMs,
+    NOW_PLAYING_ARTWORK_DURATION_MS,
+    motion,
+  );
+  const titleTransition = nowPlayingTween(
+    motion.profile.shared.title.durationMs,
+    NOW_PLAYING_TITLE_DURATION_MS,
+    motion,
+  );
+  const fadeTransition = nowPlayingTween(
+    motion.profile.shared.crossfade.durationMs,
+    NOW_PLAYING_FADE_DURATION_MS,
+    motion,
+  );
+  const componentEnter = nowPlayingTween(
+    motion.profile.component.enter.durationMs,
+    NOW_PLAYING_COMPONENT_ENTER_DURATION_MS,
+    motion,
+  );
+  const componentExit = nowPlayingTween(
+    motion.profile.component.exit.durationMs,
+    NOW_PLAYING_COMPONENT_EXIT_DURATION_MS,
+    motion,
+  );
   const artworkSource = document.querySelector(
     opening ? ".player__art-link" : ".now-playing__artwork",
   );
@@ -551,7 +612,10 @@ function configureNowPlayingTransition(
       opening ? ".now-playing__artwork" : ".player__art-link",
     ),
     motion,
-    motion.viewTransition.detailArtwork,
+    artworkTransition,
+    SHARED_ARTWORK_CLASS,
+    false,
+    fadeTransition,
   );
   configureSharedTitle(
     transition,
@@ -571,6 +635,8 @@ function configureNowPlayingTransition(
         : "[data-coda-now-playing-title-compact]",
     ),
     motion,
+    titleTransition,
+    fadeTransition,
   );
 
   const player = transition.add("footer[data-player-mode]").group(false);
@@ -583,7 +649,7 @@ function configureNowPlayingTransition(
         opacity: motion.profile.component.opacityFrom,
         transform: `translateY(${motion.profile.component.translationPx * 0.75}px)`,
       },
-      motion.componentExit,
+      componentExit,
     );
     header.enter(
       {
@@ -593,7 +659,10 @@ function configureNowPlayingTransition(
           componentRest,
         ],
       },
-      { ...motion.componentEnter, delay: 0.05 / motion.profile.speed },
+      {
+        ...componentEnter,
+        delay: NOW_PLAYING_HEADER_DELAY_MS / motion.profile.speed / 1_000,
+      },
     );
     details.enter(
       {
@@ -603,7 +672,10 @@ function configureNowPlayingTransition(
           componentRest,
         ],
       },
-      { ...motion.componentEnter, delay: 0.08 / motion.profile.speed },
+      {
+        ...componentEnter,
+        delay: NOW_PLAYING_DETAILS_DELAY_MS / motion.profile.speed / 1_000,
+      },
     );
   } else {
     player.new(
@@ -614,14 +686,14 @@ function configureNowPlayingTransition(
           componentRest,
         ],
       },
-      motion.componentEnter,
+      componentEnter,
     );
     const exit = {
       opacity: motion.profile.component.opacityFrom,
       transform: `translateY(${motion.profile.component.translationPx * 0.75}px)`,
     };
-    header.exit(exit, motion.componentExit);
-    details.exit(exit, motion.componentExit);
+    header.exit(exit, componentExit);
+    details.exit(exit, componentExit);
   }
 }
 
@@ -1053,6 +1125,35 @@ function configuredVisualDuration(
       scale(profile.page.enter.durationMs + profile.page.enterDelayMs),
     );
   }
+  if (kind.startsWith("now-playing")) {
+    const durations = [
+      cappedDurationMs(
+        profile.shared.artwork.durationMs,
+        NOW_PLAYING_ARTWORK_DURATION_MS,
+      ),
+      cappedDurationMs(
+        profile.shared.title.durationMs,
+        NOW_PLAYING_TITLE_DURATION_MS,
+      ),
+      cappedDurationMs(
+        profile.shared.crossfade.durationMs,
+        NOW_PLAYING_FADE_DURATION_MS,
+      ),
+      cappedDurationMs(
+        profile.component.exit.durationMs,
+        NOW_PLAYING_COMPONENT_EXIT_DURATION_MS,
+      ),
+    ];
+    if (!kind.endsWith("close")) {
+      durations.push(
+        cappedDurationMs(
+          profile.component.enter.durationMs,
+          NOW_PLAYING_COMPONENT_ENTER_DURATION_MS,
+        ) + NOW_PLAYING_DETAILS_DELAY_MS,
+      );
+    }
+    return scale(Math.max(...durations));
+  }
   const sharedTiming = kind.startsWith("playlist")
     ? profile.shared.identity
     : profile.shared.artwork;
@@ -1063,12 +1164,6 @@ function configuredVisualDuration(
   const durations = [sharedDuration, profile.shared.title.durationMs];
   if (!kind.endsWith("close"))
     durations.push(profile.detail.surface.durationMs);
-  if (kind.startsWith("now-playing")) {
-    durations.push(
-      profile.component.enter.durationMs + 80,
-      profile.component.exit.durationMs,
-    );
-  }
   return scale(Math.max(...durations));
 }
 
@@ -1117,6 +1212,13 @@ export async function transitionCodaViewWithMotion(
   let capturedDestinationNames: readonly string[] = [];
 
   try {
+    const nowPlayingDefaultTransition = kind.startsWith("now-playing")
+      ? nowPlayingTween(
+          motion.profile.shared.artwork.durationMs,
+          NOW_PLAYING_ARTWORK_DURATION_MS,
+          motion,
+        )
+      : undefined;
     const transition = animateView(
       async () => {
         if (transitionId !== latestMotionTransitionId || updated) return;
@@ -1150,6 +1252,7 @@ export async function transitionCodaViewWithMotion(
         // commit. Waiting preserves the render acknowledgement so the incoming
         // shared element exists before the browser captures its snapshot.
         interrupt: "wait",
+        ...nowPlayingDefaultTransition,
       },
     );
     configureMotionTransition(transition, kind, motion);
@@ -1201,19 +1304,20 @@ export async function transitionCodaViewWithMotion(
 
 export function supersedeMotionViewTransition() {
   latestMotionTransitionId += 1;
-  if (typeof document.getAnimations !== "function") return;
-
-  for (const animation of document.getAnimations()) {
-    const effect = animation.effect as KeyframeEffect | null;
-    if (
-      effect?.target === document.documentElement &&
-      effect.pseudoElement?.startsWith("::view-transition")
-    ) {
-      try {
-        animation.finish();
-      } catch {
-        animation.cancel();
+  if (typeof document.getAnimations === "function") {
+    for (const animation of document.getAnimations()) {
+      const effect = animation.effect as KeyframeEffect | null;
+      if (
+        effect?.target === document.documentElement &&
+        effect.pseudoElement?.startsWith("::view-transition")
+      ) {
+        try {
+          animation.finish();
+        } catch {
+          animation.cancel();
+        }
       }
     }
   }
+  clearStaleMotionViewTransitionNames();
 }

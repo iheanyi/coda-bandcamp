@@ -859,6 +859,17 @@ describe("transitionCodaView with Motion view transitions", () => {
 
   it("pairs compact and full artwork while leaving the ephemeral name to Motion", async () => {
     enableMotionViewTransitions();
+    const staleMotionTarget = document.createElement("div");
+    staleMotionTarget.style.setProperty(
+      "view-transition-name",
+      "motion-view-42",
+    );
+    staleMotionTarget.style.setProperty(
+      "view-transition-class",
+      "coda-motion-shared-artwork",
+    );
+    staleMotionTarget.style.setProperty("view-transition-group", "none");
+    document.body.append(staleMotionTarget);
     const source = document.createElement("button");
     source.id = "compact-cover";
     source.className = "player__art-link";
@@ -874,18 +885,31 @@ describe("transitionCodaView with Motion view transitions", () => {
 
     await transitionCodaView(vi.fn(), "now-playing-open");
 
+    expect(motionMocks.animateView).toHaveBeenCalledWith(expect.any(Function), {
+      interrupt: "wait",
+      duration: 0.18,
+      ease: [0.22, 1, 0.36, 1],
+    });
     expect(builder.add).toHaveBeenCalledWith(
       source,
       '.now-playing__artwork[data-coda-track-id="track-1"]',
     );
     expect(capturedName).toBe("");
     expect(source.style.getPropertyValue("view-transition-name")).toBe("");
+    expect(
+      staleMotionTarget.style.getPropertyValue("view-transition-name"),
+    ).toBe("");
+    expect(
+      staleMotionTarget.style.getPropertyValue("view-transition-class"),
+    ).toBe("");
+    expect(
+      staleMotionTarget.style.getPropertyValue("view-transition-group"),
+    ).toBe("");
     expect(builder.class).toHaveBeenCalledWith("coda-motion-shared-artwork");
     expect(builder.layout).toHaveBeenCalledWith(
       expect.objectContaining({
-        type: motionMocks.spring,
-        visualDuration: 0.3,
-        bounce: 0.06,
+        duration: 0.18,
+        ease: [0.22, 1, 0.36, 1],
       }),
     );
     expect(builder.new).not.toHaveBeenCalled();
@@ -894,7 +918,10 @@ describe("transitionCodaView with Motion view transitions", () => {
         opacity: 0,
         transform: "translateY(6px)",
       },
-      expect.objectContaining({ duration: 0.14 }),
+      expect.objectContaining({
+        duration: 0.09,
+        ease: [0.22, 1, 0.36, 1],
+      }),
     );
   });
 
@@ -1229,27 +1256,50 @@ describe("transitionCodaView with Motion view transitions", () => {
       expect(builder.class).toHaveBeenCalledWith("coda-motion-shared-title");
       expect(builder.group).toHaveBeenCalledWith(false);
       expect(builder.crop).toHaveBeenCalledWith(false);
-      expect(builder.layout).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: motionMocks.spring,
-          visualDuration: 0.26,
-          bounce: 0,
-        }),
-      );
-      expect(builder.old).toHaveBeenCalledWith(
-        { opacity: [1, 0] },
-        expect.objectContaining({
-          duration: 0.2,
-          ease: "linear",
-        }),
-      );
-      expect(builder.new).toHaveBeenCalledWith(
-        { opacity: [0, 1] },
-        expect.objectContaining({
-          duration: 0.2,
-          ease: "linear",
-        }),
-      );
+      if (kind.startsWith("now-playing")) {
+        expect(builder.layout).toHaveBeenCalledWith(
+          expect.objectContaining({
+            duration: 0.16,
+            ease: [0.22, 1, 0.36, 1],
+          }),
+        );
+        expect(builder.old).toHaveBeenCalledWith(
+          { opacity: [1, 0] },
+          expect.objectContaining({
+            duration: 0.12,
+            ease: [0.22, 1, 0.36, 1],
+          }),
+        );
+        expect(builder.new).toHaveBeenCalledWith(
+          { opacity: [0, 1] },
+          expect.objectContaining({
+            duration: 0.12,
+            ease: [0.22, 1, 0.36, 1],
+          }),
+        );
+      } else {
+        expect(builder.layout).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: motionMocks.spring,
+            visualDuration: 0.26,
+            bounce: 0,
+          }),
+        );
+        expect(builder.old).toHaveBeenCalledWith(
+          { opacity: [1, 0] },
+          expect.objectContaining({
+            duration: 0.2,
+            ease: "linear",
+          }),
+        );
+        expect(builder.new).toHaveBeenCalledWith(
+          { opacity: [0, 1] },
+          expect.objectContaining({
+            duration: 0.2,
+            ease: "linear",
+          }),
+        );
+      }
     },
   );
 
