@@ -1,6 +1,12 @@
 import { artistKey, type LibraryBrowseMode } from "@/libraryBrowse";
 import { BANDCAMP_RADIO_SERIES } from "@/radioSeries";
-import type { DiscoverFilters, DiscoverSort, SortMode } from "@/types";
+import { isDailyCategory } from "@/daily";
+import type {
+  DailyCategory,
+  DiscoverFilters,
+  DiscoverSort,
+  SortMode,
+} from "@/types";
 
 // Keep URL inputs at or below the corresponding native validation boundaries.
 export const MAX_ROUTE_SEARCH_TEXT_BYTES = 1_024;
@@ -32,6 +38,7 @@ export type CollectionRouteSearch = Readonly<{
 }>;
 
 export type DiscoverRouteSearch = Readonly<DiscoverFilters>;
+export type DailyRouteSearch = Readonly<{ category: DailyCategory }>;
 
 export const DEFAULT_COLLECTION_ROUTE_SEARCH: CollectionRouteSearch =
   Object.freeze({
@@ -47,6 +54,10 @@ export const DEFAULT_DISCOVER_ROUTE_SEARCH: DiscoverRouteSearch = Object.freeze(
     sort: "top",
   },
 );
+
+export const DEFAULT_DAILY_ROUTE_SEARCH: DailyRouteSearch = Object.freeze({
+  category: "album-of-the-day",
+});
 
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
 const ABSOLUTE_URL = /^[a-z][a-z\d+.-]*:\/\//iu;
@@ -136,6 +147,15 @@ function discoverSort(value: unknown): DiscoverSort {
     default:
       return DEFAULT_DISCOVER_ROUTE_SEARCH.sort;
   }
+}
+
+export function validateDailySearch(value: unknown): DailyRouteSearch {
+  const candidate = isPlainUnknownRecord(value) ? value.category : undefined;
+  return {
+    category: isDailyCategory(candidate)
+      ? candidate
+      : DEFAULT_DAILY_ROUTE_SEARCH.category,
+  };
 }
 
 export function validateCollectionSearch(

@@ -70,6 +70,27 @@ describe("track route destinations", () => {
     });
   });
 
+  it("keeps Daily releases external to the authenticated library", () => {
+    const track: Track = {
+      ...libraryTrack,
+      albumId: "daily:lists:a42",
+      dailySource: {
+        articleSlug: "night-music",
+        articleTitle: "Night Music",
+        articleUrl: "https://daily.bandcamp.com/lists/night-music",
+        artistUrl: "https://signal-garden.bandcamp.com",
+        category: "lists",
+        itemUrl: "https://signal-garden.bandcamp.com/album/blue-hours",
+      },
+      id: "daily:lists:a42:7",
+    };
+
+    expect(trackAlbumDestination(track)).toBeUndefined();
+    expect(trackArtistDestination(track)).toEqual({
+      kind: "daily-external-artist",
+    });
+  });
+
   it("refuses malformed internal identities", () => {
     expect(
       trackAlbumDestination({ ...libraryTrack, albumId: "https://example.com" }),

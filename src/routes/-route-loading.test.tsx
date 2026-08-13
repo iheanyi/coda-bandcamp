@@ -13,6 +13,9 @@ import { DiscoverReleasePending } from "@/routes/discover/-release-status";
 import { Route as DiscoverIndexRoute } from "@/routes/discover/index";
 import { Route as DiscoverReleaseRoute } from "@/routes/discover/releases/$releaseId";
 import { Route as DiscoverLayoutRoute } from "@/routes/discover/route";
+import { Route as DailyArticleRoute } from "@/routes/daily/$slug";
+import { Route as DailyIndexRoute } from "@/routes/daily/index";
+import { Route as DailyLayoutRoute } from "@/routes/daily/route";
 import { Route as FavoritesRoute } from "@/routes/favorites";
 import { Route as NowPlayingRoute } from "@/routes/now-playing";
 import { Route as PlaylistRoute } from "@/routes/playlists/$playlistId";
@@ -30,6 +33,7 @@ import { Route as RecentRoute } from "@/routes/recent";
 import {
   CollectionRoutePending,
   DiscoverRoutePending,
+  DailyRoutePending,
   FavoritesRoutePending,
   NowPlayingRoutePending,
   PlaylistRoutePending,
@@ -65,6 +69,9 @@ describe("route loading boundaries", () => {
     expect(DiscoverReleaseRoute.options.pendingComponent).toBe(
       DiscoverReleasePending,
     );
+    expect(DailyLayoutRoute.options.pendingComponent).toBe(DailyRoutePending);
+    expect(DailyIndexRoute.options.pendingComponent).toBe(DailyRoutePending);
+    expect(DailyArticleRoute.options.pendingComponent).toBe(DailyRoutePending);
     expect(RadioLayoutRoute.options.pendingComponent).toBe(RadioArchivePending);
     expect(RadioIndexRoute.options.pendingComponent).toBe(RadioArchivePending);
     expect(RadioSeriesRoute.options.pendingComponent).toBe(RadioArchivePending);

@@ -40,6 +40,7 @@ export type Track = {
   streamUrl?: string;
   radioChapters?: RadioChapter[];
   discoverRelease?: DiscoverRelease;
+  dailySource?: DailyTrackSource;
   palette: [string, string];
 };
 
@@ -217,6 +218,69 @@ export type DiscoverPage = {
   resultCount: number;
   cursor?: string;
   hasMore: boolean;
+};
+
+export type DailyCategory =
+  | "album-of-the-day"
+  | "features"
+  | "lists"
+  | "big-ups"
+  | "scene-report"
+  | "essential-releases";
+
+export type DailyArticleSummary = {
+  id: string;
+  category: DailyCategory;
+  slug: string;
+  title: string;
+  publishedAt?: string;
+  artworkUrl?: string;
+  articleUrl: string;
+};
+
+export type DailyArticlesPage = {
+  results: DailyArticleSummary[];
+  page: number;
+  hasMore: boolean;
+};
+
+export type DailyTrack = {
+  id: string;
+  title: string;
+  artist: string;
+  album: string;
+  albumId: string;
+  duration: number;
+  track: number;
+  artworkUrl?: string;
+  streamUrl: string;
+};
+
+export type DailyEmbed = {
+  id: string;
+  title: string;
+  artist: string;
+  itemUrl: string;
+  artistUrl?: string;
+  artworkUrl?: string;
+  location?: string;
+  featuredTrackNumber?: number;
+  tracks: DailyTrack[];
+};
+
+export type DailyArticle = DailyArticleSummary & {
+  description?: string;
+  author?: string;
+  embeds: DailyEmbed[];
+};
+
+export type DailyTrackSource = {
+  category: DailyCategory;
+  articleSlug: string;
+  articleTitle: string;
+  articleUrl: string;
+  itemUrl: string;
+  artistUrl?: string;
 };
 
 export type RadioSeries = {

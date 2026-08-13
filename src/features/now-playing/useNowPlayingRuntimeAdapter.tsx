@@ -148,9 +148,12 @@ export function useNowPlayingRuntimeAdapter({
         currentRadioShowId !== undefined
           ? favoriteRadioShowIds.has(currentRadioShowId)
           : favoriteTrackIds.has(currentTrack.id),
-      onToggleFavorite: onToggleCurrent,
+      onToggleFavorite: currentTrack.id.startsWith("daily:")
+        ? undefined
+        : onToggleCurrent,
       onAddToPlaylist:
-        currentRadioShowId === undefined
+        currentRadioShowId === undefined &&
+        !currentTrack.id.startsWith("daily:")
           ? () => onAddToPlaylist([currentTrack])
           : undefined,
     });

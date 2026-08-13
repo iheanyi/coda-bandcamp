@@ -58,6 +58,7 @@ export function PersistentPlayerDock({
       ? favorites.radioShowIds.has(currentRadioShowId)
       : favorites.trackIds.has(currentTrack.id)
     : false;
+  const dailyPreview = currentTrack?.id.startsWith("daily:") ?? false;
 
   return (
     <PlayerDock
@@ -88,10 +89,14 @@ export function PersistentPlayerDock({
       onOpenRadioItem={navigation.onOpenRadioItem}
       getRadioChapterLocalLinks={getRadioChapterLocalLinks}
       favorite={favorite}
-      onToggleFavorite={favorites.onToggleCurrent}
-      onAddToPlaylist={() => {
-        if (currentTrack) favorites.onAddToPlaylist([currentTrack]);
-      }}
+      onToggleFavorite={dailyPreview ? undefined : favorites.onToggleCurrent}
+      onAddToPlaylist={
+        dailyPreview
+          ? undefined
+          : () => {
+              if (currentTrack) favorites.onAddToPlaylist([currentTrack]);
+            }
+      }
       queueOpen={queueOpen}
       queueControlRef={queueControlRef}
     />

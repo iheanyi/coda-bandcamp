@@ -148,7 +148,10 @@ export function TrackArtistLink({
   const destination = trackArtistDestination(track);
   if (!destination) return <>{children}</>;
 
-  if (destination.kind === "discover-external-artist") {
+  if (
+    destination.kind === "discover-external-artist" ||
+    destination.kind === "daily-external-artist"
+  ) {
     if (!onNavigate) return <>{children}</>;
     // Discover artist URLs cross Tauri's native HTTPS allowlist, so this stays
     // an explicitly named action instead of bypassing validation with an href.

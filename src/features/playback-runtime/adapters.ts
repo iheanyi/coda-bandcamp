@@ -16,6 +16,7 @@ import {
   updateSystemMediaTimeline,
   type SystemMediaControlEvent,
 } from "@/lib";
+import { refreshDailyTrack } from "@/daily";
 import {
   installMediaSessionTrackHandlers,
   syncMediaSessionPlayback,
@@ -40,6 +41,7 @@ export const defaultPlaybackPersistenceAdapters: PlaybackPersistenceAdapters = {
 export const defaultPlaybackAudioAdapters: PlaybackAudioAdapters = {
   fetchStreamUrl,
   invalidateStreamUrl,
+  loadDailyTrack: refreshDailyTrack,
   loadRadioShow: fetchRadioShow,
   recordDiagnostic: recordPlaybackDiagnostic,
 };

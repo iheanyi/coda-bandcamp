@@ -30,6 +30,7 @@ export type TrackArtistDestination =
       sourceAlbumId?: AlbumId;
     }>
   | Readonly<{ kind: "discover-external-artist" }>
+  | Readonly<{ kind: "daily-external-artist" }>
   | Readonly<{ kind: "radio" }>
   | Readonly<{ kind: "radio-series"; seriesId: RadioSeriesId }>;
 
@@ -54,6 +55,8 @@ export function trackAlbumDestination(
     return releaseId ? { kind: "discover-release", releaseId } : undefined;
   }
 
+  if (track.id.startsWith("daily:")) return undefined;
+
   if (track.id.startsWith("radio:")) {
     const rawShowId = radioShowIdFromTrackId(track.id);
     const showId = tryParse(rawShowId, parseRadioShowIdParam);
@@ -70,6 +73,12 @@ export function trackArtistDestination(
   if (track.id.startsWith("discover:")) {
     return track.discoverRelease?.id === track.albumId
       ? { kind: "discover-external-artist" }
+      : undefined;
+  }
+
+  if (track.id.startsWith("daily:")) {
+    return track.dailySource?.artistUrl
+      ? { kind: "daily-external-artist" }
       : undefined;
   }
 

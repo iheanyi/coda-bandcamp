@@ -57,8 +57,10 @@ export function getWindowTitle({
         activeArtistName ??
         (view === "discover"
           ? "Discover"
-          : view === "radio"
-            ? BANDCAMP_RADIO_PROVIDER
-            : (currentRadioChapter?.title ?? currentTrack?.title)));
+          : view === "daily"
+            ? "Bandcamp Daily"
+            : view === "radio"
+              ? BANDCAMP_RADIO_PROVIDER
+              : (currentRadioChapter?.title ?? currentTrack?.title)));
   return subject ? `${subject} — ${CODA_APP_NAME}` : CODA_APP_NAME;
 }

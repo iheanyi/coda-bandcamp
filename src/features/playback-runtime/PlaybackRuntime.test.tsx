@@ -169,6 +169,7 @@ function createAdapterHarness(
         `https://example.test/${trackId}.mp3?signature=private`,
     ),
     invalidateStreamUrl: vi.fn(),
+    loadDailyTrack: vi.fn(async (track: Track) => track),
     loadRadioShow: vi.fn(async () => refreshedRadioShow),
     recordDiagnostic: vi.fn(),
   };
@@ -685,6 +686,60 @@ describe("Playback runtime", () => {
       "Coda lost the Bandcamp stream connection.",
       "bad",
     );
+  });
+
+  it("refreshes an expired Daily preview without using Subsonic", async () => {
+    const dailyTrack: Track = {
+      ...tracks[0],
+      id: "daily:album-of-the-day:a42:101",
+      albumId: "daily:album-of-the-day:a42",
+      streamUrl: "https://t4.bcbits.com/stream/expired/m4a",
+      dailySource: {
+        category: "album-of-the-day",
+        articleSlug: "soft-focus-album-review",
+        articleTitle: "Soft Focus",
+        articleUrl:
+          "https://daily.bandcamp.com/album-of-the-day/soft-focus-album-review",
+        itemUrl: "https://night-archive.bandcamp.com/album/soft-focus",
+        artistUrl: "https://night-archive.bandcamp.com",
+      },
+    };
+    const refreshedTrack = {
+      ...dailyTrack,
+      streamUrl: "https://t4.bcbits.com/stream/refreshed/m4a",
+    };
+    const harness = createAdapterHarness();
+    harness.audio.loadDailyTrack.mockResolvedValue(refreshedTrack);
+    const { container, current } = renderRuntime({
+      connected: false,
+      lastFmConnected: false,
+      adapters: harness.adapters,
+    });
+    const audio = container.querySelector<HTMLAudioElement>("audio")!;
+
+    await waitFor(() => expect(controllerFrom(current).queue.ready).toBe(true));
+    act(() => controllerFrom(current).queueCommands.playTrack(dailyTrack));
+    await waitFor(() =>
+      expect(audio).toHaveAttribute("src", dailyTrack.streamUrl),
+    );
+    Object.defineProperty(audio, "error", {
+      configurable: true,
+      value: { code: 2 },
+    });
+
+    fireEvent.error(audio);
+
+    await waitFor(() =>
+      expect(audio).toHaveAttribute("src", refreshedTrack.streamUrl),
+    );
+    expect(harness.audio.loadDailyTrack).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: dailyTrack.id,
+        streamUrl: undefined,
+      }),
+    );
+    expect(harness.audio.fetchStreamUrl).not.toHaveBeenCalled();
+    expect(harness.audio.invalidateStreamUrl).not.toHaveBeenCalled();
   });
 
   it("scrobbles only genuine listened time after a seek", async () => {

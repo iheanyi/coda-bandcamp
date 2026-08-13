@@ -23,7 +23,7 @@ export type PlayerTrackProps = {
   radioTimeline: readonly RadioChapter[];
   playbackClock: PlaybackClock;
   favorite: boolean;
-  onToggleFavorite: () => void;
+  onToggleFavorite?: () => void;
   onArtist: ArtistNavigationHandler;
   onAlbum: (track: Track, trigger?: HTMLElement) => void;
   albumLoading: boolean;
@@ -50,7 +50,7 @@ export const PlayerTrack = memo(function PlayerTrack({
   const radioAiring = useCurrentRadioChapter(playbackClock, radioTimeline);
   const activeChapter = radioAiring.current;
   const releaseTitle = track ? normalizedReleaseTitle(track.album) : "";
-  const favoriteControl = track ? (
+  const favoriteControl = track && onToggleFavorite ? (
     <Button
       className={cn(
         "size-7 shrink-0",

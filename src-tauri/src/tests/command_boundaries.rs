@@ -1,6 +1,7 @@
 #[test]
 fn every_tauri_command_enters_through_the_async_runtime() {
     let sources = [
+        ("daily", include_str!("../daily.rs")),
         ("discover", include_str!("../discover.rs")),
         ("favorites", include_str!("../favorites.rs")),
         ("lastfm", include_str!("../lastfm.rs")),
@@ -32,7 +33,7 @@ fn every_tauri_command_enters_through_the_async_runtime() {
         }
     }
     assert_eq!(
-        command_count, 34,
+        command_count, 36,
         "the registered command inventory changed"
     );
 }
@@ -71,6 +72,7 @@ fn production_modules_declare_their_dependencies_explicitly() {
     let sources = [
         ("album_cache", include_str!("../album_cache.rs")),
         ("bandcamp_http", include_str!("../bandcamp_http.rs")),
+        ("daily", include_str!("../daily.rs")),
         ("desktop", include_str!("../desktop.rs")),
         ("discover", include_str!("../discover.rs")),
         ("favorites", include_str!("../favorites.rs")),
@@ -99,6 +101,7 @@ fn production_modules_declare_their_dependencies_explicitly() {
     for module in [
         "album_cache",
         "bandcamp_http",
+        "daily",
         "desktop",
         "discover",
         "favorites",

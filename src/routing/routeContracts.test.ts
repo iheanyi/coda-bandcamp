@@ -3,6 +3,7 @@ import {
   type AlbumId,
   type ArtistKey,
   DEFAULT_COLLECTION_ROUTE_SEARCH,
+  DEFAULT_DAILY_ROUTE_SEARCH,
   DEFAULT_DISCOVER_ROUTE_SEARCH,
   type DiscoverReleaseId,
   MAX_ARTIST_KEY_BYTES,
@@ -28,6 +29,7 @@ import {
   stringifyRadioSeriesIdParam,
   stringifyRadioShowIdParam,
   validateCollectionSearch,
+  validateDailySearch,
   validateDiscoverSearch,
 } from "./routeContracts";
 
@@ -113,6 +115,21 @@ describe("Discover route search", () => {
       }),
     ).toEqual(DEFAULT_DISCOVER_ROUTE_SEARCH);
   });
+});
+
+describe("Bandcamp Daily route search", () => {
+  it("preserves the six supported categories", () => {
+    expect(validateDailySearch({ category: "essential-releases" })).toEqual({
+      category: "essential-releases",
+    });
+  });
+
+  it.each([undefined, null, [], "lists", { category: "latest" }])(
+    "defaults a malformed category search (%j)",
+    (value) => {
+      expect(validateDailySearch(value)).toEqual(DEFAULT_DAILY_ROUTE_SEARCH);
+    },
+  );
 });
 
 describe("Radio route parameters", () => {

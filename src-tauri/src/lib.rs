@@ -7,6 +7,7 @@ use tauri::{
 mod album_cache;
 mod app_identity;
 mod bandcamp_http;
+mod daily;
 mod desktop;
 mod discover;
 mod favorites;
@@ -26,6 +27,7 @@ mod system_media;
 mod url_policy;
 mod validation;
 
+use daily::{daily_article, daily_articles};
 #[cfg(desktop)]
 use desktop::{
     ensure_window_is_visible, should_maximize_main_window_on_startup, show_main_window,
@@ -261,6 +263,8 @@ pub fn run() {
             delete_playlist,
             get_stream_url,
             get_cover_url,
+            daily_articles,
+            daily_article,
             discover,
             radio_shows,
             radio_show,

@@ -98,6 +98,32 @@ export function usePlaybackAudioController({
       return;
     }
 
+    if (currentTrack.id.startsWith("daily:") && currentTrack.dailySource) {
+      let active = true;
+      setResolvedStream(undefined);
+      void adapters
+        .loadDailyTrack(currentTrack)
+        .then((refreshedTrack) => {
+          if (!active || !refreshedTrack.streamUrl) return;
+          replaceCurrentTrack(currentTrack.id, refreshedTrack);
+          setResolvedStream({
+            trackId: currentTrack.id,
+            url: refreshedTrack.streamUrl,
+          });
+        })
+        .catch((cause) => {
+          if (!active) return;
+          pause();
+          notify(
+            `Coda could not refresh this Bandcamp Daily preview: ${safePlaybackErrorDetail(cause)}`,
+            "bad",
+          );
+        });
+      return () => {
+        active = false;
+      };
+    }
+
     const radioShowId = radioShowIdFromTrackId(currentTrack.id);
     if (radioShowId !== undefined) {
       let active = true;
@@ -306,7 +332,11 @@ export function usePlaybackAudioController({
         !track.streamUrl &&
         !track.id.startsWith("radio:") &&
         (mediaError?.code === 2 || mediaError?.code === 4);
-      if (canRefreshAuthenticatedStream) {
+      const canRefreshDailyStream =
+        track.id.startsWith("daily:") &&
+        Boolean(track.dailySource) &&
+        (mediaError?.code === 2 || mediaError?.code === 4);
+      if (canRefreshAuthenticatedStream || canRefreshDailyStream) {
         const refresh = streamRefreshRef.current;
         if (refresh.trackId !== track.id) {
           refresh.trackId = track.id;
@@ -314,7 +344,11 @@ export function usePlaybackAudioController({
         }
         if (refresh.attempts < MAX_STREAM_REFRESH_ATTEMPTS) {
           refresh.attempts += 1;
-          adapters.invalidateStreamUrl(track.id);
+          if (canRefreshAuthenticatedStream) {
+            adapters.invalidateStreamUrl(track.id);
+          } else {
+            replaceCurrentTrack(track.id, { ...track, streamUrl: undefined });
+          }
           setResolvedStream(undefined);
           setStreamRequestNonce((nonce) => nonce + 1);
           return;
@@ -323,7 +357,15 @@ export function usePlaybackAudioController({
       pause();
       notify(playbackErrorMessage(mediaError?.code), "bad");
     },
-    [adapters, connected, getCoreSnapshot, notify, pause, boundStreamTrackId],
+    [
+      adapters,
+      boundStreamTrackId,
+      connected,
+      getCoreSnapshot,
+      notify,
+      pause,
+      replaceCurrentTrack,
+    ],
   );
 
   const handleEnded = useCallback(

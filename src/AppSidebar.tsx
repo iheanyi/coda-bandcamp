@@ -6,6 +6,7 @@ import {
   Heart,
   Library,
   ListMusic,
+  Newspaper,
   Radio,
   Settings2,
   type LucideIcon,
@@ -46,6 +47,7 @@ export type AppSidebarDestination =
   | "/playlists"
   | "/recent"
   | "/discover"
+  | "/daily"
   | "/radio";
 
 export type AppSidebarNavigationRequest = Readonly<{
@@ -251,6 +253,31 @@ function AppSidebar({
             </SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu className="gap-1">
+                <SidebarMenuItem>
+                  <Link
+                    {...navigationLinkProps}
+                    onClick={(event) =>
+                      activateNavigation(
+                        event,
+                        "/daily",
+                        async (viewTransition = true) => {
+                          await navigate({
+                            search: { category: "album-of-the-day" },
+                            to: "/daily",
+                            viewTransition,
+                          });
+                        },
+                      )
+                    }
+                    search={{ category: "album-of-the-day" }}
+                    to="/daily"
+                  >
+                    <NavigationLinkContent
+                      icon={Newspaper}
+                      label="Bandcamp Daily"
+                    />
+                  </Link>
+                </SidebarMenuItem>
                 <SidebarMenuItem>
                   <Link
                     {...navigationLinkProps}

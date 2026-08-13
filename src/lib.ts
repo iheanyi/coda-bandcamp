@@ -12,6 +12,9 @@ import {
 import type {
   Album,
   ConnectionInput,
+  DailyArticle,
+  DailyArticlesPage,
+  DailyCategory,
   DiscoverFilters,
   DiscoverPage,
   FavoriteCollection,
@@ -671,6 +674,26 @@ export async function fetchDiscover(
       cursor,
     },
   });
+}
+
+export async function fetchDailyArticles(
+  category: DailyCategory,
+  page = 1,
+): Promise<DailyArticlesPage> {
+  if (!isDesktop()) {
+    throw new Error("Bandcamp Daily is available in the Coda desktop app.");
+  }
+  return invoke<DailyArticlesPage>("daily_articles", { category, page });
+}
+
+export async function fetchDailyArticle(
+  category: DailyCategory,
+  slug: string,
+): Promise<DailyArticle> {
+  if (!isDesktop()) {
+    throw new Error("Bandcamp Daily is available in the Coda desktop app.");
+  }
+  return invoke<DailyArticle>("daily_article", { category, slug });
 }
 
 export async function fetchRadioShows({

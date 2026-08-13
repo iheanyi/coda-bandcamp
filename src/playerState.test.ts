@@ -141,15 +141,16 @@ describe("player state persistence", () => {
     })?.queue[0].album).toBe("");
   });
 
-  it("omits Discover previews but preserves refreshable Radio shows", () => {
+  it("omits anonymous Daily and Discover previews but preserves refreshable Radio shows", () => {
     const state = createPlayerState({
       ...input,
       queue: [
         { ...track, id: "discover:featured" },
+        { ...track, id: "daily:lists:a42:7" },
         { ...track, id: "radio:979" },
         { ...track, id: "library-track" },
       ],
-      currentIndex: 1,
+      currentIndex: 2,
       positionSeconds: 30,
       lastFmProgress: undefined,
     });

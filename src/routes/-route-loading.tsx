@@ -101,6 +101,15 @@ export function DiscoverRoutePending() {
   );
 }
 
+export function DailyRoutePending() {
+  return (
+    <RouteLoadingState
+      detail="Finding the playable releases embedded in Bandcamp Daily."
+      title="Loading Bandcamp Daily…"
+    />
+  );
+}
+
 export function NowPlayingRoutePending() {
   return (
     <RouteLoadingState

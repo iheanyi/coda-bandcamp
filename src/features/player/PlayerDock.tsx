@@ -42,8 +42,8 @@ export type PlayerDockProps = {
   onOpenRadioItem: (url: string) => void;
   getRadioChapterLocalLinks: (chapter: RadioChapter) => RadioChapterLocalLinks;
   favorite: boolean;
-  onToggleFavorite: () => void;
-  onAddToPlaylist: () => void;
+  onToggleFavorite?: () => void;
+  onAddToPlaylist?: () => void;
   queueOpen: boolean;
   queueControlRef: RefObject<HTMLButtonElement | null>;
   className?: string;
@@ -169,7 +169,7 @@ export function PlayerDock({
             <TooltipContent>Choose AirPlay device</TooltipContent>
           </Tooltip>
         ) : null}
-        {mode === "full" && track && !track.id.startsWith("radio:") ? (
+        {mode === "full" && track && onAddToPlaylist ? (
           <Tooltip>
             <TooltipTrigger
               render={

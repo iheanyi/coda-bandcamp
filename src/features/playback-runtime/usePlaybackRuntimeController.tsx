@@ -67,6 +67,11 @@ function useResolvedAdapters(
           overridesRef.current?.audio?.invalidateStreamUrl ??
           defaultPlaybackAudioAdapters.invalidateStreamUrl
         )(trackId),
+      loadDailyTrack: (track) =>
+        (
+          overridesRef.current?.audio?.loadDailyTrack ??
+          defaultPlaybackAudioAdapters.loadDailyTrack
+        )(track),
       loadRadioShow: (showId) =>
         (
           overridesRef.current?.audio?.loadRadioShow ??

@@ -4,6 +4,7 @@ export type CodaPrimaryView =
   | "playlists"
   | "recent"
   | "discover"
+  | "daily"
   | "radio";
 
 export type CodaScreen =
@@ -16,6 +17,8 @@ export type CodaScreen =
   | "playlist"
   | "discover"
   | "discover-release"
+  | "daily"
+  | "daily-article"
   | "radio"
   | "radio-series"
   | "radio-show"

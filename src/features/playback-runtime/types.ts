@@ -36,6 +36,7 @@ export type PlaybackPersistenceAdapters = {
 export type PlaybackAudioAdapters = {
   fetchStreamUrl: (trackId: string) => Promise<string>;
   invalidateStreamUrl: (trackId: string) => void;
+  loadDailyTrack: (track: Track) => Promise<Track>;
   loadRadioShow: (showId: number) => Promise<RadioShow>;
   recordDiagnostic: (event: PlaybackDiagnosticEvent) => void;
 };

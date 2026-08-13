@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as CollectionRouteRouteImport } from './routes/collection/route'
+import { Route as DailyRouteRouteImport } from './routes/daily/route'
 import { Route as DiscoverRouteRouteImport } from './routes/discover/route'
 import { Route as FavoritesRouteImport } from './routes/favorites'
 import { Route as NowPlayingRouteImport } from './routes/now-playing'
@@ -18,6 +19,8 @@ import { Route as PlaylistsRouteRouteImport } from './routes/playlists/route'
 import { Route as RadioRouteImport } from './routes/radio'
 import { Route as RecentRouteImport } from './routes/recent'
 import { Route as CollectionIndexRouteImport } from './routes/collection/index'
+import { Route as DailyIndexRouteImport } from './routes/daily/index'
+import { Route as DailySlugRouteImport } from './routes/daily/$slug'
 import { Route as DiscoverIndexRouteImport } from './routes/discover/index'
 import { Route as PlaylistsIndexRouteImport } from './routes/playlists/index'
 import { Route as PlaylistsPlaylistIdRouteImport } from './routes/playlists/$playlistId'
@@ -36,6 +39,11 @@ const IndexRoute = IndexRouteImport.update({
 const CollectionRouteRoute = CollectionRouteRouteImport.update({
   id: '/collection',
   path: '/collection',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DailyRouteRoute = DailyRouteRouteImport.update({
+  id: '/daily',
+  path: '/daily',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DiscoverRouteRoute = DiscoverRouteRouteImport.update({
@@ -72,6 +80,16 @@ const CollectionIndexRoute = CollectionIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => CollectionRouteRoute,
+} as any)
+const DailyIndexRoute = DailyIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => DailyRouteRoute,
+} as any)
+const DailySlugRoute = DailySlugRouteImport.update({
+  id: '/$slug',
+  path: '/$slug',
+  getParentRoute: () => DailyRouteRoute,
 } as any)
 const DiscoverIndexRoute = DiscoverIndexRouteImport.update({
   id: '/',
@@ -124,14 +142,17 @@ const RadioShowsShowIdRoute = RadioShowsShowIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/collection': typeof CollectionRouteRouteWithChildren
+  '/daily': typeof DailyRouteRouteWithChildren
   '/discover': typeof DiscoverRouteRouteWithChildren
   '/playlists': typeof PlaylistsRouteRouteWithChildren
   '/favorites': typeof FavoritesRoute
   '/now-playing': typeof NowPlayingRoute
   '/radio': typeof RadioRouteWithChildren
   '/recent': typeof RecentRoute
+  '/daily/$slug': typeof DailySlugRoute
   '/playlists/$playlistId': typeof PlaylistsPlaylistIdRoute
   '/collection/': typeof CollectionIndexRoute
+  '/daily/': typeof DailyIndexRoute
   '/discover/': typeof DiscoverIndexRoute
   '/playlists/': typeof PlaylistsIndexRoute
   '/radio/': typeof RadioIndexRoute
@@ -146,8 +167,10 @@ export interface FileRoutesByTo {
   '/favorites': typeof FavoritesRoute
   '/now-playing': typeof NowPlayingRoute
   '/recent': typeof RecentRoute
+  '/daily/$slug': typeof DailySlugRoute
   '/playlists/$playlistId': typeof PlaylistsPlaylistIdRoute
   '/collection': typeof CollectionIndexRoute
+  '/daily': typeof DailyIndexRoute
   '/discover': typeof DiscoverIndexRoute
   '/playlists': typeof PlaylistsIndexRoute
   '/radio': typeof RadioIndexRoute
@@ -161,14 +184,17 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/collection': typeof CollectionRouteRouteWithChildren
+  '/daily': typeof DailyRouteRouteWithChildren
   '/discover': typeof DiscoverRouteRouteWithChildren
   '/playlists': typeof PlaylistsRouteRouteWithChildren
   '/favorites': typeof FavoritesRoute
   '/now-playing': typeof NowPlayingRoute
   '/radio': typeof RadioRouteWithChildren
   '/recent': typeof RecentRoute
+  '/daily/$slug': typeof DailySlugRoute
   '/playlists/$playlistId': typeof PlaylistsPlaylistIdRoute
   '/collection/': typeof CollectionIndexRoute
+  '/daily/': typeof DailyIndexRoute
   '/discover/': typeof DiscoverIndexRoute
   '/playlists/': typeof PlaylistsIndexRoute
   '/radio/': typeof RadioIndexRoute
@@ -183,14 +209,17 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/collection'
+    | '/daily'
     | '/discover'
     | '/playlists'
     | '/favorites'
     | '/now-playing'
     | '/radio'
     | '/recent'
+    | '/daily/$slug'
     | '/playlists/$playlistId'
     | '/collection/'
+    | '/daily/'
     | '/discover/'
     | '/playlists/'
     | '/radio/'
@@ -205,8 +234,10 @@ export interface FileRouteTypes {
     | '/favorites'
     | '/now-playing'
     | '/recent'
+    | '/daily/$slug'
     | '/playlists/$playlistId'
     | '/collection'
+    | '/daily'
     | '/discover'
     | '/playlists'
     | '/radio'
@@ -219,14 +250,17 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/collection'
+    | '/daily'
     | '/discover'
     | '/playlists'
     | '/favorites'
     | '/now-playing'
     | '/radio'
     | '/recent'
+    | '/daily/$slug'
     | '/playlists/$playlistId'
     | '/collection/'
+    | '/daily/'
     | '/discover/'
     | '/playlists/'
     | '/radio/'
@@ -240,6 +274,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CollectionRouteRoute: typeof CollectionRouteRouteWithChildren
+  DailyRouteRoute: typeof DailyRouteRouteWithChildren
   DiscoverRouteRoute: typeof DiscoverRouteRouteWithChildren
   PlaylistsRouteRoute: typeof PlaylistsRouteRouteWithChildren
   FavoritesRoute: typeof FavoritesRoute
@@ -262,6 +297,13 @@ declare module '@tanstack/react-router' {
       path: '/collection'
       fullPath: '/collection'
       preLoaderRoute: typeof CollectionRouteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/daily': {
+      id: '/daily'
+      path: '/daily'
+      fullPath: '/daily'
+      preLoaderRoute: typeof DailyRouteRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/discover': {
@@ -312,6 +354,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/collection/'
       preLoaderRoute: typeof CollectionIndexRouteImport
       parentRoute: typeof CollectionRouteRoute
+    }
+    '/daily/': {
+      id: '/daily/'
+      path: '/'
+      fullPath: '/daily/'
+      preLoaderRoute: typeof DailyIndexRouteImport
+      parentRoute: typeof DailyRouteRoute
+    }
+    '/daily/$slug': {
+      id: '/daily/$slug'
+      path: '/$slug'
+      fullPath: '/daily/$slug'
+      preLoaderRoute: typeof DailySlugRouteImport
+      parentRoute: typeof DailyRouteRoute
     }
     '/discover/': {
       id: '/discover/'
@@ -395,6 +451,20 @@ const CollectionRouteRouteWithChildren = CollectionRouteRoute._addFileChildren(
   CollectionRouteRouteChildren,
 )
 
+interface DailyRouteRouteChildren {
+  DailySlugRoute: typeof DailySlugRoute
+  DailyIndexRoute: typeof DailyIndexRoute
+}
+
+const DailyRouteRouteChildren: DailyRouteRouteChildren = {
+  DailySlugRoute: DailySlugRoute,
+  DailyIndexRoute: DailyIndexRoute,
+}
+
+const DailyRouteRouteWithChildren = DailyRouteRoute._addFileChildren(
+  DailyRouteRouteChildren,
+)
+
 interface DiscoverRouteRouteChildren {
   DiscoverIndexRoute: typeof DiscoverIndexRoute
   DiscoverReleasesReleaseIdRoute: typeof DiscoverReleasesReleaseIdRoute
@@ -440,6 +510,7 @@ const RadioRouteWithChildren = RadioRoute._addFileChildren(RadioRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CollectionRouteRoute: CollectionRouteRouteWithChildren,
+  DailyRouteRoute: DailyRouteRouteWithChildren,
   DiscoverRouteRoute: DiscoverRouteRouteWithChildren,
   PlaylistsRouteRoute: PlaylistsRouteRouteWithChildren,
   FavoritesRoute: FavoritesRoute,

@@ -78,7 +78,7 @@ function parsePalette(value: unknown): [string, string] | undefined {
 }
 
 export function isEphemeralTrackId(id: string): boolean {
-  return id.startsWith("discover:");
+  return id.startsWith("discover:") || id.startsWith("daily:");
 }
 
 export function persistedQueueIndex(

@@ -52,11 +52,12 @@ describe("Coda sidebar", () => {
       "Playlists",
       "Recently added",
       "Discover",
+      "Bandcamp Daily",
       "Bandcamp Radio",
     ].map((name) => screen.getByRole("link", { name }));
 
     expect(navigation).toContainElement(links[0]);
-    expect(links).toHaveLength(6);
+    expect(links).toHaveLength(7);
     expect(
       screen.queryByRole("button", { name: "Favorites" }),
     ).not.toBeInTheDocument();
@@ -64,6 +65,9 @@ describe("Coda sidebar", () => {
       "aria-current",
       "page",
     );
+    expect(
+      screen.getByRole("link", { name: "Bandcamp Daily" }),
+    ).toHaveAttribute("href", "/daily?category=album-of-the-day");
     expect(
       screen.getByRole("link", { name: "Bandcamp Radio" }),
     ).toHaveAttribute("href", "/radio");

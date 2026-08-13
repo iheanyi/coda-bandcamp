@@ -83,7 +83,8 @@ const PRIMARY_VIEW_ORDER: Readonly<Record<CodaPrimaryView, number>> = {
   playlists: 2,
   recent: 3,
   discover: 4,
-  radio: 5,
+  daily: 5,
+  radio: 6,
 };
 
 const PRIMARY_DESTINATION_VIEW: Readonly<
@@ -94,6 +95,7 @@ const PRIMARY_DESTINATION_VIEW: Readonly<
   "/playlists": "playlists",
   "/recent": "recent",
   "/discover": "discover",
+  "/daily": "daily",
   "/radio": "radio",
 };
 
@@ -324,6 +326,15 @@ export function useCodaNavigationController({
         sourceTrack,
         sourceTrigger = currentNavigationTrigger(),
       } = request;
+      if (sourceTrack?.id.startsWith("daily:")) {
+        const artistUrl = sourceTrack.dailySource?.artistUrl;
+        if (!artistUrl) {
+          notify(`Could not open ${artist} on Bandcamp`, "bad");
+          return;
+        }
+        openExternal(artistUrl);
+        return;
+      }
       if (sourceTrack?.id.startsWith("discover:")) {
         const release = sourceTrack.discoverRelease;
         if (!release || release.id !== sourceTrack.albumId) {
@@ -402,12 +413,22 @@ export function useCodaNavigationController({
       navigate,
       notify,
       openDiscoverArtist,
+      openExternal,
       prepareArtistSearch,
     ],
   );
 
   const openTrackAlbum = useCallback(
     (track: Track, sourceTrigger?: HTMLElement) => {
+      if (track.id.startsWith("daily:")) {
+        const itemUrl = track.dailySource?.itemUrl;
+        if (!itemUrl) {
+          notify(`Could not open ${track.album} on Bandcamp`, "bad");
+          return;
+        }
+        openExternal(itemUrl);
+        return;
+      }
       if (track.id.startsWith("discover:")) {
         const release = track.discoverRelease;
         if (!release || release.id !== track.albumId) {
@@ -464,6 +485,7 @@ export function useCodaNavigationController({
       notify,
       openAlbum,
       openDiscoverDetail,
+      openExternal,
     ],
   );
 

@@ -28,7 +28,15 @@ export function useCurrentFavoriteController({
   const queryClient = useQueryClient();
 
   const toggle = useCallback(() => {
-    if (!currentTrack || !favorites.ensureReady()) return;
+    if (!currentTrack) return;
+    if (currentTrack.id.startsWith("daily:")) {
+      notify(
+        "Bandcamp Daily previews cannot be added to Subsonic Favorites.",
+        "bad",
+      );
+      return;
+    }
+    if (!favorites.ensureReady()) return;
     const radioShowId = radioShowIdFromTrackId(currentTrack.id);
     if (radioShowId === undefined) {
       favorites.toggleFavorite(currentTrack.id, "song");

@@ -414,3 +414,66 @@ pub(crate) struct RadioChapter {
     pub(crate) album_url: Option<String>,
     pub(crate) artwork_url: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DailyArticleSummary {
+    pub(crate) id: String,
+    pub(crate) article_section: String,
+    pub(crate) slug: String,
+    pub(crate) title: String,
+    pub(crate) published_at: Option<String>,
+    pub(crate) artwork_url: Option<String>,
+    pub(crate) article_url: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DailyArticlesPage {
+    pub(crate) results: Vec<DailyArticleSummary>,
+    pub(crate) page: u32,
+    pub(crate) has_more: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DailyArticle {
+    pub(crate) id: String,
+    pub(crate) article_section: String,
+    pub(crate) slug: String,
+    pub(crate) title: String,
+    pub(crate) description: Option<String>,
+    pub(crate) author: Option<String>,
+    pub(crate) published_at: Option<String>,
+    pub(crate) artwork_url: Option<String>,
+    pub(crate) article_url: String,
+    pub(crate) embeds: Vec<DailyEmbed>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DailyEmbed {
+    pub(crate) id: String,
+    pub(crate) title: String,
+    pub(crate) artist: String,
+    pub(crate) location: Option<String>,
+    pub(crate) item_url: String,
+    pub(crate) artist_url: Option<String>,
+    pub(crate) artwork_url: Option<String>,
+    pub(crate) featured_track_number: Option<u64>,
+    pub(crate) tracks: Vec<DailyTrack>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DailyTrack {
+    pub(crate) id: String,
+    pub(crate) title: String,
+    pub(crate) artist: String,
+    pub(crate) album: String,
+    pub(crate) album_id: String,
+    pub(crate) duration: u64,
+    pub(crate) track: u64,
+    pub(crate) artwork_url: Option<String>,
+    pub(crate) stream_url: String,
+}
