@@ -192,6 +192,9 @@ describe("Bandcamp Daily article music", () => {
     ).toHaveAttribute("data-coda-daily-artwork-detail", article.slug);
     expect(screen.getByRole("heading", { name: article.title })).toHaveFocus();
     expect(screen.getByText("2 playable tracks")).toHaveClass("text-left");
+    expect(
+      screen.queryByRole("button", { name: "Queue all releases" }),
+    ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Play release" }));
     expect(onPlayTracks.mock.calls[0]?.[0].map(({ id }: Track) => id)).toEqual([
@@ -214,6 +217,66 @@ describe("Bandcamp Daily article music", () => {
     expect(navigation.closeArticle).toHaveBeenCalledWith(
       article.slug,
       "essential-releases",
+    );
+  });
+
+  it("queues every playable track in story and release order", async () => {
+    const user = userEvent.setup();
+    const onQueueTracks = vi.fn();
+    const router = createCodaMemoryRouter(new QueryClient(), ["/collection"]);
+    const multiReleaseArticle: DailyArticle = {
+      ...article,
+      embeds: [
+        ...article.embeds,
+        {
+          artist: "Night Signal",
+          id: "daily:essential-releases:a99",
+          itemUrl: "https://night-signal.bandcamp.com/album/second-light",
+          title: "Second Light",
+          tracks: [
+            {
+              album: "Second Light",
+              albumId: "daily:essential-releases:a99",
+              artist: "Night Signal",
+              duration: 144,
+              id: "daily:essential-releases:a99:3",
+              streamUrl: "https://t4.bcbits.com/stream/three",
+              title: "Third Light",
+              track: 1,
+            },
+          ],
+        },
+      ],
+    };
+
+    render(
+      <RouterContextProvider router={router}>
+        <DailyNavigationHarness>
+          <DailyArticleScreen
+            article={multiReleaseArticle}
+            section="essential-releases"
+            playback={{
+              onPlayTracks: vi.fn(),
+              onQueueTracks,
+              onTogglePlayback: vi.fn(),
+              playing: false,
+            }}
+          />
+        </DailyNavigationHarness>
+      </RouterContextProvider>,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Queue all releases" }),
+    );
+
+    expect(onQueueTracks).toHaveBeenCalledTimes(1);
+    expect(onQueueTracks.mock.calls[0]?.[0].map(({ id }: Track) => id)).toEqual(
+      [
+        "daily:essential-releases:a42:7",
+        "daily:essential-releases:a42:8",
+        "daily:essential-releases:a99:3",
+      ],
     );
   });
 });

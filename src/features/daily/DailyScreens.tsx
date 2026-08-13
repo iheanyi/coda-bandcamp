@@ -10,7 +10,7 @@ import {
   Plus,
   RefreshCw,
 } from "lucide-react";
-import { memo, useLayoutEffect } from "react";
+import { memo, useLayoutEffect, useMemo } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -479,6 +479,11 @@ export function DailyArticleScreen({
 }>) {
   const navigation = useDailyRouteNavigation();
   const published = formatDailyDate(article.publishedAt);
+  const allTracks = useMemo(
+    () =>
+      article.embeds.flatMap((embed) => dailyTracksFromEmbed(article, embed)),
+    [article],
+  );
   useLayoutEffect(() => {
     document
       .getElementById("daily-article-heading")
@@ -549,11 +554,24 @@ export function DailyArticleScreen({
         </div>
       </header>
 
-      <div className="mt-7 flex items-baseline justify-between gap-3">
+      <div className="mt-7 flex items-center justify-between gap-3">
         <h2 className="m-0 text-xl font-semibold">Music in this story</h2>
-        <span className="text-xs text-muted-foreground">
-          {countLabel(article.embeds.length, "release")}
-        </span>
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <span className="text-xs text-muted-foreground">
+            {countLabel(article.embeds.length, "release")}
+          </span>
+          {article.embeds.length > 1 && allTracks.length ? (
+            <Button
+              aria-label="Queue all releases"
+              onClick={() => playback.onQueueTracks(allTracks)}
+              size="compact"
+              title="Add every playable track to the queue"
+              variant="outline"
+            >
+              <ListPlus size={14} /> Queue all
+            </Button>
+          ) : null}
+        </div>
       </div>
       {article.embeds.length ? (
         <div className="mt-4 grid gap-5">
