@@ -17,12 +17,12 @@ export function dailyArticlesInfiniteQueryOptions(category: DailyCategory) {
 }
 
 export function dailyArticleQueryOptions(
-  category: DailyCategory,
+  articleSection: string,
   slug: string,
 ) {
   return queryOptions({
-    queryKey: ["bandcamp-daily-article", category, slug] as const,
-    queryFn: () => fetchDailyArticle(category, slug),
+    queryKey: ["bandcamp-daily-article", articleSection, slug] as const,
+    queryFn: () => fetchDailyArticle(articleSection, slug),
     staleTime: DAILY_STALE_TIME_MS,
   });
 }

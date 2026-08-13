@@ -220,17 +220,12 @@ export type DiscoverPage = {
   hasMore: boolean;
 };
 
-export type DailyCategory =
-  | "album-of-the-day"
-  | "features"
-  | "lists"
-  | "big-ups"
-  | "scene-report"
-  | "essential-releases";
+export type { DailyCategory } from "./dailyCatalog";
+import type { DailyCategory } from "./dailyCatalog";
 
 export type DailyArticleSummary = {
   id: string;
-  category: DailyCategory;
+  articleSection: string;
   slug: string;
   title: string;
   publishedAt?: string;
@@ -275,7 +270,7 @@ export type DailyArticle = DailyArticleSummary & {
 };
 
 export type DailyTrackSource = {
-  category: DailyCategory;
+  articleSection: string;
   articleSlug: string;
   articleTitle: string;
   articleUrl: string;

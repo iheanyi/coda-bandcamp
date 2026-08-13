@@ -53,8 +53,10 @@ function DailyArticleError({ reset }: ErrorComponentProps) {
 
 function DailyArticleRoute() {
   const { slug } = Route.useParams();
-  const { category } = validateDailySearch(Route.useSearch());
-  const query = useQuery(dailyArticleQueryOptions(category, slug));
+  const { articleSection, category } = validateDailySearch(Route.useSearch());
+  const query = useQuery(
+    dailyArticleQueryOptions(articleSection ?? category, slug),
+  );
   const queue = usePlaybackQueueStatus();
   const transport = usePlaybackTransportModel();
   const queueCommands = usePlaybackQueueCommands();
@@ -88,7 +90,13 @@ function DailyArticleRoute() {
 
   if (query.isPending) return <DailyRoutePending />;
   if (query.isError) throw query.error;
-  return <DailyArticleScreen article={query.data} playback={playback} />;
+  return (
+    <DailyArticleScreen
+      article={query.data}
+      playback={playback}
+      section={category}
+    />
+  );
 }
 
 export const Route = createFileRoute("/daily/$slug")({
@@ -101,7 +109,10 @@ export const Route = createFileRoute("/daily/$slug")({
   loaderDeps: ({ search }) => validateDailySearch(search),
   loader: ({ context, deps, params }) =>
     context.queryClient.ensureQueryData(
-      dailyArticleQueryOptions(deps.category, params.slug),
+      dailyArticleQueryOptions(
+        deps.articleSection ?? deps.category,
+        params.slug,
+      ),
     ),
   pendingComponent: DailyRoutePending,
   staticData: codaRouteMeta("daily-article", "daily"),

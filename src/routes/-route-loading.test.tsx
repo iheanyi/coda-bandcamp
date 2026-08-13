@@ -81,6 +81,10 @@ describe("route loading boundaries", () => {
     );
   });
 
+  it("lets the Daily screen load its archive without blocking navigation", () => {
+    expect(DailyLayoutRoute.options.loader).toBeUndefined();
+  });
+
   it("shows one accessible, reduced-motion-safe spinner for a cold route", () => {
     const { container } = render(<RecentRoutePending />);
 

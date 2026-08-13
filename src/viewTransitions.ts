@@ -21,6 +21,8 @@ export type CodaViewTransitionKind =
   | "album-detail-close"
   | "artist-detail"
   | "artist-detail-close"
+  | "daily-detail"
+  | "daily-detail-close"
   | "discover-detail"
   | "discover-detail-close"
   | "playlist-detail"
@@ -60,6 +62,8 @@ const TRANSITION_CLASSES: Record<CodaViewTransitionKind, string> = {
   "album-detail-close": "coda-transition--album-detail-close",
   "artist-detail": "coda-transition--artist-detail",
   "artist-detail-close": "coda-transition--artist-detail-close",
+  "daily-detail": "coda-transition--daily-detail",
+  "daily-detail-close": "coda-transition--daily-detail-close",
   "discover-detail": "coda-transition--discover-detail",
   "discover-detail-close": "coda-transition--discover-detail-close",
   "playlist-detail": "coda-transition--playlist-detail",
@@ -119,6 +123,14 @@ const SHARED_SOURCE_SELECTORS: Partial<
     "[data-coda-artist-artwork-detail][data-slot='cover']",
     "[data-coda-artist-artwork-detail] [data-slot='cover']",
     "[data-coda-artist-name-detail]",
+  ],
+  "daily-detail": [
+    "[data-coda-daily-artwork-source]",
+    "[data-coda-daily-title-source]",
+  ],
+  "daily-detail-close": [
+    "[data-coda-daily-artwork-detail]",
+    "[data-coda-daily-title-detail]",
   ],
   "discover-detail": [
     "[data-coda-discover-artwork-source]",

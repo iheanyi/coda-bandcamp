@@ -186,7 +186,7 @@
 
 @supports (view-transition-name: coda-now-playing-artwork) {
   /*
-   * Album drill-ins only snapshot the artwork. Capturing the scrollable
+   * Detail drill-ins only snapshot their shared identity. Capturing the scrollable
    * Collection pane makes WebKit rasterize the virtualized grid before it can
    * begin the transition, which turns the shared-element morph into a visible
    * pause on larger libraries.
@@ -196,6 +196,8 @@
     .coda-transition--album-detail-close,
     .coda-transition--artist-detail,
     .coda-transition--artist-detail-close,
+    .coda-transition--daily-detail,
+    .coda-transition--daily-detail-close,
     .coda-transition--discover-detail,
     .coda-transition--discover-detail-close,
     .coda-transition--playlist-detail,
@@ -274,6 +276,28 @@
       [data-coda-artist-name-return]
     ) {
     view-transition-name: coda-artist-name;
+  }
+
+  html:is(.coda-transition--daily-detail, .coda-transition--daily-detail-close)
+    :is(
+      [data-coda-daily-artwork-source],
+      [data-coda-daily-artwork-detail],
+      [data-coda-daily-artwork-return]
+    ) {
+    view-transition-name: coda-daily-artwork;
+  }
+
+  html.coda-transition--daily-detail [data-coda-daily-detail-surface] {
+    view-transition-name: coda-daily-detail-surface;
+  }
+
+  html:is(.coda-transition--daily-detail, .coda-transition--daily-detail-close)
+    :is(
+      [data-coda-daily-title-source],
+      [data-coda-daily-title-detail],
+      [data-coda-daily-title-return]
+    ) {
+    view-transition-name: coda-daily-title;
   }
 
   html:is(
@@ -406,6 +430,7 @@
 
 ::view-transition-group(coda-album-artwork),
 ::view-transition-group(coda-artist-artwork),
+::view-transition-group(coda-daily-artwork),
 ::view-transition-group(coda-discover-artwork),
 ::view-transition-group(coda-radio-artwork),
 ::view-transition-group(coda-playlist-identity) {
@@ -416,6 +441,7 @@
 
 ::view-transition-image-pair(coda-album-artwork),
 ::view-transition-image-pair(coda-artist-artwork),
+::view-transition-image-pair(coda-daily-artwork),
 ::view-transition-image-pair(coda-discover-artwork),
 ::view-transition-image-pair(coda-radio-artwork) {
   overflow: clip;
@@ -428,6 +454,8 @@
 ::view-transition-new(coda-album-artwork),
 ::view-transition-old(coda-artist-artwork),
 ::view-transition-new(coda-artist-artwork),
+::view-transition-old(coda-daily-artwork),
+::view-transition-new(coda-daily-artwork),
 ::view-transition-old(coda-discover-artwork),
 ::view-transition-new(coda-discover-artwork),
 ::view-transition-old(coda-radio-artwork),
@@ -466,6 +494,7 @@
 
 ::view-transition-group(coda-album-title),
 ::view-transition-group(coda-artist-name),
+::view-transition-group(coda-daily-title),
 ::view-transition-group(coda-discover-title),
 ::view-transition-group(coda-radio-title),
 ::view-transition-group(coda-playlist-title),
@@ -478,6 +507,7 @@
 
 ::view-transition-image-pair(coda-album-title),
 ::view-transition-image-pair(coda-artist-name),
+::view-transition-image-pair(coda-daily-title),
 ::view-transition-image-pair(coda-discover-title),
 ::view-transition-image-pair(coda-radio-title),
 ::view-transition-image-pair(coda-playlist-title),
@@ -489,6 +519,7 @@
 
 ::view-transition-old(coda-album-title),
 ::view-transition-old(coda-artist-name),
+::view-transition-old(coda-daily-title),
 ::view-transition-old(coda-discover-title),
 ::view-transition-old(coda-radio-title),
 ::view-transition-old(coda-playlist-title),
@@ -501,6 +532,7 @@
 
 ::view-transition-new(coda-album-title),
 ::view-transition-new(coda-artist-name),
+::view-transition-new(coda-daily-title),
 ::view-transition-new(coda-discover-title),
 ::view-transition-new(coda-radio-title),
 ::view-transition-new(coda-playlist-title),
@@ -513,6 +545,7 @@
 
 ::view-transition-group(coda-album-detail-surface),
 ::view-transition-group(coda-artist-detail-surface),
+::view-transition-group(coda-daily-detail-surface),
 ::view-transition-group(coda-discover-detail-surface),
 ::view-transition-group(coda-radio-detail-surface),
 ::view-transition-group(coda-playlist-detail-surface),
@@ -522,6 +555,7 @@
 
 ::view-transition-image-pair(coda-album-detail-surface),
 ::view-transition-image-pair(coda-artist-detail-surface),
+::view-transition-image-pair(coda-daily-detail-surface),
 ::view-transition-image-pair(coda-discover-detail-surface),
 ::view-transition-image-pair(coda-radio-detail-surface),
 ::view-transition-image-pair(coda-playlist-detail-surface),
@@ -533,6 +567,7 @@
 html:is(
     .coda-transition--album-detail,
     .coda-transition--artist-detail,
+    .coda-transition--daily-detail,
     .coda-transition--discover-detail,
     .coda-transition--radio-detail,
     .coda-transition--playlist-detail
@@ -547,6 +582,15 @@ html:is(
 html:is(
     .coda-transition--album-detail,
     .coda-transition--artist-detail,
+    .coda-transition--daily-detail,
+    .coda-transition--discover-detail,
+    .coda-transition--radio-detail,
+    .coda-transition--playlist-detail
+  )::view-transition-new(coda-daily-detail-surface),
+html:is(
+    .coda-transition--album-detail,
+    .coda-transition--artist-detail,
+    .coda-transition--daily-detail,
     .coda-transition--discover-detail,
     .coda-transition--radio-detail,
     .coda-transition--playlist-detail
@@ -554,6 +598,7 @@ html:is(
 html:is(
     .coda-transition--album-detail,
     .coda-transition--artist-detail,
+    .coda-transition--daily-detail,
     .coda-transition--discover-detail,
     .coda-transition--radio-detail,
     .coda-transition--playlist-detail
@@ -561,6 +606,7 @@ html:is(
 html:is(
     .coda-transition--album-detail,
     .coda-transition--artist-detail,
+    .coda-transition--daily-detail,
     .coda-transition--radio-detail,
     .coda-transition--playlist-detail
   )::view-transition-new(coda-playlist-detail-surface) {
@@ -572,6 +618,8 @@ html:is(
   [data-coda-album-title-return],
   [data-coda-artist-name-source],
   [data-coda-artist-name-return],
+  [data-coda-daily-title-source],
+  [data-coda-daily-title-return],
   [data-coda-discover-title-source],
   [data-coda-discover-title-return],
   [data-coda-radio-title-source],
@@ -591,6 +639,8 @@ html:is(
     [data-coda-album-title-return],
     [data-coda-artist-name-source],
     [data-coda-artist-name-return],
+    [data-coda-daily-title-source],
+    [data-coda-daily-title-return],
     [data-coda-discover-title-source],
     [data-coda-discover-title-return],
     [data-coda-radio-title-source],

@@ -1,6 +1,6 @@
 import { artistKey, type LibraryBrowseMode } from "@/libraryBrowse";
 import { BANDCAMP_RADIO_SERIES } from "@/radioSeries";
-import { isDailyCategory } from "@/daily";
+import { isDailyArticleSection, isDailyCategory } from "@/daily";
 import type {
   DailyCategory,
   DiscoverFilters,
@@ -38,7 +38,10 @@ export type CollectionRouteSearch = Readonly<{
 }>;
 
 export type DiscoverRouteSearch = Readonly<DiscoverFilters>;
-export type DailyRouteSearch = Readonly<{ category: DailyCategory }>;
+export type DailyRouteSearch = Readonly<{
+  articleSection?: string;
+  category: DailyCategory;
+}>;
 
 export const DEFAULT_COLLECTION_ROUTE_SEARCH: CollectionRouteSearch =
   Object.freeze({
@@ -150,11 +153,14 @@ function discoverSort(value: unknown): DiscoverSort {
 }
 
 export function validateDailySearch(value: unknown): DailyRouteSearch {
-  const candidate = isPlainUnknownRecord(value) ? value.category : undefined;
+  const search = isPlainUnknownRecord(value) ? value : {};
   return {
-    category: isDailyCategory(candidate)
-      ? candidate
+    category: isDailyCategory(search.category)
+      ? search.category
       : DEFAULT_DAILY_ROUTE_SEARCH.category,
+    ...(isDailyArticleSection(search.articleSection)
+      ? { articleSection: search.articleSection }
+      : {}),
   };
 }
 

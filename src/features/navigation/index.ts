@@ -1,5 +1,6 @@
 export {
   awaitRouterBackAfterRender,
+  useDailyRouteNavigationAdapter,
   usePlaylistRouteNavigationAdapter,
   useRadioRouteNavigationAdapter,
 } from "./routeNavigationAdapters";

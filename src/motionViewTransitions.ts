@@ -116,6 +116,28 @@ function sharedSnapshotDestination(kind: CodaViewTransitionKind) {
         (destination): destination is string => Boolean(destination),
       );
     }
+    case "daily-detail": {
+      const source = document.querySelector("[data-coda-daily-artwork-source]");
+      return source
+        ? identityDestination(
+            source,
+            ["data-coda-daily-artwork-source"],
+            "data-coda-daily-artwork-detail",
+            "[data-coda-daily-artwork-detail]",
+          )
+        : undefined;
+    }
+    case "daily-detail-close": {
+      const source = document.querySelector("[data-coda-daily-artwork-detail]");
+      return source
+        ? identityDestination(
+            source,
+            ["data-coda-daily-artwork-detail"],
+            "data-coda-daily-artwork-return",
+            "[data-coda-daily-artwork-return]",
+          )
+        : undefined;
+    }
     case "discover-detail": {
       const source = document.querySelector(
         "[data-coda-discover-artwork-source]",
@@ -238,6 +260,8 @@ const SHARED_DIAGNOSTIC_SOURCE_SELECTORS: Partial<
   "artist-detail":
     ":is([data-coda-artist-artwork-source] [data-slot='cover'], [data-coda-artist-artwork-source][data-slot='cover'])",
   "artist-detail-close": "[data-coda-artist-artwork-detail][data-slot='cover']",
+  "daily-detail": "[data-coda-daily-artwork-source]",
+  "daily-detail-close": "[data-coda-daily-artwork-detail]",
   "discover-detail": "[data-coda-discover-artwork-source]",
   "discover-detail-close": "[data-coda-discover-artwork-detail]",
   "radio-detail": "[data-coda-radio-artwork-source]",
@@ -713,6 +737,77 @@ function configureMotionTransition(
           ["data-coda-artist-name-detail"],
           "data-coda-artist-name-return",
           "[data-coda-artist-name-return]",
+        ),
+        motion,
+      );
+      return;
+    }
+    case "daily-detail": {
+      const dailyArtwork = document.querySelector(
+        "[data-coda-daily-artwork-source]",
+      );
+      const dailyTitle = document.querySelector(
+        "[data-coda-daily-title-source]",
+      );
+      configureSharedElement(
+        transition,
+        dailyArtwork,
+        identityDestination(
+          dailyArtwork,
+          ["data-coda-daily-artwork-source"],
+          "data-coda-daily-artwork-detail",
+          "[data-coda-daily-artwork-detail]",
+        ),
+        motion,
+        motion.viewTransition.detailArtwork,
+      );
+      configureDetailSurface(
+        transition,
+        "[data-coda-daily-detail-surface]",
+        motion,
+      );
+      configureSharedTitle(
+        transition,
+        dailyTitle,
+        identityDestination(
+          dailyTitle,
+          ["data-coda-daily-title-source"],
+          "data-coda-daily-title-detail",
+          "[data-coda-daily-title-detail]",
+        ),
+        motion,
+      );
+      return;
+    }
+    case "daily-detail-close": {
+      const dailyArtwork = document.querySelector(
+        "[data-coda-daily-artwork-detail]",
+      );
+      const dailyTitle = document.querySelector(
+        "[data-coda-daily-title-detail]",
+      );
+      configureSharedElement(
+        transition,
+        dailyArtwork,
+        identityDestination(
+          dailyArtwork,
+          ["data-coda-daily-artwork-detail"],
+          "data-coda-daily-artwork-return",
+          "[data-coda-daily-artwork-return]",
+        ),
+        motion,
+        motion.viewTransition.detailArtwork,
+        SHARED_ARTWORK_CLASS,
+        true,
+      );
+      configureSharedTitle(
+        transition,
+        dailyTitle,
+        identityDestination(
+          dailyTitle,
+          ["data-coda-daily-title-detail"],
+          "data-coda-daily-title-return",
+          "[data-coda-daily-title-return]",
         ),
         motion,
       );

@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   dailyCategoryLabel,
+  dailyArticlesNewestFirst,
+  formatDailyDate,
+  parseDailyArticleSection,
   dailyTracksFromEmbed,
   parseDailyArticleSlug,
   parseDailyCategory,
@@ -10,7 +13,7 @@ import type { DailyArticle } from "./types";
 
 const article: DailyArticle = {
   articleUrl: "https://daily.bandcamp.com/lists/night-music",
-  category: "lists",
+  articleSection: "lists",
   embeds: [
     {
       artist: "Signal Garden",
@@ -38,9 +41,14 @@ const article: DailyArticle = {
 };
 
 describe("Bandcamp Daily domain helpers", () => {
-  it("recognizes only the six supported Daily categories and bounded slugs", () => {
+  it("recognizes the full Daily catalog and bounded article identities", () => {
     expect(parseDailyCategory("essential-releases")).toBe("essential-releases");
+    expect(parseDailyCategory("genre-jazz")).toBe("genre-jazz");
+    expect(parseDailyCategory("best-of-2026")).toBe("best-of-2026");
     expect(() => parseDailyCategory("latest")).toThrow(/category/u);
+    expect(parseDailyArticleSection("left-behind-by-streaming")).toBe(
+      "left-behind-by-streaming",
+    );
     expect(parseDailyArticleSlug("night-music-2026")).toBe("night-music-2026");
     expect(() => parseDailyArticleSlug("../night-music")).toThrow(/slug/u);
     expect(() => parseDailyArticleSlug("-night-music")).toThrow(/slug/u);
@@ -59,10 +67,33 @@ describe("Bandcamp Daily domain helpers", () => {
       dailySource: {
         articleSlug: "night-music",
         articleTitle: "Night Music",
-        category: "lists",
+        articleSection: "lists",
         itemUrl: "https://signal-garden.bandcamp.com/album/blue-hours",
       },
     });
     expect(tracks[0]?.palette).toHaveLength(2);
+  });
+
+  it("deduplicates and orders loaded stories newest-first with stable ties", () => {
+    const summary = {
+      articleSection: "lists",
+      articleUrl: "https://daily.bandcamp.com/lists/story",
+      id: "daily-article:lists:story",
+      slug: "story",
+      title: "Story",
+    };
+    expect(
+      dailyArticlesNewestFirst([
+        { ...summary, id: "missing", slug: "missing" },
+        { ...summary, id: "same-a", publishedAt: "2026-08-11" },
+        { ...summary, id: "newest", publishedAt: "2026-08-12" },
+        { ...summary, id: "same-b", publishedAt: "2026-08-11" },
+        { ...summary, id: "newest", publishedAt: "2026-08-12" },
+      ]).map(({ id }) => id),
+    ).toEqual(["newest", "same-a", "same-b", "missing"]);
+  });
+
+  it("formats date-only listing values without crossing calendar days", () => {
+    expect(formatDailyDate("2026-08-07")).toMatch(/7/u);
   });
 });

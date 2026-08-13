@@ -677,23 +677,23 @@ export async function fetchDiscover(
 }
 
 export async function fetchDailyArticles(
-  category: DailyCategory,
+  section: DailyCategory,
   page = 1,
 ): Promise<DailyArticlesPage> {
   if (!isDesktop()) {
     throw new Error("Bandcamp Daily is available in the Coda desktop app.");
   }
-  return invoke<DailyArticlesPage>("daily_articles", { category, page });
+  return invoke<DailyArticlesPage>("daily_articles", { page, section });
 }
 
 export async function fetchDailyArticle(
-  category: DailyCategory,
+  articleSection: string,
   slug: string,
 ): Promise<DailyArticle> {
   if (!isDesktop()) {
     throw new Error("Bandcamp Daily is available in the Coda desktop app.");
   }
-  return invoke<DailyArticle>("daily_article", { category, slug });
+  return invoke<DailyArticle>("daily_article", { articleSection, slug });
 }
 
 export async function fetchRadioShows({

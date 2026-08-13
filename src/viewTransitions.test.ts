@@ -116,6 +116,12 @@ afterEach(() => {
         "[data-coda-playlist-title-source]",
         "[data-coda-playlist-title-detail]",
         "[data-coda-playlist-title-return]",
+        "[data-coda-daily-artwork-source]",
+        "[data-coda-daily-artwork-detail]",
+        "[data-coda-daily-artwork-return]",
+        "[data-coda-daily-title-source]",
+        "[data-coda-daily-title-detail]",
+        "[data-coda-daily-title-return]",
         "[data-coda-radio-artwork-source]",
         "[data-coda-radio-artwork-detail]",
         "[data-coda-radio-title-source]",
@@ -131,6 +137,8 @@ afterEach(() => {
     "coda-view-transitions-supported",
     "coda-transition--album-detail",
     "coda-transition--artist-detail",
+    "coda-transition--daily-detail",
+    "coda-transition--daily-detail-close",
     "coda-transition--discover-detail",
     "coda-transition--discover-detail-close",
     "coda-transition--playlist-detail",
@@ -288,6 +296,8 @@ describe("transitionCodaView", () => {
     const cases: Array<[CodaViewTransitionKind, string]> = [
       ["album-detail", "coda-transition--album-detail"],
       ["artist-detail", "coda-transition--artist-detail"],
+      ["daily-detail", "coda-transition--daily-detail"],
+      ["daily-detail-close", "coda-transition--daily-detail-close"],
       ["discover-detail", "coda-transition--discover-detail"],
       ["discover-detail-close", "coda-transition--discover-detail-close"],
       ["playlist-detail", "coda-transition--playlist-detail"],
@@ -915,6 +925,18 @@ describe("transitionCodaView with Motion view transitions", () => {
 
   it.each([
     [
+      "daily-detail",
+      "data-coda-daily-artwork-source",
+      "[data-coda-daily-artwork-detail]",
+      "coda-motion-shared-artwork",
+    ],
+    [
+      "daily-detail-close",
+      "data-coda-daily-artwork-detail",
+      "[data-coda-daily-artwork-return]",
+      "coda-motion-shared-artwork",
+    ],
+    [
       "discover-detail",
       "data-coda-discover-artwork-source",
       "[data-coda-discover-artwork-detail]",
@@ -1139,6 +1161,16 @@ describe("transitionCodaView with Motion view transitions", () => {
       "[data-coda-artist-name-return]",
     ],
     [
+      "daily-detail",
+      "data-coda-daily-title-source",
+      "[data-coda-daily-title-detail]",
+    ],
+    [
+      "daily-detail-close",
+      "data-coda-daily-title-detail",
+      "[data-coda-daily-title-return]",
+    ],
+    [
       "discover-detail",
       "data-coda-discover-title-source",
       "[data-coda-discover-title-detail]",
@@ -1224,6 +1256,7 @@ describe("transitionCodaView with Motion view transitions", () => {
   it.each([
     ["album-detail", "[data-coda-album-detail-surface]"],
     ["artist-detail", "[data-coda-artist-detail-surface]"],
+    ["daily-detail", "[data-coda-daily-detail-surface]"],
     ["discover-detail", "[data-coda-discover-detail-surface]"],
     ["radio-detail", "[data-coda-radio-detail-surface]"],
     ["playlist-detail", "[data-coda-playlist-detail-surface]"],

@@ -695,7 +695,7 @@ describe("Playback runtime", () => {
       albumId: "daily:album-of-the-day:a42",
       streamUrl: "https://t4.bcbits.com/stream/expired/m4a",
       dailySource: {
-        category: "album-of-the-day",
+        articleSection: "album-of-the-day",
         articleSlug: "soft-focus-album-review",
         articleTitle: "Soft Focus",
         articleUrl:

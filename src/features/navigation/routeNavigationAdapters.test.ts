@@ -35,6 +35,7 @@ vi.mock("@tanstack/react-router", () => ({
 import {
   awaitRouterBackAfterRender,
   awaitRouterNavigationAfterRender,
+  useDailyRouteNavigationAdapter,
   usePlaylistRouteNavigationAdapter,
   useRadioRouteNavigationAdapter,
 } from "./routeNavigationAdapters";
@@ -149,6 +150,35 @@ describe("route navigation adapters", () => {
     expect(adapterMocks.navigate).toHaveBeenNthCalledWith(2, {
       replace: true,
       to: "/playlists",
+      viewTransition: false,
+    });
+  });
+
+  it("provides Daily article and archive commits without Router-owned transitions", async () => {
+    const { result } = renderHook(() => useDailyRouteNavigationAdapter());
+
+    await act(() =>
+      result.current.goToArticle({
+        articleSection: "essential-releases",
+        category: "genre-jazz",
+        slug: "essential-releases-august-7-2026",
+      }),
+    );
+    await act(() => result.current.goBack("genre-jazz"));
+
+    expect(adapterMocks.navigate).toHaveBeenNthCalledWith(1, {
+      params: { slug: "essential-releases-august-7-2026" },
+      search: {
+        articleSection: "essential-releases",
+        category: "genre-jazz",
+      },
+      to: "/daily/$slug",
+      viewTransition: false,
+    });
+    expect(adapterMocks.navigate).toHaveBeenNthCalledWith(2, {
+      replace: true,
+      search: { articleSection: undefined, category: "genre-jazz" },
+      to: "/daily",
       viewTransition: false,
     });
   });

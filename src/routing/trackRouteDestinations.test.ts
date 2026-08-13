@@ -79,7 +79,7 @@ describe("track route destinations", () => {
         articleTitle: "Night Music",
         articleUrl: "https://daily.bandcamp.com/lists/night-music",
         artistUrl: "https://signal-garden.bandcamp.com",
-        category: "lists",
+        articleSection: "lists",
         itemUrl: "https://signal-garden.bandcamp.com/album/blue-hours",
       },
       id: "daily:lists:a42:7",

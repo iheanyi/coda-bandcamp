@@ -1,6 +1,7 @@
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 
+import type { DailyRouteNavigationAdapter } from "@/features/daily/DailyRouteNavigationContext";
 import type { RadioRouteNavigationAdapter } from "@/features/radio/RadioRouteNavigationContext";
 import type { PlaylistRouteNavigationAdapter } from "@/features/saved-library/playlistRouteNavigation";
 import type { CodaRouter } from "@/router";
@@ -84,6 +85,57 @@ export function awaitRouterBackAfterRender(router: CodaRouter): Promise<void> {
     });
     router.history.back();
   });
+}
+
+/**
+ * Route-layout adapter for DailyRouteNavigationProvider. Router-owned
+ * transitions stay disabled so the provider can retain the article artwork
+ * and title identity through the asynchronous route commit.
+ */
+export function useDailyRouteNavigationAdapter(): DailyRouteNavigationAdapter {
+  const navigate = useNavigate();
+  const router = useRouter();
+  const goToIndex = useCallback<DailyRouteNavigationAdapter["goToIndex"]>(
+    async (category, replace = false) => {
+      await awaitRouterNavigationAfterRender(router, () =>
+        navigate({
+          replace,
+          search: { articleSection: undefined, category },
+          to: "/daily",
+          viewTransition: false,
+        }),
+      );
+    },
+    [navigate, router],
+  );
+  const goToArticle = useCallback<DailyRouteNavigationAdapter["goToArticle"]>(
+    async ({ articleSection, category, slug }) => {
+      await awaitRouterNavigationAfterRender(router, () =>
+        navigate({
+          params: { slug },
+          search: { articleSection, category },
+          to: "/daily/$slug",
+          viewTransition: false,
+        }),
+      );
+    },
+    [navigate, router],
+  );
+  const goBack = useCallback<DailyRouteNavigationAdapter["goBack"]>(
+    async (category) => {
+      if (!router.history.canGoBack()) {
+        await goToIndex(category, true);
+        return;
+      }
+      await awaitRouterBackAfterRender(router);
+    },
+    [goToIndex, router],
+  );
+
+  return useMemo(
+    () => ({ goBack, goToArticle, goToIndex }),
+    [goBack, goToArticle, goToIndex],
+  );
 }
 
 /**
