@@ -887,8 +887,9 @@ describe("transitionCodaView with Motion view transitions", () => {
 
     expect(motionMocks.animateView).toHaveBeenCalledWith(expect.any(Function), {
       interrupt: "wait",
-      duration: 0.18,
-      ease: [0.22, 1, 0.36, 1],
+      type: motionMocks.spring,
+      visualDuration: 0.2,
+      bounce: 0.1,
     });
     expect(builder.add).toHaveBeenCalledWith(
       source,
@@ -908,8 +909,9 @@ describe("transitionCodaView with Motion view transitions", () => {
     expect(builder.class).toHaveBeenCalledWith("coda-motion-shared-artwork");
     expect(builder.layout).toHaveBeenCalledWith(
       expect.objectContaining({
-        duration: 0.18,
-        ease: [0.22, 1, 0.36, 1],
+        type: motionMocks.spring,
+        visualDuration: 0.2,
+        bounce: 0.1,
       }),
     );
     expect(builder.new).not.toHaveBeenCalled();
@@ -919,7 +921,7 @@ describe("transitionCodaView with Motion view transitions", () => {
         transform: "translateY(6px)",
       },
       expect.objectContaining({
-        duration: 0.09,
+        duration: 0.1,
         ease: [0.22, 1, 0.36, 1],
       }),
     );
@@ -1259,21 +1261,22 @@ describe("transitionCodaView with Motion view transitions", () => {
       if (kind.startsWith("now-playing")) {
         expect(builder.layout).toHaveBeenCalledWith(
           expect.objectContaining({
-            duration: 0.16,
-            ease: [0.22, 1, 0.36, 1],
+            type: motionMocks.spring,
+            visualDuration: 0.18,
+            bounce: 0.05,
           }),
         );
         expect(builder.old).toHaveBeenCalledWith(
           { opacity: [1, 0] },
           expect.objectContaining({
-            duration: 0.12,
+            duration: 0.13,
             ease: [0.22, 1, 0.36, 1],
           }),
         );
         expect(builder.new).toHaveBeenCalledWith(
           { opacity: [0, 1] },
           expect.objectContaining({
-            duration: 0.12,
+            duration: 0.13,
             ease: [0.22, 1, 0.36, 1],
           }),
         );

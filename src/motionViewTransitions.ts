@@ -1,5 +1,6 @@
 import {
   animateView,
+  spring,
   type AnimationPlaybackControls,
   type Transition,
   type ViewTransitionBuilder,
@@ -25,13 +26,15 @@ const SHARED_ARTWORK_CLASS = "coda-motion-shared-artwork";
 const SHARED_IDENTITY_CLASS = "coda-motion-shared-identity";
 const SHARED_TITLE_CLASS = "coda-motion-shared-title";
 const DETAIL_SURFACE_CLASS = "coda-motion-detail-surface";
-const NOW_PLAYING_ARTWORK_DURATION_MS = 180;
-const NOW_PLAYING_TITLE_DURATION_MS = 160;
-const NOW_PLAYING_FADE_DURATION_MS = 120;
-const NOW_PLAYING_COMPONENT_ENTER_DURATION_MS = 120;
-const NOW_PLAYING_COMPONENT_EXIT_DURATION_MS = 90;
-const NOW_PLAYING_HEADER_DELAY_MS = 10;
-const NOW_PLAYING_DETAILS_DELAY_MS = 20;
+const NOW_PLAYING_ARTWORK_VISUAL_DURATION_MS = 200;
+const NOW_PLAYING_ARTWORK_BOUNCE = 0.1;
+const NOW_PLAYING_TITLE_VISUAL_DURATION_MS = 180;
+const NOW_PLAYING_TITLE_BOUNCE = 0.05;
+const NOW_PLAYING_FADE_DURATION_MS = 130;
+const NOW_PLAYING_COMPONENT_ENTER_DURATION_MS = 140;
+const NOW_PLAYING_COMPONENT_EXIT_DURATION_MS = 100;
+const NOW_PLAYING_HEADER_DELAY_MS = 20;
+const NOW_PLAYING_DETAILS_DELAY_MS = 35;
 const NOW_PLAYING_EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
 const MOTION_OWNED_VIEW_TRANSITION_NAME = /^motion-view-\d+$/;
 let latestMotionTransitionId = 0;
@@ -49,6 +52,22 @@ function nowPlayingTween(
     duration:
       cappedDurationMs(durationMs, maximumMs) / motion.profile.speed / 1_000,
     ease: NOW_PLAYING_EASE,
+  };
+}
+
+function nowPlayingSpring(
+  durationMs: number,
+  maximumVisualDurationMs: number,
+  bounce: number,
+  motion: ResolvedMotionProfile,
+): Transition {
+  return {
+    type: spring,
+    visualDuration:
+      cappedDurationMs(durationMs, maximumVisualDurationMs) /
+      motion.profile.speed /
+      1_000,
+    bounce,
   };
 }
 
@@ -568,14 +587,16 @@ function configureNowPlayingTransition(
   opening: boolean,
   motion: ResolvedMotionProfile,
 ) {
-  const artworkTransition = nowPlayingTween(
+  const artworkTransition = nowPlayingSpring(
     motion.profile.shared.artwork.durationMs,
-    NOW_PLAYING_ARTWORK_DURATION_MS,
+    NOW_PLAYING_ARTWORK_VISUAL_DURATION_MS,
+    NOW_PLAYING_ARTWORK_BOUNCE,
     motion,
   );
-  const titleTransition = nowPlayingTween(
+  const titleTransition = nowPlayingSpring(
     motion.profile.shared.title.durationMs,
-    NOW_PLAYING_TITLE_DURATION_MS,
+    NOW_PLAYING_TITLE_VISUAL_DURATION_MS,
+    NOW_PLAYING_TITLE_BOUNCE,
     motion,
   );
   const fadeTransition = nowPlayingTween(
@@ -1129,11 +1150,11 @@ function configuredVisualDuration(
     const durations = [
       cappedDurationMs(
         profile.shared.artwork.durationMs,
-        NOW_PLAYING_ARTWORK_DURATION_MS,
+        NOW_PLAYING_ARTWORK_VISUAL_DURATION_MS,
       ),
       cappedDurationMs(
         profile.shared.title.durationMs,
-        NOW_PLAYING_TITLE_DURATION_MS,
+        NOW_PLAYING_TITLE_VISUAL_DURATION_MS,
       ),
       cappedDurationMs(
         profile.shared.crossfade.durationMs,
@@ -1213,9 +1234,10 @@ export async function transitionCodaViewWithMotion(
 
   try {
     const nowPlayingDefaultTransition = kind.startsWith("now-playing")
-      ? nowPlayingTween(
+      ? nowPlayingSpring(
           motion.profile.shared.artwork.durationMs,
-          NOW_PLAYING_ARTWORK_DURATION_MS,
+          NOW_PLAYING_ARTWORK_VISUAL_DURATION_MS,
+          NOW_PLAYING_ARTWORK_BOUNCE,
           motion,
         )
       : undefined;
