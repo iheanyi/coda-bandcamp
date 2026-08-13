@@ -26,6 +26,11 @@ const SHARED_ARTWORK_CLASS = "coda-motion-shared-artwork";
 const SHARED_IDENTITY_CLASS = "coda-motion-shared-identity";
 const SHARED_TITLE_CLASS = "coda-motion-shared-title";
 const DETAIL_SURFACE_CLASS = "coda-motion-detail-surface";
+const ALBUM_DETAIL_ARTWORK_VISUAL_DURATION_MS = 220;
+const ALBUM_DETAIL_ARTWORK_BOUNCE = 0.08;
+const ALBUM_DETAIL_TITLE_VISUAL_DURATION_MS = 190;
+const ALBUM_DETAIL_TITLE_BOUNCE = 0.04;
+const ALBUM_DETAIL_FADE_DURATION_MS = 130;
 const NOW_PLAYING_ARTWORK_VISUAL_DURATION_MS = 200;
 const NOW_PLAYING_ARTWORK_BOUNCE = 0.1;
 const NOW_PLAYING_TITLE_VISUAL_DURATION_MS = 180;
@@ -43,7 +48,7 @@ function cappedDurationMs(durationMs: number, maximumMs: number) {
   return Math.min(durationMs, maximumMs);
 }
 
-function nowPlayingTween(
+function cappedTween(
   durationMs: number,
   maximumMs: number,
   motion: ResolvedMotionProfile,
@@ -55,7 +60,7 @@ function nowPlayingTween(
   };
 }
 
-function nowPlayingSpring(
+function cappedSpring(
   durationMs: number,
   maximumVisualDurationMs: number,
   bounce: number,
@@ -587,29 +592,29 @@ function configureNowPlayingTransition(
   opening: boolean,
   motion: ResolvedMotionProfile,
 ) {
-  const artworkTransition = nowPlayingSpring(
+  const artworkTransition = cappedSpring(
     motion.profile.shared.artwork.durationMs,
     NOW_PLAYING_ARTWORK_VISUAL_DURATION_MS,
     NOW_PLAYING_ARTWORK_BOUNCE,
     motion,
   );
-  const titleTransition = nowPlayingSpring(
+  const titleTransition = cappedSpring(
     motion.profile.shared.title.durationMs,
     NOW_PLAYING_TITLE_VISUAL_DURATION_MS,
     NOW_PLAYING_TITLE_BOUNCE,
     motion,
   );
-  const fadeTransition = nowPlayingTween(
+  const fadeTransition = cappedTween(
     motion.profile.shared.crossfade.durationMs,
     NOW_PLAYING_FADE_DURATION_MS,
     motion,
   );
-  const componentEnter = nowPlayingTween(
+  const componentEnter = cappedTween(
     motion.profile.component.enter.durationMs,
     NOW_PLAYING_COMPONENT_ENTER_DURATION_MS,
     motion,
   );
-  const componentExit = nowPlayingTween(
+  const componentExit = cappedTween(
     motion.profile.component.exit.durationMs,
     NOW_PLAYING_COMPONENT_EXIT_DURATION_MS,
     motion,
@@ -724,32 +729,67 @@ function configureMotionTransition(
   motion: ResolvedMotionProfile,
 ) {
   switch (kind) {
-    case "album-detail":
+    case "album-detail": {
+      const artworkTransition = cappedSpring(
+        motion.profile.shared.artwork.durationMs,
+        ALBUM_DETAIL_ARTWORK_VISUAL_DURATION_MS,
+        ALBUM_DETAIL_ARTWORK_BOUNCE,
+        motion,
+      );
+      const titleTransition = cappedSpring(
+        motion.profile.shared.title.durationMs,
+        ALBUM_DETAIL_TITLE_VISUAL_DURATION_MS,
+        ALBUM_DETAIL_TITLE_BOUNCE,
+        motion,
+      );
+      const fadeTransition = cappedTween(
+        motion.profile.shared.crossfade.durationMs,
+        ALBUM_DETAIL_FADE_DURATION_MS,
+        motion,
+      );
       configureSharedElement(
         transition,
         document.querySelector(".coda-album-artwork-source"),
         ".album-detail__artwork [data-slot='cover']",
         motion,
-        motion.viewTransition.detailArtwork,
-      );
-      configureDetailSurface(
-        transition,
-        "[data-coda-album-detail-surface]",
-        motion,
+        artworkTransition,
+        SHARED_ARTWORK_CLASS,
+        false,
+        fadeTransition,
       );
       configureSharedTitle(
         transition,
         document.querySelector("[data-coda-album-title-source]"),
         "[data-coda-album-title-detail]",
         motion,
+        titleTransition,
+        fadeTransition,
       );
       return;
+    }
     case "album-detail-close": {
       const albumArtwork = document.querySelector(
         "[data-coda-album-artwork-detail]",
       );
       const albumTitle = document.querySelector(
         "[data-coda-album-title-detail]",
+      );
+      const artworkTransition = cappedSpring(
+        motion.profile.shared.artwork.durationMs,
+        ALBUM_DETAIL_ARTWORK_VISUAL_DURATION_MS,
+        ALBUM_DETAIL_ARTWORK_BOUNCE,
+        motion,
+      );
+      const titleTransition = cappedSpring(
+        motion.profile.shared.title.durationMs,
+        ALBUM_DETAIL_TITLE_VISUAL_DURATION_MS,
+        ALBUM_DETAIL_TITLE_BOUNCE,
+        motion,
+      );
+      const fadeTransition = cappedTween(
+        motion.profile.shared.crossfade.durationMs,
+        ALBUM_DETAIL_FADE_DURATION_MS,
+        motion,
       );
       configureSharedElement(
         transition,
@@ -761,9 +801,10 @@ function configureMotionTransition(
           "[data-coda-album-artwork-return]",
         ),
         motion,
-        motion.viewTransition.detailArtwork,
+        artworkTransition,
         SHARED_ARTWORK_CLASS,
         true,
+        fadeTransition,
       );
       configureSharedTitle(
         transition,
@@ -775,6 +816,8 @@ function configureMotionTransition(
           "[data-coda-album-title-return]",
         ),
         motion,
+        titleTransition,
+        fadeTransition,
       );
       return;
     }
@@ -1175,6 +1218,24 @@ function configuredVisualDuration(
     }
     return scale(Math.max(...durations));
   }
+  if (kind.startsWith("album-detail")) {
+    return scale(
+      Math.max(
+        cappedDurationMs(
+          profile.shared.artwork.durationMs,
+          ALBUM_DETAIL_ARTWORK_VISUAL_DURATION_MS,
+        ),
+        cappedDurationMs(
+          profile.shared.title.durationMs,
+          ALBUM_DETAIL_TITLE_VISUAL_DURATION_MS,
+        ),
+        cappedDurationMs(
+          profile.shared.crossfade.durationMs,
+          ALBUM_DETAIL_FADE_DURATION_MS,
+        ),
+      ),
+    );
+  }
   const sharedTiming = kind.startsWith("playlist")
     ? profile.shared.identity
     : profile.shared.artwork;
@@ -1233,14 +1294,21 @@ export async function transitionCodaViewWithMotion(
   let capturedDestinationNames: readonly string[] = [];
 
   try {
-    const nowPlayingDefaultTransition = kind.startsWith("now-playing")
-      ? nowPlayingSpring(
+    const defaultTransition = kind.startsWith("now-playing")
+      ? cappedSpring(
           motion.profile.shared.artwork.durationMs,
           NOW_PLAYING_ARTWORK_VISUAL_DURATION_MS,
           NOW_PLAYING_ARTWORK_BOUNCE,
           motion,
         )
-      : undefined;
+      : kind.startsWith("album-detail")
+        ? cappedSpring(
+            motion.profile.shared.artwork.durationMs,
+            ALBUM_DETAIL_ARTWORK_VISUAL_DURATION_MS,
+            ALBUM_DETAIL_ARTWORK_BOUNCE,
+            motion,
+          )
+        : undefined;
     const transition = animateView(
       async () => {
         if (transitionId !== latestMotionTransitionId || updated) return;
@@ -1274,7 +1342,7 @@ export async function transitionCodaViewWithMotion(
         // commit. Waiting preserves the render acknowledgement so the incoming
         // shared element exists before the browser captures its snapshot.
         interrupt: "wait",
-        ...nowPlayingDefaultTransition,
+        ...defaultTransition,
       },
     );
     configureMotionTransition(transition, kind, motion);

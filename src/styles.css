@@ -422,10 +422,6 @@
     view-transition-name: coda-album-artwork;
   }
 
-  html.coda-transition--album-detail [data-coda-album-detail-surface] {
-    view-transition-name: coda-album-detail-surface;
-  }
-
   html:is(.coda-transition--album-detail, .coda-transition--album-detail-close)
     :is(
       [data-coda-album-title-source],
@@ -749,7 +745,6 @@
   mix-blend-mode: normal;
 }
 
-::view-transition-group(coda-album-detail-surface),
 ::view-transition-group(coda-artist-detail-surface),
 ::view-transition-group(coda-daily-detail-surface),
 ::view-transition-group(coda-discover-detail-surface),
@@ -759,7 +754,6 @@
   z-index: 30;
 }
 
-::view-transition-image-pair(coda-album-detail-surface),
 ::view-transition-image-pair(coda-artist-detail-surface),
 ::view-transition-image-pair(coda-daily-detail-surface),
 ::view-transition-image-pair(coda-discover-detail-surface),
@@ -770,14 +764,6 @@
   background: transparent;
 }
 
-html:is(
-    .coda-transition--album-detail,
-    .coda-transition--artist-detail,
-    .coda-transition--daily-detail,
-    .coda-transition--discover-detail,
-    .coda-transition--radio-detail,
-    .coda-transition--playlist-detail
-  )::view-transition-new(coda-album-detail-surface),
 html:is(
     .coda-transition--album-detail,
     .coda-transition--artist-detail,

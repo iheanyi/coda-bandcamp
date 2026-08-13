@@ -9,6 +9,17 @@ import {
 import { cn } from "@/lib/utils";
 import type { Album } from "@/types";
 
+const MAX_WARM_COVER_URLS = 512;
+const warmCoverUrls = new Set<string>();
+
+function rememberWarmCoverUrl(url: string) {
+  warmCoverUrls.delete(url);
+  warmCoverUrls.add(url);
+  if (warmCoverUrls.size <= MAX_WARM_COVER_URLS) return;
+  const oldest = warmCoverUrls.values().next().value;
+  if (oldest) warmCoverUrls.delete(oldest);
+}
+
 export type CoverArtAlbum = Pick<
   Album,
   "id" | "title" | "artist" | "coverArt" | "artworkUrl" | "palette"
@@ -142,6 +153,7 @@ export function CoverArt({
       : size === "small"
         ? "size-10 rounded-sm"
         : "size-52 rounded-md shadow-[0_20px_42px_rgba(0,0,0,0.35)]";
+  const warm = Boolean(url && warmCoverUrls.has(url));
 
   return (
     <div
@@ -168,10 +180,14 @@ export function CoverArt({
           key={url}
           src={url}
           alt={`${album.title} cover`}
-          loading={size === "card" ? "lazy" : "eager"}
-          decoding="async"
+          loading={size === "card" && !warm ? "lazy" : "eager"}
+          decoding={warm ? "sync" : "async"}
           draggable={false}
-          onError={retryImage}
+          onError={() => {
+            warmCoverUrls.delete(url);
+            retryImage();
+          }}
+          onLoad={() => rememberWarmCoverUrl(url)}
           className="relative z-10 block size-full object-cover"
         />
       ) : null}

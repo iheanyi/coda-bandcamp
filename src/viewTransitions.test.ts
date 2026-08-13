@@ -1280,6 +1280,28 @@ describe("transitionCodaView with Motion view transitions", () => {
             ease: [0.22, 1, 0.36, 1],
           }),
         );
+      } else if (kind.startsWith("album-detail")) {
+        expect(builder.layout).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: motionMocks.spring,
+            visualDuration: 0.19,
+            bounce: 0.04,
+          }),
+        );
+        expect(builder.old).toHaveBeenCalledWith(
+          { opacity: [1, 0] },
+          expect.objectContaining({
+            duration: 0.13,
+            ease: [0.22, 1, 0.36, 1],
+          }),
+        );
+        expect(builder.new).toHaveBeenCalledWith(
+          { opacity: [0, 1] },
+          expect.objectContaining({
+            duration: 0.13,
+            ease: [0.22, 1, 0.36, 1],
+          }),
+        );
       } else {
         expect(builder.layout).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -1307,7 +1329,6 @@ describe("transitionCodaView with Motion view transitions", () => {
   );
 
   it.each([
-    ["album-detail", "[data-coda-album-detail-surface]"],
     ["artist-detail", "[data-coda-artist-detail-surface]"],
     ["daily-detail", "[data-coda-daily-detail-surface]"],
     ["discover-detail", "[data-coda-discover-detail-surface]"],
@@ -1339,6 +1360,31 @@ describe("transitionCodaView with Motion view transitions", () => {
       );
     },
   );
+
+  it("does not snapshot the album tracklist as a detail surface", async () => {
+    enableMotionViewTransitions();
+    const source = document.createElement("div");
+    source.className = "coda-album-artwork-source";
+    document.body.append(source);
+    const builder = motionBuilder();
+    motionMocks.animateView.mockImplementation((update: () => void) => {
+      update();
+      return builder;
+    });
+
+    await transitionCodaView(vi.fn(), "album-detail");
+
+    expect(builder.add).not.toHaveBeenCalledWith(
+      "[data-coda-album-detail-surface]",
+    );
+    expect(builder.layout).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: motionMocks.spring,
+        visualDuration: 0.22,
+        bounce: 0.08,
+      }),
+    );
+  });
 
   it("pairs artist artwork for the forward drill-in", async () => {
     enableMotionViewTransitions();
@@ -1392,8 +1438,8 @@ describe("transitionCodaView with Motion view transitions", () => {
     expect(builder.layout).toHaveBeenCalledWith(
       expect.objectContaining({
         type: motionMocks.spring,
-        visualDuration: 0.3,
-        bounce: 0.06,
+        visualDuration: 0.22,
+        bounce: 0.08,
       }),
     );
   });

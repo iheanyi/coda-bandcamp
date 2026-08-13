@@ -41,6 +41,24 @@ beforeEach(() => {
 });
 
 describe("CoverArt", () => {
+  it("restores a previously painted cover eagerly on remount", () => {
+    const warmUrl = "https://bandcamp.com/warm-cover.jpg";
+    const first = render(<CoverArt album={album(warmUrl)} />);
+    const firstImage = screen.getByRole("img", { name: "Test Album cover" });
+
+    expect(firstImage).toHaveAttribute("loading", "lazy");
+    expect(firstImage).toHaveAttribute("decoding", "async");
+    fireEvent.load(firstImage);
+    first.unmount();
+
+    render(<CoverArt album={album(warmUrl)} />);
+    const restoredImage = screen.getByRole("img", {
+      name: "Test Album cover",
+    });
+    expect(restoredImage).toHaveAttribute("loading", "eager");
+    expect(restoredImage).toHaveAttribute("decoding", "sync");
+  });
+
   it("renders a resolved runtime URL on the first remount commit", () => {
     mocks.readCachedCoverUrl.mockReturnValue(resolvedB);
     mocks.fetchCoverUrl.mockImplementation(() => new Promise(() => {}));

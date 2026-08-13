@@ -87,6 +87,7 @@ function createSession(
 
 function renderController(
   options: Readonly<{
+    autoCommitNavigation?: boolean;
     queryClient?: QueryClient;
     selectedAlbumId?: string;
     session?: LibrarySessionCommands;
@@ -102,7 +103,7 @@ function renderController(
   };
   const detailNavigation = {
     open: vi.fn(async (request) => {
-      request.beforeCommit?.();
+      if (options.autoCommitNavigation !== false) request.beforeCommit?.();
       return "navigated" as const;
     }),
   } satisfies LibraryActionsControllerOptions["detailNavigation"];
@@ -137,6 +138,33 @@ function renderController(
 }
 
 describe("useLibraryActionsController", () => {
+  it("defers cold album loading state until the detail transition commits", async () => {
+    const pendingAlbum = deferred<Album | undefined>();
+    const session = createSession({
+      ensureAlbum: vi.fn(() => pendingAlbum.promise),
+    });
+    const { detailNavigation, result } = renderController({
+      autoCommitNavigation: false,
+      session,
+    });
+
+    let openPromise!: Promise<void>;
+    act(() => {
+      openPromise = result.current.commands.openAlbum(album);
+    });
+
+    expect(result.current.state.loadingAlbumId).toBeUndefined();
+    const request = detailNavigation.open.mock.calls[0]?.[0];
+    act(() => request?.beforeCommit?.());
+    expect(result.current.state.loadingAlbumId).toBe(album.id);
+
+    await act(async () => {
+      pendingAlbum.resolve(hydratedAlbum);
+      await openPromise;
+    });
+    expect(result.current.state.loadingAlbumId).toBeUndefined();
+  });
+
   it("does not commit hydrated playback after the library generation changes", async () => {
     const pendingAlbum = deferred<Album | undefined>();
     const generation = generationHarness();
@@ -243,6 +271,9 @@ describe("useLibraryActionsController", () => {
         kind: "album",
         sourceTrigger: trigger,
       }),
+    );
+    expect(detailNavigation.open.mock.calls[0]?.[0].beforeCommit).toEqual(
+      expect.any(Function),
     );
     expect(result.current.state.selectedAlbum).toEqual(hydratedAlbum);
 

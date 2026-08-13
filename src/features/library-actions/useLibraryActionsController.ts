@@ -4,17 +4,18 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { ToastNotifier } from "@/components/ui/toastManager";
 import type { LibrarySessionCommands } from "@/features/library-session";
 import type { DetailNavigationController } from "@/features/navigation/useDetailNavigationController";
-import {
-  tracksForArtistGroupAlbum,
-  type ArtistGroup,
-} from "@/libraryBrowse";
+import { tracksForArtistGroupAlbum, type ArtistGroup } from "@/libraryBrowse";
 import {
   cachedAlbumTracks,
   libraryQueryKey,
   revalidateAlbumQueryData,
 } from "@/libraryQueries";
 import { countLabel } from "@/countLabel";
-import { pickRandomItem, weightedRandomOrder, yieldToMacrotask } from "@/random";
+import {
+  pickRandomItem,
+  weightedRandomOrder,
+  yieldToMacrotask,
+} from "@/random";
 import { parseAlbumIdParam } from "@/routing/routeContracts";
 import { resolveSurprise } from "@/surpriseMe";
 import type { Album, Track } from "@/types";
@@ -183,14 +184,18 @@ export function useLibraryActionsController({
         ? album
         : albumWithTracks(album, cachedTracks);
 
-      setLoadingAlbumId(coldLoad ? album.id : undefined);
       void detailNavigation
         .open({
           kind: "album",
           albumId: parseAlbumIdParam(album.id),
           coldLoad,
           sourceTrigger,
-          beforeCommit: () => setSelectedAlbumSnapshot(albumForDetail),
+          beforeCommit: () =>
+            setLoadingAlbumId(coldLoad ? album.id : undefined),
+        })
+        .then(() => {
+          if (!session.generation.isCurrent(sessionGeneration)) return;
+          setSelectedAlbumSnapshot(albumForDetail);
         })
         .catch((cause) => notify(String(cause), "bad"));
 
@@ -234,7 +239,14 @@ export function useLibraryActionsController({
         }
       }
     },
-    [detailNavigation, ensureTracks, notify, queryClient, session, updateAlbums],
+    [
+      detailNavigation,
+      ensureTracks,
+      notify,
+      queryClient,
+      session,
+      updateAlbums,
+    ],
   );
 
   const playAlbum = useCallback(
@@ -243,7 +255,10 @@ export function useLibraryActionsController({
       const generation = session.generation.current();
       try {
         const ready = await ensureTracks(album, generation);
-        if (!ready?.tracks?.length || !session.generation.isCurrent(generation)) {
+        if (
+          !ready?.tracks?.length ||
+          !session.generation.isCurrent(generation)
+        ) {
           return;
         }
         playTracks(ready.tracks);
@@ -262,7 +277,10 @@ export function useLibraryActionsController({
       const generation = session.generation.current();
       try {
         const ready = await ensureTracks(album, generation);
-        if (!ready?.tracks?.length || !session.generation.isCurrent(generation)) {
+        if (
+          !ready?.tracks?.length ||
+          !session.generation.isCurrent(generation)
+        ) {
           return false;
         }
         queueTracks(ready.tracks);
@@ -534,8 +552,7 @@ export function useLibraryActionsController({
       queueArtist: (group) => void loadArtistTracks(group, "queue"),
       refreshArtwork,
       resetTransientState,
-      shuffleArtist: (group) =>
-        startShuffle(group.albums, group.name, group),
+      shuffleArtist: (group) => startShuffle(group.albums, group.name, group),
     }),
     [
       acceptConnectedLibrary,

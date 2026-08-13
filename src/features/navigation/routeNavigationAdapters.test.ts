@@ -91,9 +91,8 @@ describe("route navigation adapters", () => {
       settled = true;
     });
 
-    await Promise.resolve();
-    await Promise.resolve();
     expect(navigate).toHaveBeenCalledOnce();
+    await Promise.resolve();
     expect(settled).toBe(false);
 
     onRendered?.({ toLocation: { state: { __TSR_key: "entry-3" } } });

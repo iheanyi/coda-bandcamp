@@ -75,6 +75,8 @@ export const AlbumCard = memo(function AlbumCard({
             );
           }}
           params={{ albumId }}
+          preload="intent"
+          preloadDelay={0}
           search={(previous) => validateCollectionSearch(previous)}
           to="/collection/albums/$albumId"
         />
@@ -127,6 +129,8 @@ export const AlbumCard = memo(function AlbumCard({
             );
           }}
           params={{ albumId }}
+          preload="intent"
+          preloadDelay={0}
           search={(previous) => validateCollectionSearch(previous)}
           to="/collection/albums/$albumId"
         >

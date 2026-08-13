@@ -1,16 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { RouterContextProvider } from "@tanstack/react-router";
-import {
-  createRef,
-  type ComponentProps,
-  type ReactElement,
-} from "react";
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { createRef, type ComponentProps, type ReactElement } from "react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { ArtistGroup } from "@/libraryBrowse";
@@ -131,9 +122,9 @@ describe("library semantic navigation", () => {
     expect(onPlay).toHaveBeenCalledWith(album);
     expect(onOpen).toHaveBeenCalledOnce();
     expect(
-      (
-        await screen.findByRole("button", { name: "Play Blue Hours" })
-      ).closest('[data-slot="card-action-overlay"]'),
+      (await screen.findByRole("button", { name: "Play Blue Hours" })).closest(
+        '[data-slot="card-action-overlay"]',
+      ),
     ).toBeInTheDocument();
     expectNoNestedInteractiveElements(container);
   });
@@ -147,9 +138,7 @@ describe("library semantic navigation", () => {
     const link = screen.getByRole("link", { name: "Browse Signal Garden" });
     const destination = linkLocation(link);
 
-    expect(destination.pathname).toBe(
-      "/collection/artists/signal%20garden",
-    );
+    expect(destination.pathname).toBe("/collection/artists/signal%20garden");
     expect(Object.fromEntries(destination.searchParams)).toEqual({
       genre: "Ambient",
       mode: "artists",
@@ -198,7 +187,9 @@ describe("library semantic navigation", () => {
     const guestArtistDestination = linkLocation(guestArtistLink);
 
     expect(albumArtistDestination.searchParams.has("albumId")).toBe(false);
-    expect(Object.fromEntries(albumArtistDestination.searchParams)).toMatchObject({
+    expect(
+      Object.fromEntries(albumArtistDestination.searchParams),
+    ).toMatchObject({
       genre: "All",
       mode: "artists",
       q: "",
@@ -206,9 +197,7 @@ describe("library semantic navigation", () => {
     expect(guestArtistDestination.pathname).toBe(
       "/collection/artists/guest%20voice",
     );
-    expect(guestArtistDestination.searchParams.get("albumId")).toBe(
-      "album-1",
-    );
+    expect(guestArtistDestination.searchParams.get("albumId")).toBe("album-1");
 
     await userEvent.click(guestArtistLink);
     expect(onArtist).toHaveBeenCalledWith(
@@ -275,9 +264,9 @@ describe("library semantic navigation", () => {
       await screen.findByRole("heading", { name: "Recently added" }),
     ).toBeInTheDocument();
     expect(
-      (
-        await screen.findByRole("button", { name: "Play Blue Hours" })
-      ).closest('[data-slot="card-action-overlay"]'),
+      (await screen.findByRole("button", { name: "Play Blue Hours" })).closest(
+        '[data-slot="card-action-overlay"]',
+      ),
     ).toBeInTheDocument();
   });
 
@@ -319,6 +308,51 @@ describe("library semantic navigation", () => {
 
     await waitFor(() => expect(preloadRoute).toHaveBeenCalledOnce());
     expect(router.options.defaultPreload).toBe("intent");
+    expect(router.state.location.pathname).toBe("/collection");
+  });
+
+  it("does not run a duplicate preload on pointer-down before activation", async () => {
+    const router = createCodaMemoryRouter(
+      new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+      [initialLocation],
+    );
+    await router.load();
+    const preloadRoute = vi.spyOn(router, "preloadRoute");
+    const onOpen = vi.fn();
+
+    render(
+      <RouterContextProvider router={router}>
+        <ReleaseResults
+          actions={{
+            onArtist: vi.fn(),
+            onClearFilters: vi.fn(),
+            onOpen,
+            onPlay: vi.fn(),
+            onQueue: vi.fn(),
+            onQueueSearchResults: vi.fn(),
+            onTogglePlayback: vi.fn(),
+          }}
+          model={{
+            albums: [album],
+            browseMode: "releases",
+            hasActiveFilters: false,
+            hasSearchQuery: false,
+            playing: false,
+            title: "All releases",
+          }}
+          scrollElementRef={createRef<HTMLElement>()}
+        />
+      </RouterContextProvider>,
+    );
+
+    const albumLink = await screen.findByRole("link", {
+      name: "Open Blue Hours",
+    });
+    fireEvent.pointerDown(albumLink, { button: 0, isPrimary: true });
+    fireEvent.click(albumLink);
+
+    expect(preloadRoute).not.toHaveBeenCalled();
+    expect(onOpen).toHaveBeenCalledOnce();
     expect(router.state.location.pathname).toBe("/collection");
   });
 });

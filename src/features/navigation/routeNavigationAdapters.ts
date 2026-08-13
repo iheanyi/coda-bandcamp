@@ -52,12 +52,17 @@ export function awaitRouterNavigationAfterRender(
       rendered = true;
       finish();
     });
-    Promise.resolve()
-      .then(navigate)
-      .then(() => {
-        navigationSettled = true;
-        finish();
-      }, fail);
+    let navigation: void | Promise<void>;
+    try {
+      navigation = navigate();
+    } catch (cause) {
+      fail(cause);
+      return;
+    }
+    Promise.resolve(navigation).then(() => {
+      navigationSettled = true;
+      finish();
+    }, fail);
   });
 }
 
