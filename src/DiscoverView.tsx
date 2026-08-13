@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import {
   ArrowDownUp,
   ArrowUpRight,
+  Check,
   Disc3,
   Plus,
   RefreshCw,
@@ -21,6 +22,7 @@ import {
   useState,
 } from "react";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { CardActionOverlay } from "@/components/ItemInteractions";
 import { ScrollableSelectionRail } from "@/components/ScrollableSelectionRail";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -38,12 +40,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { countLabel } from "@/countLabel";
 import { discoverPreviewTrack } from "@/discover";
 import { DISCOVER_GENRES, normalizeGenre } from "@/genres";
-import {
-  formatTime,
-  initials,
-  openBandcampUrl,
-  paletteFor,
-} from "@/lib";
+import { initials, openBandcampUrl, paletteFor } from "@/lib";
 import { cn } from "@/lib/utils";
 import { discoverInfiniteQueryOptions } from "@/queries/discoverQueries";
 import { ResponsiveVirtualGrid } from "@/ResponsiveVirtualGrid";
@@ -85,8 +82,8 @@ const DiscoverCard = memo(function DiscoverCard({
   currentTrackId,
   playing,
   onPlay,
-  onTogglePlayback,
   onQueue,
+  onTogglePlayback,
   onOpenRelease,
   onOpenArtist,
 }: {
@@ -96,8 +93,8 @@ const DiscoverCard = memo(function DiscoverCard({
   currentTrackId?: string;
   playing: boolean;
   onPlay: (track: Track) => void;
-  onTogglePlayback: () => void;
   onQueue: (track: Track) => void;
+  onTogglePlayback: () => void;
   onOpenRelease: (
     release: DiscoverRelease,
     trigger: HTMLElement,
@@ -111,6 +108,8 @@ const DiscoverCard = memo(function DiscoverCard({
   const artworkUrl = release.artworkUrl;
   const [failedArtworkUrl, setFailedArtworkUrl] = useState<string>();
   const [loadedArtworkUrl, setLoadedArtworkUrl] = useState<string>();
+  const [queueConfirmed, setQueueConfirmed] = useState(false);
+  const queueConfirmationTimeoutRef = useRef<number | null>(null);
   const artworkEligible = Boolean(
     artworkUrl && failedArtworkUrl !== artworkUrl,
   );
@@ -125,6 +124,27 @@ const DiscoverCard = memo(function DiscoverCard({
   const openInvalidRelease = (event: MouseEvent<HTMLButtonElement>) => {
     onOpenRelease(release, event.currentTarget);
   };
+  const queueTrack = () => {
+    if (!track) return;
+    onQueue(track);
+    setQueueConfirmed(true);
+    if (queueConfirmationTimeoutRef.current !== null) {
+      window.clearTimeout(queueConfirmationTimeoutRef.current);
+    }
+    queueConfirmationTimeoutRef.current = window.setTimeout(() => {
+      setQueueConfirmed(false);
+      queueConfirmationTimeoutRef.current = null;
+    }, 1_600);
+  };
+
+  useEffect(
+    () => () => {
+      if (queueConfirmationTimeoutRef.current !== null) {
+        window.clearTimeout(queueConfirmationTimeoutRef.current);
+      }
+    },
+    [],
+  );
 
   return (
     <article
@@ -192,20 +212,55 @@ const DiscoverCard = memo(function DiscoverCard({
           />
         )}
         {track ? (
-          <Button
-            variant="primary"
-            size="icon"
-            className={`absolute right-2 bottom-2 z-2 size-9 translate-y-1 rounded-full p-0 opacity-0 shadow-[0_5px_17px_rgba(0,0,0,0.42)] transition-[opacity,transform] duration-(--duration-coda-fast) group-focus-within/card:translate-y-0 group-focus-within/card:opacity-100 group-hover/card:translate-y-0 group-hover/card:opacity-100 motion-reduce:transition-none ${active ? "translate-y-0 opacity-100" : ""} ${active && playing ? "bg-[color-mix(in_srgb,var(--primary)_80%,#17191b)] shadow-[0_5px_17px_rgba(0,0,0,0.42),0_0_0_3px_rgba(221,101,73,0.16)]" : ""}`}
-            onClick={active ? onTogglePlayback : () => onPlay(track)}
-            aria-label={
-              active
-                ? `${playing ? "Pause" : "Resume"} ${track.title}`
-                : `Preview ${track.title}`
-            }
-            aria-pressed={active && playing}
+          <CardActionOverlay
+            contentClassName="flex items-center gap-1.5"
+            visible={active}
           >
-            <PlaybackIcon playing={active && playing} />
-          </Button>
+            <Button
+              variant="primary"
+              size="icon"
+              className={`size-9 rounded-full p-0 shadow-[0_5px_17px_rgba(0,0,0,0.42)] ${active && playing ? "bg-[color-mix(in_srgb,var(--primary)_80%,#17191b)] shadow-[0_5px_17px_rgba(0,0,0,0.42),0_0_0_3px_rgba(221,101,73,0.16)]" : ""}`}
+              onClick={active ? onTogglePlayback : () => onPlay(track)}
+              aria-label={
+                active
+                  ? `${playing ? "Pause" : "Resume"} ${track.title}`
+                  : `Preview ${track.title}`
+              }
+              aria-pressed={active && playing}
+            >
+              <PlaybackIcon playing={active && playing} />
+            </Button>
+            <Button
+              variant={queueConfirmed ? "primary" : "artwork"}
+              size="icon"
+              className="relative size-9 rounded-full p-0 shadow-[0_5px_17px_rgba(0,0,0,0.42)]"
+              onClick={queueTrack}
+              data-coda-discover-queue-action
+              data-confirmed={queueConfirmed}
+              aria-label={
+                queueConfirmed
+                  ? `${track.title} added to queue`
+                  : `Add ${track.title} to queue`
+              }
+              title={queueConfirmed ? "Added" : "Add to queue"}
+            >
+              <Plus
+                aria-hidden="true"
+                className="absolute inset-0 m-auto"
+                data-coda-queue-plus
+                size={15}
+              />
+              <Check
+                aria-hidden="true"
+                className="absolute inset-0 m-auto"
+                data-coda-queue-check
+                size={15}
+              />
+              <span className="sr-only" aria-live="polite">
+                {queueConfirmed ? `${track.title} added to queue` : ""}
+              </span>
+            </Button>
+          </CardActionOverlay>
         ) : null}
       </div>
       <div className="flex min-w-0 flex-col px-3 pt-3 pb-2">
@@ -263,21 +318,10 @@ const DiscoverCard = memo(function DiscoverCard({
             .join(" · ") ||
             "Independent release"}
         </p>
-        <div className="mt-auto flex items-center gap-1">
-          {track ? (
-            <Button
-              variant="text"
-              size="compact"
-              className="h-auto min-w-0 gap-1 py-1 pr-1 pl-0 text-xs font-bold text-[#dc8069] hover:text-[#dc8069]"
-              onClick={() => onQueue(track)}
-            >
-              <Plus size={14} />
-              Add to queue
-              {track.duration ? <span className="text-xs font-medium text-[#626661]">{formatTime(track.duration)}</span> : null}
-            </Button>
-          ) : (
+        <div className="mt-auto flex min-h-7 items-center gap-1">
+          {!track ? (
             <span className="text-xs text-[#666a65]">No preview available</span>
-          )}
+          ) : null}
           {/* Keep this imperative: the native opener validates the external
               Bandcamp URL instead of exposing it to in-app routing. */}
           <Button
@@ -580,8 +624,8 @@ export function DiscoverScreen({
                 currentTrackId={currentTrackId}
                 playing={playing}
                 onPlay={onPlay}
-                onTogglePlayback={onTogglePlayback}
                 onQueue={onQueue}
+                onTogglePlayback={onTogglePlayback}
                 onOpenRelease={onOpenRelease}
                 onOpenArtist={onOpenArtist}
               />

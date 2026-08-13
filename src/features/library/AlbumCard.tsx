@@ -2,6 +2,7 @@ import { Plus } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { memo } from "react";
 import { Button } from "@/components/ui/button";
+import { CardActionOverlay } from "@/components/ItemInteractions";
 import { OverflowMarquee } from "@/components/ui/overflow-marquee";
 import { PlaybackIcon } from "@/components/ui/playback-icon";
 import { Spinner } from "@/components/ui/spinner";
@@ -50,7 +51,7 @@ export const AlbumCard = memo(function AlbumCard({
   return (
     <article
       className={cn(
-        "group relative min-w-0 [contain-intrinsic-size:170px_235px] [content-visibility:auto]",
+        "group/card relative min-w-0 [contain-intrinsic-size:170px_235px] [content-visibility:auto]",
         className,
       )}
       data-album-card={album.id}
@@ -85,10 +86,7 @@ export const AlbumCard = memo(function AlbumCard({
             />
           </span>
         ) : null}
-        <span
-          className="absolute right-2 bottom-2 z-2 translate-y-1 opacity-0 transition-[opacity,transform] duration-(--duration-coda-fast) group-focus-within:translate-y-0 group-focus-within:opacity-100 group-hover:translate-y-0 group-hover:opacity-100 data-current:translate-y-0 data-current:opacity-100"
-          data-current={active || undefined}
-        >
+        <CardActionOverlay visible={active}>
           <Button
             className={`size-10 rounded-full p-0 text-white shadow-[0_5px_15px_rgba(0,0,0,0.35)] ${
               active && playing
@@ -110,7 +108,7 @@ export const AlbumCard = memo(function AlbumCard({
           >
             <PlaybackIcon playing={active && playing} />
           </Button>
-        </span>
+        </CardActionOverlay>
       </div>
       <div className="flex min-w-0 flex-col pt-2.5 pr-8">
         <Link
@@ -160,7 +158,7 @@ export const AlbumCard = memo(function AlbumCard({
         </Link>
       </div>
       <Button
-        className="absolute right-0 bottom-0 items-end border-0 bg-transparent text-coda-subtle-foreground opacity-0 shadow-none group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-transparent hover:text-primary"
+        className="absolute right-0 bottom-0 items-end border-0 bg-transparent text-coda-subtle-foreground opacity-0 shadow-none transition-[opacity,transform] duration-(--duration-coda-fast) group-focus-within/card:opacity-100 group-hover/card:opacity-100 hover:-translate-y-px hover:bg-transparent hover:text-primary motion-reduce:transform-none motion-reduce:transition-none"
         onClick={() => onQueue(album)}
         size="icon-compact"
         title="Add album to queue"

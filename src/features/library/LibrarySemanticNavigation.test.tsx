@@ -20,6 +20,7 @@ import { AlbumCard } from "./AlbumCard";
 import { AlbumDetailPage } from "./AlbumDetailPage";
 import { ArtistCard } from "./ArtistCard";
 import { ReleaseResults } from "./LibraryResults";
+import { RecentScreen } from "./RecentScreen";
 
 const guestTrack: Track = {
   id: "track-1",
@@ -129,6 +130,11 @@ describe("library semantic navigation", () => {
     await user.click(screen.getByRole("button", { name: "Play Blue Hours" }));
     expect(onPlay).toHaveBeenCalledWith(album);
     expect(onOpen).toHaveBeenCalledOnce();
+    expect(
+      (
+        await screen.findByRole("button", { name: "Play Blue Hours" })
+      ).closest('[data-slot="card-action-overlay"]'),
+    ).toBeInTheDocument();
     expectNoNestedInteractiveElements(container);
   });
 
@@ -215,7 +221,64 @@ describe("library semantic navigation", () => {
     expect(
       screen.getByRole("button", { name: "Play Glass Lines" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Play Glass Lines" }),
+    ).toHaveAttribute("data-slot", "row-playback-action");
+    expect(
+      screen.getByRole("button", { name: "Add Glass Lines to queue" })
+        .parentElement,
+    ).toHaveAttribute("data-slot", "row-action-group");
     expectNoNestedInteractiveElements(container);
+  });
+
+  it("routes Recently Added releases through the shared AlbumCard choreography", async () => {
+    await renderWithRouter(
+      <RecentScreen
+        actions={{
+          availability: {
+            onConnect: vi.fn(),
+            onRetryStartup: vi.fn(),
+            onSync: vi.fn(),
+          },
+          releases: {
+            onArtist: vi.fn(),
+            onClearFilters: vi.fn(),
+            onOpen: vi.fn(),
+            onPlay: vi.fn(),
+            onQueue: vi.fn(),
+            onQueueSearchResults: vi.fn(),
+            onTogglePlayback: vi.fn(),
+          },
+        }}
+        model={{
+          availability: {
+            connected: true,
+            isInitialLoading: false,
+            libraryError: "",
+            releaseCount: 1,
+            syncState: "idle",
+          },
+          results: {
+            albums: [album],
+            browseMode: "releases",
+            hasActiveFilters: false,
+            hasSearchQuery: false,
+            playing: false,
+            title: "Recently added",
+          },
+        }}
+        refs={{ libraryPane: createRef<HTMLElement>() }}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Recently added" }),
+    ).toBeInTheDocument();
+    expect(
+      (
+        await screen.findByRole("button", { name: "Play Blue Hours" })
+      ).closest('[data-slot="card-action-overlay"]'),
+    ).toBeInTheDocument();
   });
 
   it("uses safe router intent preload without a custom metadata prefetch handler", async () => {

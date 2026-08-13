@@ -148,6 +148,212 @@
   text-rendering: optimizeLegibility;
 }
 
+/* Shared card and row actions retain their footprint while the affordances
+   move on the compositor. Enters invite; exits get out of the way quickly. */
+[data-slot="card-action-overlay"] {
+  opacity: 0;
+  transition: opacity var(--duration-coda-fast) var(--ease-coda-exit);
+}
+
+:is([class~="group/card"]:hover, [class~="group/card"]:focus-within)
+  [data-slot="card-action-overlay"],
+[data-slot="card-action-overlay"][data-visible="true"] {
+  opacity: 1;
+  transition-duration: var(--duration-coda-standard);
+  transition-timing-function: var(--ease-coda-enter);
+}
+
+[data-slot="card-action-overlay-content"] {
+  opacity: 0;
+  transform: translateY(6px) scale(0.92);
+  transform-origin: right bottom;
+  transition:
+    opacity var(--duration-coda-fast) var(--ease-coda-exit),
+    transform var(--duration-coda-fast) var(--ease-coda-exit);
+}
+
+:is([class~="group/card"]:hover, [class~="group/card"]:focus-within)
+  [data-slot="card-action-overlay-content"],
+[data-slot="card-action-overlay-content"][data-visible="true"] {
+  pointer-events: auto;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition-duration: var(--duration-coda-standard);
+  transition-timing-function: var(--ease-coda-enter);
+}
+
+[data-slot="card-action-overlay-content"] [data-slot="button"] {
+  transition-property: color, background-color, box-shadow, transform;
+  transition-duration: var(--duration-coda-fast);
+  transition-timing-function: var(--ease-coda-enter);
+}
+
+[data-slot="card-action-overlay-content"] [data-slot="button"]:hover {
+  transform: scale(1.04);
+}
+
+[data-slot="card-action-overlay-content"] [data-slot="button"]:active {
+  transform: scale(0.96);
+}
+
+[data-slot="row-position"] {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity var(--duration-coda-fast) var(--ease-coda-enter),
+    transform var(--duration-coda-fast) var(--ease-coda-enter);
+}
+
+[data-slot="row-playback-action"] [data-slot="playback-icon"] {
+  opacity: 0;
+  transform: translateY(4px) scale(0.82);
+  transition:
+    opacity var(--duration-coda-fast) var(--ease-coda-exit),
+    transform var(--duration-coda-fast) var(--ease-coda-exit);
+}
+
+:is([class~="group/row"]:hover, [class~="group/row"]:focus-within)
+  [data-slot="row-position"],
+[data-slot="row-playback-action"][data-active="true"]
+  [data-slot="row-position"] {
+  opacity: 0;
+  transform: translateY(-4px);
+  transition-timing-function: var(--ease-coda-exit);
+}
+
+:is([class~="group/row"]:hover, [class~="group/row"]:focus-within)
+  [data-slot="row-playback-action"]
+  [data-slot="playback-icon"],
+[data-slot="row-playback-action"][data-active="true"]
+  [data-slot="playback-icon"] {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition-duration: var(--duration-coda-standard);
+  transition-timing-function: var(--ease-coda-enter);
+}
+
+[data-slot="row-action-group"] > [data-slot="button"] {
+  opacity: 0.58;
+  transform: translateY(2px) scale(0.96);
+  transition-property: color, background-color, opacity, transform;
+  transition-duration: var(--duration-coda-fast);
+  transition-timing-function: var(--ease-coda-exit);
+}
+
+:is([class~="group/row"]:hover, [class~="group/row"]:focus-within)
+  [data-slot="row-action-group"]
+  > [data-slot="button"],
+[data-slot="row-action-group"] > [data-slot="button"]:focus-visible,
+[data-slot="row-action-group"] > [data-slot="button"][aria-pressed="true"] {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition-duration: var(--duration-coda-standard);
+  transition-timing-function: var(--ease-coda-enter);
+}
+
+[data-slot="row-action-group"] > [data-slot="button"]:hover {
+  transform: translateY(-1px) scale(1.04);
+}
+
+[data-slot="row-action-group"] > [data-slot="button"]:active {
+  transform: translateY(0) scale(0.95);
+}
+
+[data-coda-discover-queue-action] {
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    opacity var(--duration-coda-fast) var(--ease-coda-exit),
+    transform var(--duration-coda-fast) var(--ease-coda-exit);
+}
+
+:is([class~="group/card"]:hover, [class~="group/card"]:focus-within)
+  [data-coda-discover-queue-action],
+[data-coda-discover-queue-action]:focus-visible {
+  pointer-events: auto;
+  opacity: 1;
+  transform: translateY(0);
+  transition-duration: var(--duration-coda-standard);
+  transition-timing-function: var(--ease-coda-enter);
+}
+
+[data-coda-queue-plus],
+[data-coda-queue-check],
+[data-coda-queue-label] {
+  transition:
+    opacity var(--duration-coda-fast) var(--ease-coda-enter),
+    transform var(--duration-coda-fast) var(--ease-coda-enter);
+}
+
+[data-coda-queue-plus] {
+  opacity: 1;
+  transform: rotate(0) scale(1);
+}
+
+[data-coda-queue-check] {
+  opacity: 0;
+  transform: rotate(-90deg) scale(0.75);
+}
+
+[data-coda-queue-label="idle"] {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+[data-coda-queue-label="confirmed"] {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+[data-coda-discover-queue-action][data-confirmed="true"]
+  [data-coda-queue-plus] {
+  opacity: 0;
+  transform: rotate(90deg) scale(0.75);
+}
+
+[data-coda-discover-queue-action][data-confirmed="true"]
+  [data-coda-queue-check] {
+  opacity: 1;
+  transform: rotate(0) scale(1);
+}
+
+[data-coda-discover-queue-action][data-confirmed="true"]
+  [data-coda-queue-label="idle"] {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+[data-coda-discover-queue-action][data-confirmed="true"]
+  [data-coda-queue-label="confirmed"] {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-slot="card-action-overlay"],
+  [data-slot="card-action-overlay-content"],
+  [data-slot="card-action-overlay-content"] [data-slot="button"],
+  [data-slot="row-position"],
+  [data-slot="row-playback-action"] [data-slot="playback-icon"],
+  [data-slot="row-action-group"] > [data-slot="button"],
+  [data-coda-discover-queue-action],
+  [data-coda-queue-plus],
+  [data-coda-queue-check],
+  [data-coda-queue-label] {
+    transition: none;
+  }
+
+  [data-slot="card-action-overlay-content"],
+  [data-slot="card-action-overlay-content"] [data-slot="button"],
+  [data-slot="row-position"],
+  [data-slot="row-playback-action"] [data-slot="playback-icon"],
+  [data-slot="row-action-group"] > [data-slot="button"],
+  [data-coda-discover-queue-action] {
+    transform: none;
+  }
+}
+
 @keyframes skeleton-shimmer {
   to {
     transform: translateX(270%);

@@ -15,6 +15,11 @@ import { memo, useLayoutEffect, useMemo } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  CardActionOverlay,
+  RowActionGroup,
+  RowPlaybackAction,
+} from "@/components/ItemInteractions";
 import { PlaybackIcon } from "@/components/ui/playback-icon";
 import { Spinner } from "@/components/ui/spinner";
 import { ScrollableLinkSelectionRail } from "@/components/ScrollableLinkSelectionRail";
@@ -135,7 +140,7 @@ const DailyArticleCard = memo(function DailyArticleCard({
   const navigation = useDailyRouteNavigation();
   const published = formatDailyDate(article.publishedAt);
   return (
-    <article className="group min-w-0 [contain-intrinsic-size:144px_224px] [content-visibility:auto]">
+    <article className="group/card min-w-0 [contain-intrinsic-size:144px_224px] [content-visibility:auto]">
       <Link
         aria-label={`Open ${article.title}`}
         className="flex min-w-0 flex-col gap-2 rounded-md text-left text-inherit outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
@@ -174,7 +179,7 @@ const DailyArticleCard = memo(function DailyArticleCard({
           {article.artworkUrl ? (
             <img
               alt=""
-              className="size-full object-cover transition-transform duration-(--duration-coda-fast) group-hover:scale-[1.025] motion-reduce:transition-none"
+              className="size-full object-cover transition-transform duration-(--duration-coda-standard) ease-coda-enter group-hover/card:scale-[1.025] motion-reduce:transform-none motion-reduce:transition-none"
               decoding="async"
               draggable={false}
               loading="lazy"
@@ -185,6 +190,11 @@ const DailyArticleCard = memo(function DailyArticleCard({
               <BookOpenText size={24} />
             </span>
           )}
+          <CardActionOverlay
+            contentClassName="grid size-8 place-items-center rounded-full border border-white/10 bg-black/60 text-white shadow-[0_5px_15px_rgba(0,0,0,0.3)] backdrop-blur-sm"
+          >
+            <ArrowUpRight size={15} />
+          </CardActionOverlay>
         </div>
         <div className="grid min-w-0 gap-1">
           {published ? (
@@ -193,7 +203,7 @@ const DailyArticleCard = memo(function DailyArticleCard({
             </div>
           ) : null}
           <h3
-            className="m-0 line-clamp-2 text-left text-xs font-bold text-foreground group-hover:text-primary"
+            className="m-0 line-clamp-2 text-left text-xs font-bold text-foreground transition-colors duration-(--duration-coda-fast) group-hover/card:text-primary motion-reduce:transition-none"
             data-daily-article-title={article.slug}
           >
             {article.title}
@@ -417,44 +427,41 @@ function DailyEmbedCard({
             const active = track.id === playback.currentTrackId;
             return (
               <li
-                className="flex min-w-0 items-center gap-3 rounded-md px-2 py-2 hover:bg-white/3"
+                className="group/row flex min-w-0 items-center gap-3 rounded-md px-2 py-2 transition-colors duration-(--duration-coda-fast) hover:bg-white/3 focus-within:bg-white/3 motion-reduce:transition-none"
                 key={track.id}
               >
-                <Button
-                  aria-label={
+                <RowPlaybackAction
+                  active={active}
+                  ariaLabel={
                     active
                       ? `${playback.playing ? "Pause" : "Resume"} ${track.title}`
                       : `Play ${track.title}`
                   }
-                  aria-pressed={active && playback.playing}
                   className={cn("size-8 shrink-0", active && "text-primary")}
                   onClick={
                     active
                       ? playback.onTogglePlayback
                       : () => playback.onPlayTracks([track])
                   }
-                  size="icon-compact"
-                  variant="ghost"
-                >
-                  <PlaybackIcon playing={active && playback.playing} />
-                </Button>
-                <span className="w-5 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
-                  {track.track}
-                </span>
+                  playing={playback.playing}
+                  position={track.track}
+                />
                 <span className="min-w-0 flex-1 truncate text-sm font-medium">
                   {track.title}
                 </span>
                 <span className="text-xs tabular-nums text-muted-foreground">
                   {formatTime(track.duration)}
                 </span>
-                <Button
-                  aria-label={`Add ${track.title} to queue`}
-                  onClick={() => playback.onQueueTracks([track])}
-                  size="icon-compact"
-                  variant="ghost"
-                >
-                  <Plus size={14} />
-                </Button>
+                <RowActionGroup>
+                  <Button
+                    aria-label={`Add ${track.title} to queue`}
+                    onClick={() => playback.onQueueTracks([track])}
+                    size="icon-compact"
+                    variant="ghost"
+                  >
+                    <Plus size={14} />
+                  </Button>
+                </RowActionGroup>
               </li>
             );
           })}

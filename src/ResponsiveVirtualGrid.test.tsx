@@ -85,9 +85,11 @@ const card = (index: number): Card => ({
 
 function Grid({
   cards,
+  gridLayouts = layouts,
   threshold = 10,
 }: {
   cards: Card[];
+  gridLayouts?: ResponsiveGridLayout[];
   threshold?: number;
 }) {
   const scrollRef = { current: null } as React.RefObject<HTMLDivElement | null>;
@@ -104,7 +106,7 @@ function Grid({
         aria-label="Collection"
         getItemKey={(item) => item.id}
         items={cards}
-        layouts={layouts}
+        layouts={gridLayouts}
         renderItem={(item, context) => (
           <button type="button">
             {item.title} row {context.row} column {context.column}
@@ -159,6 +161,26 @@ describe("ResponsiveVirtualGrid", () => {
     expect(listItems).toHaveLength(6);
     expect(listItems[0]).toHaveAttribute("aria-posinset", "1");
     expect(listItems[0]).toHaveAttribute("aria-setsize", "6");
+  });
+
+  it("caps columns for full-width responsive rows", async () => {
+    render(
+      <Grid
+        cards={Array.from({ length: 6 }, (_, index) => card(index))}
+        gridLayouts={[{ ...layouts[1], maxColumns: 1 }]}
+      />,
+    );
+
+    const grid = screen.getByRole("list", { name: "Collection" });
+    expect(
+      await screen.findByRole("button", {
+        name: "Card 3 row 3 column 0",
+      }),
+    ).toBeInTheDocument();
+    expect(grid).toHaveAttribute("data-columns", "1");
+    expect(grid).toHaveStyle({
+      gridTemplateColumns: "repeat(1, minmax(0, 1fr))",
+    });
   });
 
   it("keeps a large grid bounded and renders the final row after scrolling", async () => {

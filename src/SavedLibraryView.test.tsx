@@ -115,6 +115,7 @@ const favorites: LocalFavoriteCollection = {
       id: 979,
       subtitle: "The Hip Hop Show",
       description: "New independent hip-hop.",
+      artworkUrl: "https://bandcamp.com/radio-cover.jpg",
       publishedAt: "24 Jul 2026 00:00:00 GMT",
       series: {
         id: 5,
@@ -1395,6 +1396,14 @@ describe("saved Bandcamp library views", () => {
     withQueryClient(<SavedLibraryView mode="favorites" {...commonProps} />);
 
     const favoriteTracks = screen.getByLabelText("Favorite tracks");
+    expect(
+      within(favoriteTracks).getByRole("button", { name: "Play Mirage" }),
+    ).toHaveAttribute("data-slot", "row-playback-action");
+    expect(
+      within(favoriteTracks).getByRole("button", {
+        name: "Add Mirage to queue",
+      }).parentElement,
+    ).toHaveAttribute("data-slot", "row-action-group");
     fireEvent.click(
       within(favoriteTracks).getByRole("button", {
         name: "Remove Mirage from favorites",
@@ -1437,6 +1446,21 @@ describe("saved Bandcamp library views", () => {
       }),
     );
     expect(commonProps.onOpenRadioSeries).toHaveBeenCalledWith(5);
+    expect(
+      screen.getByRole("button", { name: "Play The Hip Hop Show" }),
+    ).toHaveTextContent("Play");
+    const radioSeriesLink = screen.getByRole("link", {
+      name: "Browse The Hip Hop Show",
+    });
+    expect(
+      radioSeriesLink.parentElement?.querySelector("time"),
+    ).toHaveAttribute("dateTime", favorites.radioShows[0].publishedAt);
+    expect(
+      document.querySelector('[data-radio-show-artwork="979"] img'),
+    ).toHaveAttribute("src", favorites.radioShows[0].artworkUrl);
+    expect(
+      screen.queryByText(favorites.radioShows[0].description ?? ""),
+    ).not.toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("link", {
         name: "Open The Hip Hop Show details",

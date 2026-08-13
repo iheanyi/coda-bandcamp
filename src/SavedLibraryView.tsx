@@ -42,6 +42,10 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import {
+  RowActionGroup,
+  RowPlaybackAction,
+} from "@/components/ItemInteractions";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -229,17 +233,11 @@ const metadataTextClassName =
 const savedPageClassName = "mx-auto min-h-full w-full max-w-5xl pt-2 pb-12";
 const FAVORITE_RADIO_GRID_LAYOUTS = [
   {
-    maxWidth: 780,
-    minColumnWidth: 304,
+    minColumnWidth: 420,
+    maxColumns: 2,
     columnGap: 10,
     rowGap: 10,
-    rowHeight: 148,
-  },
-  {
-    minColumnWidth: 304,
-    columnGap: 10,
-    rowGap: 10,
-    rowHeight: 104,
+    rowHeight: 88,
   },
 ] as const;
 const FAVORITE_ALBUM_GRID_LAYOUTS = [
@@ -423,9 +421,11 @@ function Eyebrow({ className, ...props }: React.ComponentProps<"span">) {
 
 function FavoriteArtwork({
   className,
+  fallback,
   item,
 }: {
   className?: string;
+  fallback?: React.ReactNode;
   item: Pick<Album, "title" | "coverArt" | "artworkUrl" | "palette">;
 }) {
   const initialCachedUrl = item.coverArt
@@ -515,11 +515,12 @@ function FavoriteArtwork({
         />
       ) : null}
       {loadedUrl !== url || !url ? (
-        <Music2
-          className="col-start-1 row-start-1"
+        <span
+          className="col-start-1 row-start-1 grid place-items-center"
           data-favorite-artwork-fallback=""
-          size={20}
-        />
+        >
+          {fallback ?? <Music2 size={20} />}
+        </span>
       ) : null}
     </span>
   );
@@ -1058,39 +1059,23 @@ function PlaylistDetailView({
               <div
                 {...rowProps}
                 className={cn(
-                  "group relative grid h-16 grid-cols-[2rem_2.5rem_minmax(0,1fr)_3rem_repeat(2,2rem)] items-center gap-x-2 py-3 pr-3 pl-1 after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-white/5 last:after:hidden hover:bg-white/3 lg:grid-cols-[2rem_2.5rem_minmax(0,1fr)_4rem_repeat(2,2rem)]",
+                  "group/row relative grid h-16 grid-cols-[2rem_2.5rem_minmax(0,1fr)_3rem_repeat(2,2rem)] items-center gap-x-2 py-3 pr-3 pl-1 transition-colors duration-(--duration-coda-fast) after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-white/5 last:after:hidden hover:bg-white/3 focus-within:bg-white/3 motion-reduce:transition-none lg:grid-cols-[2rem_2.5rem_minmax(0,1fr)_4rem_repeat(2,2rem)]",
                   activeTrack && "bg-primary/7.5",
                 )}
               >
-                <Button
-                  className={cn(
-                    "group/number size-full rounded-none p-0 text-xs font-normal text-[#777a76] hover:bg-transparent",
-                    activeTrack && "text-[#e88c75]",
-                  )}
-                  onClick={
-                    activeTrack ? onTogglePlayback : () => onPlay([track])
-                  }
-                  aria-label={
+                <RowPlaybackAction
+                  active={activeTrack}
+                  ariaLabel={
                     activeTrack
                       ? `${playing ? "Pause" : "Resume"} ${track.title}`
                       : `Play ${track.title}`
                   }
-                  aria-pressed={activeTrack && playing}
-                  variant="ghost"
-                >
-                  <span
-                    className={activeTrack ? "hidden" : "group-hover:hidden"}
-                  >
-                    {index + 1}
-                  </span>
-                  <PlaybackIcon
-                    className={cn(
-                      "size-3.5",
-                      !activeTrack && "hidden group-hover:inline-grid",
-                    )}
-                    playing={activeTrack && playing}
-                  />
-                </Button>
+                  onClick={
+                    activeTrack ? onTogglePlayback : () => onPlay([track])
+                  }
+                  playing={playing}
+                  position={index + 1}
+                />
                 {albumId ? (
                   <Link
                     aria-busy={albumLoading || undefined}
@@ -1205,32 +1190,34 @@ function PlaylistDetailView({
                 <span className="justify-self-end pr-1 text-right text-xs text-coda-subtle-foreground tabular-nums">
                   {formatTime(track.duration)}
                 </span>
-                <Button
-                  onClick={() => onAddToPlaylist([track])}
-                  title="Add to another playlist"
-                  aria-label={`Add ${track.title} to another playlist`}
-                  size="icon"
-                  variant="ghost"
-                >
-                  <ListPlus size={15} />
-                </Button>
-                <Button
-                  disabled={actionPending}
-                  onClick={() => onRemove(index)}
-                  title="Remove from playlist"
-                  aria-label={`Remove ${track.title} from ${playlist.name}`}
-                  size="icon"
-                  variant="ghost"
-                >
-                  {pendingRemovalIndex === index ? (
-                    <Spinner
-                      aria-hidden="true"
-                      className="size-4 text-current"
-                    />
-                  ) : (
-                    <X size={15} />
-                  )}
-                </Button>
+                <RowActionGroup className="contents">
+                  <Button
+                    onClick={() => onAddToPlaylist([track])}
+                    title="Add to another playlist"
+                    aria-label={`Add ${track.title} to another playlist`}
+                    size="icon"
+                    variant="ghost"
+                  >
+                    <ListPlus size={15} />
+                  </Button>
+                  <Button
+                    disabled={actionPending}
+                    onClick={() => onRemove(index)}
+                    title="Remove from playlist"
+                    aria-label={`Remove ${track.title} from ${playlist.name}`}
+                    size="icon"
+                    variant="ghost"
+                  >
+                    {pendingRemovalIndex === index ? (
+                      <Spinner
+                        aria-hidden="true"
+                        className="size-4 text-current"
+                      />
+                    ) : (
+                      <X size={15} />
+                    )}
+                  </Button>
+                </RowActionGroup>
               </div>
             );
           }}
@@ -2322,45 +2309,27 @@ function SavedLibraryController({
                     <div
                       {...rowProps}
                       className={cn(
-                        "group relative grid h-14 grid-cols-[2rem_2.5rem_minmax(0,1fr)_3rem_repeat(3,2rem)] items-center gap-x-1.5 overflow-hidden border-b border-white/6 bg-white/[0.012] pr-2 pl-1 transition-colors last:border-b-0 hover:bg-white/[0.045] lg:grid-cols-[2rem_2.5rem_minmax(0,1fr)_4rem_repeat(3,2rem)] lg:gap-x-2 lg:pr-3",
+                        "group/row relative grid h-14 grid-cols-[2rem_2.5rem_minmax(0,1fr)_3rem_repeat(3,2rem)] items-center gap-x-1.5 overflow-hidden border-b border-white/6 bg-white/[0.012] pr-2 pl-1 transition-colors duration-(--duration-coda-fast) last:border-b-0 hover:bg-white/[0.045] focus-within:bg-white/[0.045] motion-reduce:transition-none lg:grid-cols-[2rem_2.5rem_minmax(0,1fr)_4rem_repeat(3,2rem)] lg:gap-x-2 lg:pr-3",
                         activeTrack &&
                           "bg-primary/[0.065] before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-primary before:content-['']",
                       )}
                       data-album-card={track.albumId}
                     >
-                      <Button
-                        className={cn(
-                          "group/number size-full rounded-none p-0 text-xs font-normal text-[#777a76] hover:bg-transparent",
-                          activeTrack && "text-[#e88c75]",
-                        )}
+                      <RowPlaybackAction
+                        active={activeTrack}
+                        ariaLabel={
+                          activeTrack
+                            ? `${playing ? "Pause" : "Resume"} ${track.title}`
+                            : `Play ${track.title}`
+                        }
                         onClick={
                           activeTrack
                             ? onTogglePlayback
                             : () => onPlayTrack(track)
                         }
-                        aria-label={
-                          activeTrack
-                            ? `${playing ? "Pause" : "Resume"} ${track.title}`
-                            : `Play ${track.title}`
-                        }
-                        aria-pressed={activeTrack && playing}
-                        variant="ghost"
-                      >
-                        <span
-                          className={
-                            activeTrack ? "hidden" : "group-hover:hidden"
-                          }
-                        >
-                          {index + 1}
-                        </span>
-                        <PlaybackIcon
-                          className={cn(
-                            "size-3.5",
-                            !activeTrack && "hidden group-hover:inline-grid",
-                          )}
-                          playing={activeTrack && playing}
-                        />
-                      </Button>
+                        playing={playing}
+                        position={index + 1}
+                      />
                       {albumId ? (
                         <Link
                           aria-busy={albumLoading || undefined}
@@ -2488,36 +2457,38 @@ function SavedLibraryController({
                       <span className="justify-self-end pr-1 text-right text-xs text-coda-subtle-foreground tabular-nums">
                         {formatTime(track.duration)}
                       </span>
-                      <Button
-                        onClick={() => onQueueTrack(track)}
-                        aria-label={`Add ${track.title} to queue`}
-                        title="Add to queue"
-                        size="icon"
-                        variant="ghost"
-                      >
-                        <Plus size={15} />
-                      </Button>
-                      <Button
-                        onClick={() => onAddToPlaylist([track])}
-                        aria-label={`Add ${track.title} to playlist`}
-                        title="Add to playlist"
-                        size="icon"
-                        variant="ghost"
-                      >
-                        <ListPlus size={15} />
-                      </Button>
-                      <Button
-                        className="rounded-full bg-primary/10 text-coda-favorite ring-1 ring-primary/20 ring-inset hover:bg-primary/[0.18] hover:text-coda-favorite"
-                        onClick={() =>
-                          onToggleFavorite(track.id, "song", false)
-                        }
-                        aria-label={`Remove ${track.title} from favorites`}
-                        title="Remove from favorites"
-                        size="icon"
-                        variant="ghost"
-                      >
-                        <Heart size={15} fill="currentColor" />
-                      </Button>
+                      <RowActionGroup className="contents">
+                        <Button
+                          onClick={() => onQueueTrack(track)}
+                          aria-label={`Add ${track.title} to queue`}
+                          title="Add to queue"
+                          size="icon"
+                          variant="ghost"
+                        >
+                          <Plus size={15} />
+                        </Button>
+                        <Button
+                          onClick={() => onAddToPlaylist([track])}
+                          aria-label={`Add ${track.title} to playlist`}
+                          title="Add to playlist"
+                          size="icon"
+                          variant="ghost"
+                        >
+                          <ListPlus size={15} />
+                        </Button>
+                        <Button
+                          className="rounded-full bg-primary/10 text-coda-favorite ring-1 ring-primary/20 ring-inset hover:bg-primary/[0.18] hover:text-coda-favorite"
+                          onClick={() =>
+                            onToggleFavorite(track.id, "song", false)
+                          }
+                          aria-label={`Remove ${track.title} from favorites`}
+                          title="Remove from favorites"
+                          size="icon"
+                          variant="ghost"
+                        >
+                          <Heart size={15} fill="currentColor" />
+                        </Button>
+                      </RowActionGroup>
                     </div>
                   );
                 }}
@@ -2562,13 +2533,13 @@ function SavedLibraryController({
                   return (
                     <article
                       className={cn(
-                        "grid h-full min-w-0 grid-cols-[2.75rem_minmax(0,1fr)] items-center gap-3 rounded-lg border border-border bg-white/2 p-3 transition-[border-color,background-color,transform] duration-(--duration-coda-fast) hover:-translate-y-px hover:border-white/12 hover:bg-white/3 lg:grid-cols-[3rem_minmax(0,1fr)_auto]",
+                        "group/row grid h-[88px] min-w-0 grid-cols-[4rem_minmax(0,1fr)_auto] items-center gap-3 overflow-hidden rounded-xl border border-border bg-white/[0.025] p-3 transition-[border-color,background-color] duration-(--duration-coda-fast) hover:border-white/12 hover:bg-white/4 focus-within:border-white/12 focus-within:bg-white/4 motion-reduce:transition-none",
                         activeShow && "border-primary/30 bg-primary/7",
                       )}
                     >
                       {showIdParam ? (
                         <Link
-                          className="size-11 overflow-hidden rounded-lg outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring lg:size-12"
+                          className="size-16 overflow-hidden rounded-lg outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                           data-radio-show-open={show.id}
                           onClick={openShow}
                           params={{ showId: showIdParam }}
@@ -2581,7 +2552,9 @@ function SavedLibraryController({
                           >
                             <FavoriteArtwork
                               className="size-full"
+                              fallback={<Radio size={22} />}
                               item={{
+                                artworkUrl: show.artworkUrl,
                                 title: identity.episodeTitle,
                                 palette: paletteFor(`radio:${show.id}`),
                               }}
@@ -2590,40 +2563,20 @@ function SavedLibraryController({
                         </Link>
                       ) : (
                         <FavoriteArtwork
-                          className="size-11 lg:size-12"
+                          className="size-16"
+                          fallback={<Radio size={22} />}
                           item={{
+                            artworkUrl: show.artworkUrl,
                             title: identity.episodeTitle,
                             palette: paletteFor(`radio:${show.id}`),
                           }}
                         />
                       )}
-                      <div className="flex min-w-0 flex-col gap-1">
-                        <Link
-                          activeOptions={{ exact: true }}
-                          className={cn(
-                            eyebrowClassName,
-                            "mb-0 inline-flex h-auto w-fit max-w-full items-center justify-start gap-1 truncate rounded-none p-0 outline-none hover:bg-transparent hover:text-accent-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
-                          )}
-                          onClick={(event) =>
-                            handleCodaLinkActivation(event, () =>
-                              onOpenRadioSeries(seriesId),
-                            )
-                          }
-                          aria-label={`Browse ${identity.seriesTitle ?? BANDCAMP_RADIO_PROVIDER}`}
-                          {...(seriesId
-                            ? {
-                                params: { seriesId },
-                                to: "/radio/series/$seriesId" as const,
-                              }
-                            : { to: "/radio" as const })}
-                        >
-                          <Radio size={12} />
-                          {identity.seriesTitle ?? BANDCAMP_RADIO_PROVIDER}
-                        </Link>
+                      <div className="flex min-w-0 flex-col gap-1.5">
                         <span data-radio-show-title={show.id}>
                           {showIdParam ? (
                             <Link
-                              className="inline-flex h-auto w-fit max-w-full justify-start overflow-hidden rounded-none p-0 text-xs text-[#deddd7] outline-none hover:bg-transparent hover:text-accent-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+                              className="inline-flex h-auto w-fit max-w-full justify-start overflow-hidden rounded-none p-0 text-sm font-semibold text-[#deddd7] outline-none hover:bg-transparent hover:text-accent-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                               data-radio-show-open={show.id}
                               onClick={openShow}
                               params={{ showId: showIdParam }}
@@ -2640,28 +2593,45 @@ function SavedLibraryController({
                             </Link>
                           ) : (
                             <OverflowMarquee
-                              className="max-w-full text-xs text-[#deddd7]"
+                              className="max-w-full text-sm font-semibold text-[#deddd7]"
                               text={identity.episodeTitle}
                             />
                           )}
                         </span>
-                        <time
-                          className="truncate text-xs text-coda-subtle-foreground"
-                          dateTime={show.publishedAt}
-                        >
-                          {radioShowDate(show.publishedAt)}
-                        </time>
-                        {show.description ? (
-                          <p className="m-0 truncate text-xs text-coda-subtle-foreground">
-                            {show.description}
-                          </p>
-                        ) : null}
+                        <div className="flex min-w-0 items-center gap-1.5 text-xs text-coda-subtle-foreground">
+                          <Link
+                            activeOptions={{ exact: true }}
+                            className="h-auto min-w-0 max-w-[60%] truncate rounded-none p-0 text-xs font-medium text-coda-subtle-foreground outline-none hover:bg-transparent hover:text-accent-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+                            onClick={(event) =>
+                              handleCodaLinkActivation(event, () =>
+                                onOpenRadioSeries(seriesId),
+                              )
+                            }
+                            aria-label={`Browse ${identity.seriesTitle ?? BANDCAMP_RADIO_PROVIDER}`}
+                            {...(seriesId
+                              ? {
+                                  params: { seriesId },
+                                  to: "/radio/series/$seriesId" as const,
+                                }
+                              : { to: "/radio" as const })}
+                          >
+                            {identity.seriesTitle ?? BANDCAMP_RADIO_PROVIDER}
+                          </Link>
+                          <span aria-hidden="true">·</span>
+                          <time
+                            className="shrink-0"
+                            dateTime={show.publishedAt}
+                          >
+                            {radioShowDate(show.publishedAt)}
+                          </time>
+                        </div>
                       </div>
-                      <div className="col-start-2 flex items-center gap-1 lg:col-start-auto">
+                      <div className="flex items-center gap-1">
                         <Button
-                          className={
-                            activeShow && playing ? "text-primary" : undefined
-                          }
+                          className={cn(
+                            "gap-1.5",
+                            activeShow && playing && "text-primary",
+                          )}
                           onClick={
                             activeShow
                               ? onTogglePlayback
@@ -2677,7 +2647,7 @@ function SavedLibraryController({
                           title={
                             activeShow ? (playing ? "Pause" : "Resume") : "Play"
                           }
-                          size="icon"
+                          size="compact"
                           variant="ghost"
                         >
                           {busyAction === "play" ? (
@@ -2691,36 +2661,45 @@ function SavedLibraryController({
                               playing={activeShow && playing}
                             />
                           )}
+                          <span>
+                            {activeShow
+                              ? playing
+                                ? "Pause"
+                                : "Resume"
+                              : "Play"}
+                          </span>
                         </Button>
-                        <Button
-                          onClick={() =>
-                            void actOnFavoriteRadioShow(show, "queue")
-                          }
-                          disabled={Boolean(radioAction)}
-                          aria-label={`Add ${identity.episodeTitle} to queue`}
-                          title="Add to queue"
-                          size="icon"
-                          variant="ghost"
-                        >
-                          {busyAction === "queue" ? (
-                            <Spinner
-                              aria-hidden="true"
-                              className="size-4 text-current"
-                            />
-                          ) : (
-                            <ListPlus size={15} />
-                          )}
-                        </Button>
-                        <Button
-                          className="text-coda-favorite"
-                          onClick={() => onToggleRadioFavorite(show, false)}
-                          aria-label={`Remove ${identity.episodeTitle} from favorites`}
-                          title="Remove from favorites"
-                          size="icon"
-                          variant="ghost"
-                        >
-                          <Heart size={15} fill="currentColor" />
-                        </Button>
+                        <RowActionGroup>
+                          <Button
+                            onClick={() =>
+                              void actOnFavoriteRadioShow(show, "queue")
+                            }
+                            disabled={Boolean(radioAction)}
+                            aria-label={`Add ${identity.episodeTitle} to queue`}
+                            title="Add to queue"
+                            size="icon"
+                            variant="ghost"
+                          >
+                            {busyAction === "queue" ? (
+                              <Spinner
+                                aria-hidden="true"
+                                className="size-4 text-current"
+                              />
+                            ) : (
+                              <ListPlus size={15} />
+                            )}
+                          </Button>
+                          <Button
+                            className="text-coda-favorite"
+                            onClick={() => onToggleRadioFavorite(show, false)}
+                            aria-label={`Remove ${identity.episodeTitle} from favorites`}
+                            title="Remove from favorites"
+                            size="icon"
+                            variant="ghost"
+                          >
+                            <Heart size={15} fill="currentColor" />
+                          </Button>
+                        </RowActionGroup>
                       </div>
                     </article>
                   );

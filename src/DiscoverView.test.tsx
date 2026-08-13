@@ -49,7 +49,6 @@ function renderDiscover(
   const onPlay = playback.onPlay ?? vi.fn();
   return {
     client,
-    onQueue,
     onPlay,
     onTogglePlayback,
     router,
@@ -192,16 +191,31 @@ describe("Discover", () => {
     expect(await screen.findByText("No releases found")).toBeInTheDocument();
   });
 
-  it("loads previews, queues a result, and supports the full genre selector", async () => {
+  it("reveals a card-level queue action without durations and supports the full genre selector", async () => {
     const user = userEvent.setup();
-    const { onQueue } = renderDiscover();
+    const onQueue = vi.fn();
+    renderDiscover(onQueue);
 
-    expect(await screen.findByText("Blue Hours")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Add to queue/ }));
-    expect(onQueue).toHaveBeenCalledWith(expect.objectContaining({
-      id: "preview-1",
-      album: "Blue Hours",
-    }));
+    const releaseTitle = await screen.findByText("Blue Hours");
+    const releaseCard = releaseTitle.closest("article");
+    if (!releaseCard) throw new Error("Expected Discover release card");
+    expect(within(releaseCard).queryByText("3:21")).not.toBeInTheDocument();
+    const queueButton = within(releaseCard).getByRole("button", {
+      name: "Add Glass Lines to queue",
+    });
+    expect(queueButton).toHaveAttribute("data-coda-discover-queue-action");
+    expect(queueButton).toHaveAttribute("title", "Add to queue");
+    expect(
+      queueButton.closest('[data-slot="card-action-overlay"]'),
+    ).toBeInTheDocument();
+    expect(queueButton.querySelector(".lucide-plus")).toBeInTheDocument();
+    expect(queueButton).toHaveAttribute("data-confirmed", "false");
+    await user.click(queueButton);
+    expect(onQueue).toHaveBeenCalledTimes(1);
+    expect(queueButton).toHaveAccessibleName("Glass Lines added to queue");
+    expect(queueButton).toHaveAttribute("title", "Added");
+    expect(queueButton).toHaveAttribute("data-confirmed", "true");
+    expect(queueButton.querySelector(".lucide-check")).toBeInTheDocument();
 
     const genreNavigation = screen.getByRole("navigation", {
       name: "Filter Discover by genre",

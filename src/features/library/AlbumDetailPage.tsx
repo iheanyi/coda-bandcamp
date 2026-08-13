@@ -4,6 +4,10 @@ import { AnimatePresence, usePresence } from "motion/react";
 import * as m from "motion/react-m";
 import type { ReactNode } from "react";
 import { VirtualizedSavedTrackList } from "@/VirtualizedSavedTrackList";
+import {
+  RowActionGroup,
+  RowPlaybackAction,
+} from "@/components/ItemInteractions";
 import { Button } from "@/components/ui/button";
 import { OverflowMarquee } from "@/components/ui/overflow-marquee";
 import { PlaybackIcon } from "@/components/ui/playback-icon";
@@ -246,38 +250,27 @@ export function AlbumDetailPage({
                         <div
                           {...rowProps}
                           className={cn(
-                            "group grid h-14 grid-cols-[2.5rem_minmax(0,1fr)_3.5rem_7rem] items-center rounded-sm border-b border-white/4.5 transition-colors hover:bg-white/[0.035]",
+                            "group/row grid h-14 grid-cols-[2.5rem_minmax(0,1fr)_3.5rem_7rem] items-center rounded-sm border-b border-white/4.5 transition-colors hover:bg-white/[0.035] focus-within:bg-white/[0.035] motion-reduce:transition-none",
                             favoriteTrack && !activeTrack && "bg-primary/[0.025]",
                             activeTrack && "bg-primary/[0.075]",
                           )}
                         >
-                          <Button
-                            className={`h-full rounded-none p-0 text-xs text-[#777a76] hover:bg-transparent ${activeTrack ? "text-[#e88c75]" : ""}`}
+                          <RowPlaybackAction
+                            active={activeTrack}
+                            ariaLabel={
+                              activeTrack
+                                ? `${playing ? "Pause" : "Resume"} ${track.title}`
+                                : `Play ${track.title}`
+                            }
+                            className="h-full"
                             onClick={
                               activeTrack
                                 ? onTogglePlayback
                                 : () => onPlayTrack(track)
                             }
-                            aria-label={
-                              activeTrack
-                                ? `${playing ? "Pause" : "Resume"} ${track.title}`
-                                : `Play ${track.title}`
-                            }
-                            aria-pressed={activeTrack && playing}
-                            variant="ghost"
-                          >
-                            <span
-                              className={
-                                activeTrack ? "hidden" : "group-hover:hidden"
-                              }
-                            >
-                              {track.track}
-                            </span>
-                            <PlaybackIcon
-                              className={`size-3.5 ${activeTrack ? "" : "hidden group-hover:inline-grid"}`}
-                              playing={activeTrack && playing}
-                            />
-                          </Button>
+                            playing={playing}
+                            position={track.track}
+                          />
                           <div className="flex min-w-0 flex-col gap-0.5 overflow-hidden">
                             <Button
                               className="h-auto w-fit max-w-full min-w-0 justify-start overflow-hidden p-0 text-left focus-visible:-outline-offset-2 focus-visible:outline-primary"
@@ -340,7 +333,7 @@ export function AlbumDetailPage({
                           <span className="grid place-items-center justify-self-stretch text-center text-xs text-coda-subtle-foreground tabular-nums">
                             {formatTime(track.duration)}
                           </span>
-                          <div className="grid grid-cols-[repeat(3,2rem)] justify-end">
+                          <RowActionGroup className="grid-cols-[repeat(3,2rem)]">
                             <Button
                               onClick={() => onQueueTrack(track)}
                               size="icon"
@@ -384,7 +377,7 @@ export function AlbumDetailPage({
                                 fill={favoriteTrack ? "currentColor" : "none"}
                               />
                             </Button>
-                          </div>
+                          </RowActionGroup>
                         </div>
                       );
                     }}

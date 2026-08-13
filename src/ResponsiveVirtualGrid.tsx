@@ -20,6 +20,7 @@ export const DEFAULT_GRID_VIRTUALIZATION_THRESHOLD = 80;
 
 export type ResponsiveGridLayout = {
   columnGap: number;
+  maxColumns?: number;
   maxWidth?: number;
   minColumnWidth: number;
   rowGap: number;
@@ -83,10 +84,15 @@ function responsiveGridMetrics(
   const minColumnWidth = Math.max(1, finiteNonNegative(layout.minColumnWidth, 1));
   const columnGap = finiteNonNegative(layout.columnGap);
   const rowGap = finiteNonNegative(layout.rowGap);
-  const columns = Math.max(
+  const responsiveColumns = Math.max(
     1,
     Math.floor((safeWidth + columnGap) / (minColumnWidth + columnGap)),
   );
+  const maxColumns = Math.max(
+    1,
+    Math.floor(finiteNonNegative(layout.maxColumns ?? responsiveColumns, 1)),
+  );
+  const columns = Math.min(responsiveColumns, maxColumns);
   const columnWidth = Math.max(
     0,
     (safeWidth - columnGap * (columns - 1)) / columns,
@@ -280,7 +286,10 @@ export function ResponsiveVirtualGrid<Item>({
           ...style,
           columnGap: metrics.columnGap,
           display: "grid",
-          gridTemplateColumns: `repeat(auto-fill, minmax(${layout.minColumnWidth}px, 1fr))`,
+          gridTemplateColumns:
+            layout.maxColumns === undefined
+              ? `repeat(auto-fill, minmax(${layout.minColumnWidth}px, 1fr))`
+              : `repeat(${metrics.columns}, minmax(0, 1fr))`,
           rowGap: metrics.rowGap,
         }}
       >
