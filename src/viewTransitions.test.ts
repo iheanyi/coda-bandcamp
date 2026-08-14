@@ -282,7 +282,7 @@ describe("transitionCodaView", () => {
     expect(source.style.getPropertyValue("view-transition-name")).toBe("");
   });
 
-  it("exposes every transition kind while the browser captures and cleans it afterward", async () => {
+  it("characterizes every transition kind with one update and complete cleanup", async () => {
     const capturedClasses: string[] = [];
     Object.defineProperty(document, "startViewTransition", {
       configurable: true,
@@ -293,26 +293,32 @@ describe("transitionCodaView", () => {
       }),
     });
 
-    const cases: Array<[CodaViewTransitionKind, string]> = [
-      ["album-detail", "coda-transition--album-detail"],
-      ["artist-detail", "coda-transition--artist-detail"],
-      ["daily-detail", "coda-transition--daily-detail"],
-      ["daily-detail-close", "coda-transition--daily-detail-close"],
-      ["discover-detail", "coda-transition--discover-detail"],
-      ["discover-detail-close", "coda-transition--discover-detail-close"],
-      ["playlist-detail", "coda-transition--playlist-detail"],
-      ["playlist-detail-close", "coda-transition--playlist-detail-close"],
-      ["radio-detail", "coda-transition--radio-detail"],
-      ["radio-detail-close", "coda-transition--radio-detail-close"],
-      ["now-playing-open", "coda-transition--now-playing-open"],
-      ["now-playing-close", "coda-transition--now-playing-close"],
-      ["page-forward", "coda-transition--page-forward"],
-      ["page-back", "coda-transition--page-back"],
-      ["page-crossfade", "coda-transition--page-crossfade"],
-    ];
-    for (const [kind, className] of cases) {
-      await transitionCodaView(vi.fn(), kind);
+    const cases = {
+      "album-detail": "coda-transition--album-detail",
+      "album-detail-close": "coda-transition--album-detail-close",
+      "artist-detail": "coda-transition--artist-detail",
+      "artist-detail-close": "coda-transition--artist-detail-close",
+      "daily-detail": "coda-transition--daily-detail",
+      "daily-detail-close": "coda-transition--daily-detail-close",
+      "discover-detail": "coda-transition--discover-detail",
+      "discover-detail-close": "coda-transition--discover-detail-close",
+      "playlist-detail": "coda-transition--playlist-detail",
+      "playlist-detail-close": "coda-transition--playlist-detail-close",
+      "radio-detail": "coda-transition--radio-detail",
+      "radio-detail-close": "coda-transition--radio-detail-close",
+      "now-playing-open": "coda-transition--now-playing-open",
+      "now-playing-close": "coda-transition--now-playing-close",
+      "page-forward": "coda-transition--page-forward",
+      "page-back": "coda-transition--page-back",
+      "page-crossfade": "coda-transition--page-crossfade",
+    } satisfies Record<CodaViewTransitionKind, string>;
+    for (const [kind, className] of Object.entries(cases) as Array<
+      [CodaViewTransitionKind, string]
+    >) {
+      const update = vi.fn();
+      await transitionCodaView(update, kind);
 
+      expect(update).toHaveBeenCalledOnce();
       expect(capturedClasses.at(-1)).toContain(className);
       expect(document.documentElement).toHaveClass(
         "coda-view-transitions-supported",
