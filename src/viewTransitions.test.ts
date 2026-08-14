@@ -90,6 +90,12 @@ beforeEach(() => {
     finished: Promise.resolve(),
     stop: vi.fn(),
   }));
+  motionMocks.animateView.mockImplementation(
+    (update: () => void | Promise<void>) => {
+      const updateDone = Promise.resolve(update());
+      return motionBuilder({ finished: updateDone });
+    },
+  );
 });
 
 afterEach(() => {
@@ -247,51 +253,16 @@ describe("transitionCodaView", () => {
     pane.remove();
   });
 
-  it("excludes a root-owned shared source that remains mounted in the incoming snapshot", async () => {
-    const source = document.createElement("a");
-    source.className = "player__art-link";
-    document.body.append(source);
-    const transitionFinished = deferred();
-    const incomingSnapshot = vi.fn();
-    let incomingName = "";
-    Object.defineProperty(document, "startViewTransition", {
-      configurable: true,
-      value: vi.fn((update: () => void | Promise<void>) => {
-        const updateCallbackDone = Promise.resolve(update()).then(() => {
-          incomingName = source.style.getPropertyValue("view-transition-name");
-          incomingSnapshot();
-        });
-        return {
-          finished: Promise.all([
-            updateCallbackDone,
-            transitionFinished.promise,
-          ]).then(() => undefined),
-          updateCallbackDone,
-        };
-      }),
-    });
-
-    const transition = transitionCodaView(
-      () => Promise.resolve(),
-      "now-playing-open",
-    );
-
-    await vi.waitFor(() => expect(incomingSnapshot).toHaveBeenCalledOnce());
-    expect(incomingName).toBe("none");
-    transitionFinished.resolve();
-    await transition;
-    expect(source.style.getPropertyValue("view-transition-name")).toBe("");
-  });
-
   it("characterizes every transition kind with one update and complete cleanup", async () => {
     const capturedClasses: string[] = [];
+    const startViewTransition = vi.fn((update: () => void) => {
+      capturedClasses.push(document.documentElement.className);
+      update();
+      return { finished: Promise.resolve() };
+    });
     Object.defineProperty(document, "startViewTransition", {
       configurable: true,
-      value: vi.fn((update: () => void) => {
-        capturedClasses.push(document.documentElement.className);
-        update();
-        return { finished: Promise.resolve() };
-      }),
+      value: startViewTransition,
     });
 
     const cases = {
@@ -317,10 +288,25 @@ describe("transitionCodaView", () => {
       [CodaViewTransitionKind, string]
     >) {
       const update = vi.fn();
+      const nativeCallsBefore = startViewTransition.mock.calls.length;
+      const motionCallsBefore = motionMocks.animateView.mock.calls.length;
       await transitionCodaView(update, kind);
 
       expect(update).toHaveBeenCalledOnce();
-      expect(capturedClasses.at(-1)).toContain(className);
+      if (kind.startsWith("page")) {
+        expect(startViewTransition).toHaveBeenCalledTimes(
+          nativeCallsBefore + 1,
+        );
+        expect(motionMocks.animateView).toHaveBeenCalledTimes(
+          motionCallsBefore,
+        );
+        expect(capturedClasses.at(-1)).toContain(className);
+      } else {
+        expect(startViewTransition).toHaveBeenCalledTimes(nativeCallsBefore);
+        expect(motionMocks.animateView).toHaveBeenCalledTimes(
+          motionCallsBefore + 1,
+        );
+      }
       expect(document.documentElement).toHaveClass(
         "coda-view-transitions-supported",
       );
@@ -409,56 +395,6 @@ describe("transitionCodaView", () => {
       "coda-view-transitioning",
       "coda-transition--page-crossfade",
     );
-  });
-
-  it("restores a persistent shared source after repeated supersession", async () => {
-    const source = document.createElement("a");
-    source.className = "player__art-link";
-    source.style.setProperty("view-transition-name", "player-artwork");
-    document.body.append(source);
-    const transitions = Array.from({ length: 50 }, () => deferred());
-    const skipTransitions = transitions.map(() => vi.fn());
-    let transitionIndex = 0;
-    Object.defineProperty(document, "startViewTransition", {
-      configurable: true,
-      value: vi.fn((update: () => void | Promise<void>) => {
-        const index = transitionIndex;
-        transitionIndex += 1;
-        const updateCallbackDone = Promise.resolve(update());
-        return {
-          finished: Promise.all([
-            updateCallbackDone,
-            transitions[index]!.promise,
-          ]).then(() => undefined),
-          skipTransition: skipTransitions[index],
-          updateCallbackDone,
-        };
-      }),
-    });
-
-    const updates = transitions.map(() => vi.fn());
-    const activeTransitions: Promise<void>[] = [];
-    for (let index = 0; index < transitions.length; index += 1) {
-      activeTransitions.push(
-        transitionCodaView(updates[index]!, "now-playing-open"),
-      );
-      await Promise.resolve();
-      await Promise.resolve();
-      expect(updates[index]).toHaveBeenCalledOnce();
-      expect(source.style.viewTransitionName).toBe("none");
-    }
-
-    transitions.forEach((transition) => transition.resolve());
-    await Promise.all(activeTransitions);
-
-    skipTransitions
-      .slice(0, -1)
-      .forEach((skipTransition) =>
-        expect(skipTransition).toHaveBeenCalledOnce(),
-      );
-    expect(skipTransitions.at(-1)).not.toHaveBeenCalled();
-    expect(source.style.viewTransitionName).toBe("player-artwork");
-    expect(document.documentElement).not.toHaveClass("coda-view-transitioning");
   });
 
   it("commits once and clears support when browser lifecycle promises reject", async () => {

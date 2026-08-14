@@ -752,12 +752,6 @@ function configureMotionTransition(
   }
 }
 
-export function motionViewTransitionsEnabled() {
-  // The product path is always enabled. Unit tests retain the isolated native
-  // coordinator through Vitest's standard test mode, not a product flag.
-  return import.meta.env.MODE !== "test";
-}
-
 function configuredVisualDuration(
   kind: CodaViewTransitionKind,
   motion: ResolvedMotionProfile,

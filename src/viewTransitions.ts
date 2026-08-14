@@ -1,8 +1,6 @@
 import { flushSync } from "react-dom";
 import { animate, type AnimationPlaybackControls } from "motion";
-import { acquireTemporaryStyleProperty } from "@/features/navigation/temporaryDomMarkers";
 import {
-  motionViewTransitionsEnabled,
   supersedeMotionViewTransition,
   transitionCodaViewWithMotion,
 } from "./motionViewTransitions";
@@ -74,7 +72,6 @@ const TRANSITION_CLASSES: Record<CodaViewTransitionKind, string> = {
   "page-crossfade": "coda-transition--page-crossfade",
 };
 const TRANSITION_CLASS_NAMES = Object.values(TRANSITION_CLASSES);
-const EMPTY_TRANSITION_NAMES: readonly string[] = [];
 const PAGE_TRANSITION_NAMES = ["coda-page-content"] as const;
 const PAGE_MOTION_STYLE_PROPERTIES = [
   "--coda-motion-page-enter-duration",
@@ -91,7 +88,6 @@ const PAGE_MOTION_STYLE_PROPERTIES = [
 let latestTransitionId = 0;
 let activeTransition:
   { id: number; transition: CodaViewTransition } | undefined;
-let releaseActiveSourceSuppression: (() => void) | undefined;
 let activePageAnimations: AnimationPlaybackControls[] = [];
 let releaseActivePageStyles: (() => void) | undefined;
 
@@ -100,105 +96,6 @@ function stopActivePageAnimations() {
   activePageAnimations = [];
   releaseActivePageStyles?.();
   releaseActivePageStyles = undefined;
-}
-
-const SHARED_SOURCE_SELECTORS: Partial<
-  Record<CodaViewTransitionKind, readonly string[]>
-> = {
-  "album-detail": [
-    ".coda-album-artwork-source",
-    "[data-coda-album-title-source]",
-  ],
-  "album-detail-close": [
-    "[data-coda-album-artwork-detail]",
-    "[data-coda-album-title-detail]",
-  ],
-  "artist-detail": [
-    "[data-coda-artist-artwork-source] [data-slot='cover']",
-    "[data-coda-artist-artwork-source][data-slot='cover']",
-    "[data-coda-artist-name-source]",
-  ],
-  "artist-detail-close": [
-    "[data-coda-artist-artwork-detail][data-slot='cover']",
-    "[data-coda-artist-artwork-detail] [data-slot='cover']",
-    "[data-coda-artist-name-detail]",
-  ],
-  "daily-detail": [
-    "[data-coda-daily-artwork-source]",
-    "[data-coda-daily-title-source]",
-  ],
-  "daily-detail-close": [
-    "[data-coda-daily-artwork-detail]",
-    "[data-coda-daily-title-detail]",
-  ],
-  "discover-detail": [
-    "[data-coda-discover-artwork-source]",
-    "[data-coda-discover-title-source]",
-  ],
-  "discover-detail-close": [
-    "[data-coda-discover-artwork-detail]",
-    "[data-coda-discover-title-detail]",
-  ],
-  "playlist-detail": [
-    "[data-coda-playlist-identity-source]",
-    "[data-coda-playlist-title-source]",
-  ],
-  "playlist-detail-close": [
-    "[data-coda-playlist-identity-detail]",
-    "[data-coda-playlist-title-detail]",
-  ],
-  "radio-detail": [
-    "[data-coda-radio-artwork-source]",
-    "[data-coda-radio-title-source]",
-  ],
-  "radio-detail-close": [
-    "[data-coda-radio-artwork-detail]",
-    "[data-coda-radio-title-detail]",
-  ],
-  "now-playing-open": [
-    ".player__art-link",
-    "[data-coda-now-playing-title-compact]",
-  ],
-  "now-playing-close": [
-    ".now-playing__artwork",
-    "[data-coda-now-playing-title-detail]",
-  ],
-};
-
-function sharedSourceCandidates(kind: CodaViewTransitionKind) {
-  const elements = new Set<HTMLElement>();
-  for (const selector of SHARED_SOURCE_SELECTORS[kind] ?? []) {
-    document.querySelectorAll<HTMLElement>(selector).forEach((element) => {
-      elements.add(element);
-    });
-  }
-  return [...elements];
-}
-
-function suppressSourcesThatSurvive(
-  candidates: readonly HTMLElement[],
-): () => void {
-  const releases = candidates
-    .filter((element) => element.isConnected)
-    .map((element) =>
-      // A persistent route parent or root-owned player can leave the outgoing
-      // element mounted beside its destination. Exclude that old endpoint from
-      // the incoming snapshot so the shared name remains unique.
-      acquireTemporaryStyleProperty(
-        element,
-        "view-transition-name",
-        "none",
-        "important",
-      ),
-    );
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    for (let index = releases.length - 1; index >= 0; index -= 1) {
-      releases[index]?.();
-    }
-  };
 }
 
 function clearTransitionClasses() {
@@ -414,15 +311,11 @@ export function transitionCodaView(
     : undefined;
   activeTransition?.transition.skipTransition?.();
   activeTransition = undefined;
-  releaseActiveSourceSuppression?.();
-  releaseActiveSourceSuppression = undefined;
   stopActivePageAnimations();
   clearTransitionClasses();
 
   if (options.skipSnapshot) {
-    if (motionViewTransitionsEnabled()) {
-      supersedeMotionViewTransition();
-    }
+    supersedeMotionViewTransition();
     const diagnosticId = diagnostics?.begin({
       kind,
       configuredDurationMs: motionProfile.configuredDurationMs,
@@ -453,9 +346,7 @@ export function transitionCodaView(
   }
   const transitionDocument = document as ViewTransitionDocument;
   if (!transitionDocument.startViewTransition || prefersReducedMotion) {
-    if (motionViewTransitionsEnabled()) {
-      supersedeMotionViewTransition();
-    }
+    supersedeMotionViewTransition();
     const diagnosticId = diagnostics?.begin({
       kind,
       configuredDurationMs: motionProfile.configuredDurationMs,
@@ -477,7 +368,7 @@ export function transitionCodaView(
     return Promise.resolve(update(false)).then(() => undefined);
   }
 
-  if (motionViewTransitionsEnabled() && !nativePageTransition) {
+  if (!nativePageTransition) {
     document.documentElement.classList.add(
       "coda-view-transitions-supported",
       "coda-view-transitioning",
@@ -495,54 +386,34 @@ export function transitionCodaView(
   }
 
   const transitionClass =
-    nativePageTransition && motionProfile.profile.page.mode === "crossfade"
+    motionProfile.profile.page.mode === "crossfade"
       ? TRANSITION_CLASSES["page-crossfade"]
       : TRANSITION_CLASSES[kind];
   let updated = false;
   let failed = false;
-  let lifecycleActive = true;
-  let releaseSourceSuppression: (() => void) | undefined;
-  const commitUpdate = (snapshot: boolean): void | Promise<void> => {
+  const commitUpdate = (): void | Promise<void> => {
     if (latestTransitionId !== transitionId || updated || failed) {
       return;
     }
     updated = true;
-    if (snapshot) {
-      const sourceCandidates = sharedSourceCandidates(kind);
-      const result = flushSync(update);
-      return Promise.resolve(result).then(() => {
-        if (latestTransitionId !== transitionId || failed || !lifecycleActive) {
-          return;
-        }
-        if (nativePageTransition) {
-          const destination =
-            document.querySelector<HTMLElement>(".library-pane");
-          if (diagnostics && diagnosticId !== undefined) {
-            diagnostics.update(diagnosticId, {
-              destinationCount:
-                document.querySelectorAll(".library-pane").length,
-              destinationRect: destination
-                ? diagnostics.rectSnapshot(destination.getBoundingClientRect())
-                : undefined,
-            });
-          }
-        }
-        releaseSourceSuppression = suppressSourcesThatSurvive(sourceCandidates);
-        if (latestTransitionId === transitionId) {
-          releaseActiveSourceSuppression = releaseSourceSuppression;
-        }
-      });
-    }
-    return update();
+    const result = flushSync(update);
+    return Promise.resolve(result).then(() => {
+      if (latestTransitionId !== transitionId || failed) return;
+      const destination = document.querySelector<HTMLElement>(".library-pane");
+      if (diagnostics && diagnosticId !== undefined) {
+        diagnostics.update(diagnosticId, {
+          destinationCount: document.querySelectorAll(".library-pane").length,
+          destinationRect: destination
+            ? diagnostics.rectSnapshot(destination.getBoundingClientRect())
+            : undefined,
+        });
+      }
+    });
   };
   const handleTransitionFailure = () => {
     if (latestTransitionId !== transitionId || failed) return;
     failed = true;
     activeTransition = undefined;
-    releaseSourceSuppression?.();
-    if (releaseActiveSourceSuppression === releaseSourceSuppression) {
-      releaseActiveSourceSuppression = undefined;
-    }
     clearTransitionClasses();
     clearTransitionSupport();
     if (diagnosticId !== undefined) {
@@ -553,42 +424,31 @@ export function transitionCodaView(
       update();
     }
   };
-  if (nativePageTransition) {
-    configureNativePageProfile(kind, motionProfile);
-  }
+  configureNativePageProfile(kind, motionProfile);
   document.documentElement.classList.add(
     "coda-view-transitions-supported",
     "coda-view-transitioning",
     transitionClass,
   );
-  const source =
-    diagnostics && nativePageTransition
-      ? document.querySelector<HTMLElement>(".library-pane")
-      : null;
-  const sourceCount =
-    diagnostics && nativePageTransition
-      ? document.querySelectorAll(".library-pane").length
-      : 0;
-  const transitionNames =
-    diagnostics && nativePageTransition
-      ? PAGE_TRANSITION_NAMES
-      : EMPTY_TRANSITION_NAMES;
+  const source = diagnostics
+    ? document.querySelector<HTMLElement>(".library-pane")
+    : null;
+  const sourceCount = diagnostics
+    ? document.querySelectorAll(".library-pane").length
+    : 0;
+  const transitionNames = PAGE_TRANSITION_NAMES;
   const diagnosticId = diagnostics?.begin({
     kind,
-    configuredDurationMs: nativePageTransition
-      ? Math.max(
-          motionProfile.profile.page.exit.durationMs,
-          motionProfile.profile.page.enter.durationMs +
-            motionProfile.profile.page.enterDelayMs,
-        ) / motionProfile.profile.speed
-      : motionProfile.configuredDurationMs,
+    configuredDurationMs:
+      Math.max(
+        motionProfile.profile.page.exit.durationMs,
+        motionProfile.profile.page.enter.durationMs +
+          motionProfile.profile.page.enterDelayMs,
+      ) / motionProfile.profile.speed,
     speed: motionProfile.profile.speed,
     transitionClass,
     transitionNames,
-    transitionClasses: [
-      transitionClass,
-      nativePageTransition ? "coda-native-page" : "coda-native-fallback",
-    ],
+    transitionClasses: [transitionClass, "coda-native-page"],
     sourceRect: source
       ? diagnostics.rectSnapshot(source.getBoundingClientRect())
       : undefined,
@@ -599,9 +459,7 @@ export function transitionCodaView(
   try {
     const transition = transitionDocument.startViewTransition.call(
       transitionDocument,
-      () => {
-        return commitUpdate(true);
-      },
+      commitUpdate,
     );
     if (latestTransitionId === transitionId) {
       activeTransition = { id: transitionId, transition };
@@ -629,12 +487,7 @@ export function transitionCodaView(
       .then(() => undefined)
       .finally(() => {
         if (latestTransitionId !== transitionId) return;
-        lifecycleActive = false;
         activeTransition = undefined;
-        releaseSourceSuppression?.();
-        if (releaseActiveSourceSuppression === releaseSourceSuppression) {
-          releaseActiveSourceSuppression = undefined;
-        }
         clearTransitionClasses();
       });
   } catch {
