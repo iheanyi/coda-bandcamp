@@ -1,6 +1,9 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { codaViewTransitionMotion } from "./motion";
+import { subscribeMotionDiagnostics } from "./motionDiagnostics";
 import { transitionCodaViewWithMotion } from "./motionViewTransitions";
+
+let unsubscribeDiagnostics: (() => void) | undefined;
 
 function deferred() {
   let resolve!: () => void;
@@ -101,7 +104,13 @@ function mountDiscoverReturnDestination(releaseId: string) {
   return { artwork, title };
 }
 
+beforeEach(() => {
+  unsubscribeDiagnostics = subscribeMotionDiagnostics(() => undefined);
+});
+
 afterEach(() => {
+  unsubscribeDiagnostics?.();
+  unsubscribeDiagnostics = undefined;
   document.body.replaceChildren();
   Reflect.deleteProperty(document, "getAnimations");
   Reflect.deleteProperty(document, "startViewTransition");

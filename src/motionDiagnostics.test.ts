@@ -8,8 +8,10 @@ import {
   inspectMotionPseudoLayers,
   pseudoLayersPair,
   resetMotionDiagnosticsForTests,
+  subscribeMotionDiagnostics,
   updateMotionDiagnostic,
 } from "./motionDiagnostics";
+import { motionDiagnosticsActive } from "./motionDiagnosticsRuntime";
 
 function pseudoAnimation(
   pseudoElement: string,
@@ -112,5 +114,13 @@ describe("Motion diagnostics", () => {
       reason: "native-transition-error",
       duplicateEndpoints: ["destination"],
     });
+  });
+
+  it("collects transition diagnostics only while a consumer subscribes", () => {
+    expect(motionDiagnosticsActive()).toBe(false);
+    const unsubscribe = subscribeMotionDiagnostics(() => undefined);
+    expect(motionDiagnosticsActive()).toBe(true);
+    unsubscribe();
+    expect(motionDiagnosticsActive()).toBe(false);
   });
 });

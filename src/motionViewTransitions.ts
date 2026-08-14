@@ -7,16 +7,15 @@ import {
 } from "motion";
 import { flushSync } from "react-dom";
 import {
-  beginMotionDiagnostic,
-  endpointIssues,
-  finishMotionDiagnostic,
-  inspectMotionPseudoLayers,
-  pseudoLayersPair,
-  rectSnapshot,
-  updateMotionDiagnostic,
-} from "./motionDiagnostics";
+  resolveDetailTransition,
+  type ResolvedDetailTransition,
+} from "./detailTransitionDescriptors";
+import {
+  motionDiagnosticsActive,
+  motionDiagnosticsRuntime,
+} from "./motionDiagnosticsRuntime";
 import type { ResolvedMotionProfile } from "./motionProfile";
-import { snapshotMotionProfile } from "./motionProfileStore";
+import { snapshotMotionProfile } from "./motionProfileRuntime";
 import type {
   CodaViewTransitionKind,
   CodaViewTransitionUpdate,
@@ -42,6 +41,7 @@ const NOW_PLAYING_HEADER_DELAY_MS = 20;
 const NOW_PLAYING_DETAILS_DELAY_MS = 35;
 const NOW_PLAYING_EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
 const MOTION_OWNED_VIEW_TRANSITION_NAME = /^motion-view-\d+$/;
+const EMPTY_TRANSITION_NAMES: readonly string[] = [];
 let latestMotionTransitionId = 0;
 
 function cappedDurationMs(durationMs: number, maximumMs: number) {
@@ -127,7 +127,11 @@ function identityDestination(
 // Candidate selectors are derived while the old route is still mounted, but
 // their existence is resolved only after the Router has committed the new
 // route. Return markers cannot exist before that commit.
-function sharedSnapshotDestination(kind: CodaViewTransitionKind) {
+function sharedSnapshotDestination(
+  kind: CodaViewTransitionKind,
+  detail: ResolvedDetailTransition | undefined,
+) {
+  if (detail) return detail.snapshotDestinations;
   switch (kind) {
     case "album-detail":
       return document.querySelector(".coda-album-artwork-source")
@@ -145,136 +149,16 @@ function sharedSnapshotDestination(kind: CodaViewTransitionKind) {
         : undefined;
     }
     case "artist-detail":
-      return document.querySelector(
-        ":is([data-coda-artist-artwork-source] [data-slot='cover'], [data-coda-artist-artwork-source][data-slot='cover'])",
-      )
-        ? ":is([data-coda-artist-artwork-detail][data-slot='cover'], [data-coda-artist-artwork-detail] [data-slot='cover'])"
-        : document.querySelector("[data-coda-artist-name-source]")
-          ? "[data-coda-artist-name-detail]"
-          : undefined;
-    case "artist-detail-close": {
-      const source = document.querySelector(
-        "[data-coda-artist-artwork-detail][data-slot='cover']",
-      );
-      const artworkDestination = source
-        ? identityDestination(
-            source,
-            ["data-coda-artist-artwork-detail"],
-            "data-coda-artist-artwork-return",
-            "[data-coda-artist-artwork-return]",
-          )
-        : undefined;
-      const nameSource = document.querySelector(
-        "[data-coda-artist-name-detail]",
-      );
-      const nameDestination = nameSource
-        ? identityDestination(
-            nameSource,
-            ["data-coda-artist-name-detail"],
-            "data-coda-artist-name-return",
-            "[data-coda-artist-name-return]",
-          )
-        : undefined;
-      return [artworkDestination, nameDestination].filter(
-        (destination): destination is string => Boolean(destination),
-      );
-    }
-    case "daily-detail": {
-      const source = document.querySelector("[data-coda-daily-artwork-source]");
-      return source
-        ? identityDestination(
-            source,
-            ["data-coda-daily-artwork-source"],
-            "data-coda-daily-artwork-detail",
-            "[data-coda-daily-artwork-detail]",
-          )
-        : undefined;
-    }
-    case "daily-detail-close": {
-      const source = document.querySelector("[data-coda-daily-artwork-detail]");
-      return source
-        ? identityDestination(
-            source,
-            ["data-coda-daily-artwork-detail"],
-            "data-coda-daily-artwork-return",
-            "[data-coda-daily-artwork-return]",
-          )
-        : undefined;
-    }
-    case "discover-detail": {
-      const source = document.querySelector(
-        "[data-coda-discover-artwork-source]",
-      );
-      return source
-        ? identityDestination(
-            source,
-            ["data-coda-discover-artwork-source", "data-coda-discover-artwork"],
-            "data-coda-discover-artwork-detail",
-            "[data-coda-discover-artwork-detail]",
-          )
-        : undefined;
-    }
-    case "discover-detail-close": {
-      const source = document.querySelector(
-        "[data-coda-discover-artwork-detail]",
-      );
-      return source
-        ? identityDestination(
-            source,
-            ["data-coda-discover-artwork-detail"],
-            "data-coda-discover-artwork-return",
-            "[data-coda-discover-artwork-return]",
-          )
-        : undefined;
-    }
-    case "radio-detail": {
-      const source = document.querySelector("[data-coda-radio-artwork-source]");
-      return source
-        ? identityDestination(
-            source,
-            ["data-coda-radio-artwork-source"],
-            "data-coda-radio-artwork-detail",
-            "[data-coda-radio-artwork-detail]",
-          )
-        : undefined;
-    }
-    case "radio-detail-close": {
-      const source = document.querySelector("[data-coda-radio-artwork-detail]");
-      return source
-        ? identityDestination(
-            source,
-            ["data-coda-radio-artwork-detail"],
-            "data-coda-radio-artwork-return",
-            "[data-coda-radio-artwork-return]",
-          )
-        : undefined;
-    }
-    case "playlist-detail": {
-      const source = document.querySelector(
-        "[data-coda-playlist-identity-source]",
-      );
-      return source
-        ? identityDestination(
-            source,
-            ["data-coda-playlist-identity-source"],
-            "data-coda-playlist-identity-detail",
-            "[data-coda-playlist-identity-detail]",
-          )
-        : undefined;
-    }
-    case "playlist-detail-close": {
-      const source = document.querySelector(
-        "[data-coda-playlist-identity-detail]",
-      );
-      return source
-        ? identityDestination(
-            source,
-            ["data-coda-playlist-identity-detail"],
-            "data-coda-playlist-identity-return",
-            "[data-coda-playlist-identity-return]",
-          )
-        : undefined;
-    }
+    case "artist-detail-close":
+    case "daily-detail":
+    case "daily-detail-close":
+    case "discover-detail":
+    case "discover-detail-close":
+    case "radio-detail":
+    case "radio-detail-close":
+    case "playlist-detail":
+    case "playlist-detail-close":
+      return undefined;
     case "now-playing-open": {
       const source = document.querySelector(".player__art-link");
       return source
@@ -306,8 +190,11 @@ function sharedSnapshotDestination(kind: CodaViewTransitionKind) {
   }
 }
 
-function sharedSnapshotDestinations(kind: CodaViewTransitionKind) {
-  const destination = sharedSnapshotDestination(kind);
+function sharedSnapshotDestinations(
+  kind: CodaViewTransitionKind,
+  detail: ResolvedDetailTransition | undefined,
+) {
+  const destination = sharedSnapshotDestination(kind, detail);
   return Array.isArray(destination)
     ? destination
     : destination
@@ -320,50 +207,40 @@ const SHARED_DIAGNOSTIC_SOURCE_SELECTORS: Partial<
 > = {
   "album-detail": ".coda-album-artwork-source",
   "album-detail-close": "[data-coda-album-artwork-detail]",
-  "artist-detail":
-    ":is([data-coda-artist-artwork-source] [data-slot='cover'], [data-coda-artist-artwork-source][data-slot='cover'])",
-  "artist-detail-close": "[data-coda-artist-artwork-detail][data-slot='cover']",
-  "daily-detail": "[data-coda-daily-artwork-source]",
-  "daily-detail-close": "[data-coda-daily-artwork-detail]",
-  "discover-detail": "[data-coda-discover-artwork-source]",
-  "discover-detail-close": "[data-coda-discover-artwork-detail]",
-  "radio-detail": "[data-coda-radio-artwork-source]",
-  "radio-detail-close": "[data-coda-radio-artwork-detail]",
-  "playlist-detail": "[data-coda-playlist-identity-source]",
-  "playlist-detail-close": "[data-coda-playlist-identity-detail]",
   "now-playing-open": ".player__art-link",
   "now-playing-close": ".now-playing__artwork",
 };
 
-function sharedSnapshotSource(kind: CodaViewTransitionKind) {
+function sharedSnapshotSource(
+  kind: CodaViewTransitionKind,
+  detail: ResolvedDetailTransition | undefined,
+) {
+  if (detail) return detail.diagnosticSource;
   const preferredSelector = SHARED_DIAGNOSTIC_SOURCE_SELECTORS[kind];
-  const selector =
-    preferredSelector && document.querySelector(preferredSelector)
-      ? preferredSelector
-      : kind === "artist-detail"
-        ? "[data-coda-artist-name-source]"
-        : kind === "artist-detail-close"
-          ? "[data-coda-artist-name-detail]"
-          : preferredSelector;
-  return selector ? document.querySelector<HTMLElement>(selector) : null;
+  return preferredSelector
+    ? document.querySelector<HTMLElement>(preferredSelector)
+    : null;
 }
 
-function sharedSnapshotSourceCount(kind: CodaViewTransitionKind) {
-  const source = sharedSnapshotSource(kind);
+function sharedSnapshotSourceCount(
+  kind: CodaViewTransitionKind,
+  detail: ResolvedDetailTransition | undefined,
+) {
+  if (detail) return detail.diagnosticSourceCount;
+  const source = sharedSnapshotSource(kind, detail);
   if (!source) return 0;
   const preferredSelector = SHARED_DIAGNOSTIC_SOURCE_SELECTORS[kind];
   if (preferredSelector && source.matches(preferredSelector)) {
     return document.querySelectorAll(preferredSelector).length;
   }
-  const fallbackSelector =
-    kind === "artist-detail"
-      ? "[data-coda-artist-name-source]"
-      : "[data-coda-artist-name-detail]";
-  return document.querySelectorAll(fallbackSelector).length;
+  return 0;
 }
 
-function sharedSnapshotSourceHasImage(kind: CodaViewTransitionKind) {
-  const source = sharedSnapshotSource(kind);
+function sharedSnapshotSourceHasImage(
+  kind: CodaViewTransitionKind,
+  detail: ResolvedDetailTransition | undefined,
+) {
+  const source = sharedSnapshotSource(kind, detail);
   return Boolean(
     source && (source.matches("img") || source.querySelector("img")),
   );
@@ -436,7 +313,9 @@ function inspectSharedSnapshotDestination(
     .filter((name) => name && name !== "none");
   return {
     destinationCount: new Set(destinationElements).size,
-    destinationRect: rectSnapshot(target.getBoundingClientRect()),
+    destinationRect: motionDiagnosticsRuntime.rectSnapshot(
+      target.getBoundingClientRect(),
+    ),
     destinationNames,
     imageInsertionMs,
     imageDecodeMs,
@@ -723,11 +602,50 @@ function configureNowPlayingTransition(
   }
 }
 
+function configureDetailTransition(
+  transition: ViewTransitionBuilder,
+  detail: ResolvedDetailTransition,
+  motion: ResolvedMotionProfile,
+) {
+  const { descriptor } = detail;
+  configureSharedElement(
+    transition,
+    detail.sharedSource,
+    detail.sharedDestination,
+    motion,
+    descriptor.sharedKind === "identity"
+      ? motion.viewTransition.detailIdentity
+      : motion.viewTransition.detailArtwork,
+    descriptor.sharedKind === "identity"
+      ? SHARED_IDENTITY_CLASS
+      : SHARED_ARTWORK_CLASS,
+    descriptor.preserveSourceVisual,
+  );
+  if (descriptor.detailSurfaceSelector) {
+    configureDetailSurface(
+      transition,
+      descriptor.detailSurfaceSelector,
+      motion,
+    );
+  }
+  configureSharedTitle(
+    transition,
+    detail.titleSource,
+    detail.titleDestination,
+    motion,
+  );
+}
+
 function configureMotionTransition(
   transition: ViewTransitionBuilder,
   kind: CodaViewTransitionKind,
   motion: ResolvedMotionProfile,
+  detail: ResolvedDetailTransition | undefined,
 ) {
+  if (detail) {
+    configureDetailTransition(transition, detail, motion);
+    return;
+  }
   switch (kind) {
     case "album-detail": {
       const artworkTransition = cappedSpring(
@@ -818,343 +736,6 @@ function configureMotionTransition(
         motion,
         titleTransition,
         fadeTransition,
-      );
-      return;
-    }
-    case "artist-detail":
-      configureSharedElement(
-        transition,
-        document.querySelector(
-          "[data-coda-artist-artwork-source] [data-slot='cover']",
-        ) ??
-          document.querySelector(
-            "[data-coda-artist-artwork-source][data-slot='cover']",
-          ),
-        ":is([data-coda-artist-artwork-detail][data-slot='cover'], [data-coda-artist-artwork-detail] [data-slot='cover'])",
-        motion,
-        motion.viewTransition.detailArtwork,
-      );
-      configureDetailSurface(
-        transition,
-        "[data-coda-artist-detail-surface]",
-        motion,
-      );
-      configureSharedTitle(
-        transition,
-        document.querySelector("[data-coda-artist-name-source]"),
-        "[data-coda-artist-name-detail]",
-        motion,
-      );
-      return;
-    case "artist-detail-close": {
-      const artistArtwork = document.querySelector(
-        "[data-coda-artist-artwork-detail][data-slot='cover']",
-      );
-      const artistName = document.querySelector(
-        "[data-coda-artist-name-detail]",
-      );
-      configureSharedElement(
-        transition,
-        artistArtwork,
-        identityDestination(
-          artistArtwork,
-          ["data-coda-artist-artwork-detail"],
-          "data-coda-artist-artwork-return",
-          "[data-coda-artist-artwork-return]",
-        ),
-        motion,
-        motion.viewTransition.detailArtwork,
-      );
-      configureSharedTitle(
-        transition,
-        artistName,
-        identityDestination(
-          artistName,
-          ["data-coda-artist-name-detail"],
-          "data-coda-artist-name-return",
-          "[data-coda-artist-name-return]",
-        ),
-        motion,
-      );
-      return;
-    }
-    case "daily-detail": {
-      const dailyArtwork = document.querySelector(
-        "[data-coda-daily-artwork-source]",
-      );
-      const dailyTitle = document.querySelector(
-        "[data-coda-daily-title-source]",
-      );
-      configureSharedElement(
-        transition,
-        dailyArtwork,
-        identityDestination(
-          dailyArtwork,
-          ["data-coda-daily-artwork-source"],
-          "data-coda-daily-artwork-detail",
-          "[data-coda-daily-artwork-detail]",
-        ),
-        motion,
-        motion.viewTransition.detailArtwork,
-      );
-      configureDetailSurface(
-        transition,
-        "[data-coda-daily-detail-surface]",
-        motion,
-      );
-      configureSharedTitle(
-        transition,
-        dailyTitle,
-        identityDestination(
-          dailyTitle,
-          ["data-coda-daily-title-source"],
-          "data-coda-daily-title-detail",
-          "[data-coda-daily-title-detail]",
-        ),
-        motion,
-      );
-      return;
-    }
-    case "daily-detail-close": {
-      const dailyArtwork = document.querySelector(
-        "[data-coda-daily-artwork-detail]",
-      );
-      const dailyTitle = document.querySelector(
-        "[data-coda-daily-title-detail]",
-      );
-      configureSharedElement(
-        transition,
-        dailyArtwork,
-        identityDestination(
-          dailyArtwork,
-          ["data-coda-daily-artwork-detail"],
-          "data-coda-daily-artwork-return",
-          "[data-coda-daily-artwork-return]",
-        ),
-        motion,
-        motion.viewTransition.detailArtwork,
-        SHARED_ARTWORK_CLASS,
-        true,
-      );
-      configureSharedTitle(
-        transition,
-        dailyTitle,
-        identityDestination(
-          dailyTitle,
-          ["data-coda-daily-title-detail"],
-          "data-coda-daily-title-return",
-          "[data-coda-daily-title-return]",
-        ),
-        motion,
-      );
-      return;
-    }
-    case "discover-detail": {
-      const discoverArtwork = document.querySelector(
-        "[data-coda-discover-artwork-source]",
-      );
-      const discoverTitle = document.querySelector(
-        "[data-coda-discover-title-source]",
-      );
-      configureSharedElement(
-        transition,
-        discoverArtwork,
-        identityDestination(
-          discoverArtwork,
-          ["data-coda-discover-artwork-source", "data-coda-discover-artwork"],
-          "data-coda-discover-artwork-detail",
-          "[data-coda-discover-artwork-detail]",
-        ),
-        motion,
-        motion.viewTransition.detailArtwork,
-      );
-      configureDetailSurface(
-        transition,
-        "[data-coda-discover-detail-surface]",
-        motion,
-      );
-      configureSharedTitle(
-        transition,
-        discoverTitle,
-        identityDestination(
-          discoverTitle,
-          ["data-coda-discover-title-source", "data-coda-discover-title"],
-          "data-coda-discover-title-detail",
-          "[data-coda-discover-title-detail]",
-        ),
-        motion,
-      );
-      return;
-    }
-    case "discover-detail-close": {
-      const discoverArtwork = document.querySelector(
-        "[data-coda-discover-artwork-detail]",
-      );
-      const discoverTitle = document.querySelector(
-        "[data-coda-discover-title-detail]",
-      );
-      configureSharedElement(
-        transition,
-        discoverArtwork,
-        identityDestination(
-          discoverArtwork,
-          ["data-coda-discover-artwork-detail"],
-          "data-coda-discover-artwork-return",
-          "[data-coda-discover-artwork-return]",
-        ),
-        motion,
-        motion.viewTransition.detailArtwork,
-      );
-      configureSharedTitle(
-        transition,
-        discoverTitle,
-        identityDestination(
-          discoverTitle,
-          ["data-coda-discover-title-detail"],
-          "data-coda-discover-title-return",
-          "[data-coda-discover-title-return]",
-        ),
-        motion,
-      );
-      return;
-    }
-    case "radio-detail": {
-      const radioArtwork = document.querySelector(
-        "[data-coda-radio-artwork-source]",
-      );
-      const radioTitle = document.querySelector(
-        "[data-coda-radio-title-source]",
-      );
-      configureSharedElement(
-        transition,
-        radioArtwork,
-        identityDestination(
-          radioArtwork,
-          ["data-coda-radio-artwork-source"],
-          "data-coda-radio-artwork-detail",
-          "[data-coda-radio-artwork-detail]",
-        ),
-        motion,
-        motion.viewTransition.detailArtwork,
-      );
-      configureDetailSurface(
-        transition,
-        "[data-coda-radio-detail-surface]",
-        motion,
-      );
-      configureSharedTitle(
-        transition,
-        radioTitle,
-        identityDestination(
-          radioTitle,
-          ["data-coda-radio-title-source"],
-          "data-coda-radio-title-detail",
-          "[data-coda-radio-title-detail]",
-        ),
-        motion,
-      );
-      return;
-    }
-    case "radio-detail-close": {
-      const radioArtwork = document.querySelector(
-        "[data-coda-radio-artwork-detail]",
-      );
-      const radioTitle = document.querySelector(
-        "[data-coda-radio-title-detail]",
-      );
-      configureSharedElement(
-        transition,
-        radioArtwork,
-        identityDestination(
-          radioArtwork,
-          ["data-coda-radio-artwork-detail"],
-          "data-coda-radio-artwork-return",
-          "[data-coda-radio-artwork-return]",
-        ),
-        motion,
-        motion.viewTransition.detailArtwork,
-      );
-      configureSharedTitle(
-        transition,
-        radioTitle,
-        identityDestination(
-          radioTitle,
-          ["data-coda-radio-title-detail"],
-          "data-coda-radio-title-return",
-          "[data-coda-radio-title-return]",
-        ),
-        motion,
-      );
-      return;
-    }
-    case "playlist-detail": {
-      const playlistIdentity = document.querySelector(
-        "[data-coda-playlist-identity-source]",
-      );
-      const playlistTitle = document.querySelector(
-        "[data-coda-playlist-title-source]",
-      );
-      configureSharedElement(
-        transition,
-        playlistIdentity,
-        identityDestination(
-          playlistIdentity,
-          ["data-coda-playlist-identity-source"],
-          "data-coda-playlist-identity-detail",
-          "[data-coda-playlist-identity-detail]",
-        ),
-        motion,
-        motion.viewTransition.detailIdentity,
-        SHARED_IDENTITY_CLASS,
-      );
-      configureDetailSurface(
-        transition,
-        "[data-coda-playlist-detail-surface]",
-        motion,
-      );
-      configureSharedTitle(
-        transition,
-        playlistTitle,
-        identityDestination(
-          playlistTitle,
-          ["data-coda-playlist-title-source"],
-          "data-coda-playlist-title-detail",
-          "[data-coda-playlist-title-detail]",
-        ),
-        motion,
-      );
-      return;
-    }
-    case "playlist-detail-close": {
-      const playlistIdentity = document.querySelector(
-        "[data-coda-playlist-identity-detail]",
-      );
-      const playlistTitle = document.querySelector(
-        "[data-coda-playlist-title-detail]",
-      );
-      configureSharedElement(
-        transition,
-        playlistIdentity,
-        identityDestination(
-          playlistIdentity,
-          ["data-coda-playlist-identity-detail"],
-          "data-coda-playlist-identity-return",
-          "[data-coda-playlist-identity-return]",
-        ),
-        motion,
-        motion.viewTransition.detailIdentity,
-        SHARED_IDENTITY_CLASS,
-      );
-      configureSharedTitle(
-        transition,
-        playlistTitle,
-        identityDestination(
-          playlistTitle,
-          ["data-coda-playlist-title-detail"],
-          "data-coda-playlist-title-return",
-          "[data-coda-playlist-title-return]",
-        ),
-        motion,
       );
       return;
     }
@@ -1261,29 +842,36 @@ export async function transitionCodaViewWithMotion(
   // settled timeline.
   supersedeMotionViewTransition();
   const transitionId = ++latestMotionTransitionId;
-  const snapshotDestinations = sharedSnapshotDestinations(kind);
-  const sourceHadImage = sharedSnapshotSourceHasImage(kind);
-  const source = sharedSnapshotSource(kind);
-  const sourceCount = sharedSnapshotSourceCount(kind);
+  const detail = resolveDetailTransition(kind);
+  const diagnostics = motionDiagnosticsActive()
+    ? motionDiagnosticsRuntime
+    : undefined;
+  const snapshotDestinations = diagnostics
+    ? sharedSnapshotDestinations(kind, detail)
+    : EMPTY_TRANSITION_NAMES;
+  const sourceHadImage = diagnostics
+    ? sharedSnapshotSourceHasImage(kind, detail)
+    : false;
+  const source = diagnostics ? sharedSnapshotSource(kind, detail) : null;
+  const sourceCount = diagnostics ? sharedSnapshotSourceCount(kind, detail) : 0;
   const sourceName = source ? getComputedStyle(source).viewTransitionName : "";
   const sharedExpected = snapshotDestinations.length > 0;
-  const configuredDurationMs = configuredVisualDuration(kind, motion);
-  const diagnosticId = beginMotionDiagnostic({
+  const diagnosticId = diagnostics?.begin({
     kind,
-    configuredDurationMs,
+    configuredDurationMs: configuredVisualDuration(kind, motion),
     speed: motion.profile.speed,
     transitionClass,
     transitionNames: sourceName && sourceName !== "none" ? [sourceName] : [],
     transitionClasses: [
       transitionClass,
-      kind.startsWith("playlist")
+      detail?.descriptor.sharedKind === "identity"
         ? SHARED_IDENTITY_CLASS
         : kind.startsWith("page")
           ? "coda-motion-page"
           : SHARED_ARTWORK_CLASS,
     ],
     sourceRect: source
-      ? rectSnapshot(source.getBoundingClientRect())
+      ? diagnostics.rectSnapshot(source.getBoundingClientRect())
       : undefined,
     sourceCount,
     destinationCount: 0,
@@ -1291,7 +879,7 @@ export async function transitionCodaViewWithMotion(
   });
   let updated = false;
   let capturedDestinationCount = 0;
-  let capturedDestinationNames: readonly string[] = [];
+  let capturedDestinationNames = EMPTY_TRANSITION_NAMES;
 
   try {
     const defaultTransition = kind.startsWith("now-playing")
@@ -1314,26 +902,31 @@ export async function transitionCodaViewWithMotion(
         if (transitionId !== latestMotionTransitionId || updated) return;
         updated = true;
         await flushSync(update);
-        const destination = inspectSharedSnapshotDestination(
-          snapshotDestinations,
-          sourceHadImage,
-        );
+        const destination = diagnostics
+          ? inspectSharedSnapshotDestination(
+              snapshotDestinations,
+              sourceHadImage,
+            )
+          : undefined;
         const destinationCount = destination?.destinationCount ?? 0;
         capturedDestinationCount = destinationCount;
         capturedDestinationNames = destination?.destinationNames ?? [];
-        updateMotionDiagnostic(diagnosticId, {
-          destinationCount,
-          destinationRect: destination?.destinationRect,
-          imageInsertionMs: destination?.imageInsertionMs,
-          imageDecodeMs: destination?.imageDecodeMs,
-          transitionNames: [
-            ...(sourceName && sourceName !== "none" ? [sourceName] : []),
-            ...(destination?.destinationNames ?? []),
-          ],
-          ...endpointIssues(sourceCount, destinationCount),
-        });
+        if (diagnosticId !== undefined)
+          diagnostics?.update(diagnosticId, {
+            destinationCount,
+            destinationRect: destination?.destinationRect,
+            imageInsertionMs: destination?.imageInsertionMs,
+            imageDecodeMs: destination?.imageDecodeMs,
+            transitionNames: [
+              ...(sourceName && sourceName !== "none" ? [sourceName] : []),
+              ...(destination?.destinationNames ?? []),
+            ],
+            ...diagnostics.endpointIssues(sourceCount, destinationCount),
+          });
         void destination?.imageDecodeReady?.then((imageDecodeMs) => {
-          updateMotionDiagnostic(diagnosticId, { imageDecodeMs });
+          if (diagnosticId !== undefined) {
+            diagnostics?.update(diagnosticId, { imageDecodeMs });
+          }
         });
       },
       {
@@ -1345,7 +938,7 @@ export async function transitionCodaViewWithMotion(
         ...defaultTransition,
       },
     );
-    configureMotionTransition(transition, kind, motion);
+    configureMotionTransition(transition, kind, motion, detail);
     // TanStack Router's navigate promise resolves after its route commit and
     // render acknowledgement. Motion's builder then resolves when the browser
     // has captured that committed destination. Those are the lifecycle
@@ -1353,29 +946,33 @@ export async function transitionCodaViewWithMotion(
     const controls = await Promise.resolve(
       transition as unknown as PromiseLike<AnimationPlaybackControls>,
     );
-    const expectedTransitionNames = [
-      ...(sourceName && sourceName !== "none" ? [sourceName] : []),
-      ...capturedDestinationNames,
-    ];
-    const pseudo = inspectMotionPseudoLayers(expectedTransitionNames);
-    updateMotionDiagnostic(diagnosticId, {
-      pseudoLayers: pseudo.layers,
-      actualDurationMs: pseudo.actualDurationMs,
-      transitionNames: [
-        ...new Set([
-          ...(sourceName && sourceName !== "none" ? [sourceName] : []),
-          ...capturedDestinationNames,
-          ...pseudo.layers.group,
-        ]),
-      ],
-      sharedPaired: sharedExpected
-        ? sourceCount === 1 &&
-          capturedDestinationCount === 1 &&
-          pseudoLayersPair(pseudo.layers, expectedTransitionNames)
-        : undefined,
-    });
+    if (diagnostics && diagnosticId !== undefined) {
+      const expectedTransitionNames = [
+        ...(sourceName && sourceName !== "none" ? [sourceName] : []),
+        ...capturedDestinationNames,
+      ];
+      const pseudo = diagnostics.inspectPseudoLayers(expectedTransitionNames);
+      diagnostics.update(diagnosticId, {
+        pseudoLayers: pseudo.layers,
+        actualDurationMs: pseudo.actualDurationMs,
+        transitionNames: [
+          ...new Set([
+            ...(sourceName && sourceName !== "none" ? [sourceName] : []),
+            ...capturedDestinationNames,
+            ...pseudo.layers.group,
+          ]),
+        ],
+        sharedPaired: sharedExpected
+          ? sourceCount === 1 &&
+            capturedDestinationCount === 1 &&
+            diagnostics.pseudoLayersPair(pseudo.layers, expectedTransitionNames)
+          : undefined,
+      });
+    }
     await controls.finished;
-    finishMotionDiagnostic(diagnosticId, "finished");
+    if (diagnosticId !== undefined) {
+      diagnostics?.finish(diagnosticId, "finished");
+    }
   } catch (cause) {
     if (transitionId === latestMotionTransitionId && !updated) {
       updated = true;
@@ -1384,11 +981,15 @@ export async function transitionCodaViewWithMotion(
       );
       await update();
     }
-    finishMotionDiagnostic(
-      diagnosticId,
-      "fallback",
-      cause instanceof Error ? cause.message.slice(0, 160) : "transition-error",
-    );
+    if (diagnosticId !== undefined) {
+      diagnostics?.finish(
+        diagnosticId,
+        "fallback",
+        cause instanceof Error
+          ? cause.message.slice(0, 160)
+          : "transition-error",
+      );
+    }
   }
 }
 

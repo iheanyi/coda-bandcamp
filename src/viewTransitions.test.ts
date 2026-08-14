@@ -16,6 +16,7 @@ import {
   transitionCodaView,
   type CodaViewTransitionKind,
 } from "./viewTransitions";
+import { subscribeMotionDiagnostics } from "./motionDiagnostics";
 import {
   resetMotionProfileStoreForTests,
   selectMotionPreset,
@@ -801,6 +802,9 @@ describe("transitionCodaView with Motion view transitions", () => {
   it.each(["current", "crossfade-baseline"])(
     "keeps album-return artwork stable with the %s profile without holding decode open",
     async (presetId) => {
+      const unsubscribeDiagnostics = subscribeMotionDiagnostics(
+        () => undefined,
+      );
       enableMotionViewTransitions();
       selectMotionPreset(presetId);
       const source = document.createElement("div");
@@ -842,6 +846,7 @@ describe("transitionCodaView with Motion view transitions", () => {
       imageDecoded.resolve();
       await Promise.all([capturedCommit!, transition]);
       document.querySelector("[data-coda-album-artwork-return]")?.remove();
+      unsubscribeDiagnostics();
     },
   );
 

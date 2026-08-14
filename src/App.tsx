@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Outlet } from "@tanstack/react-router";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useMemo, useRef, useState } from "react";
 
 import { AppSidebar } from "./AppSidebar";
 import { useAppUpdater } from "./appUpdaterController";
@@ -8,7 +8,6 @@ import { notifyToast } from "@/components/ui/toastManager";
 import { useCurrentFavoriteController } from "@/features/favorites/useCurrentFavoriteController";
 import { useLocalFavoritesController } from "@/features/favorites/useLocalFavoritesController";
 import { LibraryScreenChrome } from "@/features/library/LibraryScreenChrome";
-import { MotionLabPanel } from "@/features/motion-lab/MotionLabPanel";
 import {
   readMotionLabOpen,
   writeMotionLabOpen,
@@ -40,10 +39,21 @@ import { cachedAlbumTracks, updateLibraryData } from "./libraryQueries";
 import { radioShowQueryOptions } from "@/queries/radioQueries";
 import type { Album, Track } from "./types";
 
+const motionLabAvailable = import.meta.env.MODE !== "production";
+const MotionLabPanel = motionLabAvailable
+  ? lazy(async () => {
+      const module = await import("@/features/motion-lab/MotionLabPanel");
+      return { default: module.MotionLabPanel };
+    })
+  : null;
+
 // Keep non-component exports in focused modules so Fast Refresh preserves App state.
 export default function App() {
-  const [motionLabOpen, setMotionLabOpenState] = useState(readMotionLabOpen);
+  const [motionLabOpen, setMotionLabOpenState] = useState(
+    () => motionLabAvailable && readMotionLabOpen(),
+  );
   const setMotionLabOpen = useCallback((open: boolean) => {
+    if (!motionLabAvailable) return;
     setMotionLabOpenState(open);
     writeMotionLabOpen(open);
   }, []);
@@ -132,7 +142,9 @@ export default function App() {
     onNext: next,
     onPrevious: previous,
     onTogglePlayback: togglePlayback,
-    onToggleMotionLab: () => setMotionLabOpen(!motionLabOpen),
+    onToggleMotionLab: motionLabAvailable
+      ? () => setMotionLabOpen(!motionLabOpen)
+      : undefined,
     searchRef,
   });
   const {
@@ -447,10 +459,11 @@ export default function App() {
         }
         overlays={
           <>
-            <MotionLabPanel
-              open={motionLabOpen}
-              onOpenChange={setMotionLabOpen}
-            />
+            {MotionLabPanel && motionLabOpen ? (
+              <Suspense fallback={null}>
+                <MotionLabPanel open onOpenChange={setMotionLabOpen} />
+              </Suspense>
+            ) : null}
             <PersistentAppOverlays
               connected={connected}
               controller={overlays}

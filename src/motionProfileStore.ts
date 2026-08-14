@@ -3,12 +3,14 @@ import {
   BUILTIN_MOTION_PRESETS,
   cloneMotionProfile,
   CURRENT_MOTION_PROFILE,
-  resolveMotionProfile,
   type MotionPreset,
   type MotionProfile,
-  type ResolvedMotionProfile,
   validateMotionProfile,
 } from "./motionProfile";
+import {
+  setMotionProfileRuntime,
+  snapshotMotionProfile,
+} from "./motionProfileRuntime";
 
 const STORAGE_KEY = "coda.motion-lab.v1";
 const MAX_CUSTOM_PRESETS = 24;
@@ -97,6 +99,7 @@ function readInitialState(): MotionProfileState {
 }
 
 let state = readInitialState();
+setMotionProfileRuntime(state.profile);
 
 function persist() {
   try {
@@ -116,6 +119,7 @@ function persist() {
 
 function publish(next: MotionProfileState) {
   state = next;
+  setMotionProfileRuntime(state.profile);
   persist();
   listeners.forEach((listener) => listener());
 }
@@ -268,11 +272,10 @@ export function importMotionProfile(serialized: string) {
   return profile;
 }
 
-export function snapshotMotionProfile(): ResolvedMotionProfile {
-  return resolveMotionProfile(cloneMotionProfile(state.profile));
-}
+export { snapshotMotionProfile };
 
 export function resetMotionProfileStoreForTests() {
   state = readInitialState();
+  setMotionProfileRuntime(state.profile);
   listeners.forEach((listener) => listener());
 }

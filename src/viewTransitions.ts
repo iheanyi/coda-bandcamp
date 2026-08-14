@@ -7,14 +7,11 @@ import {
   transitionCodaViewWithMotion,
 } from "./motionViewTransitions";
 import {
-  beginMotionDiagnostic,
-  finishMotionDiagnostic,
-  inspectMotionPseudoLayers,
-  rectSnapshot,
-  updateMotionDiagnostic,
-} from "./motionDiagnostics";
+  motionDiagnosticsActive,
+  motionDiagnosticsRuntime,
+} from "./motionDiagnosticsRuntime";
 import type { MotionEase, ResolvedMotionProfile } from "./motionProfile";
-import { snapshotMotionProfile } from "./motionProfileStore";
+import { snapshotMotionProfile } from "./motionProfileRuntime";
 
 export type CodaViewTransitionKind =
   | "album-detail"
@@ -77,6 +74,8 @@ const TRANSITION_CLASSES: Record<CodaViewTransitionKind, string> = {
   "page-crossfade": "coda-transition--page-crossfade",
 };
 const TRANSITION_CLASS_NAMES = Object.values(TRANSITION_CLASSES);
+const EMPTY_TRANSITION_NAMES: readonly string[] = [];
+const PAGE_TRANSITION_NAMES = ["coda-page-content"] as const;
 const PAGE_MOTION_STYLE_PROPERTIES = [
   "--coda-motion-page-enter-duration",
   "--coda-motion-page-exit-duration",
@@ -300,21 +299,28 @@ async function transitionRouterOwnedPage(
     "coda-view-transitioning",
     transitionClass,
   );
-  const source = document.querySelector<HTMLElement>(".library-pane");
-  const configuredDurationMs =
-    (motion.profile.page.enter.durationMs + motion.profile.page.enterDelayMs) /
-    motion.profile.speed;
-  const diagnosticId = beginMotionDiagnostic({
+  const diagnostics = motionDiagnosticsActive()
+    ? motionDiagnosticsRuntime
+    : undefined;
+  const source = diagnostics
+    ? document.querySelector<HTMLElement>(".library-pane")
+    : null;
+  const diagnosticId = diagnostics?.begin({
     kind,
-    configuredDurationMs,
+    configuredDurationMs:
+      (motion.profile.page.enter.durationMs +
+        motion.profile.page.enterDelayMs) /
+      motion.profile.speed,
     speed: motion.profile.speed,
     transitionClass,
     transitionNames: [],
     transitionClasses: [transitionClass, "coda-live-page"],
     sourceRect: source
-      ? rectSnapshot(source.getBoundingClientRect())
+      ? diagnostics.rectSnapshot(source.getBoundingClientRect())
       : undefined,
-    sourceCount: document.querySelectorAll(".library-pane").length,
+    sourceCount: diagnostics
+      ? document.querySelectorAll(".library-pane").length
+      : 0,
     destinationCount: 0,
     sharedExpected: false,
   });
@@ -329,7 +335,7 @@ async function transitionRouterOwnedPage(
     await update(false);
     if (transitionId !== latestTransitionId) return;
     const destination = document.querySelector<HTMLElement>(".library-pane");
-    const animationStartedAt = performance.now();
+    const animationStartedAt = diagnostics ? performance.now() : 0;
     if (destination) {
       const inlineOpacity = destination.style.getPropertyValue("opacity");
       const inlineTransform = destination.style.getPropertyValue("transform");
@@ -368,20 +374,24 @@ async function transitionRouterOwnedPage(
       activePageAnimations = [enter];
       await enter.finished;
     }
-    updateMotionDiagnostic(diagnosticId, {
-      actualDurationMs: performance.now() - animationStartedAt,
-      destinationCount: document.querySelectorAll(".library-pane").length,
-      destinationRect: destination
-        ? rectSnapshot(destination.getBoundingClientRect())
-        : undefined,
-    });
-    finishMotionDiagnostic(diagnosticId, "finished");
+    if (diagnostics && diagnosticId !== undefined) {
+      diagnostics.update(diagnosticId, {
+        actualDurationMs: performance.now() - animationStartedAt,
+        destinationCount: document.querySelectorAll(".library-pane").length,
+        destinationRect: destination
+          ? diagnostics.rectSnapshot(destination.getBoundingClientRect())
+          : undefined,
+      });
+      diagnostics.finish(diagnosticId, "finished");
+    }
   } catch (cause) {
-    finishMotionDiagnostic(
-      diagnosticId,
-      "fallback",
-      cause instanceof Error ? cause.message.slice(0, 160) : "router-error",
-    );
+    if (diagnostics && diagnosticId !== undefined) {
+      diagnostics.finish(
+        diagnosticId,
+        "fallback",
+        cause instanceof Error ? cause.message.slice(0, 160) : "router-error",
+      );
+    }
   } finally {
     if (latestTransitionId === transitionId) {
       activePageAnimations = [];
@@ -399,6 +409,9 @@ export function transitionCodaView(
 ): Promise<void> {
   const transitionId = ++latestTransitionId;
   const motionProfile = snapshotMotionProfile();
+  const diagnostics = motionDiagnosticsActive()
+    ? motionDiagnosticsRuntime
+    : undefined;
   activeTransition?.transition.skipTransition?.();
   activeTransition = undefined;
   releaseActiveSourceSuppression?.();
@@ -410,7 +423,7 @@ export function transitionCodaView(
     if (motionViewTransitionsEnabled()) {
       supersedeMotionViewTransition();
     }
-    const diagnosticId = beginMotionDiagnostic({
+    const diagnosticId = diagnostics?.begin({
       kind,
       configuredDurationMs: motionProfile.configuredDurationMs,
       speed: motionProfile.profile.speed,
@@ -421,7 +434,9 @@ export function transitionCodaView(
       destinationCount: 0,
       sharedExpected: false,
     });
-    finishMotionDiagnostic(diagnosticId, "bypassed", "skip-snapshot");
+    if (diagnosticId !== undefined) {
+      diagnostics?.finish(diagnosticId, "bypassed", "skip-snapshot");
+    }
     return Promise.resolve(update(false)).then(() => undefined);
   }
 
@@ -441,7 +456,7 @@ export function transitionCodaView(
     if (motionViewTransitionsEnabled()) {
       supersedeMotionViewTransition();
     }
-    const diagnosticId = beginMotionDiagnostic({
+    const diagnosticId = diagnostics?.begin({
       kind,
       configuredDurationMs: motionProfile.configuredDurationMs,
       speed: motionProfile.profile.speed,
@@ -452,11 +467,13 @@ export function transitionCodaView(
       destinationCount: 0,
       sharedExpected: false,
     });
-    finishMotionDiagnostic(
-      diagnosticId,
-      "bypassed",
-      prefersReducedMotion ? "reduced-motion" : "native-unavailable",
-    );
+    if (diagnosticId !== undefined) {
+      diagnostics?.finish(
+        diagnosticId,
+        "bypassed",
+        prefersReducedMotion ? "reduced-motion" : "native-unavailable",
+      );
+    }
     return Promise.resolve(update(false)).then(() => undefined);
   }
 
@@ -500,12 +517,15 @@ export function transitionCodaView(
         if (nativePageTransition) {
           const destination =
             document.querySelector<HTMLElement>(".library-pane");
-          updateMotionDiagnostic(diagnosticId, {
-            destinationCount: document.querySelectorAll(".library-pane").length,
-            destinationRect: destination
-              ? rectSnapshot(destination.getBoundingClientRect())
-              : undefined,
-          });
+          if (diagnostics && diagnosticId !== undefined) {
+            diagnostics.update(diagnosticId, {
+              destinationCount:
+                document.querySelectorAll(".library-pane").length,
+              destinationRect: destination
+                ? diagnostics.rectSnapshot(destination.getBoundingClientRect())
+                : undefined,
+            });
+          }
         }
         releaseSourceSuppression = suppressSourcesThatSurvive(sourceCandidates);
         if (latestTransitionId === transitionId) {
@@ -525,7 +545,9 @@ export function transitionCodaView(
     }
     clearTransitionClasses();
     clearTransitionSupport();
-    finishMotionDiagnostic(diagnosticId, "fallback", "native-transition-error");
+    if (diagnosticId !== undefined) {
+      diagnostics?.finish(diagnosticId, "fallback", "native-transition-error");
+    }
     if (!updated) {
       updated = true;
       update();
@@ -539,23 +561,27 @@ export function transitionCodaView(
     "coda-view-transitioning",
     transitionClass,
   );
-  const source = nativePageTransition
-    ? document.querySelector<HTMLElement>(".library-pane")
-    : null;
-  const sourceCount = nativePageTransition
-    ? document.querySelectorAll(".library-pane").length
-    : 0;
-  const transitionNames = nativePageTransition ? ["coda-page-content"] : [];
-  const configuredDurationMs = nativePageTransition
-    ? Math.max(
-        motionProfile.profile.page.exit.durationMs,
-        motionProfile.profile.page.enter.durationMs +
-          motionProfile.profile.page.enterDelayMs,
-      ) / motionProfile.profile.speed
-    : motionProfile.configuredDurationMs;
-  const diagnosticId = beginMotionDiagnostic({
+  const source =
+    diagnostics && nativePageTransition
+      ? document.querySelector<HTMLElement>(".library-pane")
+      : null;
+  const sourceCount =
+    diagnostics && nativePageTransition
+      ? document.querySelectorAll(".library-pane").length
+      : 0;
+  const transitionNames =
+    diagnostics && nativePageTransition
+      ? PAGE_TRANSITION_NAMES
+      : EMPTY_TRANSITION_NAMES;
+  const diagnosticId = diagnostics?.begin({
     kind,
-    configuredDurationMs,
+    configuredDurationMs: nativePageTransition
+      ? Math.max(
+          motionProfile.profile.page.exit.durationMs,
+          motionProfile.profile.page.enter.durationMs +
+            motionProfile.profile.page.enterDelayMs,
+        ) / motionProfile.profile.speed
+      : motionProfile.configuredDurationMs,
     speed: motionProfile.profile.speed,
     transitionClass,
     transitionNames,
@@ -564,7 +590,7 @@ export function transitionCodaView(
       nativePageTransition ? "coda-native-page" : "coda-native-fallback",
     ],
     sourceRect: source
-      ? rectSnapshot(source.getBoundingClientRect())
+      ? diagnostics.rectSnapshot(source.getBoundingClientRect())
       : undefined,
     sourceCount,
     destinationCount: 0,
@@ -583,16 +609,19 @@ export function transitionCodaView(
       transition.skipTransition?.();
     }
     const lifecycle = [
-      transition.finished.then(
-        () => finishMotionDiagnostic(diagnosticId, "finished"),
-        handleTransitionFailure,
-      ),
+      transition.finished.then(() => {
+        if (diagnosticId !== undefined) {
+          diagnostics?.finish(diagnosticId, "finished");
+        }
+      }, handleTransitionFailure),
       transition.ready?.then(() => {
-        const pseudo = inspectMotionPseudoLayers(transitionNames);
-        updateMotionDiagnostic(diagnosticId, {
-          actualDurationMs: pseudo.actualDurationMs,
-          pseudoLayers: pseudo.layers,
-        });
+        if (diagnostics && diagnosticId !== undefined) {
+          const pseudo = diagnostics.inspectPseudoLayers(transitionNames);
+          diagnostics.update(diagnosticId, {
+            actualDurationMs: pseudo.actualDurationMs,
+            pseudoLayers: pseudo.layers,
+          });
+        }
       }, handleTransitionFailure),
       transition.updateCallbackDone?.then(undefined, handleTransitionFailure),
     ].filter((promise): promise is Promise<void> => Boolean(promise));

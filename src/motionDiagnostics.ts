@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { installMotionDiagnosticsRuntime } from "./motionDiagnosticsRuntime";
 import type { CodaViewTransitionKind } from "./viewTransitions";
 
 export type MotionRect = Readonly<{
@@ -40,6 +41,16 @@ export type MotionTransitionDiagnostic = Readonly<{
   duplicateEndpoints: readonly string[];
 }>;
 
+export type MotionDiagnosticInput = Omit<
+  MotionTransitionDiagnostic,
+  | "id"
+  | "status"
+  | "startedAt"
+  | "pseudoLayers"
+  | "missingEndpoints"
+  | "duplicateEndpoints"
+>;
+
 const EMPTY_LAYERS: MotionPseudoLayers = { group: [], old: [], new: [] };
 const listeners = new Set<() => void>();
 let nextId = 1;
@@ -67,17 +78,7 @@ export function useMotionDiagnostic() {
   );
 }
 
-export function beginMotionDiagnostic(
-  input: Omit<
-    MotionTransitionDiagnostic,
-    | "id"
-    | "status"
-    | "startedAt"
-    | "pseudoLayers"
-    | "missingEndpoints"
-    | "duplicateEndpoints"
-  >,
-) {
+export function beginMotionDiagnostic(input: MotionDiagnosticInput) {
   if (current?.status === "active") {
     publish({
       ...current,
@@ -211,3 +212,14 @@ export function resetMotionDiagnosticsForTests() {
   nextId = 1;
   listeners.forEach((listener) => listener());
 }
+
+installMotionDiagnosticsRuntime({
+  active: () => listeners.size > 0,
+  begin: beginMotionDiagnostic,
+  endpointIssues,
+  finish: finishMotionDiagnostic,
+  inspectPseudoLayers: inspectMotionPseudoLayers,
+  pseudoLayersPair,
+  rectSnapshot,
+  update: updateMotionDiagnostic,
+});
