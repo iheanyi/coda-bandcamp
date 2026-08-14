@@ -14,7 +14,11 @@ import {
   motionDiagnosticsActive,
   motionDiagnosticsRuntime,
 } from "./motionDiagnosticsRuntime";
-import type { ResolvedMotionProfile } from "./motionProfile";
+import {
+  CODA_DETAIL_TRANSITION_OVERRIDES,
+  MOTION_EASINGS,
+  type ResolvedMotionProfile,
+} from "./motionProfile";
 import { snapshotMotionProfile } from "./motionProfileRuntime";
 import type {
   CodaViewTransitionKind,
@@ -25,21 +29,8 @@ const SHARED_ARTWORK_CLASS = "coda-motion-shared-artwork";
 const SHARED_IDENTITY_CLASS = "coda-motion-shared-identity";
 const SHARED_TITLE_CLASS = "coda-motion-shared-title";
 const DETAIL_SURFACE_CLASS = "coda-motion-detail-surface";
-const ALBUM_DETAIL_ARTWORK_VISUAL_DURATION_MS = 220;
-const ALBUM_DETAIL_ARTWORK_BOUNCE = 0.08;
-const ALBUM_DETAIL_TITLE_VISUAL_DURATION_MS = 190;
-const ALBUM_DETAIL_TITLE_BOUNCE = 0.04;
-const ALBUM_DETAIL_FADE_DURATION_MS = 130;
-const NOW_PLAYING_ARTWORK_VISUAL_DURATION_MS = 200;
-const NOW_PLAYING_ARTWORK_BOUNCE = 0.1;
-const NOW_PLAYING_TITLE_VISUAL_DURATION_MS = 180;
-const NOW_PLAYING_TITLE_BOUNCE = 0.05;
-const NOW_PLAYING_FADE_DURATION_MS = 130;
-const NOW_PLAYING_COMPONENT_ENTER_DURATION_MS = 140;
-const NOW_PLAYING_COMPONENT_EXIT_DURATION_MS = 100;
-const NOW_PLAYING_HEADER_DELAY_MS = 20;
-const NOW_PLAYING_DETAILS_DELAY_MS = 35;
-const NOW_PLAYING_EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
+const ALBUM_DETAIL = CODA_DETAIL_TRANSITION_OVERRIDES.album;
+const NOW_PLAYING = CODA_DETAIL_TRANSITION_OVERRIDES.nowPlaying;
 const MOTION_OWNED_VIEW_TRANSITION_NAME = /^motion-view-\d+$/;
 const EMPTY_TRANSITION_NAMES: readonly string[] = [];
 let latestMotionTransitionId = 0;
@@ -56,7 +47,7 @@ function cappedTween(
   return {
     duration:
       cappedDurationMs(durationMs, maximumMs) / motion.profile.speed / 1_000,
-    ease: NOW_PLAYING_EASE,
+    ease: MOTION_EASINGS[NOW_PLAYING.ease],
   };
 }
 
@@ -473,29 +464,29 @@ function configureNowPlayingTransition(
 ) {
   const artworkTransition = cappedSpring(
     motion.profile.shared.artwork.durationMs,
-    NOW_PLAYING_ARTWORK_VISUAL_DURATION_MS,
-    NOW_PLAYING_ARTWORK_BOUNCE,
+    NOW_PLAYING.artwork.maximumDurationMs,
+    NOW_PLAYING.artwork.bounce,
     motion,
   );
   const titleTransition = cappedSpring(
     motion.profile.shared.title.durationMs,
-    NOW_PLAYING_TITLE_VISUAL_DURATION_MS,
-    NOW_PLAYING_TITLE_BOUNCE,
+    NOW_PLAYING.title.maximumDurationMs,
+    NOW_PLAYING.title.bounce,
     motion,
   );
   const fadeTransition = cappedTween(
     motion.profile.shared.crossfade.durationMs,
-    NOW_PLAYING_FADE_DURATION_MS,
+    NOW_PLAYING.fadeMaximumDurationMs,
     motion,
   );
   const componentEnter = cappedTween(
     motion.profile.component.enter.durationMs,
-    NOW_PLAYING_COMPONENT_ENTER_DURATION_MS,
+    NOW_PLAYING.componentEnterMaximumDurationMs,
     motion,
   );
   const componentExit = cappedTween(
     motion.profile.component.exit.durationMs,
-    NOW_PLAYING_COMPONENT_EXIT_DURATION_MS,
+    NOW_PLAYING.componentExitMaximumDurationMs,
     motion,
   );
   const artworkSource = document.querySelector(
@@ -566,7 +557,7 @@ function configureNowPlayingTransition(
       },
       {
         ...componentEnter,
-        delay: NOW_PLAYING_HEADER_DELAY_MS / motion.profile.speed / 1_000,
+        delay: NOW_PLAYING.headerDelayMs / motion.profile.speed / 1_000,
       },
     );
     details.enter(
@@ -579,7 +570,7 @@ function configureNowPlayingTransition(
       },
       {
         ...componentEnter,
-        delay: NOW_PLAYING_DETAILS_DELAY_MS / motion.profile.speed / 1_000,
+        delay: NOW_PLAYING.detailsDelayMs / motion.profile.speed / 1_000,
       },
     );
   } else {
@@ -650,19 +641,19 @@ function configureMotionTransition(
     case "album-detail": {
       const artworkTransition = cappedSpring(
         motion.profile.shared.artwork.durationMs,
-        ALBUM_DETAIL_ARTWORK_VISUAL_DURATION_MS,
-        ALBUM_DETAIL_ARTWORK_BOUNCE,
+        ALBUM_DETAIL.artwork.maximumDurationMs,
+        ALBUM_DETAIL.artwork.bounce,
         motion,
       );
       const titleTransition = cappedSpring(
         motion.profile.shared.title.durationMs,
-        ALBUM_DETAIL_TITLE_VISUAL_DURATION_MS,
-        ALBUM_DETAIL_TITLE_BOUNCE,
+        ALBUM_DETAIL.title.maximumDurationMs,
+        ALBUM_DETAIL.title.bounce,
         motion,
       );
       const fadeTransition = cappedTween(
         motion.profile.shared.crossfade.durationMs,
-        ALBUM_DETAIL_FADE_DURATION_MS,
+        ALBUM_DETAIL.fadeMaximumDurationMs,
         motion,
       );
       configureSharedElement(
@@ -694,19 +685,19 @@ function configureMotionTransition(
       );
       const artworkTransition = cappedSpring(
         motion.profile.shared.artwork.durationMs,
-        ALBUM_DETAIL_ARTWORK_VISUAL_DURATION_MS,
-        ALBUM_DETAIL_ARTWORK_BOUNCE,
+        ALBUM_DETAIL.artwork.maximumDurationMs,
+        ALBUM_DETAIL.artwork.bounce,
         motion,
       );
       const titleTransition = cappedSpring(
         motion.profile.shared.title.durationMs,
-        ALBUM_DETAIL_TITLE_VISUAL_DURATION_MS,
-        ALBUM_DETAIL_TITLE_BOUNCE,
+        ALBUM_DETAIL.title.maximumDurationMs,
+        ALBUM_DETAIL.title.bounce,
         motion,
       );
       const fadeTransition = cappedTween(
         motion.profile.shared.crossfade.durationMs,
-        ALBUM_DETAIL_FADE_DURATION_MS,
+        ALBUM_DETAIL.fadeMaximumDurationMs,
         motion,
       );
       configureSharedElement(
@@ -768,27 +759,27 @@ function configuredVisualDuration(
     const durations = [
       cappedDurationMs(
         profile.shared.artwork.durationMs,
-        NOW_PLAYING_ARTWORK_VISUAL_DURATION_MS,
+        NOW_PLAYING.artwork.maximumDurationMs,
       ),
       cappedDurationMs(
         profile.shared.title.durationMs,
-        NOW_PLAYING_TITLE_VISUAL_DURATION_MS,
+        NOW_PLAYING.title.maximumDurationMs,
       ),
       cappedDurationMs(
         profile.shared.crossfade.durationMs,
-        NOW_PLAYING_FADE_DURATION_MS,
+        NOW_PLAYING.fadeMaximumDurationMs,
       ),
       cappedDurationMs(
         profile.component.exit.durationMs,
-        NOW_PLAYING_COMPONENT_EXIT_DURATION_MS,
+        NOW_PLAYING.componentExitMaximumDurationMs,
       ),
     ];
     if (!kind.endsWith("close")) {
       durations.push(
         cappedDurationMs(
           profile.component.enter.durationMs,
-          NOW_PLAYING_COMPONENT_ENTER_DURATION_MS,
-        ) + NOW_PLAYING_DETAILS_DELAY_MS,
+          NOW_PLAYING.componentEnterMaximumDurationMs,
+        ) + NOW_PLAYING.detailsDelayMs,
       );
     }
     return scale(Math.max(...durations));
@@ -798,15 +789,15 @@ function configuredVisualDuration(
       Math.max(
         cappedDurationMs(
           profile.shared.artwork.durationMs,
-          ALBUM_DETAIL_ARTWORK_VISUAL_DURATION_MS,
+          ALBUM_DETAIL.artwork.maximumDurationMs,
         ),
         cappedDurationMs(
           profile.shared.title.durationMs,
-          ALBUM_DETAIL_TITLE_VISUAL_DURATION_MS,
+          ALBUM_DETAIL.title.maximumDurationMs,
         ),
         cappedDurationMs(
           profile.shared.crossfade.durationMs,
-          ALBUM_DETAIL_FADE_DURATION_MS,
+          ALBUM_DETAIL.fadeMaximumDurationMs,
         ),
       ),
     );
@@ -879,15 +870,15 @@ export async function transitionCodaViewWithMotion(
     const defaultTransition = kind.startsWith("now-playing")
       ? cappedSpring(
           motion.profile.shared.artwork.durationMs,
-          NOW_PLAYING_ARTWORK_VISUAL_DURATION_MS,
-          NOW_PLAYING_ARTWORK_BOUNCE,
+          NOW_PLAYING.artwork.maximumDurationMs,
+          NOW_PLAYING.artwork.bounce,
           motion,
         )
       : kind.startsWith("album-detail")
         ? cappedSpring(
             motion.profile.shared.artwork.durationMs,
-            ALBUM_DETAIL_ARTWORK_VISUAL_DURATION_MS,
-            ALBUM_DETAIL_ARTWORK_BOUNCE,
+            ALBUM_DETAIL.artwork.maximumDurationMs,
+            ALBUM_DETAIL.artwork.bounce,
             motion,
           )
         : undefined;

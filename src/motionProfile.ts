@@ -95,13 +95,54 @@ export type ResolvedMotionProfile = Readonly<{
   configuredDurationMs: number;
 }>;
 
-const EASINGS: Record<MotionEase, [number, number, number, number] | "linear"> =
-  {
-    emphasized: [0.22, 1, 0.36, 1],
-    standard: [0.4, 0, 0.2, 1],
-    accelerate: [0.4, 0, 1, 1],
-    linear: "linear",
-  };
+export const MOTION_EASINGS: Record<
+  MotionEase,
+  [number, number, number, number] | "linear"
+> = {
+  emphasized: [0.22, 1, 0.36, 1],
+  standard: [0.4, 0, 0.2, 1],
+  accelerate: [0.4, 0, 1, 1],
+  linear: "linear",
+};
+
+type CappedSpringOverride = Readonly<{
+  maximumDurationMs: number;
+  bounce: number;
+}>;
+
+export const CODA_DETAIL_TRANSITION_OVERRIDES = {
+  album: {
+    artwork: { maximumDurationMs: 220, bounce: 0.08 },
+    title: { maximumDurationMs: 190, bounce: 0.04 },
+    fadeMaximumDurationMs: 130,
+  },
+  nowPlaying: {
+    artwork: { maximumDurationMs: 200, bounce: 0.1 },
+    title: { maximumDurationMs: 180, bounce: 0.05 },
+    fadeMaximumDurationMs: 130,
+    componentEnterMaximumDurationMs: 140,
+    componentExitMaximumDurationMs: 100,
+    headerDelayMs: 20,
+    detailsDelayMs: 35,
+    ease: "emphasized" as const,
+  },
+} as const satisfies Readonly<{
+  album: Readonly<{
+    artwork: CappedSpringOverride;
+    title: CappedSpringOverride;
+    fadeMaximumDurationMs: number;
+  }>;
+  nowPlaying: Readonly<{
+    artwork: CappedSpringOverride;
+    title: CappedSpringOverride;
+    fadeMaximumDurationMs: number;
+    componentEnterMaximumDurationMs: number;
+    componentExitMaximumDurationMs: number;
+    headerDelayMs: number;
+    detailsDelayMs: number;
+    ease: MotionEase;
+  }>;
+}>;
 
 function timing(
   durationMs: number,
@@ -453,7 +494,7 @@ function resolveTiming(value: MotionTiming, speed: number): Transition {
   if (value.type === "spring") {
     return { type: "spring", visualDuration: duration, bounce: value.bounce };
   }
-  return { duration, ease: EASINGS[value.ease] };
+  return { duration, ease: MOTION_EASINGS[value.ease] };
 }
 
 function resolveViewTiming(
@@ -464,7 +505,7 @@ function resolveViewTiming(
   if (value.type === "spring") {
     return { type: spring, visualDuration: duration, bounce: value.bounce };
   }
-  return { duration, ease: EASINGS[value.ease] };
+  return { duration, ease: MOTION_EASINGS[value.ease] };
 }
 
 export function resolveMotionProfile(
