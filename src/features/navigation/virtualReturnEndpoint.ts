@@ -4,7 +4,7 @@ import {
   type MarkerRelease,
 } from "./temporaryDomMarkers";
 
-const MAX_VIRTUAL_RETURN_ATTEMPTS = 8;
+const DEFAULT_MAXIMUM_FRAME_WAITS = 8;
 
 function nextDomOpportunity(): Promise<void> {
   return new Promise((resolve) => {
@@ -18,28 +18,30 @@ function nextDomOpportunity(): Promise<void> {
 
 /**
  * Restore the persistent scroll surface before asking a virtualizer for the
- * exact entity/slot that initiated navigation. The frame count and per-frame
- * frame budget gives the virtualizer bounded opportunities to mount it.
+ * exact entity/slot that initiated navigation. Callers choose how many frames
+ * the View Transition snapshot may wait for the virtualizer to mount it.
  */
 export async function awaitVirtualReturnTrigger({
   findTrigger,
   isCurrent,
+  maximumFrameWaits = DEFAULT_MAXIMUM_FRAME_WAITS,
   scrollRoot,
   scrollTop,
 }: Readonly<{
   findTrigger: () => HTMLElement | undefined;
   isCurrent: () => boolean;
+  maximumFrameWaits?: number;
   scrollRoot: HTMLElement | null;
   scrollTop: number;
 }>): Promise<HTMLElement | undefined> {
   if (!isCurrent()) return undefined;
   if (scrollRoot) scrollRoot.scrollTop = scrollTop;
 
-  for (let attempt = 0; attempt <= MAX_VIRTUAL_RETURN_ATTEMPTS; attempt += 1) {
+  for (let frameWaits = 0; frameWaits <= maximumFrameWaits; frameWaits += 1) {
     if (!isCurrent()) return undefined;
     const trigger = findTrigger();
     if (trigger?.isConnected) return trigger;
-    if (attempt === MAX_VIRTUAL_RETURN_ATTEMPTS) return undefined;
+    if (frameWaits === maximumFrameWaits) return undefined;
     await nextDomOpportunity();
   }
 

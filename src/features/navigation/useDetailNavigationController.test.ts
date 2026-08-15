@@ -668,6 +668,47 @@ describe("useDetailNavigationController", () => {
     );
   });
 
+  it("starts album Back after one frame when the virtual return card is late", async () => {
+    const albumId = parseAlbumIdParam("album-late-return");
+    const source = albumCard(albumId);
+    const scrollRoot = document.createElement("main");
+    scrollRoot.scrollTop = 216;
+    document.body.append(scrollRoot);
+    const { result, rerender } = renderHook(
+      ({ route }) => useDetailNavigationController(route),
+      { initialProps: { route: destination(undefined, "entry-1") } },
+    );
+    result.current.scrollRootRef.current = scrollRoot;
+
+    await act(() =>
+      result.current.open({
+        albumId,
+        kind: "album",
+        sourceTrigger: source.artworkLink,
+      }),
+    );
+    const heading = document.createElement("h1");
+    heading.id = "album-detail-heading";
+    heading.tabIndex = -1;
+    document.body.append(heading);
+    rerender({
+      route: destination({ kind: "album", albumId }, "entry-2"),
+    });
+    await waitFor(() => expect(heading).toHaveFocus());
+    source.card.remove();
+    const requestAnimationFrame = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        callback(0);
+        return 1;
+      });
+
+    await act(() => result.current.back());
+
+    expect(requestAnimationFrame).toHaveBeenCalledOnce();
+    expect(scrollRoot.scrollTop).toBe(216);
+  });
+
   it("reverse-morphs an artist name and artwork into the exact source card", async () => {
     const artistKey = parseArtistKeyParam("night archive");
     const source = artistCard(artistKey);

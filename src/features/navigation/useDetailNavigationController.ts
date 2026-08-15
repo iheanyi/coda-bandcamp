@@ -88,10 +88,10 @@ export type DetailNavigationRequest =
   | DiscoverDetailNavigationRequest
   | NowPlayingNavigationRequest;
 
-type CoordinatedDetailKind = DetailNavigationRequest["kind"];
-type CoordinatedDetailDestination = Extract<
+type NavigableDetailKind = DetailNavigationRequest["kind"];
+type NavigableDetailDestination = Extract<
   CodaDetailDestination,
-  Readonly<{ kind: CoordinatedDetailKind }>
+  Readonly<{ kind: NavigableDetailKind }>
 >;
 
 export type DetailNavigationOutcome = "navigated" | "refocused";
@@ -103,30 +103,33 @@ export type DetailNavigationController = Readonly<{
   transitionPrimary: (update: CodaViewTransitionUpdate) => Promise<void>;
 }>;
 
-type DetailCoordinator = {
+type DetailNavigationState = {
   focusedIdentity: number;
   navigation: NavigationTransactionState;
   restoreFocus: boolean;
   returnFocusRequested: boolean;
   returnToDestinationHeading: boolean;
-  target?: CoordinatedDetailDestination;
+  target?: NavigableDetailDestination;
 };
 
-type DetailCoordinators = Record<CoordinatedDetailKind, DetailCoordinator>;
+type DetailNavigationStates = Record<
+  NavigableDetailKind,
+  DetailNavigationState
+>;
 
 type ManualFocusRequest = Readonly<{
   headingId: string;
-  target: CoordinatedDetailDestination;
+  target: NavigableDetailDestination;
 }>;
 
-const DESTINATION_HEADING_IDS: Record<CoordinatedDetailKind, string> = {
+const DESTINATION_HEADING_IDS: Record<NavigableDetailKind, string> = {
   album: "album-detail-heading",
   artist: "artist-detail-heading",
   "discover-release": "discover-release-heading",
   "now-playing": "now-playing-heading",
 };
 
-const ROUTE_KEYS: Record<CoordinatedDetailKind, string> = {
+const ROUTE_KEYS: Record<NavigableDetailKind, string> = {
   album: "album-detail",
   artist: "artist-detail",
   "discover-release": "discover-detail",
@@ -134,8 +137,9 @@ const ROUTE_KEYS: Record<CoordinatedDetailKind, string> = {
 };
 
 const MAX_DOM_RESTORE_ATTEMPTS = 8;
+const ALBUM_RETURN_MAXIMUM_FRAME_WAITS = 1;
 
-function createCoordinator(): DetailCoordinator {
+function createDetailNavigationState(): DetailNavigationState {
   return {
     focusedIdentity: 0,
     navigation: createNavigationTransactionState(),
@@ -145,18 +149,18 @@ function createCoordinator(): DetailCoordinator {
   };
 }
 
-function createDetailCoordinators(): DetailCoordinators {
+function createDetailNavigationStates(): DetailNavigationStates {
   return {
-    album: createCoordinator(),
-    artist: createCoordinator(),
-    "discover-release": createCoordinator(),
-    "now-playing": createCoordinator(),
+    album: createDetailNavigationState(),
+    artist: createDetailNavigationState(),
+    "discover-release": createDetailNavigationState(),
+    "now-playing": createDetailNavigationState(),
   };
 }
 
 function targetFromRequest(
   request: DetailNavigationRequest,
-): CoordinatedDetailDestination {
+): NavigableDetailDestination {
   switch (request.kind) {
     case "album":
       return { kind: "album", albumId: request.albumId };
@@ -176,7 +180,7 @@ function targetFromRequest(
 }
 
 function targetMatchesDestination(
-  target: CoordinatedDetailDestination | undefined,
+  target: NavigableDetailDestination | undefined,
   destination: CodaDetailDestination | undefined,
 ): boolean {
   if (!target || !destination || target.kind !== destination.kind) return false;
@@ -219,7 +223,7 @@ function transitionKindForOpen(
 
 function replacementNavigationTrigger(
   transaction: NavigationTransaction,
-  target: CoordinatedDetailDestination,
+  target: NavigableDetailDestination,
 ): HTMLElement | undefined {
   const sourceSlot = transaction.sourceTrigger?.dataset.navigationSlot;
   switch (target.kind) {
@@ -310,7 +314,7 @@ function destinationHeadingId(
 /**
  * Owns transient DOM choreography for root-level detail routes. The generated
  * route location remains the sole destination state; refs hold only bounded
- * source identity, return focus, and return scroll coordination.
+ * source identity plus the focus and scroll state needed for Back.
  */
 export function useDetailNavigationController(
   destination: CodaRouteDestination,
@@ -319,8 +323,8 @@ export function useDetailNavigationController(
   const router = useRouter();
   const scrollRootRef = useRef<HTMLElement>(null);
   const pendingScrollTopRef = useRef<number | undefined>(undefined);
-  const coordinatorsRef = useRef<DetailCoordinators>(
-    createDetailCoordinators(),
+  const navigationStatesRef = useRef<DetailNavigationStates>(
+    createDetailNavigationStates(),
   );
   const activeSourceReleaseRef = useRef<(() => void) | undefined>(undefined);
   const returnGenerationRef = useRef(0);
@@ -401,10 +405,10 @@ export function useDetailNavigationController(
       }
 
       const source = prepareDetailSource(request, destination);
-      const coordinator = coordinatorsRef.current[request.kind];
+      const navigationState = navigationStatesRef.current[request.kind];
       const returnScrollTop = scrollRootRef.current?.scrollTop ?? 0;
-      coordinator.navigation = replaceNavigationTransaction(
-        coordinator.navigation,
+      navigationState.navigation = replaceNavigationTransaction(
+        navigationState.navigation,
         {
           routeKey: ROUTE_KEYS[request.kind],
           intent: "forward",
@@ -417,10 +421,10 @@ export function useDetailNavigationController(
           sharedElementOwner: source.sharedElementOwner,
         },
       );
-      coordinator.target = target;
-      coordinator.restoreFocus = true;
-      coordinator.returnFocusRequested = false;
-      coordinator.returnToDestinationHeading =
+      navigationState.target = target;
+      navigationState.restoreFocus = true;
+      navigationState.returnFocusRequested = false;
+      navigationState.returnToDestinationHeading =
         request.kind === "now-playing" &&
         destination.detail?.kind === "discover-release";
       manualFocusRequestRef.current = undefined;
@@ -450,7 +454,7 @@ export function useDetailNavigationController(
   );
 
   const commitFallback = useCallback(
-    async (detail: CoordinatedDetailDestination) => {
+    async (detail: NavigableDetailDestination) => {
       switch (detail.kind) {
         case "album":
         case "now-playing":
@@ -493,19 +497,23 @@ export function useDetailNavigationController(
       ) {
         return;
       }
-      const coordinator = coordinatorsRef.current[detail.kind];
-      const transaction = targetMatchesDestination(coordinator.target, detail)
-        ? coordinator.navigation.active
+      const navigationState = navigationStatesRef.current[detail.kind];
+      const transaction = targetMatchesDestination(
+        navigationState.target,
+        detail,
+      )
+        ? navigationState.navigation.active
         : undefined;
-      const returnToDestinationHeading = coordinator.returnToDestinationHeading;
+      const returnToDestinationHeading =
+        navigationState.returnToDestinationHeading;
       const discoverCardReturn =
         detail.kind === "discover-release" &&
         returnsToDiscoverCard(transaction);
       const returnGeneration = ++returnGenerationRef.current;
       const isCurrentReturn = () =>
         returnGenerationRef.current === returnGeneration;
-      coordinator.returnFocusRequested = Boolean(transaction);
-      coordinator.restoreFocus = options.restoreFocus !== false;
+      navigationState.returnFocusRequested = Boolean(transaction);
+      navigationState.restoreFocus = options.restoreFocus !== false;
       const returnScrollTop = transaction
         ? resolveNavigationReturnScrollTop(transaction)
         : 0;
@@ -537,6 +545,7 @@ export function useDetailNavigationController(
                 findTrigger: () =>
                   replacementNavigationTrigger(transaction, detail),
                 isCurrent: isCurrentReturn,
+                maximumFrameWaits: ALBUM_RETURN_MAXIMUM_FRAME_WAITS,
                 scrollRoot: scrollRootRef.current,
                 scrollTop: returnScrollTop,
               });
@@ -594,15 +603,16 @@ export function useDetailNavigationController(
           if (focus.target) {
             focus.target.focus({ preventScroll: true });
             if (
-              coordinator.navigation.active?.identity === transaction.identity
+              navigationState.navigation.active?.identity ===
+              transaction.identity
             ) {
-              coordinator.navigation = settleNavigationTransaction(
-                coordinator.navigation,
+              navigationState.navigation = settleNavigationTransaction(
+                navigationState.navigation,
                 transaction.identity,
               );
-              coordinator.target = undefined;
-              coordinator.returnFocusRequested = false;
-              coordinator.returnToDestinationHeading = false;
+              navigationState.target = undefined;
+              navigationState.returnFocusRequested = false;
+              navigationState.returnToDestinationHeading = false;
             }
           }
         }
@@ -667,32 +677,32 @@ export function useDetailNavigationController(
       run();
     };
 
-    for (const coordinator of Object.values(coordinatorsRef.current)) {
-      const transaction = coordinator.navigation.active;
+    for (const navigationState of Object.values(navigationStatesRef.current)) {
+      const transaction = navigationState.navigation.active;
       if (
         !transaction ||
-        !coordinator.target ||
-        !coordinator.returnFocusRequested ||
-        targetMatchesDestination(coordinator.target, destination.detail)
+        !navigationState.target ||
+        !navigationState.returnFocusRequested ||
+        targetMatchesDestination(navigationState.target, destination.detail)
       ) {
         continue;
       }
 
       const settle = () => {
-        coordinator.returnFocusRequested = false;
-        coordinator.navigation = settleNavigationTransaction(
-          coordinator.navigation,
+        navigationState.returnFocusRequested = false;
+        navigationState.navigation = settleNavigationTransaction(
+          navigationState.navigation,
           transaction.identity,
         );
-        coordinator.target = undefined;
-        coordinator.returnToDestinationHeading = false;
+        navigationState.target = undefined;
+        navigationState.returnToDestinationHeading = false;
       };
-      if (!coordinator.restoreFocus) {
+      if (!navigationState.restoreFocus) {
         settle();
         return;
       }
       schedule(() => {
-        if (coordinator.returnToDestinationHeading) {
+        if (navigationState.returnToDestinationHeading) {
           const headingId = destinationHeadingId(destination.detail);
           return headingId
             ? (document.getElementById(headingId) ?? undefined)
@@ -700,7 +710,7 @@ export function useDetailNavigationController(
         }
         const replacement = replacementNavigationTrigger(
           transaction,
-          coordinator.target!,
+          navigationState.target!,
         );
         return resolveNavigationReturnFocus(transaction, replacement).target;
       }, settle);
@@ -731,12 +741,12 @@ export function useDetailNavigationController(
       };
     }
 
-    for (const coordinator of Object.values(coordinatorsRef.current)) {
-      const transaction = coordinator.navigation.active;
+    for (const navigationState of Object.values(navigationStatesRef.current)) {
+      const transaction = navigationState.navigation.active;
       if (
         !transaction ||
-        !targetMatchesDestination(coordinator.target, destination.detail) ||
-        coordinator.focusedIdentity === transaction.identity
+        !targetMatchesDestination(navigationState.target, destination.detail) ||
+        navigationState.focusedIdentity === transaction.identity
       ) {
         continue;
       }
@@ -745,7 +755,7 @@ export function useDetailNavigationController(
           document.getElementById(transaction.destinationHeadingId) ??
           undefined,
         () => {
-          coordinator.focusedIdentity = transaction.identity;
+          navigationState.focusedIdentity = transaction.identity;
         },
       );
       return () => {
