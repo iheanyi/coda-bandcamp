@@ -74,6 +74,7 @@ type TransitionSnapshot = {
   beforeSource?: string;
   beforeTitleSource?: string;
   className: string;
+  sharedClass?: string;
 };
 
 const originalStartViewTransition = Object.getOwnPropertyDescriptor(
@@ -566,6 +567,11 @@ describe("Radio file routes", () => {
             "[data-coda-radio-title-source]",
           )?.dataset.codaRadioTitleSource,
           className: document.documentElement.className,
+          sharedClass: document
+            .querySelector<HTMLElement>(
+              "[data-coda-radio-artwork-detail], [data-coda-radio-artwork-source]",
+            )
+            ?.style.getPropertyValue("view-transition-class"),
         };
         const updateCallbackDone = Promise.resolve(update()).then(() => {
           snapshot.afterDetail = document.querySelector<HTMLElement>(
@@ -581,6 +587,7 @@ describe("Radio file routes", () => {
         });
         return {
           finished: updateCallbackDone,
+          ready: updateCallbackDone,
           updateCallbackDone,
         };
       }),
@@ -623,15 +630,15 @@ describe("Radio file routes", () => {
           afterDetail: String(show.id),
           beforeSource: String(show.id),
           beforeTitleSource: String(show.id),
-          className: expect.stringContaining("coda-transition--radio-detail"),
+          className: expect.stringContaining("coda-view-transitioning"),
+          sharedClass: "coda-motion-shared-artwork",
         }),
         expect.objectContaining({
           afterReturn: String(show.id),
           afterTitleReturn: String(show.id),
           beforeDetail: String(show.id),
-          className: expect.stringContaining(
-            "coda-transition--radio-detail-close",
-          ),
+          className: expect.stringContaining("coda-view-transitioning"),
+          sharedClass: "coda-motion-shared-artwork",
         }),
       ]),
     );

@@ -40,6 +40,18 @@ const mocks = vi.hoisted(() => ({
   updatePlaylist: vi.fn(),
 }));
 
+const motionMocks = vi.hoisted(() => ({
+  animateView: vi.fn(),
+}));
+
+vi.mock("motion", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("motion")>();
+  return {
+    ...actual,
+    animateView: motionMocks.animateView,
+  };
+});
+
 vi.mock("@/coverArtSource", () => ({
   clearCoverArtRendererState: () => mocks.coverArtRevisions.clear(),
   coverArtSource: (coverArtId: string) =>
@@ -65,6 +77,68 @@ vi.mock("./lib", async (importOriginal) => {
 });
 
 import SavedLibraryView, { AddToPlaylistDialog } from "./SavedLibraryView";
+
+function settledViewTransitionBuilder(update: () => void | Promise<void>) {
+  let currentSubject: Element | string | undefined;
+  let execution: Promise<{
+    finished: Promise<void>;
+    stop: ReturnType<typeof vi.fn>;
+  }> | null = null;
+  const controls = {
+    finished: Promise.resolve(),
+    stop: vi.fn(),
+  };
+  const builder = {
+    add: vi.fn((subject: Element | string) => {
+      currentSubject = subject;
+      return builder;
+    }),
+    class: vi.fn((transitionClass: string) => {
+      const elements =
+        typeof currentSubject === "string"
+          ? document.querySelectorAll<HTMLElement>(currentSubject)
+          : currentSubject
+            ? [currentSubject]
+            : [];
+      elements.forEach((element) =>
+        element.style.setProperty("view-transition-class", transitionClass),
+      );
+      return builder;
+    }),
+    crop: vi.fn(),
+    enter: vi.fn(),
+    exit: vi.fn(),
+    group: vi.fn(),
+    layout: vi.fn(),
+    new: vi.fn(),
+    old: vi.fn(),
+    then: vi.fn(),
+  };
+  for (const method of [
+    "crop",
+    "enter",
+    "exit",
+    "group",
+    "layout",
+    "new",
+    "old",
+  ] as const) {
+    builder[method].mockReturnValue(builder);
+  }
+  builder.then.mockImplementation((resolve, reject) => {
+    execution ??= Promise.resolve().then(async () => {
+      const transition = document.startViewTransition?.(update);
+      if (transition) {
+        await transition.updateCallbackDone;
+      } else {
+        await update();
+      }
+      return controls;
+    });
+    return execution.then(resolve, reject);
+  });
+  return builder;
+}
 
 const track: Track = {
   id: "song-1",
@@ -328,6 +402,9 @@ const commonProps = {
 };
 
 beforeEach(() => {
+  motionMocks.animateView
+    .mockReset()
+    .mockImplementation(settledViewTransitionBuilder);
   Object.values(mocks).forEach((mock) => {
     if (typeof mock === "function" && "mockReset" in mock) mock.mockReset();
   });
@@ -551,12 +628,13 @@ describe("saved Bandcamp library views", () => {
       afterFocusedPlaylist?: string;
       afterScrollTop?: number;
       identityAndTitleAreSeparate?: boolean;
+      sharedClass?: string;
     }> = [];
     const originalDescriptor = Object.getOwnPropertyDescriptor(
       document,
       "startViewTransition",
     );
-    const startViewTransition = vi.fn((update: () => void) => {
+    const startViewTransition = vi.fn((update: () => void | Promise<void>) => {
       const snapshot = {
         className: document.documentElement.className,
         beforeDetail: document.querySelector<HTMLElement>(
@@ -583,6 +661,11 @@ describe("saved Bandcamp library views", () => {
         afterFocusedPlaylist: undefined as string | undefined,
         afterScrollTop: undefined as number | undefined,
         identityAndTitleAreSeparate: undefined as boolean | undefined,
+        sharedClass: document
+          .querySelector<HTMLElement>(
+            "[data-coda-playlist-identity-detail], [data-coda-playlist-identity-source]",
+          )
+          ?.style.getPropertyValue("view-transition-class"),
       };
       expect(
         document.querySelectorAll("[data-coda-playlist-identity-source]"),
@@ -590,48 +673,53 @@ describe("saved Bandcamp library views", () => {
       expect(
         document.querySelectorAll("[data-coda-playlist-title-source]"),
       ).toHaveLength(snapshot.beforeTitleSource ? 1 : 0);
-      update();
-      snapshot.afterDetail = document.querySelector<HTMLElement>(
-        "[data-coda-playlist-identity-detail]",
-      )?.dataset.codaPlaylistIdentityDetail;
-      snapshot.afterReturn = document.querySelector<HTMLElement>(
-        "[data-coda-playlist-identity-return]",
-      )?.dataset.codaPlaylistIdentityReturn;
-      snapshot.afterTitleDetail = document.querySelector<HTMLElement>(
-        "[data-coda-playlist-title-detail]",
-      )?.dataset.codaPlaylistTitleDetail;
-      snapshot.afterTitleReturn = document.querySelector<HTMLElement>(
-        "[data-coda-playlist-title-return]",
-      )?.dataset.codaPlaylistTitleReturn;
-      snapshot.afterTitleReturnIsStatic =
-        document
-          .querySelector("[data-coda-playlist-title-return]")
-          ?.matches('[data-slot="overflow-marquee-text"]') ?? false;
-      const identityTarget = document.querySelector<HTMLElement>(
-        "[data-coda-playlist-identity-detail], [data-coda-playlist-identity-return]",
-      );
-      const titleTarget = document.querySelector<HTMLElement>(
-        "[data-coda-playlist-title-detail], [data-coda-playlist-title-return]",
-      );
-      snapshot.identityAndTitleAreSeparate =
-        Boolean(identityTarget) &&
-        Boolean(titleTarget) &&
-        identityTarget !== titleTarget;
-      expect(
-        document.querySelectorAll("[data-coda-playlist-identity-return]"),
-      ).toHaveLength(snapshot.afterReturn ? 1 : 0);
-      expect(
-        document.querySelectorAll("[data-coda-playlist-title-return]"),
-      ).toHaveLength(snapshot.afterTitleReturn ? 1 : 0);
-      snapshot.afterFocusedPlaylist =
-        document.activeElement instanceof HTMLElement
-          ? document.activeElement.dataset.playlistOpen
-          : undefined;
-      snapshot.afterScrollTop = document.querySelector<HTMLElement>(
-        "[data-coda-library-scroll]",
-      )?.scrollTop;
-      snapshots.push(snapshot);
-      return { finished: Promise.resolve() };
+      const updateCallbackDone = Promise.resolve(update()).then(() => {
+        snapshot.afterDetail = document.querySelector<HTMLElement>(
+          "[data-coda-playlist-identity-detail]",
+        )?.dataset.codaPlaylistIdentityDetail;
+        snapshot.afterReturn = document.querySelector<HTMLElement>(
+          "[data-coda-playlist-identity-return]",
+        )?.dataset.codaPlaylistIdentityReturn;
+        snapshot.afterTitleDetail = document.querySelector<HTMLElement>(
+          "[data-coda-playlist-title-detail]",
+        )?.dataset.codaPlaylistTitleDetail;
+        snapshot.afterTitleReturn = document.querySelector<HTMLElement>(
+          "[data-coda-playlist-title-return]",
+        )?.dataset.codaPlaylistTitleReturn;
+        snapshot.afterTitleReturnIsStatic =
+          document
+            .querySelector("[data-coda-playlist-title-return]")
+            ?.matches('[data-slot="overflow-marquee-text"]') ?? false;
+        const identityTarget = document.querySelector<HTMLElement>(
+          "[data-coda-playlist-identity-detail], [data-coda-playlist-identity-return]",
+        );
+        const titleTarget = document.querySelector<HTMLElement>(
+          "[data-coda-playlist-title-detail], [data-coda-playlist-title-return]",
+        );
+        snapshot.identityAndTitleAreSeparate =
+          Boolean(identityTarget) &&
+          Boolean(titleTarget) &&
+          identityTarget !== titleTarget;
+        expect(
+          document.querySelectorAll("[data-coda-playlist-identity-return]"),
+        ).toHaveLength(snapshot.afterReturn ? 1 : 0);
+        expect(
+          document.querySelectorAll("[data-coda-playlist-title-return]"),
+        ).toHaveLength(snapshot.afterTitleReturn ? 1 : 0);
+        snapshot.afterFocusedPlaylist =
+          document.activeElement instanceof HTMLElement
+            ? document.activeElement.dataset.playlistOpen
+            : undefined;
+        snapshot.afterScrollTop = document.querySelector<HTMLElement>(
+          "[data-coda-library-scroll]",
+        )?.scrollTop;
+        snapshots.push(snapshot);
+      });
+      return {
+        finished: updateCallbackDone,
+        ready: updateCallbackDone,
+        updateCallbackDone,
+      };
     });
     Object.defineProperty(document, "startViewTransition", {
       configurable: true,
@@ -654,19 +742,22 @@ describe("saved Bandcamp library views", () => {
 
       fireEvent.click(screen.getByRole("link", { name: /Night drive/ }));
 
-      expect(startViewTransition).toHaveBeenCalledOnce();
+      await waitFor(() => expect(startViewTransition).toHaveBeenCalledOnce());
       expect(
         screen.getByRole("heading", { name: "Night drive" }),
       ).toBeInTheDocument();
+      await waitFor(() =>
+        expect(document.documentElement).not.toHaveClass(
+          "coda-view-transitioning",
+        ),
+      );
 
       fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
-      expect(startViewTransition).toHaveBeenCalledTimes(2);
+      await waitFor(() => expect(startViewTransition).toHaveBeenCalledTimes(2));
       expect(snapshots).toEqual([
         {
-          className: expect.stringContaining(
-            "coda-transition--playlist-detail",
-          ),
+          className: expect.stringContaining("coda-view-transitioning"),
           beforeDetail: undefined,
           beforeSource: summary.id,
           beforeTitleDetail: undefined,
@@ -680,11 +771,10 @@ describe("saved Bandcamp library views", () => {
           afterFocusedPlaylist: undefined,
           afterScrollTop: 0,
           identityAndTitleAreSeparate: true,
+          sharedClass: "coda-motion-shared-identity",
         },
         {
-          className: expect.stringContaining(
-            "coda-transition--playlist-detail-close",
-          ),
+          className: expect.stringContaining("coda-view-transitioning"),
           beforeDetail: summary.id,
           beforeSource: undefined,
           beforeTitleDetail: summary.id,
@@ -698,6 +788,7 @@ describe("saved Bandcamp library views", () => {
           afterFocusedPlaylist: summary.id,
           afterScrollTop: 173,
           identityAndTitleAreSeparate: true,
+          sharedClass: "coda-motion-shared-identity",
         },
       ]);
       await waitFor(() =>
@@ -737,7 +828,7 @@ describe("saved Bandcamp library views", () => {
       document,
       "startViewTransition",
     );
-    const startViewTransition = vi.fn((update: () => void) => {
+    const startViewTransition = vi.fn((update: () => void | Promise<void>) => {
       transitionCount += 1;
       if (transitionCount === 2) {
         returnSnapshot.beforeIcon = document.querySelector<HTMLElement>(
@@ -747,16 +838,21 @@ describe("saved Bandcamp library views", () => {
           "[data-coda-playlist-title-detail]",
         )?.dataset.codaPlaylistTitleDetail;
       }
-      update();
-      if (transitionCount === 2) {
-        returnSnapshot.afterIcon = document.querySelector<HTMLElement>(
-          "[data-coda-playlist-identity-return]",
-        )?.dataset.codaPlaylistIdentityReturn;
-        returnSnapshot.afterTitle = document.querySelector<HTMLElement>(
-          "[data-coda-playlist-title-return]",
-        )?.dataset.codaPlaylistTitleReturn;
-      }
-      return { finished: Promise.resolve() };
+      const updateCallbackDone = Promise.resolve(update()).then(() => {
+        if (transitionCount === 2) {
+          returnSnapshot.afterIcon = document.querySelector<HTMLElement>(
+            "[data-coda-playlist-identity-return]",
+          )?.dataset.codaPlaylistIdentityReturn;
+          returnSnapshot.afterTitle = document.querySelector<HTMLElement>(
+            "[data-coda-playlist-title-return]",
+          )?.dataset.codaPlaylistTitleReturn;
+        }
+      });
+      return {
+        finished: updateCallbackDone,
+        ready: updateCallbackDone,
+        updateCallbackDone,
+      };
     });
     Object.defineProperty(document, "startViewTransition", {
       configurable: true,
@@ -771,6 +867,12 @@ describe("saved Bandcamp library views", () => {
       queryClient.setQueryData(["bandcamp", "playlists", summary.id], detail);
 
       fireEvent.click(screen.getByRole("link", { name: /Night drive/ }));
+      await waitFor(() => expect(startViewTransition).toHaveBeenCalledOnce());
+      await waitFor(() =>
+        expect(document.documentElement).not.toHaveClass(
+          "coda-view-transitioning",
+        ),
+      );
       fireEvent.click(
         await screen.findByRole("button", {
           name: `Rename ${summary.name}`,
@@ -785,6 +887,7 @@ describe("saved Bandcamp library views", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
+      await waitFor(() => expect(startViewTransition).toHaveBeenCalledTimes(2));
       expect(returnSnapshot).toEqual({
         beforeIcon: summary.id,
         beforeTitle: undefined,

@@ -92,6 +92,7 @@ type TransitionSnapshot = {
   beforeDetail?: string;
   beforeSource?: string;
   className: string;
+  sharedClass?: string;
 };
 
 function renderPlaylistRoute(initialEntry = "/playlists") {
@@ -222,7 +223,11 @@ describe("Playlist file routes", () => {
       canPreloadAuthenticatedRoute: false,
       connection: "connected",
     });
-    const router = createCodaMemoryRouter(queryClient, ["/collection"], librarySession);
+    const router = createCodaMemoryRouter(
+      queryClient,
+      ["/collection"],
+      librarySession,
+    );
     await router.load();
 
     await router.preloadRoute({ to: "/playlists" });
@@ -242,7 +247,11 @@ describe("Playlist file routes", () => {
       queryClient,
     });
     librarySession.commands.acceptConnectedLibrary([], { announce: false });
-    const router = createCodaMemoryRouter(queryClient, ["/collection"], librarySession);
+    const router = createCodaMemoryRouter(
+      queryClient,
+      ["/collection"],
+      librarySession,
+    );
     await router.load();
     const playlistId = parsePlaylistIdParam(summary.id);
 
@@ -300,6 +309,11 @@ describe("Playlist file routes", () => {
             "[data-coda-playlist-identity-source]",
           )?.dataset.codaPlaylistIdentitySource,
           className: document.documentElement.className,
+          sharedClass: document
+            .querySelector<HTMLElement>(
+              "[data-coda-playlist-identity-detail], [data-coda-playlist-identity-source]",
+            )
+            ?.style.getPropertyValue("view-transition-class"),
         };
         const updateCallbackDone = Promise.resolve(update()).then(() => {
           snapshot.afterDetail = document.querySelector<HTMLElement>(
@@ -315,6 +329,7 @@ describe("Playlist file routes", () => {
         });
         return {
           finished: updateCallbackDone,
+          ready: updateCallbackDone,
           updateCallbackDone,
         };
       }),
@@ -358,17 +373,15 @@ describe("Playlist file routes", () => {
         expect.objectContaining({
           afterDetail: summary.id,
           beforeSource: summary.id,
-          className: expect.stringContaining(
-            "coda-transition--playlist-detail",
-          ),
+          className: expect.stringContaining("coda-view-transitioning"),
+          sharedClass: "coda-motion-shared-identity",
         }),
         expect.objectContaining({
           afterReturn: summary.id,
           afterTitleReturn: summary.id,
           beforeDetail: summary.id,
-          className: expect.stringContaining(
-            "coda-transition--playlist-detail-close",
-          ),
+          className: expect.stringContaining("coda-view-transitioning"),
+          sharedClass: "coda-motion-shared-identity",
         }),
       ]),
     );
