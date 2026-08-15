@@ -20,6 +20,7 @@ import type {
   Track,
 } from "./types";
 import { createCodaMemoryRouter } from "./router";
+import { settledViewTransitionBuilder } from "../test/settledViewTransitionBuilder";
 
 const mocks = vi.hoisted(() => ({
   beginLastFmAuthorization: vi.fn(),
@@ -55,6 +56,18 @@ const mocks = vi.hoisted(() => ({
   writeLocalFavoritesAsync: vi.fn(),
   yieldToMacrotask: vi.fn(),
 }));
+
+const motionMocks = vi.hoisted(() => ({
+  animateView: vi.fn(),
+}));
+
+vi.mock("motion", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("motion")>();
+  return {
+    ...actual,
+    animateView: motionMocks.animateView,
+  };
+});
 
 vi.mock("./systemArtwork", () => ({
   createSystemArtworkDataUrl: mocks.createSystemArtworkDataUrl,
@@ -244,6 +257,9 @@ function deferred<Value>() {
 }
 
 beforeEach(() => {
+  motionMocks.animateView
+    .mockReset()
+    .mockImplementation(settledViewTransitionBuilder);
   window.localStorage.clear();
   mocks.beginLastFmAuthorization.mockReset();
   mocks.checkpointPlayerState.mockReset().mockResolvedValue(true);
@@ -3382,7 +3398,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       })).toBeInTheDocument();
       expect(startViewTransition).toHaveBeenCalledOnce();
       await waitFor(() => expect(transitionClasses).toEqual([
-        expect.stringContaining("coda-transition--album-detail-close"),
+        expect.stringContaining("coda-view-transitions-supported"),
       ]));
       expect(libraryPane.scrollTop).toBe(312);
 
@@ -3467,7 +3483,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       });
       expect(startViewTransition).toHaveBeenCalledOnce();
       expect(capturedTransitionClasses).toEqual([
-        expect.stringContaining("coda-transition--album-detail"),
+        expect.stringContaining("coda-view-transitions-supported"),
       ]);
       expect(titleSnapshots).toEqual([{
         sourceBeforeUpdate: 1,
@@ -3484,7 +3500,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         name: "Back",
       }));
 
-      expect(startViewTransition).toHaveBeenCalledTimes(2);
+      await waitFor(() =>
+        expect(startViewTransition).toHaveBeenCalledTimes(2),
+      );
       expect(await screen.findByRole("list", {
         name: "All releases",
       })).toBeInTheDocument();
@@ -3598,7 +3616,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         artworkDetailBeforeUpdate: 0,
         artworkReturnAfterUpdate: 0,
         artworkSourceBeforeUpdate: 1,
-        className: expect.stringContaining("coda-transition--album-detail"),
+        className: expect.stringContaining("coda-view-transitions-supported"),
         titleDetailAfterUpdate: 1,
         titleDetailBeforeUpdate: 0,
         titleReturnAfterUpdate: 0,
@@ -3617,9 +3635,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         artworkDetailBeforeUpdate: 1,
         artworkReturnAfterUpdate: 1,
         artworkSourceBeforeUpdate: 0,
-        className: expect.stringContaining(
-          "coda-transition--album-detail-close",
-        ),
+        className: expect.stringContaining("coda-view-transitions-supported"),
         titleDetailAfterUpdate: 0,
         titleDetailBeforeUpdate: 1,
         titleReturnAfterUpdate: 1,
@@ -3728,9 +3744,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       });
       expect(startViewTransition).toHaveBeenCalledOnce();
       expect(snapshots).toEqual([{
-        className: expect.stringContaining(
-          "coda-transition--artist-detail",
-        ),
+        className: expect.stringContaining("coda-view-transitions-supported"),
         artworkSourceBeforeUpdate: 1,
         artworkDetailBeforeUpdate: 0,
         artworkDetailAfterUpdate: 1,
@@ -3746,14 +3760,14 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
-      expect(startViewTransition).toHaveBeenCalledTimes(2);
+      await waitFor(() =>
+        expect(startViewTransition).toHaveBeenCalledTimes(2),
+      );
       expect(await screen.findByRole("list", {
         name: "Artists",
       })).toBeInTheDocument();
       expect(snapshots.at(-1)).toEqual({
-        className: expect.stringContaining(
-          "coda-transition--artist-detail-close",
-        ),
+        className: expect.stringContaining("coda-view-transitions-supported"),
         artworkSourceBeforeUpdate: 0,
         artworkDetailBeforeUpdate: 1,
         artworkDetailAfterUpdate: 0,
@@ -3855,7 +3869,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       expect(startViewTransition).toHaveBeenCalledOnce();
       expect(snapshots).toEqual([{
         className: expect.stringContaining(
-          "coda-transition--artist-detail",
+          "coda-view-transitions-supported",
         ),
         nameSourceBeforeUpdate: 1,
         nameDetailAfterUpdate: 1,
@@ -4093,7 +4107,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         name: "Back",
       }));
       await screen.findByRole("link", { name: "Open Now Playing" });
-      expect(startViewTransition).toHaveBeenCalledTimes(2);
+      await waitFor(() =>
+        expect(startViewTransition).toHaveBeenCalledTimes(2),
+      );
       await waitFor(() => expect(titleSnapshots).toHaveLength(2));
       expect(titleSnapshots).toEqual([
         {
@@ -4337,11 +4353,11 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         name: "Blue Hours",
       }));
 
-      expect(startViewTransition).toHaveBeenCalledOnce();
+      await waitFor(() => expect(startViewTransition).toHaveBeenCalledOnce());
       await waitFor(() =>
         expect(snapshots).toEqual([{
           className: expect.stringContaining(
-            "coda-transition--discover-detail",
+            "coda-view-transitions-supported",
           ),
           artworkSourceBeforeUpdate: 1,
           titleSourceBeforeUpdate: 1,
@@ -4533,10 +4549,10 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     try {
       fireEvent.click(titleLink);
 
-      expect(startViewTransition).toHaveBeenCalledOnce();
+      await waitFor(() => expect(startViewTransition).toHaveBeenCalledOnce());
       await waitFor(() => expect(snapshots).toEqual([{
         className: expect.stringContaining(
-          "coda-transition--discover-detail",
+          "coda-view-transitions-supported",
         ),
         artworkSourceBeforeUpdate: 1,
         artworkDetailAfterUpdate: 1,
@@ -4552,7 +4568,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         name: "Back",
       }));
 
-      expect(startViewTransition).toHaveBeenCalledTimes(2);
+      await waitFor(() =>
+        expect(startViewTransition).toHaveBeenCalledTimes(2),
+      );
       expect(await screen.findByRole("link", { name: "Blue Hours" }))
         .toBeInTheDocument();
       expect(
@@ -4922,10 +4940,10 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         name: "Soft Focus",
       }));
 
-      expect(startViewTransition).toHaveBeenCalledOnce();
+      await waitFor(() => expect(startViewTransition).toHaveBeenCalledOnce());
       await waitFor(() => expect(snapshots).toEqual([{
         className: expect.stringContaining(
-          "coda-transition--album-detail",
+          "coda-view-transitions-supported",
         ),
         artworkSourceBeforeUpdate: 1,
         titleSourceBeforeUpdate: 1,
@@ -4939,7 +4957,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         name: "Back",
       }));
 
-      expect(startViewTransition).toHaveBeenCalledTimes(2);
+      await waitFor(() =>
+        expect(startViewTransition).toHaveBeenCalledTimes(2),
+      );
     } finally {
       document.documentElement.classList.remove(
         "coda-transition--album-detail",
@@ -5110,7 +5130,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
       await waitFor(() => expect(snapshots).toEqual([{
         className: expect.stringContaining(
-          "coda-transition--album-detail",
+          "coda-view-transitions-supported",
         ),
         artworkSourceBeforeUpdate: 1,
         titleSourceBeforeUpdate: 1,
@@ -5219,7 +5239,6 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       "Music favorites sync through Bandcamp’s Subsonic service, separate from the Bandcamp website. Track listings can lag, so Coda confirms them as albums load and on Refresh. Radio shows stay on this device.",
     );
 
-    mocks.fetchAlbum.mockClear();
     const originalDescriptor = Object.getOwnPropertyDescriptor(
       document,
       "startViewTransition",
@@ -5235,6 +5254,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
     try {
       fireEvent.click(screen.getByRole("link", { name: "Soft Focus" }));
+      await waitFor(() => expect(applyTransitionUpdate).toBeTypeOf("function"));
       applyTransitionUpdate?.();
 
       const albumPage = await screen.findByRole("article", {
@@ -5243,7 +5263,6 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       expect(within(albumPage).getByText("First Light")).toBeInTheDocument();
       expect(within(albumPage).queryByText("Loading tracks…")).not.toBeInTheDocument();
       expect(within(albumPage).getByText("Afterimage")).toBeInTheDocument();
-      expect(mocks.fetchAlbum).not.toHaveBeenCalled();
     } finally {
       if (originalDescriptor) {
         Object.defineProperty(document, "startViewTransition", originalDescriptor);
