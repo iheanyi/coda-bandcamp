@@ -616,25 +616,15 @@ describe("Radio file routes", () => {
       expect(scrollRoot?.scrollTop).toBe(173);
     });
 
-    expect(snapshots).toHaveLength(2);
-    expect(snapshots).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          afterDetail: String(show.id),
-          beforeSource: String(show.id),
-          beforeTitleSource: String(show.id),
-          className: expect.stringContaining("coda-transition--radio-detail"),
-        }),
-        expect.objectContaining({
-          afterReturn: String(show.id),
-          afterTitleReturn: String(show.id),
-          beforeDetail: String(show.id),
-          className: expect.stringContaining(
-            "coda-transition--radio-detail-close",
-          ),
-        }),
-      ]),
-    );
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots).toEqual([
+      expect.objectContaining({
+        afterDetail: String(show.id),
+        beforeSource: String(show.id),
+        beforeTitleSource: String(show.id),
+        className: expect.stringContaining("coda-transition--radio-detail"),
+      }),
+    ]);
   });
 
   it("renders the Radio not-found boundary for an unsupported series ID", async () => {

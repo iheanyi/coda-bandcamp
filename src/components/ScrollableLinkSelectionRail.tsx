@@ -195,6 +195,7 @@ export function ScrollableLinkSelectionRail<Value extends string | number>({
                       reduceMotion ? "snap" : "spring"
                     }
                     data-selection-travel-steps={indicatorMotion.travelSteps}
+                    layout="position"
                     layoutId={indicatorLayoutId}
                     transition={indicatorMotion.transition}
                   />

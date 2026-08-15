@@ -16,10 +16,7 @@ import {
   validateCollectionSearch,
 } from "@/routing/routeContracts";
 import { Route as RecentRoute } from "@/routes/recent";
-import {
-  loadAlbumRouteIdentity,
-  Route as AlbumRoute,
-} from "./albums/$albumId";
+import { loadAlbumRouteIdentity, Route as AlbumRoute } from "./albums/$albumId";
 import {
   loadArtistRouteIdentity,
   Route as ArtistRoute,
@@ -41,7 +38,10 @@ describe("library route identities", () => {
       }),
       preloadAlbum,
     };
-    const loaded = loadAlbumRouteIdentity({ librarySession, params: { albumId } });
+    const loaded = loadAlbumRouteIdentity({
+      librarySession,
+      params: { albumId },
+    });
 
     expect(loaded).toEqual({ albumId });
     expect(loaded).not.toBeInstanceOf(Promise);

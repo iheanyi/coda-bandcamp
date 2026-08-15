@@ -9,6 +9,7 @@ import type {
   ReleaseResultsModel,
 } from "./LibraryResults";
 import { LibraryAvailability, ReleaseResults } from "./LibraryResults";
+
 export type ArtistScreenModel = Readonly<{
   availability: LibraryAvailabilityModel;
   artist: Readonly<{
@@ -50,7 +51,7 @@ export function ArtistScreen({
   className,
 }: ArtistScreenProps) {
   return (
-    <section className={cn("pt-6", className)} aria-live="polite">
+    <section className={cn("pt-6", className)}>
       <LibraryAvailability
         model={model.availability}
         actions={actions.availability}

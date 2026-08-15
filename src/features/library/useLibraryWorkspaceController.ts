@@ -41,6 +41,7 @@ type WorkspaceLibraryActions = Readonly<{
     | "openAlbum"
     | "playAlbum"
     | "playSurprise"
+    | "prefetchVisibleAlbums"
     | "queueAlbum"
     | "queueAlbums"
     | "refreshArtwork"
@@ -334,6 +335,14 @@ export function useLibraryWorkspaceController({
   const queueVisibleAlbums = useCallback(() => {
     void libraryActions.commands.queueAlbums(browse.visibleAlbums);
   }, [browse.visibleAlbums, libraryActions.commands]);
+  const prefetchVisibleAlbums = useCallback<
+    NonNullable<ReleaseResultsActions["onVisibleAlbums"]>
+  >(
+    (albums) => {
+      void libraryActions.commands.prefetchVisibleAlbums(albums);
+    },
+    [libraryActions.commands],
+  );
 
   const chromeModel: LibraryChromeModel = {
     kind: recent ? "recent" : "collection",
@@ -440,6 +449,7 @@ export function useLibraryWorkspaceController({
     onTogglePlayback: playback.toggle,
     onQueueSearchResults: queueVisibleAlbums,
     onClearFilters: search.commands.clearFilters,
+    onVisibleAlbums: prefetchVisibleAlbums,
   };
   const artistResultsModel: ArtistResultsModel = {
     genre: collectionSearch.genre,

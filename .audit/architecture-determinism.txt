@@ -1,0 +1,13 @@
+2026-08-15 architecture-strategist rev2. No product edits. No Coda Dev drive.
+
+P0 DONE (pid 3626, Cmd+R): Open restored by reverting keep-alive (index () => null, parent hidden) + open() "ignored" / detailMorphFlightRef / runWithCommitGate. Those blocked transitionCodaView from superseding a stuck interrupt:wait queue. HMR `runWithCommitGate is not defined` crashed the tree. Do not re-land.
+
+Measured: Back present, Open HX.26 gone, 357ms then 344ms. Loading HX.26 false. Keep-alive absent.
+
+KEPT: artist browse-mode preserve; Motion complete()+notifyFinished; title useLayoutEffect; late-beforeCommit loading guard.
+
+P1: bound awaitRouterNavigationAfterRender / awaitRouterBackAfterRender. No timeout today. No-op or hung navigate leaves the VT update pending. Test already wants 10s settle. Not an ignore-gate.
+
+KEEP-ALIVE later only if every Open still calls transitionCodaView and the index route is never nulled while a VT is live.
+
+STOP: ignore-clicks; keep-alive-with-null-index; interrupt immediate; virtualize-at-12; render-phase setTitle; title-only AX; Search collection / as wait.

@@ -79,13 +79,13 @@ export function AppShell({
             data-slot="app-shell-main"
             ref={route.libraryPaneRef}
           >
+            {persistentServices}
             {route.chrome}
             {route.outlet}
           </main>
           {queue.panel}
         </div>
         {playback.dock}
-        {persistentServices}
         {overlays}
       </div>
     </Drawer>

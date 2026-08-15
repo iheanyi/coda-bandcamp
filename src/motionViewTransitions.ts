@@ -6,6 +6,7 @@ import {
   type ViewTransitionBuilder,
 } from "motion";
 import { flushSync } from "react-dom";
+import { rewriteDocumentViewTransitionGroupsToTransform } from "./compositorViewTransition";
 import {
   beginMotionDiagnostic,
   endpointIssues,
@@ -31,18 +32,23 @@ const ALBUM_DETAIL_ARTWORK_BOUNCE = 0.08;
 const ALBUM_DETAIL_TITLE_VISUAL_DURATION_MS = 190;
 const ALBUM_DETAIL_TITLE_BOUNCE = 0.04;
 const ALBUM_DETAIL_FADE_DURATION_MS = 130;
-const NOW_PLAYING_ARTWORK_VISUAL_DURATION_MS = 200;
-const NOW_PLAYING_ARTWORK_BOUNCE = 0.1;
-const NOW_PLAYING_TITLE_VISUAL_DURATION_MS = 180;
+const ALBUM_DETAIL_CLOSE_ARTWORK_VISUAL_DURATION_MS = 130;
+const ALBUM_DETAIL_CLOSE_ARTWORK_BOUNCE = 0;
+const ALBUM_DETAIL_CLOSE_TITLE_VISUAL_DURATION_MS = 110;
+const ALBUM_DETAIL_CLOSE_TITLE_BOUNCE = 0;
+const NOW_PLAYING_ARTWORK_VISUAL_DURATION_MS = 380;
+const NOW_PLAYING_ARTWORK_BOUNCE = 0.12;
+const NOW_PLAYING_CLOSE_ARTWORK_BOUNCE = 0;
+const NOW_PLAYING_TITLE_VISUAL_DURATION_MS = 280;
 const NOW_PLAYING_TITLE_BOUNCE = 0.05;
-const NOW_PLAYING_FADE_DURATION_MS = 130;
-const NOW_PLAYING_COMPONENT_ENTER_DURATION_MS = 140;
-const NOW_PLAYING_COMPONENT_EXIT_DURATION_MS = 100;
-const NOW_PLAYING_HEADER_DELAY_MS = 20;
-const NOW_PLAYING_DETAILS_DELAY_MS = 35;
+const NOW_PLAYING_CLOSE_TITLE_BOUNCE = 0;
+const NOW_PLAYING_FADE_DURATION_MS = 160;
 const NOW_PLAYING_EASE: [number, number, number, number] = [0.22, 1, 0.36, 1];
 const MOTION_OWNED_VIEW_TRANSITION_NAME = /^motion-view-\d+$/;
+const MOTION_FINISHED_BUFFER_MS = 80;
 let latestMotionTransitionId = 0;
+let activeMotionBuilder: ViewTransitionBuilder | undefined;
+let activeMotionControls: AnimationPlaybackControls | undefined;
 
 function cappedDurationMs(durationMs: number, maximumMs: number) {
   return Math.min(durationMs, maximumMs);
@@ -74,6 +80,289 @@ function cappedSpring(
       1_000,
     bounce,
   };
+}
+
+function nowPlayingSpring(
+  visualDurationMs: number,
+  bounce: number,
+  motion: ResolvedMotionProfile,
+): Transition {
+  return {
+    type: spring,
+    visualDuration: visualDurationMs / motion.profile.speed / 1_000,
+    bounce,
+  };
+}
+
+function cappedDetailArtwork(motion: ResolvedMotionProfile): Transition {
+  return cappedSpring(
+    motion.profile.shared.artwork.durationMs,
+    ALBUM_DETAIL_ARTWORK_VISUAL_DURATION_MS,
+    ALBUM_DETAIL_ARTWORK_BOUNCE,
+    motion,
+  );
+}
+
+function cappedDetailIdentity(motion: ResolvedMotionProfile): Transition {
+  return cappedSpring(
+    motion.profile.shared.identity.durationMs,
+    ALBUM_DETAIL_ARTWORK_VISUAL_DURATION_MS,
+    ALBUM_DETAIL_ARTWORK_BOUNCE,
+    motion,
+  );
+}
+
+function cappedDetailTitle(motion: ResolvedMotionProfile): Transition {
+  return cappedSpring(
+    motion.profile.shared.title.durationMs,
+    ALBUM_DETAIL_TITLE_VISUAL_DURATION_MS,
+    ALBUM_DETAIL_TITLE_BOUNCE,
+    motion,
+  );
+}
+
+function cappedDetailFade(motion: ResolvedMotionProfile): Transition {
+  return cappedTween(
+    motion.profile.shared.crossfade.durationMs,
+    ALBUM_DETAIL_FADE_DURATION_MS,
+    motion,
+  );
+}
+
+function cappedDetailSurface(motion: ResolvedMotionProfile): Transition {
+  return cappedTween(
+    motion.profile.detail.surface.durationMs,
+    ALBUM_DETAIL_FADE_DURATION_MS,
+    motion,
+  );
+}
+
+function cappedDetailCloseArtwork(motion: ResolvedMotionProfile): Transition {
+  return cappedSpring(
+    motion.profile.shared.artwork.durationMs,
+    ALBUM_DETAIL_CLOSE_ARTWORK_VISUAL_DURATION_MS,
+    ALBUM_DETAIL_CLOSE_ARTWORK_BOUNCE,
+    motion,
+  );
+}
+
+function cappedDetailCloseIdentity(motion: ResolvedMotionProfile): Transition {
+  return cappedSpring(
+    motion.profile.shared.identity.durationMs,
+    ALBUM_DETAIL_CLOSE_ARTWORK_VISUAL_DURATION_MS,
+    ALBUM_DETAIL_CLOSE_ARTWORK_BOUNCE,
+    motion,
+  );
+}
+
+function cappedDetailCloseTitle(motion: ResolvedMotionProfile): Transition {
+  return cappedSpring(
+    motion.profile.shared.title.durationMs,
+    ALBUM_DETAIL_CLOSE_TITLE_VISUAL_DURATION_MS,
+    ALBUM_DETAIL_CLOSE_TITLE_BOUNCE,
+    motion,
+  );
+}
+
+function isDetailCloseKind(kind: CodaViewTransitionKind) {
+  return isDetailMorphKind(kind) && kind.endsWith("close");
+}
+
+function isDetailMorphKind(kind: CodaViewTransitionKind) {
+  switch (kind) {
+    case "album-detail":
+    case "album-detail-close":
+    case "artist-detail":
+    case "artist-detail-close":
+    case "daily-detail":
+    case "daily-detail-close":
+    case "discover-detail":
+    case "discover-detail-close":
+    case "playlist-detail":
+    case "playlist-detail-close":
+    case "radio-detail":
+    case "radio-detail-close":
+      return true;
+    case "now-playing-open":
+    case "now-playing-close":
+    case "page-forward":
+    case "page-back":
+    case "page-crossfade":
+      return false;
+    default: {
+      const exhaustive: never = kind;
+      return exhaustive;
+    }
+  }
+}
+
+function finishViewTransitionAnimation(animation: Animation) {
+  try {
+    animation.finish();
+    return;
+  } catch {
+    try {
+      animation.cancel();
+    } catch {
+      // Already gone.
+    }
+  }
+  const onfinish = animation.onfinish;
+  if (typeof onfinish === "function") {
+    onfinish.call(animation, new Event("finish"));
+  }
+}
+
+function finishRunningViewTransitionAnimations() {
+  if (typeof document.getAnimations !== "function") return;
+  for (const animation of document.getAnimations()) {
+    const effect = animation.effect as KeyframeEffect | null;
+    if (!effect?.pseudoElement?.startsWith("::view-transition")) continue;
+    finishViewTransitionAnimation(animation);
+  }
+}
+
+function skipActiveNativeViewTransition() {
+  const active = (
+    document as Document & {
+      activeViewTransition?: { skipTransition?: () => void } | null;
+    }
+  ).activeViewTransition;
+  try {
+    active?.skipTransition?.();
+  } catch {
+    // Already skipped or the overlay is gone.
+  }
+}
+
+function rewriteActiveViewTransitionWhenReady() {
+  rewriteDocumentViewTransitionGroupsToTransform();
+  const active = (
+    document as Document & {
+      activeViewTransition?: { ready?: Promise<void> } | null;
+    }
+  ).activeViewTransition;
+  void active?.ready?.then(
+    () => {
+      rewriteDocumentViewTransitionGroupsToTransform();
+    },
+    () => undefined,
+  );
+}
+
+function drainNativeViewTransitionOverlay() {
+  skipActiveNativeViewTransition();
+  finishRunningViewTransitionAnimations();
+}
+
+function nestedWaapiAnimations(controls: AnimationPlaybackControls) {
+  if (!("animations" in controls) || !Array.isArray(controls.animations)) {
+    return [];
+  }
+  const animations: Animation[] = [];
+  for (const nested of controls.animations) {
+    if (!nested || typeof nested !== "object" || !("animation" in nested)) {
+      continue;
+    }
+    const waapi = nested.animation;
+    if (
+      waapi &&
+      typeof waapi === "object" &&
+      "finish" in waapi &&
+      typeof waapi.finish === "function"
+    ) {
+      animations.push(waapi as Animation);
+    }
+  }
+  return animations;
+}
+
+type MotionPlaybackNode = {
+  animations?: readonly unknown[];
+  notifyFinished?: () => void;
+};
+
+function notifyMotionPlaybackFinished(controls: object) {
+  const playback = controls as MotionPlaybackNode;
+  if (typeof playback.notifyFinished === "function") {
+    try {
+      playback.notifyFinished();
+    } catch {
+      // Already settled.
+    }
+  }
+  if (!Array.isArray(playback.animations)) return;
+  for (const nested of playback.animations) {
+    if (nested && typeof nested === "object") {
+      notifyMotionPlaybackFinished(nested);
+    }
+  }
+}
+
+function settleResolvedMotionControls(controls: AnimationPlaybackControls) {
+  if ("complete" in controls && typeof controls.complete === "function") {
+    try {
+      controls.complete();
+    } catch {
+      // complete() calls finish() which throws after a skipped transition.
+    }
+  }
+  try {
+    controls.stop();
+  } catch {
+    // Motion stop is best-effort; finishing WAAPI layers unblocks the queue.
+  }
+  for (const animation of nestedWaapiAnimations(controls)) {
+    finishViewTransitionAnimation(animation);
+    const onfinish = animation.onfinish;
+    if (typeof onfinish === "function") {
+      onfinish.call(animation, new Event("finish"));
+    }
+  }
+  // NativeAnimation.stop() for view-transition pseudos does not cancel WAAPI
+  // or call notifyFinished. NativeAnimationWrapper.stop() cancels without
+  // notifying. Motion's interrupt:wait queue waits on GroupAnimation.finished,
+  // so a cancelled close would block the next album/artist open forever.
+  notifyMotionPlaybackFinished(controls);
+}
+
+function settleActiveMotionViewTransition() {
+  const builder = activeMotionBuilder;
+  const controls = activeMotionControls;
+  activeMotionBuilder = undefined;
+  activeMotionControls = undefined;
+  const builderControls = (
+    builder as ViewTransitionBuilder & {
+      controls?: AnimationPlaybackControls;
+    }
+  )?.controls;
+  if (builderControls) {
+    settleResolvedMotionControls(builderControls);
+  }
+  if (controls && controls !== builderControls) {
+    settleResolvedMotionControls(controls);
+  }
+  drainNativeViewTransitionOverlay();
+}
+
+function awaitMotionFinished(
+  controls: AnimationPlaybackControls,
+  timeoutMs: number,
+) {
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const done = (timedOut: boolean) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeoutId);
+      resolve(timedOut);
+    };
+    const timeoutId = window.setTimeout(() => done(true), timeoutMs);
+    void Promise.resolve(controls.finished).then(
+      () => done(false),
+      () => done(false),
+    );
+  });
 }
 
 function clearStaleMotionViewTransitionNames() {
@@ -493,12 +782,14 @@ function configureSharedElement(
   source: Element | null,
   destination: string,
   motion: ResolvedMotionProfile,
-  layoutTransition: Transition = motion.viewTransition.detailArtwork,
+  layoutTransition?: Transition,
   transitionClass = SHARED_ARTWORK_CLASS,
   preserveSourceVisual = false,
-  fadeTransition: Transition = motion.detailIdentityFade,
+  fadeTransition?: Transition,
 ) {
   if (!source) return;
+  const layout = layoutTransition ?? cappedDetailArtwork(motion);
+  const fade = fadeTransition ?? cappedDetailFade(motion);
 
   const shared = transition
     .add(source, destination)
@@ -511,9 +802,9 @@ function configureSharedElement(
     // the native snapshot is released. This is an endpoint-stability invariant
     // even when the experimental shared choreography is a crossfade.
     shared
-      .layout(layoutTransition)
-      .old({ opacity: [1, 1] }, layoutTransition)
-      .new({ opacity: [0, 0] }, layoutTransition);
+      .layout(layout)
+      .old({ opacity: [1, 1] }, layout)
+      .new({ opacity: [0, 0] }, layout);
     return;
   }
   if (motion.profile.shared.choreography === "crossfade") {
@@ -524,18 +815,18 @@ function configureSharedElement(
           opacity: motion.profile.shared.opacityFrom,
           transform: `scale(${motion.profile.shared.scaleFrom})`,
         },
-        fadeTransition,
+        fade,
       )
       .new(
         {
           opacity: [motion.profile.shared.opacityFrom, 1],
           transform: [`scale(${motion.profile.shared.scaleFrom})`, "scale(1)"],
         },
-        fadeTransition,
+        fade,
       );
     return;
   }
-  shared.layout(layoutTransition);
+  shared.layout(layout);
 }
 
 function configureDetailSurface(
@@ -563,7 +854,7 @@ function configureDetailSurface(
             : "translateY(0px) scale(1)",
         ],
       },
-      motion.detailSurfaceEnter,
+      cappedDetailSurface(motion),
     );
 }
 
@@ -572,19 +863,21 @@ function configureSharedTitle(
   source: Element | null,
   destination: string,
   motion: ResolvedMotionProfile,
-  layoutTransition: Transition = motion.viewTransition.detailTitle,
-  fadeTransition: Transition = motion.detailIdentityFade,
+  layoutTransition?: Transition,
+  fadeTransition?: Transition,
 ) {
   if (!source) return;
+  const layout = layoutTransition ?? cappedDetailTitle(motion);
+  const fade = fadeTransition ?? cappedDetailFade(motion);
 
   transition
     .add(source, destination)
     .class(SHARED_TITLE_CLASS)
     .group(false)
     .crop(false)
-    .layout(layoutTransition)
-    .old({ opacity: [1, motion.profile.shared.opacityFrom] }, fadeTransition)
-    .new({ opacity: [motion.profile.shared.opacityFrom, 1] }, fadeTransition);
+    .layout(layout)
+    .old({ opacity: [1, motion.profile.shared.opacityFrom] }, fade)
+    .new({ opacity: [motion.profile.shared.opacityFrom, 1] }, fade);
 }
 
 function configureNowPlayingTransition(
@@ -592,31 +885,19 @@ function configureNowPlayingTransition(
   opening: boolean,
   motion: ResolvedMotionProfile,
 ) {
-  const artworkTransition = cappedSpring(
-    motion.profile.shared.artwork.durationMs,
+  const artworkTransition = nowPlayingSpring(
     NOW_PLAYING_ARTWORK_VISUAL_DURATION_MS,
-    NOW_PLAYING_ARTWORK_BOUNCE,
+    opening ? NOW_PLAYING_ARTWORK_BOUNCE : NOW_PLAYING_CLOSE_ARTWORK_BOUNCE,
     motion,
   );
-  const titleTransition = cappedSpring(
-    motion.profile.shared.title.durationMs,
+  const titleTransition = nowPlayingSpring(
     NOW_PLAYING_TITLE_VISUAL_DURATION_MS,
-    NOW_PLAYING_TITLE_BOUNCE,
+    opening ? NOW_PLAYING_TITLE_BOUNCE : NOW_PLAYING_CLOSE_TITLE_BOUNCE,
     motion,
   );
   const fadeTransition = cappedTween(
     motion.profile.shared.crossfade.durationMs,
     NOW_PLAYING_FADE_DURATION_MS,
-    motion,
-  );
-  const componentEnter = cappedTween(
-    motion.profile.component.enter.durationMs,
-    NOW_PLAYING_COMPONENT_ENTER_DURATION_MS,
-    motion,
-  );
-  const componentExit = cappedTween(
-    motion.profile.component.exit.durationMs,
-    NOW_PLAYING_COMPONENT_EXIT_DURATION_MS,
     motion,
   );
   const artworkSource = document.querySelector(
@@ -664,63 +945,6 @@ function configureNowPlayingTransition(
     titleTransition,
     fadeTransition,
   );
-
-  const player = transition.add("footer[data-player-mode]").group(false);
-  const header = transition.add(".now-playing__header").group(false);
-  const details = transition.add(".now-playing__details").group(false);
-  const componentRest = "translateY(0px)";
-  if (opening) {
-    player.old(
-      {
-        opacity: motion.profile.component.opacityFrom,
-        transform: `translateY(${motion.profile.component.translationPx * 0.75}px)`,
-      },
-      componentExit,
-    );
-    header.enter(
-      {
-        opacity: [motion.profile.component.opacityFrom, 1],
-        transform: [
-          `translateY(${motion.profile.component.translationPx}px)`,
-          componentRest,
-        ],
-      },
-      {
-        ...componentEnter,
-        delay: NOW_PLAYING_HEADER_DELAY_MS / motion.profile.speed / 1_000,
-      },
-    );
-    details.enter(
-      {
-        opacity: [motion.profile.component.opacityFrom, 1],
-        transform: [
-          `translateY(${motion.profile.component.translationPx}px)`,
-          componentRest,
-        ],
-      },
-      {
-        ...componentEnter,
-        delay: NOW_PLAYING_DETAILS_DELAY_MS / motion.profile.speed / 1_000,
-      },
-    );
-  } else {
-    player.new(
-      {
-        opacity: [motion.profile.component.opacityFrom, 1],
-        transform: [
-          `translateY(${motion.profile.component.translationPx * 0.75}px)`,
-          componentRest,
-        ],
-      },
-      componentEnter,
-    );
-    const exit = {
-      opacity: motion.profile.component.opacityFrom,
-      transform: `translateY(${motion.profile.component.translationPx * 0.75}px)`,
-    };
-    header.exit(exit, componentExit);
-    details.exit(exit, componentExit);
-  }
 }
 
 function configureMotionTransition(
@@ -774,18 +998,8 @@ function configureMotionTransition(
       const albumTitle = document.querySelector(
         "[data-coda-album-title-detail]",
       );
-      const artworkTransition = cappedSpring(
-        motion.profile.shared.artwork.durationMs,
-        ALBUM_DETAIL_ARTWORK_VISUAL_DURATION_MS,
-        ALBUM_DETAIL_ARTWORK_BOUNCE,
-        motion,
-      );
-      const titleTransition = cappedSpring(
-        motion.profile.shared.title.durationMs,
-        ALBUM_DETAIL_TITLE_VISUAL_DURATION_MS,
-        ALBUM_DETAIL_TITLE_BOUNCE,
-        motion,
-      );
+      const artworkTransition = cappedDetailCloseArtwork(motion);
+      const titleTransition = cappedDetailCloseTitle(motion);
       const fadeTransition = cappedTween(
         motion.profile.shared.crossfade.durationMs,
         ALBUM_DETAIL_FADE_DURATION_MS,
@@ -832,7 +1046,6 @@ function configureMotionTransition(
           ),
         ":is([data-coda-artist-artwork-detail][data-slot='cover'], [data-coda-artist-artwork-detail] [data-slot='cover'])",
         motion,
-        motion.viewTransition.detailArtwork,
       );
       configureDetailSurface(
         transition,
@@ -863,7 +1076,7 @@ function configureMotionTransition(
           "[data-coda-artist-artwork-return]",
         ),
         motion,
-        motion.viewTransition.detailArtwork,
+        cappedDetailCloseArtwork(motion),
       );
       configureSharedTitle(
         transition,
@@ -875,6 +1088,7 @@ function configureMotionTransition(
           "[data-coda-artist-name-return]",
         ),
         motion,
+        cappedDetailCloseTitle(motion),
       );
       return;
     }
@@ -895,7 +1109,6 @@ function configureMotionTransition(
           "[data-coda-daily-artwork-detail]",
         ),
         motion,
-        motion.viewTransition.detailArtwork,
       );
       configureDetailSurface(
         transition,
@@ -932,7 +1145,7 @@ function configureMotionTransition(
           "[data-coda-daily-artwork-return]",
         ),
         motion,
-        motion.viewTransition.detailArtwork,
+        cappedDetailCloseArtwork(motion),
         SHARED_ARTWORK_CLASS,
         true,
       );
@@ -946,6 +1159,7 @@ function configureMotionTransition(
           "[data-coda-daily-title-return]",
         ),
         motion,
+        cappedDetailCloseTitle(motion),
       );
       return;
     }
@@ -966,7 +1180,6 @@ function configureMotionTransition(
           "[data-coda-discover-artwork-detail]",
         ),
         motion,
-        motion.viewTransition.detailArtwork,
       );
       configureDetailSurface(
         transition,
@@ -1003,7 +1216,7 @@ function configureMotionTransition(
           "[data-coda-discover-artwork-return]",
         ),
         motion,
-        motion.viewTransition.detailArtwork,
+        cappedDetailCloseArtwork(motion),
       );
       configureSharedTitle(
         transition,
@@ -1015,6 +1228,7 @@ function configureMotionTransition(
           "[data-coda-discover-title-return]",
         ),
         motion,
+        cappedDetailCloseTitle(motion),
       );
       return;
     }
@@ -1035,7 +1249,6 @@ function configureMotionTransition(
           "[data-coda-radio-artwork-detail]",
         ),
         motion,
-        motion.viewTransition.detailArtwork,
       );
       configureDetailSurface(
         transition,
@@ -1072,7 +1285,7 @@ function configureMotionTransition(
           "[data-coda-radio-artwork-return]",
         ),
         motion,
-        motion.viewTransition.detailArtwork,
+        cappedDetailCloseArtwork(motion),
       );
       configureSharedTitle(
         transition,
@@ -1084,6 +1297,7 @@ function configureMotionTransition(
           "[data-coda-radio-title-return]",
         ),
         motion,
+        cappedDetailCloseTitle(motion),
       );
       return;
     }
@@ -1104,7 +1318,7 @@ function configureMotionTransition(
           "[data-coda-playlist-identity-detail]",
         ),
         motion,
-        motion.viewTransition.detailIdentity,
+        cappedDetailIdentity(motion),
         SHARED_IDENTITY_CLASS,
       );
       configureDetailSurface(
@@ -1142,7 +1356,7 @@ function configureMotionTransition(
           "[data-coda-playlist-identity-return]",
         ),
         motion,
-        motion.viewTransition.detailIdentity,
+        cappedDetailCloseIdentity(motion),
         SHARED_IDENTITY_CLASS,
       );
       configureSharedTitle(
@@ -1155,6 +1369,7 @@ function configureMotionTransition(
           "[data-coda-playlist-title-return]",
         ),
         motion,
+        cappedDetailCloseTitle(motion),
       );
       return;
     }
@@ -1190,63 +1405,48 @@ function configuredVisualDuration(
     );
   }
   if (kind.startsWith("now-playing")) {
+    return scale(
+      Math.max(
+        NOW_PLAYING_ARTWORK_VISUAL_DURATION_MS,
+        NOW_PLAYING_TITLE_VISUAL_DURATION_MS,
+        NOW_PLAYING_FADE_DURATION_MS,
+      ),
+    );
+  }
+  if (isDetailMorphKind(kind)) {
+    const close = isDetailCloseKind(kind);
+    const sharedTiming = kind.startsWith("playlist")
+      ? profile.shared.identity
+      : profile.shared.artwork;
     const durations = [
       cappedDurationMs(
-        profile.shared.artwork.durationMs,
-        NOW_PLAYING_ARTWORK_VISUAL_DURATION_MS,
+        sharedTiming.durationMs,
+        close
+          ? ALBUM_DETAIL_CLOSE_ARTWORK_VISUAL_DURATION_MS
+          : ALBUM_DETAIL_ARTWORK_VISUAL_DURATION_MS,
       ),
       cappedDurationMs(
         profile.shared.title.durationMs,
-        NOW_PLAYING_TITLE_VISUAL_DURATION_MS,
+        close
+          ? ALBUM_DETAIL_CLOSE_TITLE_VISUAL_DURATION_MS
+          : ALBUM_DETAIL_TITLE_VISUAL_DURATION_MS,
       ),
       cappedDurationMs(
         profile.shared.crossfade.durationMs,
-        NOW_PLAYING_FADE_DURATION_MS,
-      ),
-      cappedDurationMs(
-        profile.component.exit.durationMs,
-        NOW_PLAYING_COMPONENT_EXIT_DURATION_MS,
+        ALBUM_DETAIL_FADE_DURATION_MS,
       ),
     ];
-    if (!kind.endsWith("close")) {
+    if (!close) {
       durations.push(
         cappedDurationMs(
-          profile.component.enter.durationMs,
-          NOW_PLAYING_COMPONENT_ENTER_DURATION_MS,
-        ) + NOW_PLAYING_DETAILS_DELAY_MS,
+          profile.detail.surface.durationMs,
+          ALBUM_DETAIL_FADE_DURATION_MS,
+        ),
       );
     }
     return scale(Math.max(...durations));
   }
-  if (kind.startsWith("album-detail")) {
-    return scale(
-      Math.max(
-        cappedDurationMs(
-          profile.shared.artwork.durationMs,
-          ALBUM_DETAIL_ARTWORK_VISUAL_DURATION_MS,
-        ),
-        cappedDurationMs(
-          profile.shared.title.durationMs,
-          ALBUM_DETAIL_TITLE_VISUAL_DURATION_MS,
-        ),
-        cappedDurationMs(
-          profile.shared.crossfade.durationMs,
-          ALBUM_DETAIL_FADE_DURATION_MS,
-        ),
-      ),
-    );
-  }
-  const sharedTiming = kind.startsWith("playlist")
-    ? profile.shared.identity
-    : profile.shared.artwork;
-  const sharedDuration =
-    profile.shared.choreography === "crossfade"
-      ? profile.shared.crossfade.durationMs
-      : sharedTiming.durationMs;
-  const durations = [sharedDuration, profile.shared.title.durationMs];
-  if (!kind.endsWith("close"))
-    durations.push(profile.detail.surface.durationMs);
-  return scale(Math.max(...durations));
+  return scale(ALBUM_DETAIL_ARTWORK_VISUAL_DURATION_MS);
 }
 
 export async function transitionCodaViewWithMotion(
@@ -1258,7 +1458,9 @@ export async function transitionCodaViewWithMotion(
   // Motion queues builders configured with `interrupt: "wait"`. Finish the
   // previous snapshot before enqueueing this one so rapid primary navigation
   // remains latest-wins instead of sitting behind the prior animation's full
-  // settled timeline.
+  // settled timeline. Immediate cannot be used: Motion 12.43 rewrites that
+  // update synchronously and drops the async Router commit before the incoming
+  // shared element exists.
   supersedeMotionViewTransition();
   const transitionId = ++latestMotionTransitionId;
   const snapshotDestinations = sharedSnapshotDestinations(kind);
@@ -1292,24 +1494,26 @@ export async function transitionCodaViewWithMotion(
   let updated = false;
   let capturedDestinationCount = 0;
   let capturedDestinationNames: readonly string[] = [];
+  let playbackControls: AnimationPlaybackControls | undefined;
+  let motionTransition: ReturnType<typeof animateView> | undefined;
+  let timedOut = false;
+  let pendingRewriteRaf = 0;
 
   try {
     const defaultTransition = kind.startsWith("now-playing")
-      ? cappedSpring(
-          motion.profile.shared.artwork.durationMs,
+      ? nowPlayingSpring(
           NOW_PLAYING_ARTWORK_VISUAL_DURATION_MS,
-          NOW_PLAYING_ARTWORK_BOUNCE,
+          kind.endsWith("close")
+            ? NOW_PLAYING_CLOSE_ARTWORK_BOUNCE
+            : NOW_PLAYING_ARTWORK_BOUNCE,
           motion,
         )
-      : kind.startsWith("album-detail")
-        ? cappedSpring(
-            motion.profile.shared.artwork.durationMs,
-            ALBUM_DETAIL_ARTWORK_VISUAL_DURATION_MS,
-            ALBUM_DETAIL_ARTWORK_BOUNCE,
-            motion,
-          )
-        : undefined;
-    const transition = animateView(
+      : isDetailCloseKind(kind)
+        ? cappedDetailCloseArtwork(motion)
+        : isDetailMorphKind(kind)
+          ? cappedDetailArtwork(motion)
+          : undefined;
+    motionTransition = animateView(
       async () => {
         if (transitionId !== latestMotionTransitionId || updated) return;
         updated = true;
@@ -1345,19 +1549,49 @@ export async function transitionCodaViewWithMotion(
         ...defaultTransition,
       },
     );
-    configureMotionTransition(transition, kind, motion);
+    configureMotionTransition(motionTransition, kind, motion);
+    activeMotionBuilder = motionTransition;
+    // Radio/Discover morph groups can finish in one frame. Waiting for the
+    // builder promise misses that window, so rewrite on ready and the first
+    // pending frames instead of only after animateView resolves.
+    rewriteActiveViewTransitionWhenReady();
+    queueMicrotask(rewriteActiveViewTransitionWhenReady);
+    let pendingRewriteFrames = 0;
+    const rewriteWhileBuilderPending = () => {
+      rewriteActiveViewTransitionWhenReady();
+      pendingRewriteFrames += 1;
+      if (pendingRewriteFrames < 6) {
+        pendingRewriteRaf = window.requestAnimationFrame(
+          rewriteWhileBuilderPending,
+        );
+      }
+    };
+    pendingRewriteRaf = window.requestAnimationFrame(
+      rewriteWhileBuilderPending,
+    );
     // TanStack Router's navigate promise resolves after its route commit and
     // render acknowledgement. Motion's builder then resolves when the browser
     // has captured that committed destination. Those are the lifecycle
-    // boundaries; do not layer timing-based readiness guesses over them.
-    const controls = await Promise.resolve(
-      transition as unknown as PromiseLike<AnimationPlaybackControls>,
+    // boundaries for the snapshot. A hung `finished` promise must not keep
+    // `interrupt: "wait"` queued behind a skipped WebKit transition.
+    playbackControls = await Promise.resolve(
+      motionTransition as unknown as PromiseLike<AnimationPlaybackControls>,
     );
+    window.cancelAnimationFrame(pendingRewriteRaf);
+    if (transitionId !== latestMotionTransitionId) {
+      settleResolvedMotionControls(playbackControls);
+    } else if (activeMotionBuilder === motionTransition) {
+      activeMotionControls = playbackControls;
+    }
     const expectedTransitionNames = [
       ...(sourceName && sourceName !== "none" ? [sourceName] : []),
       ...capturedDestinationNames,
     ];
     const pseudo = inspectMotionPseudoLayers(expectedTransitionNames);
+    rewriteDocumentViewTransitionGroupsToTransform();
+    window.requestAnimationFrame(() => {
+      rewriteDocumentViewTransitionGroupsToTransform();
+    });
     updateMotionDiagnostic(diagnosticId, {
       pseudoLayers: pseudo.layers,
       actualDurationMs: pseudo.actualDurationMs,
@@ -1374,7 +1608,10 @@ export async function transitionCodaViewWithMotion(
           pseudoLayersPair(pseudo.layers, expectedTransitionNames)
         : undefined,
     });
-    await controls.finished;
+    timedOut = await awaitMotionFinished(
+      playbackControls,
+      configuredDurationMs + MOTION_FINISHED_BUFFER_MS,
+    );
     finishMotionDiagnostic(diagnosticId, "finished");
   } catch (cause) {
     if (transitionId === latestMotionTransitionId && !updated) {
@@ -1389,25 +1626,29 @@ export async function transitionCodaViewWithMotion(
       "fallback",
       cause instanceof Error ? cause.message.slice(0, 160) : "transition-error",
     );
+  } finally {
+    window.cancelAnimationFrame(pendingRewriteRaf);
+    // Settle and skip only this morph, and only while it is still latest.
+    // A superseded finally must not complete()/skipTransition() the incoming
+    // animateView that already replaced document.activeViewTransition.
+    const stillCurrent = transitionId === latestMotionTransitionId;
+    if (stillCurrent && playbackControls) {
+      settleResolvedMotionControls(playbackControls);
+    }
+    if (stillCurrent && timedOut) {
+      drainNativeViewTransitionOverlay();
+    }
+    if (playbackControls && activeMotionControls === playbackControls) {
+      activeMotionControls = undefined;
+    }
+    if (motionTransition && activeMotionBuilder === motionTransition) {
+      activeMotionBuilder = undefined;
+    }
   }
 }
 
 export function supersedeMotionViewTransition() {
   latestMotionTransitionId += 1;
-  if (typeof document.getAnimations === "function") {
-    for (const animation of document.getAnimations()) {
-      const effect = animation.effect as KeyframeEffect | null;
-      if (
-        effect?.target === document.documentElement &&
-        effect.pseudoElement?.startsWith("::view-transition")
-      ) {
-        try {
-          animation.finish();
-        } catch {
-          animation.cancel();
-        }
-      }
-    }
-  }
+  settleActiveMotionViewTransition();
   clearStaleMotionViewTransitionNames();
 }

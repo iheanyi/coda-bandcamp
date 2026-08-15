@@ -11,6 +11,7 @@ import { AlbumCard } from "./AlbumCard";
 import { AlbumDetailPage } from "./AlbumDetailPage";
 import { ArtistCard } from "./ArtistCard";
 import { ReleaseResults } from "./LibraryResults";
+import { CollectionScreen } from "./CollectionScreen";
 import { RecentScreen } from "./RecentScreen";
 
 const guestTrack: Track = {
@@ -191,7 +192,7 @@ describe("library semantic navigation", () => {
       Object.fromEntries(albumArtistDestination.searchParams),
     ).toMatchObject({
       genre: "All",
-      mode: "artists",
+      mode: "releases",
       q: "",
     });
     expect(guestArtistDestination.pathname).toBe(
@@ -354,5 +355,58 @@ describe("library semantic navigation", () => {
     expect(preloadRoute).not.toHaveBeenCalled();
     expect(onOpen).toHaveBeenCalledOnce();
     expect(router.state.location.pathname).toBe("/collection");
+  });
+
+  it("does not wrap collection results in a live region so Back AX can see Open album immediately", async () => {
+    const { container } = await renderWithRouter(
+      <CollectionScreen
+        actions={{
+          availability: {
+            onConnect: vi.fn(),
+            onRetryStartup: vi.fn(),
+            onSync: vi.fn(),
+          },
+          artists: {
+            onClearFilters: vi.fn(),
+            onOpen: vi.fn(),
+          },
+          releases: {
+            onArtist: vi.fn(),
+            onClearFilters: vi.fn(),
+            onOpen: vi.fn(),
+            onPlay: vi.fn(),
+            onQueue: vi.fn(),
+            onQueueSearchResults: vi.fn(),
+            onTogglePlayback: vi.fn(),
+          },
+        }}
+        model={{
+          availability: {
+            connected: true,
+            isInitialLoading: false,
+            libraryError: "",
+            releaseCount: 1,
+            syncState: "idle",
+          },
+          content: {
+            kind: "releases",
+            results: {
+              albums: [album],
+              browseMode: "releases",
+              hasActiveFilters: false,
+              hasSearchQuery: false,
+              playing: false,
+              title: "All releases",
+            },
+          },
+        }}
+        refs={{ libraryPane: createRef<HTMLElement>() }}
+      />,
+    );
+
+    expect(container.querySelector('[aria-live="polite"]')).toBeNull();
+    expect(
+      await screen.findByRole("link", { name: "Open Blue Hours" }),
+    ).toBeInTheDocument();
   });
 });

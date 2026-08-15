@@ -359,6 +359,7 @@ export function LibraryScreenChrome({
                       data-selection-travel-steps={
                         browseIndicatorMotion.travelSteps
                       }
+                      layout="position"
                       layoutId={browseIndicatorLayoutId}
                       style={COLLECTION_BROWSE_INDICATOR_STYLE}
                       transition={browseIndicatorMotion.transition}

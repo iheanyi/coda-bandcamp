@@ -36,7 +36,7 @@ export function RecentScreen({
   className,
 }: RecentScreenProps) {
   return (
-    <section className={cn("pt-6", className)} aria-live="polite">
+    <section className={cn("pt-6", className)}>
       <LibraryAvailability
         model={model.availability}
         actions={actions.availability}

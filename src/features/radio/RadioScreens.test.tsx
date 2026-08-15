@@ -3,12 +3,14 @@ import { RouterContextProvider } from "@tanstack/react-router";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { CodaMotionProvider } from "@/MotionProvider";
 import { createPlaybackClock } from "@/playbackClock";
 import { createCodaMemoryRouter } from "@/router";
 import { parseRadioShowIdParam } from "@/routing/routeContracts";
 import type { RadioShow } from "@/types";
 
-import { RadioArtwork } from "./RadioPresentation";
+import { RadioArtwork, RadioCard } from "./RadioPresentation";
 import { RadioShowScreen } from "./RadioScreens";
 
 const mocks = vi.hoisted(() => ({
@@ -93,9 +95,7 @@ it("loads a direct show screen by ID without requesting the archive", async () =
   expect(
     screen.getByRole("link", { name: "Browse all shows" }),
   ).toHaveAttribute("href", "/radio");
-  expect(
-    screen.getByRole("button", { name: "Back" }),
-  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument();
 });
 
 it("recovers Radio artwork by URL while preserving transition identity", () => {
@@ -148,4 +148,61 @@ it("recovers Radio artwork by URL while preserving transition identity", () => {
     "data-coda-radio-artwork-return",
     String(show.id),
   );
+});
+
+it("snaps Radio hover tray width instead of animating layout", () => {
+  const matchMedia = vi.spyOn(window, "matchMedia").mockImplementation(
+    (query) =>
+      ({
+        matches: query.includes("(hover: hover)"),
+        media: query,
+        onchange: null,
+        addListener: () => undefined,
+        removeListener: () => undefined,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+        dispatchEvent: () => false,
+      }) as MediaQueryList,
+  );
+
+  try {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const router = createCodaMemoryRouter(client, ["/radio"]);
+
+    render(
+      <CodaMotionProvider>
+        <TooltipProvider>
+          <QueryClientProvider client={client}>
+            <RouterContextProvider router={router}>
+              <RadioCard
+                show={show}
+                active={false}
+                playing={false}
+                busyAction="queue"
+                onPlay={vi.fn()}
+                onTogglePlayback={vi.fn()}
+                onQueue={vi.fn()}
+                onDetails={vi.fn()}
+                favorite={false}
+                onToggleFavorite={vi.fn()}
+                onOpenItem={vi.fn()}
+                onBrowseSeries={vi.fn()}
+                returningArtwork={false}
+              />
+            </RouterContextProvider>
+          </QueryClientProvider>
+        </TooltipProvider>
+      </CodaMotionProvider>,
+    );
+
+    const actions = document.querySelector("[data-radio-card-actions]");
+    expect(actions).toHaveAttribute("data-radio-card-actions-expanded", "true");
+    const tray = actions?.parentElement;
+    expect(tray?.className).not.toMatch(/transition-\[width\]/);
+    expect(tray).toHaveStyle({ width: "calc(100% - 1rem)" });
+  } finally {
+    matchMedia.mockRestore();
+  }
 });

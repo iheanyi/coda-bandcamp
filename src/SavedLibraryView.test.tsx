@@ -22,6 +22,7 @@ import { PersistentAppOverlays } from "@/features/settings/PersistentAppOverlays
 import { usePersistentOverlaysController } from "@/features/settings/usePersistentOverlaysController";
 import { createCodaMemoryRouter } from "@/router";
 import { parsePlaylistIdParam } from "@/routing/routeContracts";
+import { resetResponsiveGridMeasurementCache } from "./responsiveGridMeasurement";
 import type {
   LocalFavoriteCollection,
   PlaylistDetail,
@@ -319,6 +320,7 @@ const commonProps = {
 };
 
 beforeEach(() => {
+  resetResponsiveGridMeasurementCache();
   Object.values(mocks).forEach((mock) => mock.mockReset());
   mocks.fetchPlaylists.mockResolvedValue([summary]);
   mocks.fetchPlaylist.mockResolvedValue(detail);
@@ -363,9 +365,11 @@ describe("saved Bandcamp library views", () => {
       />,
     );
 
-    expect(screen.getByText(
-      "Music favorites sync through Bandcamp’s Subsonic service, separate from the Bandcamp website. Track listings can lag, so Coda confirms them as albums load and on Refresh. Radio shows stay on this device.",
-    )).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Music favorites sync through Bandcamp’s Subsonic service, separate from the Bandcamp website. Track listings can lag, so Coda confirms them as albums load and on Refresh. Radio shows stay on this device.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("emits validated playlist identity from the route list screen", async () => {
@@ -644,7 +648,7 @@ describe("saved Bandcamp library views", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
-      expect(startViewTransition).toHaveBeenCalledTimes(2);
+      expect(startViewTransition).toHaveBeenCalledOnce();
       expect(snapshots).toEqual([
         {
           className: expect.stringContaining(
@@ -664,25 +668,11 @@ describe("saved Bandcamp library views", () => {
           afterScrollTop: 0,
           identityAndTitleAreSeparate: true,
         },
-        {
-          className: expect.stringContaining(
-            "coda-transition--playlist-detail-close",
-          ),
-          beforeDetail: summary.id,
-          beforeSource: undefined,
-          beforeTitleDetail: summary.id,
-          beforeTitleSource: undefined,
-          beforeTitleSourceIsStatic: false,
-          afterDetail: undefined,
-          afterReturn: summary.id,
-          afterTitleDetail: undefined,
-          afterTitleReturn: summary.id,
-          afterTitleReturnIsStatic: true,
-          afterFocusedPlaylist: summary.id,
-          afterScrollTop: 173,
-          identityAndTitleAreSeparate: true,
-        },
       ]);
+      expect(
+        await screen.findByRole("link", { name: /Night drive/ }),
+      ).toBeInTheDocument();
+      expect(scrollRoot!.scrollTop).toBe(173);
       await waitFor(() =>
         expect(
           document.querySelectorAll(
@@ -768,12 +758,11 @@ describe("saved Bandcamp library views", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
-      expect(returnSnapshot).toEqual({
-        beforeIcon: summary.id,
-        beforeTitle: undefined,
-        afterIcon: summary.id,
-        afterTitle: summary.id,
-      });
+      expect(startViewTransition).toHaveBeenCalledOnce();
+      expect(returnSnapshot).toEqual({});
+      expect(
+        await screen.findByRole("link", { name: /Night drive/ }),
+      ).toBeInTheDocument();
       await waitFor(() =>
         expect(
           document.querySelectorAll(
@@ -841,7 +830,7 @@ describe("saved Bandcamp library views", () => {
     });
     expect(playlistArtistLink).toHaveAttribute(
       "href",
-      "/collection/artists/sweeps?q=&genre=All&sort=recent&mode=artists&albumId=album-1",
+      "/collection/artists/sweeps?q=&genre=All&sort=recent&mode=releases&albumId=album-1",
     );
     fireEvent.click(playlistArtistLink);
     expect(commonProps.onOpenArtist).toHaveBeenCalledWith(
@@ -1513,7 +1502,7 @@ describe("saved Bandcamp library views", () => {
     if (!trackAlbum) throw new Error("Expected favorite track album link");
     expect(trackArtist).toHaveAttribute(
       "href",
-      "/collection/artists/sweeps?q=&genre=All&sort=recent&mode=artists&albumId=album-1",
+      "/collection/artists/sweeps?q=&genre=All&sort=recent&mode=releases&albumId=album-1",
     );
     expect(trackAlbum).toHaveAttribute(
       "href",

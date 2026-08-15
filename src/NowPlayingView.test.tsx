@@ -455,7 +455,10 @@ describe("NowPlayingView Radio metadata", () => {
     const currentTitle = within(chapterList).getByRole("button", {
       name: "Open Mirage by Sweeps on Bandcamp",
     });
-    expect(currentTitle.closest("li")).toHaveAttribute("aria-current", "true");
+    expect(currentTitle.closest('[role="listitem"]')).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
     expect(within(chapterList).getByText("Up next")).toBeInTheDocument();
 
     fireEvent.click(
@@ -464,6 +467,78 @@ describe("NowPlayingView Radio metadata", () => {
       }),
     );
     expect(onSeek).toHaveBeenCalledWith(30);
+  });
+
+  it("virtualizes long Radio timelines while preserving list position metadata", async () => {
+    const noOp = vi.fn();
+    const onBack = vi.fn();
+    const longTimeline = boundRadioChapters(
+      Array.from({ length: 34 }, (_, index) => ({
+        artist: `Artist ${index + 1}`,
+        timecode: index * 120,
+        title: `Chapter ${index + 1}`,
+      })),
+    );
+    document.documentElement.classList.add("coda-view-transitioning");
+    try {
+      renderNowPlaying(
+        <NowPlayingView
+          track={radioTrack}
+          radioTimeline={longTimeline}
+          queue={[radioTrack]}
+          currentIndex={0}
+          playing
+          playbackClock={createPlaybackClock(0)}
+          duration={radioTrack.duration}
+          volume={0.7}
+          repeat="off"
+          artwork={<span>Artwork</span>}
+          airPlayAvailable={false}
+          queueOpen={false}
+          onBack={onBack}
+          onToggle={noOp}
+          onPrevious={noOp}
+          onNext={noOp}
+          canPrevious
+          canNext
+          onSeek={noOp}
+          onVolume={noOp}
+          onRepeat={noOp}
+          onAirPlay={noOp}
+          onArtist={noOp}
+          onAlbum={noOp}
+          onPlayQueueIndex={noOp}
+          onRadioSeries={noOp}
+          recommendationLoading={false}
+          onPlayRecommendation={noOp}
+          onAnotherRecommendation={noOp}
+        />,
+      );
+
+      const timeline = screen.getByRole("list", {
+        name: "Radio chapter timeline",
+      });
+      expect(timeline).toHaveAttribute("data-virtualized", "true");
+      expect(timeline).toHaveAttribute("aria-busy", "true");
+      expect(within(timeline).queryAllByRole("listitem")).toHaveLength(0);
+
+      document.documentElement.classList.remove("coda-view-transitioning");
+      await waitFor(() =>
+        expect(timeline).toHaveAttribute("aria-busy", "false"),
+      );
+      const renderedRows = within(timeline).getAllByRole("listitem");
+      expect(renderedRows.length).toBeLessThan(longTimeline.length);
+      expect(renderedRows[0]).toHaveAttribute(
+        "aria-setsize",
+        String(longTimeline.length),
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Back" }));
+      expect(timeline).toHaveAttribute("aria-busy", "true");
+      await waitFor(() => expect(onBack).toHaveBeenCalledOnce());
+    } finally {
+      document.documentElement.classList.remove("coda-view-transitioning");
+    }
   });
 
   it("updates progress each second without rerendering Radio metadata inside a chapter", () => {

@@ -18,6 +18,13 @@ function renderedLocationKey(location: {
 }
 
 /**
+ * A View Transition update that awaits the router must not hang the Motion
+ * `interrupt: "wait"` queue when navigate is a no-op or onRendered never
+ * fires with a new entry. Finish the update so the next album open can start.
+ */
+export const ROUTER_NAVIGATION_RENDER_TIMEOUT_MS = 500;
+
+/**
  * TanStack navigation is allowed to load and commit asynchronously. Subscribe
  * before starting it so a View Transition update never resolves until React
  * has acknowledged rendering a different route entry.
@@ -33,18 +40,27 @@ export function awaitRouterNavigationAfterRender(
     let rendered = false;
     let settled = false;
     let unsubscribe = () => {};
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
     const finish = () => {
       if (settled || !navigationSettled || !rendered) return;
       settled = true;
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
       unsubscribe();
       resolve();
     };
     const fail = (cause: unknown) => {
       if (settled) return;
       settled = true;
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
       unsubscribe();
       reject(cause);
+    };
+    const finishEvenIfHung = () => {
+      if (settled) return;
+      settled = true;
+      unsubscribe();
+      resolve();
     };
 
     unsubscribe = router.subscribe("onRendered", (event) => {
@@ -52,6 +68,10 @@ export function awaitRouterNavigationAfterRender(
       rendered = true;
       finish();
     });
+    timeoutId = setTimeout(
+      finishEvenIfHung,
+      ROUTER_NAVIGATION_RENDER_TIMEOUT_MS,
+    );
     let navigation: void | Promise<void>;
     try {
       navigation = navigate();
@@ -77,9 +97,11 @@ export function awaitRouterBackAfterRender(router: CodaRouter): Promise<void> {
   return new Promise<void>((resolve) => {
     let settled = false;
     let unsubscribe = () => {};
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const finish = () => {
       if (settled) return;
       settled = true;
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
       unsubscribe();
       resolve();
     };
@@ -88,6 +110,7 @@ export function awaitRouterBackAfterRender(router: CodaRouter): Promise<void> {
       const toLocationKey = renderedLocationKey(event.toLocation);
       if (toLocationKey !== fromLocationKey) finish();
     });
+    timeoutId = setTimeout(finish, ROUTER_NAVIGATION_RENDER_TIMEOUT_MS);
     router.history.back();
   });
 }

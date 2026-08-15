@@ -103,7 +103,6 @@ export function useAppRouteRuntimes({
       onPlay: library.actions.commands.playArtist,
       onQueue: library.actions.commands.queueArtist,
       onShuffle: library.actions.commands.shuffleArtist,
-      routeInput: library.routeInput,
       shuffleInProgress: Boolean(playback.controller.shuffle.progress),
     },
     catalog: {

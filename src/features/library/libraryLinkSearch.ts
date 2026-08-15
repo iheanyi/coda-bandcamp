@@ -16,7 +16,6 @@ export function libraryArtistRouteSearch(
   return {
     ...search,
     genre: "All",
-    mode: "artists",
     q: "",
     ...(sourceAlbumId
       ? { albumId: parseAlbumIdParam(sourceAlbumId) }

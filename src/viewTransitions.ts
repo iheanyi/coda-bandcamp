@@ -6,6 +6,7 @@ import {
   supersedeMotionViewTransition,
   transitionCodaViewWithMotion,
 } from "./motionViewTransitions";
+import { rewriteDocumentViewTransitionGroupsToTransform } from "./compositorViewTransition";
 import {
   beginMotionDiagnostic,
   finishMotionDiagnostic,
@@ -229,6 +230,13 @@ function isPageTransition(
   return kind.startsWith("page");
 }
 
+function usesLivePaneAnimation(
+  kind: CodaViewTransitionKind,
+  options: CodaViewTransitionOptions,
+): boolean {
+  return isPageTransition(kind) && Boolean(options.routerOwnedPage);
+}
+
 function configureNativePageProfile(
   kind: "page-forward" | "page-back" | "page-crossfade",
   motion: ResolvedMotionProfile,
@@ -281,21 +289,25 @@ function configureNativePageProfile(
 
 async function transitionRouterOwnedPage(
   update: CodaViewTransitionUpdate,
-  kind: "page-forward" | "page-back" | "page-crossfade",
+  kind: CodaViewTransitionKind,
   motion: ResolvedMotionProfile,
   transitionId: number,
 ) {
-  // Primary destinations can contain thousands of virtualized cards. Asking
-  // WebKit to rasterize that whole pane for a native View Transition costs far
-  // more than the animation itself. TanStack preloads the route first; animate
-  // its committed destination live after the snapshot-free render
-  // acknowledgement. The outgoing page stays interactive while loaders run.
+  // Primary destinations must not snapshot Collection. Native page captures
+  // freeze the outgoing grid, then often snapshot an unpainted destination as
+  // a black pane. Keep the outgoing page live while loaders run; animate the
+  // committed destination after it exists. Detail Back uses shared-element
+  // animateView instead, with html { view-transition-name: none } so the
+  // virtualized origin is not rasterized.
   supersedeMotionViewTransition();
   stopActivePageAnimations();
+  const reverse = kind === "page-back";
   const transitionClass =
-    motion.profile.page.mode === "crossfade"
+    isPageTransition(kind) && motion.profile.page.mode === "crossfade"
       ? TRANSITION_CLASSES["page-crossfade"]
-      : TRANSITION_CLASSES[kind];
+      : reverse
+        ? TRANSITION_CLASSES["page-back"]
+        : TRANSITION_CLASSES[kind];
   document.documentElement.classList.add(
     "coda-view-transitioning",
     transitionClass,
@@ -318,12 +330,16 @@ async function transitionRouterOwnedPage(
     destinationCount: 0,
     sharedExpected: false,
   });
-  const direction = kind === "page-back" ? -1 : 1;
+  const direction = reverse ? -1 : 1;
   const slide =
     kind !== "page-crossfade" && motion.profile.page.mode === "slide";
+  const translationPx = Math.max(motion.profile.page.translationPx, 28);
+  const scaleFrom = Math.min(motion.profile.page.scaleFrom, 0.985);
   const newTransform = slide
-    ? `translateX(${direction * motion.profile.page.translationPx}px) scale(${motion.profile.page.scaleFrom})`
-    : `scale(${motion.profile.page.scaleFrom})`;
+    ? `translateX(${direction * translationPx}px) scale(${scaleFrom})`
+    : `scale(${scaleFrom})`;
+  const opacityFrom = motion.profile.page.opacityFrom;
+  const enterTransition = { ...motion.view, delay: 0 };
 
   try {
     await update(false);
@@ -352,18 +368,16 @@ async function transitionRouterOwnedPage(
           inlineTransformPriority,
         );
       };
-      destination.style.setProperty(
-        "opacity",
-        String(motion.profile.page.opacityFrom),
-      );
+      destination.style.setProperty("opacity", String(opacityFrom));
       destination.style.setProperty("transform", newTransform);
+      void destination.getBoundingClientRect();
       const enter = animate(
         destination,
         {
-          opacity: [motion.profile.page.opacityFrom, 1],
+          opacity: [opacityFrom, 1],
           transform: [newTransform, "translateX(0px) scale(1)"],
         },
-        motion.viewEnter,
+        enterTransition,
       );
       activePageAnimations = [enter];
       await enter.finished;
@@ -428,12 +442,7 @@ export function transitionCodaView(
   const prefersReducedMotion =
     typeof window.matchMedia === "function" &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const nativePageTransition = isPageTransition(kind);
-  if (
-    nativePageTransition &&
-    options.routerOwnedPage &&
-    !prefersReducedMotion
-  ) {
+  if (usesLivePaneAnimation(kind, options) && !prefersReducedMotion) {
     return transitionRouterOwnedPage(update, kind, motionProfile, transitionId);
   }
   const transitionDocument = document as ViewTransitionDocument;
@@ -460,10 +469,12 @@ export function transitionCodaView(
     return Promise.resolve(update(false)).then(() => undefined);
   }
 
+  const nativePageTransition = isPageTransition(kind);
   if (motionViewTransitionsEnabled() && !nativePageTransition) {
     document.documentElement.classList.add(
       "coda-view-transitions-supported",
       "coda-view-transitioning",
+      TRANSITION_CLASSES[kind],
     );
     return transitionCodaViewWithMotion(
       update,
@@ -472,7 +483,7 @@ export function transitionCodaView(
       TRANSITION_CLASSES[kind],
     ).finally(() => {
       if (latestTransitionId === transitionId) {
-        document.documentElement.classList.remove("coda-view-transitioning");
+        clearTransitionClasses();
       }
     });
   }
@@ -492,7 +503,9 @@ export function transitionCodaView(
     updated = true;
     if (snapshot) {
       const sourceCandidates = sharedSourceCandidates(kind);
-      const result = flushSync(update);
+      // Coda already owns this View Transition. Tell the router not to start a
+      // nested one; sidebar navigate() defaults viewTransition to true.
+      const result = flushSync(() => update(false));
       return Promise.resolve(result).then(() => {
         if (latestTransitionId !== transitionId || failed || !lifecycleActive) {
           return;
@@ -513,7 +526,7 @@ export function transitionCodaView(
         }
       });
     }
-    return update();
+    return update(false);
   };
   const handleTransitionFailure = () => {
     if (latestTransitionId !== transitionId || failed) return;
@@ -528,7 +541,7 @@ export function transitionCodaView(
     finishMotionDiagnostic(diagnosticId, "fallback", "native-transition-error");
     if (!updated) {
       updated = true;
-      update();
+      update(false);
     }
   };
   if (nativePageTransition) {
@@ -588,6 +601,9 @@ export function transitionCodaView(
         handleTransitionFailure,
       ),
       transition.ready?.then(() => {
+        if (!nativePageTransition) {
+          rewriteDocumentViewTransitionGroupsToTransform();
+        }
         const pseudo = inspectMotionPseudoLayers(transitionNames);
         updateMotionDiagnostic(diagnosticId, {
           actualDurationMs: pseudo.actualDurationMs,

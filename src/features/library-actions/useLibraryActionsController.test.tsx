@@ -165,6 +165,32 @@ describe("useLibraryActionsController", () => {
     expect(result.current.state.loadingAlbumId).toBeUndefined();
   });
 
+  it("does not restore cold album loading after hydration already settled", async () => {
+    const pendingAlbum = deferred<Album | undefined>();
+    const session = createSession({
+      ensureAlbum: vi.fn(() => pendingAlbum.promise),
+    });
+    const { detailNavigation, result } = renderController({
+      autoCommitNavigation: false,
+      session,
+    });
+
+    let openPromise!: Promise<void>;
+    act(() => {
+      openPromise = result.current.commands.openAlbum(album);
+    });
+    const request = detailNavigation.open.mock.calls[0]?.[0];
+
+    await act(async () => {
+      pendingAlbum.resolve(hydratedAlbum);
+      await openPromise;
+    });
+    expect(result.current.state.loadingAlbumId).toBeUndefined();
+
+    act(() => request?.beforeCommit?.());
+    expect(result.current.state.loadingAlbumId).toBeUndefined();
+  });
+
   it("does not commit hydrated playback after the library generation changes", async () => {
     const pendingAlbum = deferred<Album | undefined>();
     const generation = generationHarness();
@@ -247,6 +273,55 @@ describe("useLibraryActionsController", () => {
       "good",
     );
     expect(result.current.state.queueSearchProgress).toBeUndefined();
+  });
+
+  it("does not arm loadingAlbumId when opening a visibly prefetched album", async () => {
+    const queryClient = new QueryClient();
+    const session = createSession({
+      ensureAlbums: vi.fn(async (candidates: readonly Album[]) => {
+        for (const candidate of candidates) {
+          queryClient.setQueryData(albumQueryKey(candidate.id), [track]);
+        }
+        return {
+          albums: candidates.map((candidate) => ({
+            ...candidate,
+            tracks: [track],
+          })),
+          failed: 0,
+          stale: false,
+        };
+      }),
+    });
+    const { detailNavigation, result } = renderController({
+      autoCommitNavigation: false,
+      queryClient,
+      session,
+    });
+
+    await act(async () => {
+      await result.current.commands.prefetchVisibleAlbums([album]);
+    });
+    expect(session.ensureAlbums).toHaveBeenCalledWith([album], {
+      concurrency: 6,
+      mode: "preload",
+    });
+    expect(result.current.state.loadingAlbumId).toBeUndefined();
+
+    let openPromise!: Promise<void>;
+    act(() => {
+      openPromise = result.current.commands.openAlbum(album);
+    });
+    const request = detailNavigation.open.mock.calls[0]?.[0];
+    expect(request).toEqual(
+      expect.objectContaining({ albumId: album.id, coldLoad: false }),
+    );
+    act(() => request?.beforeCommit?.());
+    expect(result.current.state.loadingAlbumId).toBeUndefined();
+
+    await act(async () => {
+      await openPromise;
+    });
+    expect(result.current.state.loadingAlbumId).toBeUndefined();
   });
 
   it("opens cached album identity, hydrates detail, and drops its snapshot on disconnect", async () => {

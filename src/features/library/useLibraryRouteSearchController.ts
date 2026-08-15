@@ -149,7 +149,6 @@ export function useLibraryRouteSearchController({
           resetScroll: false,
           search: validateCollectionSearch({
             ...validatedSearch,
-            mode: "artists",
             q: query,
           }),
           to: "/collection",
@@ -177,7 +176,6 @@ export function useLibraryRouteSearchController({
     const artistSearch = validateCollectionSearch({
       ...validatedSearch,
       genre: "All",
-      mode: "artists",
       q: "",
     });
     return {

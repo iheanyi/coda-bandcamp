@@ -147,13 +147,13 @@ export function CoverArt({
     setRequestVersion((version) => version + 1);
   };
 
+  const warm = Boolean(url && warmCoverUrls.has(url));
   const sizeClassName =
     size === "card"
       ? "aspect-square w-full rounded-md shadow-[0_10px_24px_rgba(0,0,0,0.24)]"
       : size === "small"
         ? "size-10 rounded-sm"
         : "size-52 rounded-md shadow-[0_20px_42px_rgba(0,0,0,0.35)]";
-  const warm = Boolean(url && warmCoverUrls.has(url));
 
   return (
     <div
@@ -180,8 +180,8 @@ export function CoverArt({
           key={url}
           src={url}
           alt={`${album.title} cover`}
-          loading={size === "card" && !warm ? "lazy" : "eager"}
-          decoding={warm ? "sync" : "async"}
+          loading={size === "card" ? "lazy" : "eager"}
+          decoding={warm && size !== "card" ? "sync" : "async"}
           draggable={false}
           onError={() => {
             warmCoverUrls.delete(url);

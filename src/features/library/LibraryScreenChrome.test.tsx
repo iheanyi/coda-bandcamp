@@ -18,6 +18,7 @@ import {
 
 type CapturedIndicator = Readonly<{
   kind?: "browse" | "genre";
+  layout?: unknown;
   layoutId?: string;
   transition?: unknown;
 }>;
@@ -32,10 +33,11 @@ vi.mock("motion/react-m", async () => {
       HTMLAttributes<HTMLDivElement> & {
         "data-collection-browse-indicator"?: string;
         "data-selection-rail-indicator"?: string;
+        layout?: unknown;
         layoutId?: string;
         transition?: unknown;
       }
-    >(function MotionDiv({ layoutId, transition, ...props }, ref) {
+    >(function MotionDiv({ layout, layoutId, transition, ...props }, ref) {
       capturedIndicators.push({
         kind:
           props["data-selection-rail-indicator"] !== undefined
@@ -43,6 +45,7 @@ vi.mock("motion/react-m", async () => {
             : props["data-collection-browse-indicator"] !== undefined
               ? "browse"
               : undefined,
+        layout,
         layoutId,
         transition,
       });
@@ -368,6 +371,7 @@ describe("Collection browse tabs", () => {
     expect(capturedIndicators.at(-1)?.transition).toEqual(
       codaMotion.selectionPill,
     );
+    expect(capturedIndicators.at(-1)?.layout).toBe("position");
     expect(codaMotion.selectionPill).toEqual({
       type: "spring",
       visualDuration: 0.3,
@@ -507,5 +511,8 @@ describe("Collection genre filters", () => {
       capturedIndicators.filter(({ kind }) => kind === "genre").at(-1)
         ?.transition,
     ).toEqual({ duration: 0 });
+    expect(
+      capturedIndicators.filter(({ kind }) => kind === "genre").at(-1)?.layout,
+    ).toBe("position");
   });
 });

@@ -87,6 +87,7 @@ function workspaceOptions(
         openAlbum: vi.fn(async () => undefined),
         playAlbum: vi.fn(async () => undefined),
         playSurprise: vi.fn(async () => undefined),
+        prefetchVisibleAlbums: vi.fn(async () => undefined),
         queueAlbum: vi.fn(async () => true),
         queueAlbums: vi.fn(async () => undefined),
         refreshArtwork: vi.fn(async () => undefined),

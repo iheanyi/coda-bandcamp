@@ -167,6 +167,10 @@ function PresencePanel({
 }
 
 const UPCOMING_PREVIEW_LIMIT = 4;
+const RADIO_TIMELINE_ROW_HEIGHT = 68;
+const RADIO_TIMELINE_VIRTUALIZATION_THRESHOLD = 12;
+const RADIO_TIMELINE_OVERSCAN = 1;
+const RADIO_TIMELINE_VIEWPORT_HEIGHT = 320;
 
 function useCurrentRadioIndex(
   playbackClock: PlaybackClock,
@@ -415,6 +419,7 @@ const NowPlayingRadioTimeline = memo(function NowPlayingRadioTimeline({
   timeline,
   playing,
   radioLinkError,
+  rowsReady,
   onSeek,
   onOpen,
   getLocalLinks,
@@ -423,14 +428,147 @@ const NowPlayingRadioTimeline = memo(function NowPlayingRadioTimeline({
   timeline: readonly RadioChapter[];
   playing: boolean;
   radioLinkError: string;
+  rowsReady: boolean;
   onSeek: (value: number) => void;
   onOpen: (url: string) => void;
   getLocalLinks?: (chapter: RadioChapter) => RadioChapterLocalLinks;
 }) {
   const currentIndex = useCurrentRadioIndex(playbackClock, timeline);
   const nextIndex = currentIndex + 1 < timeline.length ? currentIndex + 1 : -1;
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [focusedIndex, setFocusedIndex] = useState<number>();
+  const virtualized = timeline.length > RADIO_TIMELINE_VIRTUALIZATION_THRESHOLD;
+  const itemKey = useCallback(
+    (index: number) => {
+      const chapter = timeline[index];
+      return `${chapter.timecode}-${chapter.artist}-${chapter.title}-${index}`;
+    },
+    [timeline],
+  );
 
   if (!timeline.length) return null;
+
+  const firstVisibleIndex = Math.max(
+    0,
+    Math.floor(scrollTop / RADIO_TIMELINE_ROW_HEIGHT) - RADIO_TIMELINE_OVERSCAN,
+  );
+  const lastVisibleIndex = Math.min(
+    timeline.length - 1,
+    Math.ceil(
+      (scrollTop + RADIO_TIMELINE_VIEWPORT_HEIGHT) / RADIO_TIMELINE_ROW_HEIGHT,
+    ) + RADIO_TIMELINE_OVERSCAN,
+  );
+  const virtualIndexes = new Set<number>();
+  if (virtualized) {
+    for (let index = firstVisibleIndex; index <= lastVisibleIndex; index += 1) {
+      virtualIndexes.add(index);
+    }
+    for (const preservedIndex of [
+      currentIndex,
+      nextIndex,
+      focusedIndex ?? -1,
+    ]) {
+      if (preservedIndex >= 0 && preservedIndex < timeline.length) {
+        virtualIndexes.add(preservedIndex);
+      }
+    }
+  }
+
+  const renderChapter = (
+    chapter: RadioChapter,
+    index: number,
+    key: string | number | bigint,
+    style?: CSSProperties,
+  ) => {
+    const isCurrent = index === currentIndex;
+    const isNext = index === nextIndex;
+    return (
+      <div
+        aria-current={isCurrent ? "true" : undefined}
+        aria-posinset={index + 1}
+        aria-setsize={timeline.length}
+        className={virtualized ? "pb-1" : undefined}
+        key={key}
+        onBlurCapture={(event) => {
+          if (
+            !event.currentTarget.contains(event.relatedTarget as Node | null)
+          ) {
+            setFocusedIndex((current) =>
+              current === index ? undefined : current,
+            );
+          }
+        }}
+        onFocusCapture={() => setFocusedIndex(index)}
+        role="listitem"
+        style={style}
+      >
+        <div
+          className={cn(
+            "relative grid min-h-16 grid-cols-[6.5rem_minmax(0,1fr)_5rem] items-center gap-3.5 rounded-lg px-3.5 py-2 transition-[background-color,box-shadow] duration-(--duration-coda-fast) hover:bg-white/3 motion-reduce:transition-none max-lg:grid-cols-[6rem_minmax(0,1fr)_3rem] max-lg:pr-2",
+            virtualized && "h-16 min-h-0",
+            isCurrent &&
+              "bg-[color-mix(in_srgb,var(--now-playing-accent)_11%,rgba(24,26,28,0.94))] shadow-[0_8px_24px_color-mix(in_srgb,var(--now-playing-accent)_7%,transparent)]",
+            isNext && "bg-white/2",
+          )}
+        >
+          <Button
+            variant="text"
+            size="compact"
+            className="grid h-auto min-h-9 grid-cols-[2.5rem_1fr] items-center gap-2 rounded-lg py-0 pr-2.5 pl-0 text-[#7c807b] hover:bg-white/4 hover:text-[#dddcd6]"
+            onClick={() => onSeek(chapter.timecode)}
+            aria-label={`Seek to ${chapter.title} at ${formatTime(chapter.timecode)}`}
+            title={`Play from ${formatTime(chapter.timecode)}`}
+          >
+            <RadioChapterArtwork
+              chapter={chapter}
+              index={index}
+              active={isCurrent}
+            />
+            <time className="text-xs tabular-nums">
+              {formatTime(chapter.timecode)}
+            </time>
+          </Button>
+          <RadioChapterCopy
+            chapter={chapter}
+            className="min-w-0"
+            onOpen={onOpen}
+            localLinks={getLocalLinks?.(chapter)}
+          />
+          {isCurrent ? (
+            <Badge
+              variant="artwork"
+              className="justify-self-end border-0 bg-[color-mix(in_srgb,var(--now-playing-accent)_17%,transparent)] px-2 py-1 text-xs tracking-widest text-[color-mix(in_srgb,var(--now-playing-accent)_72%,#f4eee8)] uppercase"
+            >
+              <i
+                className={cn(
+                  "inline-flex size-2.5 items-end gap-px [&>i]:h-[9px] [&>i]:w-0.5 [&>i]:origin-bottom [&>i]:animate-[radio-equalizer_850ms_ease-in-out_infinite_alternate] [&>i]:rounded-sm [&>i]:bg-current [&>i]:[transform:scaleY(0.444444)] [&>i]:motion-reduce:animate-none [&>i:nth-child(2)]:[animation-delay:-410ms] [&>i:nth-child(2)]:[transform:scaleY(0.888889)] [&>i:nth-child(3)]:[animation-delay:-210ms] [&>i:nth-child(3)]:[transform:scaleY(0.666667)]",
+                  !playing && "[&>i]:paused",
+                )}
+                aria-hidden="true"
+              >
+                <i />
+                <i />
+                <i />
+              </i>
+              On air
+            </Badge>
+          ) : isNext ? (
+            <Badge
+              variant="secondary"
+              className="justify-self-end px-2 py-1 text-xs tracking-widest uppercase"
+            >
+              Up next
+            </Badge>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
+
+  const virtualItems = rowsReady
+    ? [...virtualIndexes].sort((left, right) => left - right)
+    : [];
 
   return (
     <section
@@ -456,77 +594,39 @@ const NowPlayingRadioTimeline = memo(function NowPlayingRadioTimeline({
           {countLabel(timeline.length, "chapter")}
         </span>
       </div>
-      <ol
-        className="relative m-0 grid max-h-[min(42vh,24rem)] scrollbar-thin [scrollbar-color:#3e4142_transparent] scrollbar-gutter-stable list-none gap-1 overflow-y-auto overscroll-contain rounded-lg bg-[rgba(13,15,17,0.66)] py-1.5 pr-2.5 pl-1.5"
+      <div
+        className="relative m-0 max-h-[min(42vh,24rem)] scrollbar-thin [scrollbar-color:#3e4142_transparent] scrollbar-gutter-stable overflow-y-auto overscroll-contain rounded-lg bg-[rgba(13,15,17,0.66)] py-1.5 pr-2.5 pl-1.5"
         aria-label="Radio chapter timeline"
+        aria-busy={!rowsReady}
+        data-virtualized={virtualized}
+        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+        ref={scrollRef}
+        role="list"
       >
-        {timeline.map((chapter, index) => {
-          const isCurrent = index === currentIndex;
-          const isNext = index === nextIndex;
-          return (
-            <li
-              className={cn(
-                "relative grid min-h-16 grid-cols-[6.5rem_minmax(0,1fr)_5rem] items-center gap-3.5 rounded-lg px-3.5 py-2 transition-[background-color,box-shadow] duration-(--duration-coda-fast) [contain-intrinsic-size:4rem] [content-visibility:auto] hover:bg-white/3 motion-reduce:transition-none max-lg:grid-cols-[6rem_minmax(0,1fr)_3rem] max-lg:pr-2",
-                isCurrent &&
-                  "bg-[color-mix(in_srgb,var(--now-playing-accent)_11%,rgba(24,26,28,0.94))] shadow-[0_8px_24px_color-mix(in_srgb,var(--now-playing-accent)_7%,transparent)]",
-                isNext && "bg-white/2",
+        <div
+          className={cn("relative w-full", !virtualized && "grid gap-1")}
+          style={
+            virtualized
+              ? { height: timeline.length * RADIO_TIMELINE_ROW_HEIGHT }
+              : undefined
+          }
+        >
+          {virtualized
+            ? virtualItems.map((index) =>
+                renderChapter(timeline[index], index, itemKey(index), {
+                  height: RADIO_TIMELINE_ROW_HEIGHT,
+                  left: 0,
+                  position: "absolute",
+                  top: 0,
+                  transform: `translateY(${index * RADIO_TIMELINE_ROW_HEIGHT}px)`,
+                  width: "100%",
+                }),
+              )
+            : timeline.map((chapter, index) =>
+                renderChapter(chapter, index, itemKey(index)),
               )}
-              key={`${chapter.timecode}-${chapter.artist}-${chapter.title}-${index}`}
-              aria-current={isCurrent ? "true" : undefined}
-            >
-              <Button
-                variant="text"
-                size="compact"
-                className="grid h-auto min-h-9 grid-cols-[2.5rem_1fr] items-center gap-2 rounded-lg py-0 pr-2.5 pl-0 text-[#7c807b] hover:bg-white/4 hover:text-[#dddcd6]"
-                onClick={() => onSeek(chapter.timecode)}
-                aria-label={`Seek to ${chapter.title} at ${formatTime(chapter.timecode)}`}
-                title={`Play from ${formatTime(chapter.timecode)}`}
-              >
-                <RadioChapterArtwork
-                  chapter={chapter}
-                  index={index}
-                  active={isCurrent}
-                />
-                <time className="text-xs tabular-nums">
-                  {formatTime(chapter.timecode)}
-                </time>
-              </Button>
-              <RadioChapterCopy
-                chapter={chapter}
-                className="min-w-0"
-                onOpen={onOpen}
-                localLinks={getLocalLinks?.(chapter)}
-              />
-              {isCurrent ? (
-                <Badge
-                  variant="artwork"
-                  className="justify-self-end border-0 bg-[color-mix(in_srgb,var(--now-playing-accent)_17%,transparent)] px-2 py-1 text-xs tracking-widest text-[color-mix(in_srgb,var(--now-playing-accent)_72%,#f4eee8)] uppercase"
-                >
-                  <i
-                    className={cn(
-                      "inline-flex size-2.5 items-end gap-px [&>i]:h-[9px] [&>i]:w-0.5 [&>i]:origin-bottom [&>i]:animate-[radio-equalizer_850ms_ease-in-out_infinite_alternate] [&>i]:rounded-sm [&>i]:bg-current [&>i]:[transform:scaleY(0.444444)] [&>i]:motion-reduce:animate-none [&>i:nth-child(2)]:[animation-delay:-410ms] [&>i:nth-child(2)]:[transform:scaleY(0.888889)] [&>i:nth-child(3)]:[animation-delay:-210ms] [&>i:nth-child(3)]:[transform:scaleY(0.666667)]",
-                      !playing && "[&>i]:paused",
-                    )}
-                    aria-hidden="true"
-                  >
-                    <i />
-                    <i />
-                    <i />
-                  </i>
-                  On air
-                </Badge>
-              ) : isNext ? (
-                <Badge
-                  variant="secondary"
-                  className="justify-self-end px-2 py-1 text-xs tracking-widest uppercase"
-                >
-                  Up next
-                </Badge>
-              ) : null}
-            </li>
-          );
-        })}
-      </ol>
+        </div>
+      </div>
       {radioLinkError ? (
         <p className="mt-2.5 text-xs text-[#d28070]" role="status">
           {radioLinkError}
@@ -580,7 +680,15 @@ function NowPlayingViewComponent({
   onAddToPlaylist,
 }: NowPlayingViewProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const backPendingRef = useRef(false);
   const [radioLinkError, setRadioLinkError] = useState("");
+  const longRadioTimeline =
+    radioTimeline.length > RADIO_TIMELINE_VIRTUALIZATION_THRESHOLD;
+  const [radioTimelineReady, setRadioTimelineReady] = useState(
+    () =>
+      !longRadioTimeline ||
+      !document.documentElement.classList.contains("coda-view-transitioning"),
+  );
   const safeDuration = Math.max(0, duration);
   const upcoming = queue.slice(
     currentIndex + 1,
@@ -611,6 +719,38 @@ function NowPlayingViewComponent({
     });
   }, []);
   useEffect(() => {
+    if (!longRadioTimeline) {
+      setRadioTimelineReady(true);
+      return;
+    }
+    const root = document.documentElement;
+    if (!root.classList.contains("coda-view-transitioning")) {
+      setRadioTimelineReady(true);
+      return;
+    }
+    let frame = 0;
+    const observer = new MutationObserver(() => {
+      if (root.classList.contains("coda-view-transitioning")) return;
+      observer.disconnect();
+      frame = window.requestAnimationFrame(() => setRadioTimelineReady(true));
+    });
+    observer.observe(root, { attributeFilter: ["class"], attributes: true });
+    return () => {
+      observer.disconnect();
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, [longRadioTimeline, track.id]);
+  const handleBack = useCallback(() => {
+    if (!longRadioTimeline || !radioTimelineReady) {
+      onBack();
+      return;
+    }
+    if (backPendingRef.current) return;
+    backPendingRef.current = true;
+    setRadioTimelineReady(false);
+    window.requestAnimationFrame(onBack);
+  }, [longRadioTimeline, onBack, radioTimelineReady]);
+  useEffect(() => {
     headingRef.current?.focus({ preventScroll: true });
   }, []);
 
@@ -634,7 +774,7 @@ function NowPlayingViewComponent({
           variant="secondary"
           size="compact"
           className="h-8 gap-2 rounded-lg border-white/7 bg-white/2.5 px-2.5 text-xs text-muted-foreground transition-[color,border-color,background-color,transform] hover:border-white/15 hover:bg-white/6 hover:text-foreground active:translate-y-px motion-reduce:transition-none"
-          onClick={onBack}
+          onClick={handleBack}
           aria-label="Back"
           title="Back to previous view"
         >
@@ -931,6 +1071,7 @@ function NowPlayingViewComponent({
         timeline={radioTimeline}
         playing={playing}
         radioLinkError={radioLinkError}
+        rowsReady={radioTimelineReady}
         onSeek={onSeek}
         onOpen={openRadioChapter}
         getLocalLinks={getRadioChapterLocalLinks}

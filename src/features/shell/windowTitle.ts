@@ -24,6 +24,52 @@ async function loadNativeTitleWindow(): Promise<NativeTitleWindow> {
   return getCurrentWindow();
 }
 
+let cachedNativeTitleWindow: NativeTitleWindow | undefined;
+
+export function resetNativeTitleWindowCache(): void {
+  cachedNativeTitleWindow = undefined;
+}
+
+export function publishDocumentTitle(title: string): void {
+  document.title = title;
+}
+
+function applyNativeTitle(
+  appWindow: NativeTitleWindow,
+  title: string,
+  generation: number,
+  currentGeneration: () => number,
+): void {
+  if (currentGeneration() !== generation) return;
+  void appWindow.setTitle(title);
+}
+
+export function publishNativeWindowTitle(
+  title: string,
+  generation: number,
+  currentGeneration: () => number,
+  loadWindow: () => Promise<NativeTitleWindow> = loadNativeTitleWindow,
+): void {
+  if (cachedNativeTitleWindow) {
+    applyNativeTitle(
+      cachedNativeTitleWindow,
+      title,
+      generation,
+      currentGeneration,
+    );
+    return;
+  }
+  void loadWindow().then(
+    (appWindow) => {
+      cachedNativeTitleWindow = appWindow;
+      applyNativeTitle(appWindow, title, generation, currentGeneration);
+    },
+    () => {
+      // Keep the cache empty so a later navigation can retry.
+    },
+  );
+}
+
 export async function applyCurrentNativeWindowTitle(
   title: string,
   generation: number,

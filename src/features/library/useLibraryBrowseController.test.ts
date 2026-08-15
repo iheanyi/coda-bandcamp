@@ -1,7 +1,9 @@
+import { renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { Album, Track } from "@/types";
 import {
   deriveLibraryBrowseController,
+  useLibraryBrowseController,
   type LibraryBrowseControllerInput,
 } from "./useLibraryBrowseController";
 
@@ -169,5 +171,64 @@ describe("library browse controller", () => {
       trackFilterAlbumId: "compilation",
       trackFilterArtistKey: "guest voice",
     });
+  });
+
+  it("keeps catalog grouping stable when only the selected artist changes", () => {
+    const albums = [
+      album("own", "Guest Voice", 2),
+      album("other", "Other Voice", 3),
+    ];
+    const input = {
+      albums,
+      browseMode: "releases" as const,
+      deferredQuery: "",
+      fallbackAlbumCandidateTracks: [] as Track[],
+      genre: "All",
+      ignoreDeferredArtistQuery: false,
+      sort: "title" as const,
+      view: "library" as const,
+    };
+    const { result, rerender } = renderHook(
+      ({ selectedArtist }: { selectedArtist?: string }) =>
+        useLibraryBrowseController({ ...input, selectedArtist }),
+      { initialProps: { selectedArtist: undefined } },
+    );
+    const groups = result.current.artistGroups;
+    const visible = result.current.visibleAlbums;
+
+    rerender({ selectedArtist: "guest voice" });
+
+    expect(result.current.artistGroups).toBe(groups);
+    expect(result.current.visibleAlbums).toBe(visible);
+    expect(result.current.activeArtist?.key).toBe("guest voice");
+  });
+
+  it("keeps catalog grouping stable when browse mode switches from releases to artists", () => {
+    const albums = [
+      album("own", "Guest Voice", 2),
+      album("other", "Other Voice", 3),
+    ];
+    const input = {
+      albums,
+      deferredQuery: "",
+      fallbackAlbumCandidateTracks: [] as Track[],
+      genre: "All",
+      ignoreDeferredArtistQuery: false,
+      selectedArtist: "guest voice" as string | undefined,
+      sort: "title" as const,
+      view: "library" as const,
+    };
+    const { result, rerender } = renderHook(
+      ({ browseMode }: { browseMode: "releases" | "artists" }) =>
+        useLibraryBrowseController({ ...input, browseMode }),
+      { initialProps: { browseMode: "releases" as const } },
+    );
+    const groups = result.current.artistGroups;
+
+    rerender({ browseMode: "artists" });
+
+    expect(result.current.artistGroups).toBe(groups);
+    expect(result.current.effectiveBrowseMode).toBe("artists");
+    expect(result.current.activeArtist?.key).toBe("guest voice");
   });
 });

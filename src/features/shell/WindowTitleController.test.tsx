@@ -2,7 +2,10 @@ import { render } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPlaybackClock } from "@/playbackClock";
 import { WindowTitleController } from "./WindowTitleController";
-import { applyCurrentNativeWindowTitle } from "./windowTitle";
+import {
+  applyCurrentNativeWindowTitle,
+  resetNativeTitleWindowCache,
+} from "./windowTitle";
 
 const mocks = vi.hoisted(() => ({
   desktop: false,
@@ -22,6 +25,7 @@ describe("WindowTitleController", () => {
     mocks.desktop = false;
     mocks.setTitle.mockReset().mockResolvedValue(undefined);
     document.title = "";
+    resetNativeTitleWindowCache();
   });
 
   it("derives the web title from the active route subject", () => {
@@ -37,6 +41,24 @@ describe("WindowTitleController", () => {
 
     expect(document.title).toBe("Night Archive — Coda");
     expect(mocks.setTitle).not.toHaveBeenCalled();
+  });
+
+  it("starts the native title write after layout commit on desktop", async () => {
+    mocks.desktop = true;
+    render(
+      <WindowTitleController
+        activeArtistName="Knxwledge."
+        nowPlayingOpen={false}
+        playbackClock={createPlaybackClock()}
+        radioTimeline={[]}
+        view="library"
+      />,
+    );
+
+    expect(document.title).toBe("Knxwledge. — Coda");
+    await vi.waitFor(() => {
+      expect(mocks.setTitle).toHaveBeenCalledWith("Knxwledge. — Coda");
+    });
   });
 
   it("ignores a stale native title load after a newer route renders", async () => {

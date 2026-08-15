@@ -24,9 +24,7 @@ export type PlayerDockNavigation = Readonly<{
 
 export type PersistentPlayerDockProps = Readonly<{
   favorites: PlayerDockFavorites;
-  getRadioChapterLocalLinks: (
-    chapter: RadioChapter,
-  ) => RadioChapterLocalLinks;
+  getRadioChapterLocalLinks: (chapter: RadioChapter) => RadioChapterLocalLinks;
   loadingAlbumId?: string;
   navigation: PlayerDockNavigation;
   nowPlayingOpen: boolean;
@@ -35,7 +33,13 @@ export type PersistentPlayerDockProps = Readonly<{
   visible: boolean;
 }>;
 
-/** Adapts persistent playback state into the dock without route-owned state. */
+/**
+ * Adapts persistent playback state into the dock without route-owned state.
+ * Keep the compact artwork mounted while Now Playing is open so Back can
+ * restore Open Now Playing without remounting CoverArt on the Radio or
+ * Collection commit. Hide with visibility, not display:none, so the reverse
+ * morph still has a real compact-bar rect at the bottom of the window.
+ */
 export function PersistentPlayerDock({
   favorites,
   getRadioChapterLocalLinks,
@@ -46,10 +50,11 @@ export function PersistentPlayerDock({
   queueControlRef,
   visible,
 }: PersistentPlayerDockProps) {
-  if (!visible) return null;
-
-  const { currentRadioTimeline, currentTrack, open: queueOpen } =
-    playback.queue;
+  const {
+    currentRadioTimeline,
+    currentTrack,
+    open: queueOpen,
+  } = playback.queue;
   const currentRadioShowId = currentTrack
     ? radioShowIdFromTrackId(currentTrack.id)
     : undefined;
@@ -60,9 +65,9 @@ export function PersistentPlayerDock({
     : false;
   const dailyPreview = currentTrack?.id.startsWith("daily:") ?? false;
 
-  return (
+  const dock = (
     <PlayerDock
-      mode={nowPlayingOpen ? "now-playing-queue" : "full"}
+      mode={visible && nowPlayingOpen ? "now-playing-queue" : "full"}
       track={currentTrack}
       radioTimeline={currentRadioTimeline}
       playing={playback.transport.playing}
@@ -100,5 +105,20 @@ export function PersistentPlayerDock({
       queueOpen={queueOpen}
       queueControlRef={queueControlRef}
     />
+  );
+
+  return (
+    <div
+      aria-hidden={visible ? undefined : true}
+      className={
+        visible
+          ? "contents"
+          : "pointer-events-none invisible fixed inset-x-0 bottom-0 z-3"
+      }
+      data-slot={visible ? undefined : "player-dock-hidden"}
+      inert={visible ? undefined : true}
+    >
+      {dock}
+    </div>
   );
 }

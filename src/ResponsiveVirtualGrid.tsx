@@ -14,8 +14,15 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import {
+  initialResponsiveGridScrollMargin,
+  initialResponsiveGridWidth,
+  readResponsiveGridViewport,
+  rememberResponsiveGridMeasurement,
+} from "./responsiveGridMeasurement";
 
-export const DEFAULT_GRID_OVERSCAN = 3;
+// One extra row above and below. Three rows each side mounted ~54 album cards on Back.
+export const DEFAULT_GRID_OVERSCAN = 1;
 export const DEFAULT_GRID_VIRTUALIZATION_THRESHOLD = 80;
 
 export type ResponsiveGridLayout = {
@@ -49,12 +56,44 @@ export type ResponsiveVirtualGridProps<Item> = {
   getItemKey: (item: Item, index: number) => Key;
   items: readonly Item[];
   layouts: readonly ResponsiveGridLayout[];
+  onVisibleItems?: (items: readonly Item[]) => void;
   overscan?: number;
   renderItem: (item: Item, context: ResponsiveGridItemContext) => ReactNode;
   scrollElementRef: RefObject<HTMLElement | null>;
   style?: CSSProperties;
   virtualizationThreshold?: number;
 };
+
+export function firstScreenGridItemCount({
+  columns,
+  overscan,
+  rowGap,
+  rowHeight,
+  viewportHeight,
+}: Readonly<{
+  columns: number;
+  overscan: number;
+  rowGap: number;
+  rowHeight: number;
+  viewportHeight: number;
+}>): number {
+  const stride = Math.max(1, rowHeight + rowGap);
+  const visibleRows = Math.max(
+    1,
+    Math.ceil(finiteNonNegative(viewportHeight) / stride),
+  );
+  return Math.max(1, columns) * (visibleRows + Math.max(0, overscan));
+}
+
+export function isOverscanVirtualRow(
+  rowIndex: number,
+  viewportRange: Readonly<{ endIndex: number; startIndex: number }> | null,
+): boolean {
+  if (viewportRange === null) return false;
+  return (
+    rowIndex < viewportRange.startIndex || rowIndex > viewportRange.endIndex
+  );
+}
 
 function finiteNonNegative(value: number, fallback = 0): number {
   return Number.isFinite(value) ? Math.max(0, value) : fallback;
@@ -70,8 +109,7 @@ function resolveResponsiveGridLayout(
   const safeWidth = finiteNonNegative(width);
   return (
     layouts.find(
-      (layout) =>
-        layout.maxWidth === undefined || safeWidth <= layout.maxWidth,
+      (layout) => layout.maxWidth === undefined || safeWidth <= layout.maxWidth,
     ) ?? layouts[layouts.length - 1]
   );
 }
@@ -81,7 +119,10 @@ function responsiveGridMetrics(
   layout: ResponsiveGridLayout,
 ): ResponsiveGridMetrics {
   const safeWidth = finiteNonNegative(width);
-  const minColumnWidth = Math.max(1, finiteNonNegative(layout.minColumnWidth, 1));
+  const minColumnWidth = Math.max(
+    1,
+    finiteNonNegative(layout.minColumnWidth, 1),
+  );
   const columnGap = finiteNonNegative(layout.columnGap);
   const rowGap = finiteNonNegative(layout.rowGap);
   const responsiveColumns = Math.max(
@@ -127,6 +168,7 @@ export function ResponsiveVirtualGrid<Item>({
   getItemKey,
   items,
   layouts,
+  onVisibleItems,
   overscan = DEFAULT_GRID_OVERSCAN,
   renderItem,
   scrollElementRef,
@@ -134,34 +176,54 @@ export function ResponsiveVirtualGrid<Item>({
   virtualizationThreshold = DEFAULT_GRID_VIRTUALIZATION_THRESHOLD,
 }: ResponsiveVirtualGridProps<Item>) {
   const rootRef = useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = useState(0);
-  const [scrollMargin, setScrollMargin] = useState(0);
+  const [containerWidth, setContainerWidth] = useState(() =>
+    initialResponsiveGridWidth(scrollElementRef.current),
+  );
+  const [scrollMargin, setScrollMargin] = useState(
+    initialResponsiveGridScrollMargin,
+  );
   const [focusedIndex, setFocusedIndex] = useState<number>();
   const layout = resolveResponsiveGridLayout(containerWidth, layouts);
   const metrics = responsiveGridMetrics(containerWidth, layout);
   const rowCount = Math.ceil(items.length / metrics.columns);
-  const virtualized =
-    items.length > Math.max(0, virtualizationThreshold);
+  const virtualized = items.length > Math.max(0, virtualizationThreshold);
 
-  const syncMeasurements = useCallback((width?: number) => {
-    const root = rootRef.current;
-    if (!root) return;
-    const scrollElement = scrollElementRef.current;
-    const nextWidth = finiteNonNegative(width ?? root.getBoundingClientRect().width);
-    setContainerWidth((current) => current === nextWidth ? current : nextWidth);
+  const syncMeasurements = useCallback(
+    (width?: number) => {
+      const root = rootRef.current;
+      if (!root) return;
+      const scrollElement = scrollElementRef.current;
+      const nextWidth = finiteNonNegative(
+        width ?? root.getBoundingClientRect().width,
+      );
+      setContainerWidth((current) =>
+        current === nextWidth ? current : nextWidth,
+      );
 
-    if (!scrollElement || scrollElement === root) {
-      setScrollMargin((current) => current === 0 ? current : 0);
-      return;
-    }
-    const rootBounds = root.getBoundingClientRect();
-    const scrollBounds = scrollElement.getBoundingClientRect();
-    const nextMargin = Math.max(
-      0,
-      rootBounds.top - scrollBounds.top + scrollElement.scrollTop,
-    );
-    setScrollMargin((current) => current === nextMargin ? current : nextMargin);
-  }, [scrollElementRef]);
+      if (!scrollElement || scrollElement === root) {
+        rememberResponsiveGridMeasurement({
+          scrollMargin: 0,
+          width: nextWidth,
+        });
+        setScrollMargin((current) => (current === 0 ? current : 0));
+        return;
+      }
+      const rootBounds = root.getBoundingClientRect();
+      const scrollBounds = scrollElement.getBoundingClientRect();
+      const nextMargin = Math.max(
+        0,
+        rootBounds.top - scrollBounds.top + scrollElement.scrollTop,
+      );
+      rememberResponsiveGridMeasurement({
+        scrollMargin: nextMargin,
+        width: nextWidth,
+      });
+      setScrollMargin((current) =>
+        current === nextMargin ? current : nextMargin,
+      );
+    },
+    [scrollElementRef],
+  );
 
   useLayoutEffect(() => {
     const root = rootRef.current;
@@ -217,6 +279,7 @@ export function ResponsiveVirtualGrid<Item>({
     [focusedIndex, items.length, metrics.columns],
   );
 
+  const scrollViewport = readResponsiveGridViewport(scrollElementRef.current);
   const virtualizer = useVirtualizer({
     count: rowCount,
     enabled: virtualized,
@@ -224,10 +287,50 @@ export function ResponsiveVirtualGrid<Item>({
     gap: metrics.rowGap,
     getItemKey: rowKey,
     getScrollElement: () => scrollElementRef.current,
+    initialOffset: () => scrollViewport.offset,
+    initialRect: {
+      height: scrollViewport.height,
+      width: scrollViewport.width,
+    },
     overscan,
     rangeExtractor,
     scrollMargin,
   });
+
+  const firstScreenCount = firstScreenGridItemCount({
+    columns: metrics.columns,
+    overscan,
+    rowGap: metrics.rowGap,
+    rowHeight: metrics.rowHeight,
+    viewportHeight: scrollViewport.height,
+  });
+  const virtualRowKey = virtualized
+    ? virtualizer
+        .getVirtualItems()
+        .map((row) => row.index)
+        .join(",")
+    : "";
+  const visibleItems = !virtualized
+    ? items.slice(0, Math.min(items.length, firstScreenCount))
+    : virtualRowKey.length === 0
+      ? []
+      : virtualRowKey.split(",").flatMap((rawRowIndex) => {
+          const rowIndex = Number(rawRowIndex);
+          const firstIndex = rowIndex * metrics.columns;
+          return items.slice(
+            firstIndex,
+            Math.min(firstIndex + metrics.columns, items.length),
+          );
+        });
+  const visibleItemKey = visibleItems
+    .map((item, index) => String(getItemKey(item, index)))
+    .join("\0");
+  const visibleItemsRef = useRef(visibleItems);
+  visibleItemsRef.current = visibleItems;
+
+  useEffect(() => {
+    onVisibleItems?.(visibleItemsRef.current);
+  }, [onVisibleItems, visibleItemKey]);
 
   const renderGridItem = (item: Item, index: number) => {
     const row = Math.floor(index / metrics.columns);
@@ -240,8 +343,12 @@ export function ResponsiveVirtualGrid<Item>({
         data-grid-item-key={String(key)}
         key={key}
         onBlurCapture={(event) => {
-          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-            setFocusedIndex((current) => current === index ? undefined : current);
+          if (
+            !event.currentTarget.contains(event.relatedTarget as Node | null)
+          ) {
+            setFocusedIndex((current) =>
+              current === index ? undefined : current,
+            );
           }
         }}
         onFocusCapture={() => setFocusedIndex(index)}
@@ -314,9 +421,18 @@ export function ResponsiveVirtualGrid<Item>({
           firstIndex,
           Math.min(firstIndex + metrics.columns, items.length),
         );
+        const focusedRow =
+          focusedIndex === undefined
+            ? undefined
+            : Math.floor(focusedIndex / metrics.columns);
+        const hideOverscanFromAx =
+          focusedRow !== virtualRow.index &&
+          isOverscanVirtualRow(virtualRow.index, virtualizer.range);
         return (
           <div
+            aria-hidden={hideOverscanFromAx || undefined}
             data-grid-row={virtualRow.index}
+            inert={hideOverscanFromAx || undefined}
             key={virtualRow.key}
             role="presentation"
             style={{

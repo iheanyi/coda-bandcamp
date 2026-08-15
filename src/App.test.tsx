@@ -1,4 +1,11 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
@@ -123,9 +130,7 @@ function renderApp(strict = false) {
       </QueryClientProvider>
     </CodaMotionProvider>
   );
-  const view = render(
-    strict ? <StrictMode>{app}</StrictMode> : app,
-  );
+  const view = render(strict ? <StrictMode>{app}</StrictMode> : app);
   return { ...view, queryClient, router };
 }
 
@@ -138,9 +143,9 @@ async function findAudioElement(container: HTMLElement) {
 }
 
 function getNavigationSlotLink(name: string, navigationSlot: string) {
-  const link = screen.getAllByRole("link", { name }).find(
-    (candidate) => candidate.dataset.navigationSlot === navigationSlot,
-  );
+  const link = screen
+    .getAllByRole("link", { name })
+    .find((candidate) => candidate.dataset.navigationSlot === navigationSlot);
   if (!link) {
     throw new Error(`Expected ${name} in navigation slot ${navigationSlot}`);
   }
@@ -149,13 +154,57 @@ function getNavigationSlotLink(name: string, navigationSlot: string) {
 
 async function startArtistShuffle(artistName = "Night Archive") {
   fireEvent.click(screen.getByRole("button", { name: /Artists\s*\d/ }));
-  fireEvent.click(await screen.findByRole("link", {
-    name: `Browse ${artistName}`,
-  }));
+  fireEvent.click(
+    await screen.findByRole("link", {
+      name: `Browse ${artistName}`,
+    }),
+  );
   const heading = await screen.findByRole("heading", { name: artistName });
   const artistHero = heading.closest("section");
   if (!artistHero) throw new Error("Expected the artist heading in its hero");
   fireEvent.click(within(artistHero).getByRole("button", { name: "Shuffle" }));
+}
+
+const LIBRARY_HYDRATION_CONCURRENCY = 6;
+
+function requestedAlbumIds() {
+  return mocks.fetchAlbum.mock.calls.map(([release]) => (release as Album).id);
+}
+
+function uniqueRequestedAlbumIds() {
+  return [...new Set(requestedAlbumIds())];
+}
+
+function expectHydrationBoundedToScope(scopeAlbumIds: ReadonlySet<string>) {
+  const uniqueIds = uniqueRequestedAlbumIds();
+  expect(uniqueIds.length).toBeGreaterThan(0);
+  expect(uniqueIds.every((albumId) => scopeAlbumIds.has(albumId))).toBe(true);
+  expect(uniqueIds.length).toBeLessThanOrEqual(scopeAlbumIds.size);
+  expect(mocks.fetchAlbum.mock.calls.length).toBe(uniqueIds.length);
+}
+
+async function resolveAlbumRequestsUntil(
+  requests: Map<string, ReturnType<typeof deferred<Track[]>>>,
+  tracksForAlbum: (albumId: string) => Track[],
+  isDone: () => boolean,
+) {
+  for (const [albumId, request] of requests) {
+    if (isDone()) return;
+    await act(async () => {
+      request.resolve(tracksForAlbum(albumId));
+    });
+  }
+}
+
+async function resolveAlbumRequests(
+  requests: Map<string, ReturnType<typeof deferred<Track[]>>>,
+  tracksForAlbum: (albumId: string) => Track[],
+) {
+  await act(async () => {
+    for (const [albumId, request] of requests) {
+      request.resolve(tracksForAlbum(albumId));
+    }
+  });
 }
 
 const tracks: Track[] = [
@@ -215,17 +264,19 @@ const single: Album = {
   songCount: 1,
   duration: 164,
   genre: "Electronic",
-  tracks: [{
-    id: "single-track-1",
-    title: "Streetlight",
-    artist: "Glass Taxi",
-    album: "Streetlight",
-    albumId: "single-1",
-    duration: 164,
-    track: 1,
-    streamUrl: "https://example.test/streetlight.mp3",
-    palette: ["#968", "#221"],
-  }],
+  tracks: [
+    {
+      id: "single-track-1",
+      title: "Streetlight",
+      artist: "Glass Taxi",
+      album: "Streetlight",
+      albumId: "single-1",
+      duration: 164,
+      track: 1,
+      streamUrl: "https://example.test/streetlight.mp3",
+      palette: ["#968", "#221"],
+    },
+  ],
   palette: ["#968", "#221"],
 };
 
@@ -256,20 +307,22 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue("https://t4.bcbits.com/img/restored-cover.jpg");
   mocks.fetchDiscover.mockReset().mockResolvedValue({
-    results: [{
-      id: "discover:release-1",
-      title: "Blue Hours",
-      artist: "Signal Garden",
-      location: "Chicago, Illinois",
-      itemUrl: "https://signal-garden.bandcamp.com/album/blue-hours",
-      artworkUrl: "https://f4.bcbits.com/img/blue-hours.jpg",
-      featuredTrack: {
-        id: "discover:preview-1",
-        title: "Glass Lines",
-        duration: 201,
-        streamUrl: "https://t4.bcbits.com/stream/blue-hours",
+    results: [
+      {
+        id: "discover:release-1",
+        title: "Blue Hours",
+        artist: "Signal Garden",
+        location: "Chicago, Illinois",
+        itemUrl: "https://signal-garden.bandcamp.com/album/blue-hours",
+        artworkUrl: "https://f4.bcbits.com/img/blue-hours.jpg",
+        featuredTrack: {
+          id: "discover:preview-1",
+          title: "Glass Lines",
+          duration: 201,
+          streamUrl: "https://t4.bcbits.com/stream/blue-hours",
+        },
       },
-    }],
+    ],
     resultCount: 1,
     hasMore: false,
   });
@@ -304,16 +357,20 @@ beforeEach(() => {
     ],
   });
   mocks.fetchRadioShows.mockReset().mockResolvedValue({
-    results: [{
-      id: 979,
-      subtitle: "The Coda Broadcast",
-      title: "Bandcamp Weekly",
-      description: "A broadcast from Bandcamp.",
-      publishedAt: "2026-07-20T12:00:00Z",
-    }],
+    results: [
+      {
+        id: 979,
+        subtitle: "The Coda Broadcast",
+        title: "Bandcamp Weekly",
+        description: "A broadcast from Bandcamp.",
+        publishedAt: "2026-07-20T12:00:00Z",
+      },
+    ],
     hasMore: false,
   });
-  mocks.fetchStreamUrl.mockReset().mockResolvedValue("https://example.test/restored.mp3");
+  mocks.fetchStreamUrl
+    .mockReset()
+    .mockResolvedValue("https://example.test/restored.mp3");
   mocks.getLastFmStatus.mockReset().mockResolvedValue({
     configured: true,
     connected: false,
@@ -335,26 +392,27 @@ beforeEach(() => {
     unstarredIds: [],
     unavailableTrackCount: 0,
   });
-  mocks.setFavorite.mockReset().mockImplementation(async (input: FavoriteInput) => ({
-    accepted: true,
-    verification: input.kind === "album" ? "notRequired" : "verified",
-    favorite: input.favorite,
-    ...(input.kind === "song"
-      ? {
-          track: {
-            ...(tracks.find((track) => track.id === input.id) ?? tracks[0]),
-            ...(input.favorite
-              ? { starredAt: "2026-08-12T18:01:00Z" }
-              : {}),
-          },
-        }
-      : {}),
-  }));
+  mocks.setFavorite
+    .mockReset()
+    .mockImplementation(async (input: FavoriteInput) => ({
+      accepted: true,
+      verification: input.kind === "album" ? "notRequired" : "verified",
+      favorite: input.favorite,
+      ...(input.kind === "song"
+        ? {
+            track: {
+              ...(tracks.find((track) => track.id === input.id) ?? tracks[0]),
+              ...(input.favorite ? { starredAt: "2026-08-12T18:01:00Z" } : {}),
+            },
+          }
+        : {}),
+    }));
   mocks.updateLastFmNowPlaying.mockReset().mockResolvedValue(undefined);
   mocks.writeLocalFavoritesAsync
     .mockReset()
     .mockImplementation(async (favorites: LocalFavoriteCollection) =>
-      writeLocalFavorites(favorites));
+      writeLocalFavorites(favorites),
+    );
   mocks.yieldToMacrotask.mockReset().mockResolvedValue(undefined);
   mocks.hasConnection.mockResolvedValue(false);
 });
@@ -390,21 +448,25 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       const { router } = renderApp();
       await act(async () => router.load());
 
-      expect(screen.getByText("Checking your saved connection…"))
-        .toBeInTheDocument();
+      expect(
+        screen.getByText("Checking your saved connection…"),
+      ).toBeInTheDocument();
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(LIBRARY_STARTUP_STEP_TIMEOUT_MS + 1);
       });
 
-      expect(screen.queryByText("Checking your saved connection…"))
-        .not.toBeInTheDocument();
-      expect(screen.getByText("Your collection couldn’t load"))
-        .toBeInTheDocument();
-      expect(screen.getByText(
-        "Checking your saved connection took too long. Try again.",
-      ))
-        .toBeInTheDocument();
+      expect(
+        screen.queryByText("Checking your saved connection…"),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByText("Your collection couldn’t load"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "Checking your saved connection took too long. Try again.",
+        ),
+      ).toBeInTheDocument();
 
       const cachedAt = Date.now();
       mocks.hasConnection.mockResolvedValue(true);
@@ -413,7 +475,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         lastFullSyncAt: cachedAt,
         albums: [album],
       });
-      fireEvent.click(screen.getByRole("button", { name: "Try checking again" }));
+      fireEvent.click(
+        screen.getByRole("button", { name: "Try checking again" }),
+      );
       vi.useRealTimers();
 
       expect(await screen.findByText("Soft Focus")).toBeInTheDocument();
@@ -432,8 +496,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       const { router } = renderApp();
       await act(async () => router.load());
 
-      expect(screen.getByText("Checking your saved connection…"))
-        .toBeInTheDocument();
+      expect(
+        screen.getByText("Checking your saved connection…"),
+      ).toBeInTheDocument();
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(LIBRARY_STARTUP_STEP_TIMEOUT_MS + 1);
@@ -464,9 +529,11 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     fireEvent.keyDown(document, { key: "Escape" });
 
     await waitFor(() =>
-      expect(screen.queryByRole("dialog", {
-        name: "Bring in your collection",
-      })).not.toBeInTheDocument(),
+      expect(
+        screen.queryByRole("dialog", {
+          name: "Bring in your collection",
+        }),
+      ).not.toBeInTheDocument(),
     );
     expect(trigger).toHaveFocus();
   });
@@ -479,13 +546,15 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     await screen.findByText("Soft Focus");
     fireEvent.click(screen.getByRole("button", { name: "Play Soft Focus" }));
     const pause = await screen.findByRole("button", { name: "Pause" });
-    fireEvent.click(screen.getByRole("button", { name: "Connection settings" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Connection settings" }),
+    );
     const dialog = await screen.findByRole("dialog", {
       name: "Bandcamp is connected",
     });
 
     await waitFor(() =>
-      expect(pause.closest("[data-base-ui-inert]")).not.toBeNull()
+      expect(pause.closest("[data-base-ui-inert]")).not.toBeNull(),
     );
     await waitFor(() => expect(dialog).toBeVisible());
   });
@@ -498,7 +567,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     mocks.connectBandcamp.mockReturnValue(pendingConnection);
     renderApp();
 
-    fireEvent.click(await screen.findByRole("button", { name: "Connect Bandcamp" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Connect Bandcamp" }),
+    );
     const dialog = await screen.findByRole("dialog", {
       name: "Bring in your collection",
     });
@@ -508,7 +579,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     fireEvent.change(within(dialog).getByLabelText("Subsonic password"), {
       target: { value: "generated-password" },
     });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Connect Bandcamp" }));
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Connect Bandcamp" }),
+    );
     expect(mocks.connectBandcamp).toHaveBeenCalledWith(
       {
         username: "generated-user",
@@ -516,9 +589,11 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       },
       expect.any(Function),
     );
-    expect(await within(dialog).findByRole("button", {
-      name: "Connecting securely…",
-    })).toBeDisabled();
+    expect(
+      await within(dialog).findByRole("button", {
+        name: "Connecting securely…",
+      }),
+    ).toBeDisabled();
     expect(within(dialog).getByLabelText("Subsonic username")).toBeDisabled();
     expect(within(dialog).getByLabelText("Subsonic password")).toBeDisabled();
 
@@ -527,10 +602,14 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     fireEvent.mouseDown(document.body);
     fireEvent.click(document.body);
 
-    expect(screen.getByRole("dialog", {
-      name: "Bring in your collection",
-    })).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "Close" })).toBeDisabled();
+    expect(
+      screen.getByRole("dialog", {
+        name: "Bring in your collection",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", { name: "Close" }),
+    ).toBeDisabled();
 
     await act(async () => {
       resolveConnection([album]);
@@ -559,20 +638,27 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
     renderApp();
 
-    fireEvent.click(await screen.findByRole("button", {
-      name: "Connection settings",
-    }));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Connection settings",
+      }),
+    );
     const dialog = await screen.findByRole("dialog", {
       name: "Bring in your collection",
     });
-    expect(within(dialog).queryByLabelText(/Last\.fm password/i))
-      .not.toBeInTheDocument();
-    fireEvent.click(within(dialog).getByRole("button", {
-      name: "Connect Last.fm",
-    }));
-    expect(await within(dialog).findByRole("button", {
-      name: "Opening Last.fm…",
-    })).toBeDisabled();
+    expect(
+      within(dialog).queryByLabelText(/Last\.fm password/i),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Connect Last.fm",
+      }),
+    );
+    expect(
+      await within(dialog).findByRole("button", {
+        name: "Opening Last.fm…",
+      }),
+    ).toBeDisabled();
 
     try {
       fireEvent.keyDown(document, { key: "Escape" });
@@ -580,11 +666,14 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       fireEvent.mouseDown(document.body);
       fireEvent.click(document.body);
 
-      expect(screen.getByRole("dialog", {
-        name: "Bring in your collection",
-      })).toBeInTheDocument();
-      expect(within(dialog).getByRole("button", { name: "Close" }))
-        .toBeDisabled();
+      expect(
+        screen.getByRole("dialog", {
+          name: "Bring in your collection",
+        }),
+      ).toBeInTheDocument();
+      expect(
+        within(dialog).getByRole("button", { name: "Close" }),
+      ).toBeDisabled();
     } finally {
       await act(async () => {
         resolveAuthorization({
@@ -599,12 +688,17 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     await waitFor(() =>
       expect(mocks.openLastFmAuthorization).toHaveBeenCalledOnce(),
     );
-    fireEvent.click(within(dialog).getByRole("button", {
-      name: "Finish connection",
-    }));
-    expect(await within(dialog).findByText("nightlistener")).toBeInTheDocument();
-    expect(mocks.completeLastFmAuthorization)
-      .toHaveBeenCalledWith("deferred-token");
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Finish connection",
+      }),
+    );
+    expect(
+      await within(dialog).findByText("nightlistener"),
+    ).toBeInTheDocument();
+    expect(mocks.completeLastFmAuthorization).toHaveBeenCalledWith(
+      "deferred-token",
+    );
   });
 
   it("wires the collection sort select and scrollable genre navigation to rendered results", async () => {
@@ -630,31 +724,39 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       name: "Sort collection",
     });
     await user.click(sort);
-    await user.click(await screen.findByRole("option", {
-      name: "Artist A–Z",
-    }));
+    await user.click(
+      await screen.findByRole("option", {
+        name: "Artist A–Z",
+      }),
+    );
     expect(sort).toHaveTextContent("Artist A–Z");
     await waitFor(() =>
-      expect(screen.getAllByRole("link", {
-        name: /^Open /,
-      })[0]).toHaveAccessibleName("Open Aardvark Rock"),
+      expect(
+        screen.getAllByRole("link", {
+          name: /^Open /,
+        })[0],
+      ).toHaveAccessibleName("Open Aardvark Rock"),
     );
 
     const genres = screen.getByRole("navigation", {
       name: "Filter collection by genre",
     });
     expect(genres).toHaveClass("overflow-x-auto");
-    expect(screen.queryByRole("combobox", {
-      name: "More collection genres",
-    })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("combobox", {
+        name: "More collection genres",
+      }),
+    ).not.toBeInTheDocument();
     Object.defineProperties(genres, {
       clientWidth: { configurable: true, value: 240 },
       scrollWidth: { configurable: true, value: 720 },
     });
     fireEvent(window, new Event("resize"));
-    expect(screen.getByRole("button", {
-      name: "Show more genres",
-    })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Show more genres",
+      }),
+    ).toBeInTheDocument();
 
     Object.defineProperty(genres, "scrollLeft", {
       configurable: true,
@@ -662,25 +764,37 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       writable: true,
     });
     fireEvent.scroll(genres);
-    expect(screen.getByRole("button", {
-      name: "Show previous genres",
-    })).toBeInTheDocument();
-    expect(screen.queryByRole("button", {
-      name: "Show more genres",
-    })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Show previous genres",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: "Show more genres",
+      }),
+    ).not.toBeInTheDocument();
 
-    await user.click(within(genres).getByRole("button", {
-      name: "Rock",
-    }));
+    await user.click(
+      within(genres).getByRole("button", {
+        name: "Rock",
+      }),
+    );
 
-    expect(await screen.findByRole("button", { name: "Rock" }))
-      .toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("link", {
-      name: "Open Aardvark Rock",
-    })).toBeInTheDocument();
-    expect(screen.queryByRole("link", {
-      name: "Open Zulu Ambient",
-    })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Rock" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(
+      screen.getByRole("link", {
+        name: "Open Aardvark Rock",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", {
+        name: "Open Zulu Ambient",
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps Recently added newest-first after the Collection sort changes", async () => {
@@ -722,11 +836,13 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       screen.queryByRole("combobox", { name: "Sort collection" }),
     ).not.toBeInTheDocument();
     expect(
-      (await screen.findAllByRole("link", { name: /^Open Release/ }))
-        .map((button) => button.getAttribute("aria-label")),
+      (await screen.findAllByRole("link", { name: /^Open Release/ })).map(
+        (button) => button.getAttribute("aria-label"),
+      ),
     ).toEqual(
-      Array.from({ length: 12 }, (_, index) =>
-        `Open Release ${String(13 - index).padStart(2, "0")}`,
+      Array.from(
+        { length: 12 },
+        (_, index) => `Open Release ${String(13 - index).padStart(2, "0")}`,
       ),
     );
     expect(
@@ -772,11 +888,13 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       albums: [album],
     });
     mocks.fetchLibrary.mockImplementation(
-      (onPage?: (progress: {
-        pageIndex: number;
-        loaded: number;
-        albums: Album[];
-      }) => void) => {
+      (
+        onPage?: (progress: {
+          pageIndex: number;
+          loaded: number;
+          albums: Album[];
+        }) => void,
+      ) => {
         onPage?.({
           pageIndex: 0,
           loaded: 1,
@@ -807,15 +925,19 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       albums: Album[];
     }) => void;
     mocks.hasConnection.mockResolvedValue(true);
-    mocks.loadLibraryCache.mockReturnValue(new Promise((resolve) => {
-      resolveCache = resolve;
-    }));
+    mocks.loadLibraryCache.mockReturnValue(
+      new Promise((resolve) => {
+        resolveCache = resolve;
+      }),
+    );
     mocks.fetchLibrary.mockResolvedValue([album]);
 
     renderApp();
 
     await screen.findByText("Synced");
-    fireEvent.click(screen.getByRole("button", { name: "Connection settings" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Connection settings" }),
+    );
     const dialog = await screen.findByRole("dialog", {
       name: "Bandcamp is connected",
     });
@@ -824,7 +946,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
     expect(disconnectButton).toBeEnabled();
     fireEvent.click(disconnectButton);
-    expect(await screen.findByText("Your collection starts here")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Your collection starts here"),
+    ).toBeInTheDocument();
 
     const cachedAt = Date.now();
     resolveCache({
@@ -844,22 +968,30 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     await screen.findByText("Soft Focus");
     queryClient.setQueryData(["bandcamp", "album", album.id], tracks);
     queryClient.setQueryData(["bandcamp-radio-show", 979], { id: 979 });
-    fireEvent.click(screen.getByRole("button", { name: "Connection settings" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Connection settings" }),
+    );
     const dialog = await screen.findByRole("dialog", {
       name: "Bandcamp is connected",
     });
-    fireEvent.click(within(dialog).getByRole("button", {
-      name: "Disconnect and remove Bandcamp credentials",
-    }));
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Disconnect and remove Bandcamp credentials",
+      }),
+    );
 
-    expect(await screen.findByText("Your collection starts here")).toBeInTheDocument();
-    expect(queryClient.getQueryData(["bandcamp", "album", album.id]))
-      .toBeUndefined();
+    expect(
+      await screen.findByText("Your collection starts here"),
+    ).toBeInTheDocument();
+    expect(
+      queryClient.getQueryData(["bandcamp", "album", album.id]),
+    ).toBeUndefined();
     expect(queryClient.getQueryData(["bandcamp-radio-show", 979])).toEqual({
       id: 979,
     });
-    expect(screen.getByText("Bandcamp credentials removed"))
-      .toBeInTheDocument();
+    expect(
+      screen.getByText("Bandcamp credentials removed"),
+    ).toBeInTheDocument();
   });
 
   it("does not let a bulk artist load restore playback after disconnect", async () => {
@@ -885,12 +1017,16 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([firstAlbum, secondAlbum]);
     mocks.fetchAlbum
-      .mockReturnValueOnce(new Promise((resolve) => {
-        resolveFirstAlbum = resolve;
-      }))
-      .mockReturnValueOnce(new Promise((resolve) => {
-        resolveSecondAlbum = resolve;
-      }));
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveFirstAlbum = resolve;
+        }),
+      )
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveSecondAlbum = resolve;
+        }),
+      );
     const { queryClient } = renderApp();
 
     await screen.findByText("Soft Focus");
@@ -904,18 +1040,25 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       await Promise.resolve();
     });
     await waitFor(() =>
-      expect(queryClient.getQueryData(["bandcamp", "album", firstRequestedAlbum.id]))
-        .toEqual([tracks[0]]),
+      expect(
+        queryClient.getQueryData(["bandcamp", "album", firstRequestedAlbum.id]),
+      ).toEqual([tracks[0]]),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Connection settings" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Connection settings" }),
+    );
     const dialog = await screen.findByRole("dialog", {
       name: "Bandcamp is connected",
     });
-    fireEvent.click(within(dialog).getByRole("button", {
-      name: "Disconnect and remove Bandcamp credentials",
-    }));
-    expect(await screen.findByText("Your collection starts here")).toBeInTheDocument();
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Disconnect and remove Bandcamp credentials",
+      }),
+    );
+    expect(
+      await screen.findByText("Your collection starts here"),
+    ).toBeInTheDocument();
 
     await act(async () => {
       resolveSecondAlbum([secondTrack]);
@@ -923,12 +1066,15 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
 
     expect(screen.getByText("Your collection starts here")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Open Now Playing" }))
-      .not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Open Now Playing" }),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText("Playing Night Archive")).not.toBeInTheDocument();
-    expect(queryClient.getQueryCache().findAll({
-      queryKey: ["bandcamp", "album"],
-    })).toHaveLength(0);
+    expect(
+      queryClient.getQueryCache().findAll({
+        queryKey: ["bandcamp", "album"],
+      }),
+    ).toHaveLength(0);
   });
 
   it("force-refreshes missing artwork through the album query", async () => {
@@ -943,7 +1089,14 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     }));
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([missingArtworkAlbum]);
-    mocks.fetchAlbum.mockResolvedValue(recoveredTracks);
+    mocks.fetchAlbum.mockImplementation(async (_requested, options) =>
+      options &&
+      typeof options === "object" &&
+      "forceRefresh" in options &&
+      options.forceRefresh
+        ? recoveredTracks
+        : tracks.map((track) => ({ ...track, coverArt: undefined })),
+    );
     renderApp();
 
     await screen.findByText("Soft Focus");
@@ -955,7 +1108,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         { forceRefresh: true },
       ),
     );
-    expect(await screen.findByText("1 missing cover recovered")).toBeInTheDocument();
+    expect(
+      await screen.findByText("1 missing cover recovered"),
+    ).toBeInTheDocument();
   });
 
   it("keeps an active sync valid when native disconnect fails", async () => {
@@ -967,23 +1122,30 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       lastFullSyncAt: staleAt,
       albums: [album],
     });
-    mocks.fetchLibrary.mockReturnValue(new Promise((resolve) => {
-      resolveRefresh = resolve;
-    }));
+    mocks.fetchLibrary.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRefresh = resolve;
+      }),
+    );
     mocks.disconnect.mockRejectedValue(new Error("Vault unavailable"));
 
     renderApp();
 
     await screen.findByText("Soft Focus");
-    fireEvent.click(screen.getByRole("button", { name: "Connection settings" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Connection settings" }),
+    );
     const dialog = await screen.findByRole("dialog", {
       name: "Bandcamp is connected",
     });
-    fireEvent.click(within(dialog).getByRole("button", {
-      name: "Disconnect and remove Bandcamp credentials",
-    }));
-    expect(await within(dialog).findByRole("alert"))
-      .toHaveTextContent("Vault unavailable");
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Disconnect and remove Bandcamp credentials",
+      }),
+    );
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "Vault unavailable",
+    );
 
     resolveRefresh([{ ...album, title: "Sync still active" }]);
     expect(await screen.findByText("Sync still active")).toBeInTheDocument();
@@ -991,10 +1153,14 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
   it("plays an album, exposes native AirPlay, and preserves now playing when clearing", async () => {
     const airPlayPicker = vi.fn();
-    Object.defineProperty(HTMLMediaElement.prototype, "webkitShowPlaybackTargetPicker", {
-      configurable: true,
-      value: airPlayPicker,
-    });
+    Object.defineProperty(
+      HTMLMediaElement.prototype,
+      "webkitShowPlaybackTargetPicker",
+      {
+        configurable: true,
+        value: airPlayPicker,
+      },
+    );
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
     const { container, queryClient } = renderApp(true);
@@ -1003,22 +1169,31 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     const setQueryData = vi.spyOn(queryClient, "setQueryData");
     fireEvent.click(screen.getByRole("button", { name: "Play Soft Focus" }));
 
-    expect(await screen.findByRole("link", { name: "Open Now Playing" }))
-      .toBeInTheDocument();
-    expect(setQueryData.mock.calls.filter(([queryKey]) =>
-      Array.isArray(queryKey) && queryKey.join("/") === "bandcamp/library"
-    )).toHaveLength(0);
+    expect(
+      await screen.findByRole("link", { name: "Open Now Playing" }),
+    ).toBeInTheDocument();
+    expect(
+      setQueryData.mock.calls.filter(
+        ([queryKey]) =>
+          Array.isArray(queryKey) && queryKey.join("/") === "bandcamp/library",
+      ),
+    ).toHaveLength(0);
     expect(screen.getAllByText("First Light").length).toBeGreaterThan(0);
     const player = screen.getByRole("contentinfo");
     const favorite = screen.getByRole("button", {
       name: "Add First Light to favorites",
     });
-    expect(within(player).getByRole("button", {
-      name: "Add First Light to favorites",
-    })).toBe(favorite);
-    expect(within(player).getByRole("slider", { name: "Volume" }))
-      .toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Choose AirPlay device" }));
+    expect(
+      within(player).getByRole("button", {
+        name: "Add First Light to favorites",
+      }),
+    ).toBe(favorite);
+    expect(
+      within(player).getByRole("slider", { name: "Volume" }),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Choose AirPlay device" }),
+    );
     expect(airPlayPicker).toHaveBeenCalledOnce();
 
     fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
@@ -1027,37 +1202,42 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     await waitFor(() => {
       expect(screen.getByText("End of the queue")).toBeInTheDocument();
     });
-    expect(screen.getByRole("button", {
-      name: "Play something from Soft Focus",
-    })).toBeInTheDocument();
-    expect(screen.getByRole("button", {
-      name: "Suggest another album",
-    })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Play something from Soft Focus",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Suggest another album",
+      }),
+    ).toBeInTheDocument();
     expect(screen.getAllByText("First Light").length).toBeGreaterThan(0);
     expect(screen.queryByText("Afterimage")).not.toBeInTheDocument();
 
     const audio = await findAudioElement(container);
     fireEvent.ended(audio);
-    expect(await screen.findByRole("button", { name: "Play" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Play" }),
+    ).toBeInTheDocument();
 
-    vi.spyOn(Math, "random")
-      .mockReturnValueOnce(0)
-      .mockReturnValueOnce(0.75);
+    vi.spyOn(Math, "random").mockReturnValueOnce(0).mockReturnValueOnce(0.75);
     const play = vi.mocked(HTMLMediaElement.prototype.play);
     play.mockClear();
-    fireEvent.click(screen.getByRole("button", {
-      name: "Play something from Soft Focus",
-    }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Play something from Soft Focus",
+      }),
+    );
 
-    expect(await screen.findByRole("button", {
-      name: "Add Afterimage to favorites",
-    })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", {
+        name: "Add Afterimage to favorites",
+      }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Pause" })).toBeInTheDocument();
     await waitFor(() => {
-      expect(audio).toHaveAttribute(
-        "src",
-        tracks[1].streamUrl,
-      );
+      expect(audio).toHaveAttribute("src", tracks[1].streamUrl);
       expect(play).toHaveBeenCalled();
     });
   });
@@ -1066,7 +1246,8 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album, single]);
     mocks.fetchAlbum.mockImplementation(async (requestedAlbum: Album) =>
-      requestedAlbum.id === single.id ? single.tracks ?? [] : tracks);
+      requestedAlbum.id === single.id ? (single.tracks ?? []) : tracks,
+    );
     const { container } = renderApp();
 
     await screen.findByText("Soft Focus");
@@ -1074,28 +1255,36 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     await screen.findByRole("link", { name: "Open Now Playing" });
     fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
     const queueDialog = await screen.findByRole("dialog", { name: "Queue" });
-    fireEvent.click(within(queueDialog).getByRole("button", {
-      name: "Clear next",
-    }));
+    fireEvent.click(
+      within(queueDialog).getByRole("button", {
+        name: "Clear next",
+      }),
+    );
 
     const audio = await findAudioElement(container);
     const play = vi.mocked(HTMLMediaElement.prototype.play);
     const playbackCallsBeforeQueueing = play.mock.calls.length;
     expect(audio).toHaveAttribute("src", tracks[0].streamUrl);
 
-    fireEvent.click(await within(queueDialog).findByRole("button", {
-      name: "Add Streetlight to queue",
-    }));
+    fireEvent.click(
+      await within(queueDialog).findByRole("button", {
+        name: "Add Streetlight to queue",
+      }),
+    );
 
-    expect(await within(queueDialog).findByRole("button", {
-      name: "Streetlight",
-    })).toBeInTheDocument();
+    expect(
+      await within(queueDialog).findByRole("button", {
+        name: "Streetlight",
+      }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Pause" })).toBeInTheDocument();
     expect(audio).toHaveAttribute("src", tracks[0].streamUrl);
     expect(play).toHaveBeenCalledTimes(playbackCallsBeforeQueueing);
-    expect(await within(queueDialog).findByRole("button", {
-      name: "Add Soft Focus to queue",
-    })).toBeInTheDocument();
+    expect(
+      await within(queueDialog).findByRole("button", {
+        name: "Add Soft Focus to queue",
+      }),
+    ).toBeInTheDocument();
   });
 
   it("routes compact-player position and volume changes into audio state", async () => {
@@ -1159,9 +1348,11 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     renderApp();
 
     const player = await screen.findByRole("contentinfo");
-    expect(within(player).getByRole("link", {
-      name: trackWithoutRelease.artist,
-    })).toBeInTheDocument();
+    expect(
+      within(player).getByRole("link", {
+        name: trackWithoutRelease.artist,
+      }),
+    ).toBeInTheDocument();
     expect(
       player.querySelector("[data-player-album-link]"),
     ).not.toBeInTheDocument();
@@ -1195,9 +1386,11 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
     try {
       await screen.findByText(longAlbumTitle);
-      fireEvent.click(screen.getByRole("button", {
-        name: `Play ${longAlbumTitle}`,
-      }));
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: `Play ${longAlbumTitle}`,
+        }),
+      );
       const player = await screen.findByRole("contentinfo");
       const albumControl = within(player).getByRole("link", {
         name: longAlbumTitle,
@@ -1211,9 +1404,11 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       });
       expect(pendingControl).toHaveAttribute("aria-disabled", "true");
       expect(pendingControl).toHaveAttribute("aria-busy", "true");
-      expect(within(pendingControl).getByRole("status", {
-        name: `Loading album ${longAlbumTitle}`,
-      })).toBeInTheDocument();
+      expect(
+        within(pendingControl).getByRole("status", {
+          name: `Loading album ${longAlbumTitle}`,
+        }),
+      ).toBeInTheDocument();
     } finally {
       pendingAlbum.resolve([longTrack]);
       await act(async () => {
@@ -1263,7 +1458,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(next).toBeDisabled();
     expect(previous).toBeEnabled();
 
-    fireEvent.click(within(player!).getByRole("button", { name: "Repeat off" }));
+    fireEvent.click(
+      within(player!).getByRole("button", { name: "Repeat off" }),
+    );
     expect(next).toBeEnabled();
     fireEvent.click(next);
     expect(within(player).getByText("First Light")).toBeInTheDocument();
@@ -1275,9 +1472,11 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     renderApp();
 
     await screen.findByText("Soft Focus");
-    fireEvent.click(screen.getByRole("button", {
-      name: "Play Soft Focus",
-    }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Play Soft Focus",
+      }),
+    );
     const player = await screen.findByRole("contentinfo");
     const next = within(player).getByRole("button", { name: "Next" });
 
@@ -1298,9 +1497,11 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     renderApp();
 
     await screen.findByText("Soft Focus");
-    fireEvent.click(screen.getByRole("button", {
-      name: "Play Soft Focus",
-    }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Play Soft Focus",
+      }),
+    );
     const player = await screen.findByRole("contentinfo");
     fireEvent.click(within(player).getByRole("button", { name: "Next" }));
     await screen.findByText("Afterimage");
@@ -1334,24 +1535,29 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     ];
     const interruptedPlay = deferred<void>();
     const play = vi.mocked(HTMLMediaElement.prototype.play);
-    play.mockReset()
+    play
+      .mockReset()
       .mockReturnValueOnce(interruptedPlay.promise)
       .mockResolvedValue(undefined);
 
     try {
       mocks.hasConnection.mockResolvedValue(true);
-      mocks.fetchLibrary.mockResolvedValue([{
-        ...album,
-        songCount: rapidTracks.length,
-        tracks: rapidTracks,
-      }]);
+      mocks.fetchLibrary.mockResolvedValue([
+        {
+          ...album,
+          songCount: rapidTracks.length,
+          tracks: rapidTracks,
+        },
+      ]);
       mocks.fetchAlbum.mockResolvedValue(rapidTracks);
       renderApp();
 
       await screen.findByText("Soft Focus");
-      fireEvent.click(screen.getByRole("button", {
-        name: "Play Soft Focus",
-      }));
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Play Soft Focus",
+        }),
+      );
       const player = await screen.findByRole("contentinfo");
       await waitFor(() => expect(play).toHaveBeenCalledOnce());
 
@@ -1361,8 +1567,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         fireEvent.click(next);
       });
       await waitFor(() => {
-        expect(within(player).getByText("Vanishing Point"))
-          .toBeInTheDocument();
+        expect(within(player).getByText("Vanishing Point")).toBeInTheDocument();
         expect(play).toHaveBeenCalledTimes(2);
       });
 
@@ -1373,8 +1578,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         await Promise.resolve();
       });
 
-      expect(within(player).getByRole("button", { name: "Pause" }))
-        .toBeInTheDocument();
+      expect(
+        within(player).getByRole("button", { name: "Pause" }),
+      ).toBeInTheDocument();
     } finally {
       play.mockReset().mockResolvedValue(undefined);
     }
@@ -1396,7 +1602,8 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       },
     ];
     const play = vi.mocked(HTMLMediaElement.prototype.play);
-    play.mockReset()
+    play
+      .mockReset()
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(
         new DOMException("The play request was interrupted", "AbortError"),
@@ -1405,18 +1612,22 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
     try {
       mocks.hasConnection.mockResolvedValue(true);
-      mocks.fetchLibrary.mockResolvedValue([{
-        ...album,
-        songCount: rapidTracks.length,
-        tracks: rapidTracks,
-      }]);
+      mocks.fetchLibrary.mockResolvedValue([
+        {
+          ...album,
+          songCount: rapidTracks.length,
+          tracks: rapidTracks,
+        },
+      ]);
       mocks.fetchAlbum.mockResolvedValue(rapidTracks);
       renderApp();
 
       await screen.findByText("Soft Focus");
-      fireEvent.click(screen.getByRole("button", {
-        name: "Play Soft Focus",
-      }));
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Play Soft Focus",
+        }),
+      );
       const player = await screen.findByRole("contentinfo");
       await waitFor(() => expect(play).toHaveBeenCalledOnce());
 
@@ -1426,10 +1637,10 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       fireEvent.click(next);
 
       await waitFor(() => {
-        expect(within(player).getByText("Vanishing Point"))
-          .toBeInTheDocument();
-        expect(within(player).getByRole("button", { name: "Pause" }))
-          .toBeInTheDocument();
+        expect(within(player).getByText("Vanishing Point")).toBeInTheDocument();
+        expect(
+          within(player).getByRole("button", { name: "Pause" }),
+        ).toBeInTheDocument();
         expect(play).toHaveBeenCalledTimes(3);
       });
     } finally {
@@ -1512,9 +1723,11 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
           title: "First Light",
           artist: "Night Archive",
           album: "Soft Focus",
-          artwork: [{
-            src: "https://t4.bcbits.com/img/restored-cover.jpg",
-          }],
+          artwork: [
+            {
+              src: "https://t4.bcbits.com/img/restored-cover.jpg",
+            },
+          ],
         }),
       );
       expect(mocks.fetchCoverUrl).toHaveBeenCalledExactlyOnceWith(
@@ -1539,11 +1752,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         Reflect.deleteProperty(navigator, "mediaSession");
       }
       if (metadataDescriptor) {
-        Object.defineProperty(
-          globalThis,
-          "MediaMetadata",
-          metadataDescriptor,
-        );
+        Object.defineProperty(globalThis, "MediaMetadata", metadataDescriptor);
       } else {
         delete (globalThis as { MediaMetadata?: typeof MediaMetadata })
           .MediaMetadata;
@@ -1610,10 +1819,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       fireEvent.click(screen.getByRole("button", { name: "Play Soft Focus" }));
 
       await waitFor(() => expect(requestIdleCallback).toHaveBeenCalledOnce());
-      expect(requestIdleCallback).toHaveBeenCalledWith(
-        expect.any(Function),
-        { timeout: 250 },
-      );
+      expect(requestIdleCallback).toHaveBeenCalledWith(expect.any(Function), {
+        timeout: 250,
+      });
       expect(mocks.createSystemArtworkDataUrl).not.toHaveBeenCalled();
 
       act(() => scheduledArtwork?.());
@@ -1627,13 +1835,17 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       await waitFor(() =>
         expect(
           (mediaSession.metadata as unknown as MockMediaMetadata | null)?.init,
-        ).toEqual(expect.objectContaining({
-          artwork: [{
-            src: "data:image/png;base64,Y29kYS1jb3Zlcg==",
-            sizes: "600x600",
-            type: "image/png",
-          }],
-        })),
+        ).toEqual(
+          expect.objectContaining({
+            artwork: [
+              {
+                src: "data:image/png;base64,Y29kYS1jb3Zlcg==",
+                sizes: "600x600",
+                type: "image/png",
+              },
+            ],
+          }),
+        ),
       );
 
       unmount();
@@ -1644,17 +1856,29 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     } finally {
       unmount?.();
       if (requestIdleDescriptor) {
-        Object.defineProperty(window, "requestIdleCallback", requestIdleDescriptor);
+        Object.defineProperty(
+          window,
+          "requestIdleCallback",
+          requestIdleDescriptor,
+        );
       } else {
         Reflect.deleteProperty(window, "requestIdleCallback");
       }
       if (cancelIdleDescriptor) {
-        Object.defineProperty(window, "cancelIdleCallback", cancelIdleDescriptor);
+        Object.defineProperty(
+          window,
+          "cancelIdleCallback",
+          cancelIdleDescriptor,
+        );
       } else {
         Reflect.deleteProperty(window, "cancelIdleCallback");
       }
       if (mediaSessionDescriptor) {
-        Object.defineProperty(navigator, "mediaSession", mediaSessionDescriptor);
+        Object.defineProperty(
+          navigator,
+          "mediaSession",
+          mediaSessionDescriptor,
+        );
       } else {
         Reflect.deleteProperty(navigator, "mediaSession");
       }
@@ -1702,11 +1926,11 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     await screen.findByText("Soft Focus");
     const libraryPane = screen.getByRole("main");
     const player = screen.getByRole("contentinfo");
-    expect(screen.queryByRole("dialog", { name: "Queue" }))
-      .not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: "Queue" }),
+    ).not.toBeInTheDocument();
     const showQueue = screen.getByRole("button", { name: "Show queue" });
-    expect(showQueue)
-      .toHaveAttribute("aria-pressed", "false");
+    expect(showQueue).toHaveAttribute("aria-pressed", "false");
     showQueue.focus();
     expect(showQueue).toHaveFocus();
 
@@ -1717,30 +1941,32 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(queueDrawer).toHaveAttribute("id", "queue-drawer");
     expect(showQueue).toHaveAttribute("aria-haspopup", "dialog");
     await waitFor(() => expect(queueDrawer).toHaveFocus());
-    expect(within(player).getByRole("slider", { name: "Volume" })).toBeEnabled();
-    expect(screen.getByRole("region", { name: "Upcoming tracks" }))
-      .toBeInTheDocument();
+    expect(
+      within(player).getByRole("slider", { name: "Volume" }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("region", { name: "Upcoming tracks" }),
+    ).toBeInTheDocument();
     const hideQueue = screen.getByRole("button", { name: "Hide queue" });
-    expect(hideQueue).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    expect(hideQueue).toHaveAttribute("aria-pressed", "true");
     expect(hideQueue).toHaveAttribute("aria-controls", "queue-drawer");
     expect(screen.getByRole("main")).toBe(libraryPane);
 
     await user.keyboard("{Escape}");
-    expect(screen.queryByRole("dialog", { name: "Queue" }))
-      .not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Show queue" }))
-      .toHaveAttribute("aria-pressed", "false");
+    expect(
+      screen.queryByRole("dialog", { name: "Queue" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show queue" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Show queue" })).toHaveFocus(),
     );
     expect(screen.getByRole("main")).toBe(libraryPane);
     await user.click(screen.getByRole("button", { name: "Show queue" }));
     await waitFor(() =>
-      expect(screen.getByRole("dialog", { name: "Queue" }))
-        .toHaveFocus(),
+      expect(screen.getByRole("dialog", { name: "Queue" })).toHaveFocus(),
     );
     const keyboardHideQueue = screen.getByRole("button", {
       name: "Hide queue",
@@ -1771,27 +1997,37 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
     nowPlayingQueueControl.focus();
     await user.click(nowPlayingQueueControl);
-    expect(await screen.findByRole("dialog", { name: "Queue" }))
-      .toBeInTheDocument();
+    expect(
+      await screen.findByRole("dialog", { name: "Queue" }),
+    ).toBeInTheDocument();
 
     const queuePlayer = screen.getByRole("contentinfo");
-    expect(within(queuePlayer).getAllByRole("button", {
-      name: "Hide queue",
-    })).toHaveLength(1);
-    expect(screen.getAllByRole("button", { name: "Hide queue" })).toHaveLength(1);
+    expect(
+      within(queuePlayer).getAllByRole("button", {
+        name: "Hide queue",
+      }),
+    ).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Hide queue" })).toHaveLength(
+      1,
+    );
     const queueClose = within(queuePlayer).getByRole("button", {
       name: "Hide queue",
     });
     expect(queueClose).toHaveAttribute("aria-controls", "queue-drawer");
-    expect(within(queuePlayer).getByRole("button", { name: "Mute" }))
-      .toBeEnabled();
-    expect(within(queuePlayer).getByRole("slider", { name: "Volume" }))
-      .toBeEnabled();
-    expect(within(nowPlaying).queryByRole("group", {
-      name: "Playback controls",
-    })).not.toBeInTheDocument();
-    expect(within(nowPlaying).queryByRole("slider", { name: "Volume" }))
-      .not.toBeInTheDocument();
+    expect(
+      within(queuePlayer).getByRole("button", { name: "Mute" }),
+    ).toBeEnabled();
+    expect(
+      within(queuePlayer).getByRole("slider", { name: "Volume" }),
+    ).toBeEnabled();
+    expect(
+      within(nowPlaying).queryByRole("group", {
+        name: "Playback controls",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(nowPlaying).queryByRole("slider", { name: "Volume" }),
+    ).not.toBeInTheDocument();
 
     await user.click(within(nowPlaying).getByRole("button", { name: "Back" }));
     const restoredPlayer = screen.getByRole("contentinfo");
@@ -1799,8 +2035,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       name: "Hide queue",
     });
     await user.click(restoredHideQueue);
-    expect(screen.queryByRole("dialog", { name: "Queue" }))
-      .not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: "Queue" }),
+    ).not.toBeInTheDocument();
   });
 
   it("removes a queued track from its keyboard-focusable control", async () => {
@@ -1830,13 +2067,19 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
     fireEvent.click(remove);
     await waitFor(() =>
-      expect(screen.queryByRole("button", {
-        name: "Remove Afterimage",
-      })).not.toBeInTheDocument(),
+      expect(
+        screen.queryByRole("button", {
+          name: "Remove Afterimage",
+        }),
+      ).not.toBeInTheDocument(),
     );
-    expect(within(screen.getByRole("region", {
-      name: "Upcoming tracks",
-    })).queryByText("Afterimage")).not.toBeInTheDocument();
+    expect(
+      within(
+        screen.getByRole("region", {
+          name: "Upcoming tracks",
+        }),
+      ).queryByText("Afterimage"),
+    ).not.toBeInTheDocument();
   });
 
   it("does not reopen a saved queue drawer without a restorable current track", async () => {
@@ -1853,10 +2096,13 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     renderApp();
 
     await waitFor(() => expect(mocks.loadPlayerState).toHaveBeenCalledOnce());
-    expect(screen.queryByRole("dialog", { name: "Queue" }))
-      .not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Show queue" }))
-      .toHaveAttribute("aria-pressed", "false");
+    expect(
+      screen.queryByRole("dialog", { name: "Queue" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show queue" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
   });
 
   it("reports the actual native restore failure instead of blaming a pause", async () => {
@@ -1878,10 +2124,12 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       albumArtist: "Night Archive & Guests",
       musicBrainzId: "189002e7-3285-4e2e-92a3-7f6c30d407a2",
     };
-    mocks.fetchLibrary.mockResolvedValue([{
-      ...album,
-      tracks: [enrichedTrack, tracks[1]],
-    }]);
+    mocks.fetchLibrary.mockResolvedValue([
+      {
+        ...album,
+        tracks: [enrichedTrack, tracks[1]],
+      },
+    ]);
     mocks.fetchAlbum.mockResolvedValue([enrichedTrack, tracks[1]]);
     mocks.getLastFmStatus.mockResolvedValue({
       configured: true,
@@ -1894,9 +2142,13 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(
       queryClient.getQueryData<Album[]>(["bandcamp", "library"])?.[0].tracks,
     ).toBeUndefined();
-    fireEvent.click(screen.getByRole("button", { name: "Connection settings" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Connection settings" }),
+    );
     const settings = await screen.findByRole("dialog");
-    expect(await within(settings).findByText("nightlistener")).toBeInTheDocument();
+    expect(
+      await within(settings).findByText("nightlistener"),
+    ).toBeInTheDocument();
     fireEvent.click(within(settings).getByRole("button", { name: "Close" }));
     fireEvent.click(screen.getByRole("button", { name: "Play Soft Focus" }));
     await screen.findByRole("link", { name: "Open Now Playing" });
@@ -1906,7 +2158,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       expect(audio).toHaveAttribute("src", enrichedTrack.streamUrl);
     });
     fireEvent.playing(audio!);
-    await waitFor(() => expect(mocks.updateLastFmNowPlaying).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(mocks.updateLastFmNowPlaying).toHaveBeenCalledOnce(),
+    );
 
     for (let position = 10; position <= 90; position += 10) {
       audio!.currentTime = position;
@@ -1956,17 +2210,22 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
     await waitFor(() => {
       expect(mocks.invalidateStreamUrl).toHaveBeenCalledWith(restoredTrack.id);
-      expect(audio).toHaveAttribute("src", "https://example.test/refreshed.mp3");
+      expect(audio).toHaveAttribute(
+        "src",
+        "https://example.test/refreshed.mp3",
+      );
     });
     expect(mocks.fetchStreamUrl).toHaveBeenCalledTimes(2);
     expect(screen.getByRole("button", { name: "Pause" })).toBeInTheDocument();
-    expect(screen.queryByText("Coda lost the Bandcamp stream connection."))
-      .not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Coda lost the Bandcamp stream connection."),
+    ).not.toBeInTheDocument();
 
     fireEvent.error(audio);
 
-    expect(await screen.findByText("Coda lost the Bandcamp stream connection."))
-      .toBeInTheDocument();
+    expect(
+      await screen.findByText("Coda lost the Bandcamp stream connection."),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
     expect(mocks.fetchStreamUrl).toHaveBeenCalledTimes(2);
     expect(mocks.invalidateStreamUrl).toHaveBeenCalledTimes(1);
@@ -1998,7 +2257,10 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       const { container } = renderApp();
       const audio = await findAudioElement(container);
       await waitFor(() => {
-        expect(audio).toHaveAttribute("src", "https://example.test/expired.mp3");
+        expect(audio).toHaveAttribute(
+          "src",
+          "https://example.test/expired.mp3",
+        );
       });
       Object.defineProperty(audio, "error", {
         configurable: true,
@@ -2009,10 +2271,15 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       fireEvent.error(audio);
 
       await waitFor(() => {
-        expect(audio).toHaveAttribute("src", "https://example.test/refreshed.mp3");
+        expect(audio).toHaveAttribute(
+          "src",
+          "https://example.test/refreshed.mp3",
+        );
       });
       expect(screen.getByRole("button", { name: "Pause" })).toBeInTheDocument();
-      expect(screen.queryByText(/Coda could not start playback/)).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(/Coda could not start playback/),
+      ).not.toBeInTheDocument();
       expect(mocks.invalidateStreamUrl).toHaveBeenCalledTimes(1);
     } finally {
       play.mockReset().mockResolvedValue(undefined);
@@ -2028,12 +2295,15 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
       await screen.findByText("Soft Focus");
       random = vi.spyOn(Math, "random").mockReturnValue(0);
-      fireEvent.click(screen.getByRole("button", {
-        name: "Surprise me from the collection",
-      }));
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Surprise me from the collection",
+        }),
+      );
 
-      expect(await screen.findByRole("link", { name: "Open Now Playing" }))
-        .toBeInTheDocument();
+      expect(
+        await screen.findByRole("link", { name: "Open Now Playing" }),
+      ).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
       expect(await screen.findByText("1 track next")).toBeInTheDocument();
       expect(
@@ -2059,21 +2329,31 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         id: `${selected.id}-${item.id}`,
         album: selected.title,
         albumId: selected.id,
-      }))
+      })),
     );
     let random: ReturnType<typeof vi.spyOn> | undefined;
     try {
       renderApp();
 
       await screen.findByText("Cold Surprise 0");
+      await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalled());
+      const prefetchedAlbumIds = new Set(
+        mocks.fetchAlbum.mock.calls.map(([requested]) => requested.id),
+      );
       random = vi.spyOn(Math, "random").mockReturnValue(0);
-      fireEvent.click(screen.getByRole("button", {
-        name: "Surprise me from the collection",
-      }));
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Surprise me from the collection",
+        }),
+      );
 
-      expect(await screen.findByRole("link", { name: "Open Now Playing" }))
-        .toBeInTheDocument();
-      expect(mocks.fetchAlbum).toHaveBeenCalledOnce();
+      expect(
+        await screen.findByRole("link", { name: "Open Now Playing" }),
+      ).toBeInTheDocument();
+      const surpriseAlbumIds = mocks.fetchAlbum.mock.calls
+        .map(([requested]) => requested.id)
+        .filter((albumId) => !prefetchedAlbumIds.has(albumId));
+      expect(surpriseAlbumIds.length).toBeLessThanOrEqual(1);
       fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
       expect(await screen.findByText("1 track next")).toBeInTheDocument();
     } finally {
@@ -2090,15 +2370,18 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       renderApp();
 
       await screen.findByText("Soft Focus");
-      random = vi.spyOn(Math, "random").mockImplementation(
-        () => randomValues.shift() ?? 0,
+      random = vi
+        .spyOn(Math, "random")
+        .mockImplementation(() => randomValues.shift() ?? 0);
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Surprise me from the collection",
+        }),
       );
-      fireEvent.click(screen.getByRole("button", {
-        name: "Surprise me from the collection",
-      }));
 
-      expect(await screen.findByRole("link", { name: "Open Now Playing" }))
-        .toBeInTheDocument();
+      expect(
+        await screen.findByRole("link", { name: "Open Now Playing" }),
+      ).toBeInTheDocument();
       expect(screen.getAllByText("Afterimage").length).toBeGreaterThan(0);
       fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
       expect(await screen.findByText("End of the queue")).toBeInTheDocument();
@@ -2126,14 +2409,27 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     renderApp();
 
     await screen.findByText("Unavailable 0");
-    fireEvent.click(screen.getByRole("button", {
-      name: "Surprise me from the collection",
-    }));
+    await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalled());
+    const prefetchedAlbumIds = new Set(uniqueRequestedAlbumIds());
+    const scopeAlbumIds = new Set(
+      unavailableAlbums.map((release) => release.id),
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Surprise me from the collection",
+      }),
+    );
 
-    await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledTimes(6));
-    expect(await screen.findByText(
-      "No playable music was found in the collection.",
-    )).toBeInTheDocument();
+    expect(
+      await screen.findByText("No playable music was found in the collection."),
+    ).toBeInTheDocument();
+    expectHydrationBoundedToScope(scopeAlbumIds);
+    const surpriseAlbumIds = uniqueRequestedAlbumIds().filter(
+      (albumId) => !prefetchedAlbumIds.has(albumId),
+    );
+    expect(surpriseAlbumIds.length).toBeLessThanOrEqual(
+      LIBRARY_HYDRATION_CONCURRENCY,
+    );
   });
 
   it("starts a contextual shuffle before progressively hydrating the next release", async () => {
@@ -2145,53 +2441,59 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       duration: 180,
       tracks: undefined,
     }));
-    const shuffleTracks = new Map(shuffleAlbums.map((release, index) => [
-      release.id,
-      [{
-        ...tracks[0],
-        id: `shuffle-track-${index + 1}`,
-        title: `Shuffle Track ${index + 1}`,
-        album: release.title,
-        albumId: release.id,
-      }],
-    ]));
-    const requests = new Map(shuffleAlbums.map((release) => [
-      release.id,
-      deferred<Track[]>(),
-    ]));
+    const shuffleTracks = new Map(
+      shuffleAlbums.map((release, index) => [
+        release.id,
+        [
+          {
+            ...tracks[0],
+            id: `shuffle-track-${index + 1}`,
+            title: `Shuffle Track ${index + 1}`,
+            album: release.title,
+            albumId: release.id,
+          },
+        ],
+      ]),
+    );
+    const requests = new Map(
+      shuffleAlbums.map((release) => [release.id, deferred<Track[]>()]),
+    );
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue(shuffleAlbums);
-    mocks.fetchAlbum.mockImplementation((release: Album) =>
-      requests.get(release.id)!.promise
+    mocks.fetchAlbum.mockImplementation(
+      (release: Album) => requests.get(release.id)!.promise,
     );
     renderApp();
 
     await screen.findByText("Shuffle Album one");
     await startArtistShuffle();
-    await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledTimes(2));
+    const scopeAlbumIds = new Set(shuffleAlbums.map((release) => release.id));
+    const scopeTrackTitles = [...shuffleTracks.values()].map(
+      ([track]) => track.title,
+    );
+    await waitFor(() => expectHydrationBoundedToScope(scopeAlbumIds));
 
-    const firstRelease = mocks.fetchAlbum.mock.calls[0][0] as Album;
-    const secondRelease = mocks.fetchAlbum.mock.calls[1][0] as Album;
-    await act(async () => {
-      requests.get(secondRelease.id)!.resolve(shuffleTracks.get(secondRelease.id)!);
-    });
-    expect(screen.queryByRole("link", { name: "Open Now Playing" }))
-      .not.toBeInTheDocument();
+    await resolveAlbumRequests(requests, (albumId) =>
+      shuffleTracks.get(albumId)!,
+    );
 
-    await act(async () => {
-      requests.get(firstRelease.id)!.resolve(shuffleTracks.get(firstRelease.id)!);
-    });
-
-    expect(await screen.findByRole("link", { name: "Open Now Playing" }))
-      .toBeInTheDocument();
-    expect(screen.getAllByText(shuffleTracks.get(firstRelease.id)![0].title).length)
-      .toBeGreaterThan(0);
-    await waitFor(() => expect(screen.getByRole("button", {
-      name: "Shuffle",
-    })).toBeEnabled());
+    expect(
+      await screen.findByRole("link", { name: "Open Now Playing" }),
+    ).toBeInTheDocument();
+    expect(
+      scopeTrackTitles.some((title) => screen.queryAllByText(title).length > 0),
+    ).toBe(true);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", {
+          name: "Shuffle",
+        }),
+      ).toBeEnabled(),
+    );
 
     fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
     expect(await screen.findByText("1 track next")).toBeInTheDocument();
+    expectHydrationBoundedToScope(scopeAlbumIds);
   });
 
   it("advances into a progressively loaded shuffle tail without stopping playback", async () => {
@@ -2202,10 +2504,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       songCount: 1,
       tracks: undefined,
     }));
-    const requests = new Map(shuffleAlbums.map((release) => [
-      release.id,
-      deferred<Track[]>(),
-    ]));
+    const requests = new Map(
+      shuffleAlbums.map((release) => [release.id, deferred<Track[]>()]),
+    );
     const trackFor = (release: Album): Track => ({
       ...tracks[0],
       id: `tail-${release.id}`,
@@ -2215,31 +2516,42 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue(shuffleAlbums);
-    mocks.fetchAlbum.mockImplementation((release: Album) =>
-      requests.get(release.id)!.promise
+    mocks.fetchAlbum.mockImplementation(
+      (release: Album) => requests.get(release.id)!.promise,
     );
     renderApp();
 
     await screen.findByText("Tail Shuffle Album one");
     await startArtistShuffle();
-    await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledTimes(2));
-    const firstRelease = mocks.fetchAlbum.mock.calls[0][0] as Album;
-    await act(async () => {
-      requests.get(firstRelease.id)!.resolve([trackFor(firstRelease)]);
-    });
-    expect(await screen.findByRole("button", { name: "Pause" }))
-      .toBeInTheDocument();
-
-    const secondRelease = mocks.fetchAlbum.mock.calls[1][0] as Album;
-    fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    await act(async () => {
-      requests.get(secondRelease.id)!.resolve([trackFor(secondRelease)]);
-    });
-
-    await within(screen.getByRole("contentinfo")).findByText(
-      trackFor(secondRelease).title,
+    const scopeAlbumIds = new Set(shuffleAlbums.map((release) => release.id));
+    const tracksForAlbum = (albumId: string) => [
+      trackFor(shuffleAlbums.find((release) => release.id === albumId)!),
+    ];
+    await waitFor(() => expectHydrationBoundedToScope(scopeAlbumIds));
+    await resolveAlbumRequestsUntil(requests, tracksForAlbum, () =>
+      Boolean(screen.queryByRole("button", { name: "Pause" })),
     );
+    expect(
+      await screen.findByRole("button", { name: "Pause" }),
+    ).toBeInTheDocument();
+
+    const player = screen.getByRole("contentinfo");
+    const firstTitle = shuffleAlbums
+      .map((release) => trackFor(release).title)
+      .find((title) => within(player).queryByText(title));
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await resolveAlbumRequests(requests, tracksForAlbum);
+
+    await waitFor(() => {
+      const nextTitle = shuffleAlbums
+        .map((release) => trackFor(release).title)
+        .find(
+          (title) => title !== firstTitle && within(player).queryByText(title),
+        );
+      expect(nextTitle).toBeDefined();
+    });
     expect(screen.getByRole("button", { name: "Pause" })).toBeInTheDocument();
+    expectHydrationBoundedToScope(scopeAlbumIds);
   });
 
   it("wraps deferred manual Next when the remaining shuffle tail is empty", async () => {
@@ -2250,10 +2562,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       songCount: 1,
       tracks: undefined,
     }));
-    const requests = new Map(shuffleAlbums.map((release) => [
-      release.id,
-      deferred<Track[]>(),
-    ]));
+    const requests = new Map(
+      shuffleAlbums.map((release) => [release.id, deferred<Track[]>()]),
+    );
     const trackFor = (release: Album): Track => ({
       ...tracks[0],
       id: `empty-tail-${release.id}`,
@@ -2261,53 +2572,53 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       album: release.title,
       albumId: release.id,
     });
-    const releaseAtCall = (index: number) =>
-      mocks.fetchAlbum.mock.calls[index][0] as Album;
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue(shuffleAlbums);
-    mocks.fetchAlbum.mockImplementation((release: Album) =>
-      requests.get(release.id)!.promise
+    mocks.fetchAlbum.mockImplementation(
+      (release: Album) => requests.get(release.id)!.promise,
     );
     renderApp();
 
     await screen.findByText("Empty Tail Album 0");
     await startArtistShuffle();
-    await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledTimes(4));
-    const firstRelease = releaseAtCall(0);
-    await act(async () => {
-      requests.get(firstRelease.id)!.resolve([trackFor(firstRelease)]);
-    });
-    expect(await screen.findByRole("button", { name: "Pause" }))
-      .toBeInTheDocument();
+    const scopeAlbumIds = new Set(shuffleAlbums.map((release) => release.id));
+    const tracksForAlbum = (albumId: string) => [
+      trackFor(shuffleAlbums.find((release) => release.id === albumId)!),
+    ];
+    await waitFor(() => expectHydrationBoundedToScope(scopeAlbumIds));
+    await resolveAlbumRequests(requests, tracksForAlbum);
+    expect(
+      await screen.findByRole("button", { name: "Pause" }),
+    ).toBeInTheDocument();
 
-    await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledTimes(5));
-
-    await act(async () => {
-      for (let index = 1; index <= 4; index += 1) {
-        const release = releaseAtCall(index);
-        requests.get(release.id)!.resolve([trackFor(release)]);
-      }
-    });
     fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
-    expect(await screen.findByText("4 tracks next")).toBeInTheDocument();
+    expect(await screen.findByText("5 tracks next")).toBeInTheDocument();
     const player = screen.getByRole("contentinfo");
+    const firstTitle = shuffleAlbums
+      .map((release) => trackFor(release).title)
+      .find((title) => within(player).queryByText(title));
+    expect(firstTitle).toBeDefined();
     fireEvent.click(within(player).getByRole("button", { name: "Repeat off" }));
-    for (let index = 0; index < 4; index += 1) {
+    for (let index = 0; index < 5; index += 1) {
       fireEvent.click(within(player).getByRole("button", { name: "Next" }));
     }
-    const lastPlayableRelease = releaseAtCall(4);
-    await within(player).findByText(trackFor(lastPlayableRelease).title);
-
-    fireEvent.click(within(player).getByRole("button", { name: "Next" }));
-    await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledTimes(6));
-    const emptyRelease = releaseAtCall(5);
-    await act(async () => {
-      requests.get(emptyRelease.id)!.resolve([]);
+    await waitFor(() => {
+      const currentTitle = shuffleAlbums
+        .map((release) => trackFor(release).title)
+        .find((title) => within(player).queryByText(title));
+      expect(currentTitle).toBeDefined();
+      expect(currentTitle).not.toBe(firstTitle);
     });
 
-    await within(player).findByText(trackFor(firstRelease).title);
-    expect(within(player).getByRole("button", { name: "Pause" }))
-      .toBeInTheDocument();
+    fireEvent.click(within(player).getByRole("button", { name: "Next" }));
+    await within(player).findByText(firstTitle!);
+    expect(
+      within(player).getByRole("button", { name: "Pause" }),
+    ).toBeInTheDocument();
+    expectHydrationBoundedToScope(scopeAlbumIds);
+    expect(uniqueRequestedAlbumIds().length).toBeLessThanOrEqual(
+      LIBRARY_HYDRATION_CONCURRENCY,
+    );
   });
 
   it("keeps playback paused when deferred manual Next receives a track", async () => {
@@ -2318,10 +2629,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       songCount: 1,
       tracks: undefined,
     }));
-    const requests = new Map(shuffleAlbums.map((release) => [
-      release.id,
-      deferred<Track[]>(),
-    ]));
+    const requests = new Map(
+      shuffleAlbums.map((release) => [release.id, deferred<Track[]>()]),
+    );
     const trackFor = (release: Album): Track => ({
       ...tracks[0],
       id: `paused-tail-${release.id}`,
@@ -2331,31 +2641,41 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue(shuffleAlbums);
-    mocks.fetchAlbum.mockImplementation((release: Album) =>
-      requests.get(release.id)!.promise
+    mocks.fetchAlbum.mockImplementation(
+      (release: Album) => requests.get(release.id)!.promise,
     );
     renderApp();
 
     await screen.findByText("Paused Tail Album 0");
     await startArtistShuffle();
-    await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledTimes(2));
-    const firstRelease = mocks.fetchAlbum.mock.calls[0][0] as Album;
-    await act(async () => {
-      requests.get(firstRelease.id)!.resolve([trackFor(firstRelease)]);
-    });
+    const scopeAlbumIds = new Set(shuffleAlbums.map((release) => release.id));
+    const tracksForAlbum = (albumId: string) => [
+      trackFor(shuffleAlbums.find((release) => release.id === albumId)!),
+    ];
+    await waitFor(() => expectHydrationBoundedToScope(scopeAlbumIds));
+    await resolveAlbumRequestsUntil(requests, tracksForAlbum, () =>
+      Boolean(screen.queryByRole("button", { name: "Pause" })),
+    );
     fireEvent.click(await screen.findByRole("button", { name: "Pause" }));
     expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
 
+    const player = screen.getByRole("contentinfo");
+    const firstTitle = shuffleAlbums
+      .map((release) => trackFor(release).title)
+      .find((title) => within(player).queryByText(title));
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    const secondRelease = mocks.fetchAlbum.mock.calls[1][0] as Album;
-    await act(async () => {
-      requests.get(secondRelease.id)!.resolve([trackFor(secondRelease)]);
-    });
+    await resolveAlbumRequests(requests, tracksForAlbum);
 
-    await within(screen.getByRole("contentinfo")).findByText(
-      trackFor(secondRelease).title,
-    );
+    await waitFor(() => {
+      const nextTitle = shuffleAlbums
+        .map((release) => trackFor(release).title)
+        .find(
+          (title) => title !== firstTitle && within(player).queryByText(title),
+        );
+      expect(nextTitle).toBeDefined();
+    });
     expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
+    expectHydrationBoundedToScope(scopeAlbumIds);
   });
 
   it("moves cached track metadata into shuffle without refetching or resolving future streams", async () => {
@@ -2384,8 +2704,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     mocks.fetchStreamUrl.mockClear();
     await startArtistShuffle();
 
-    expect(await screen.findByRole("link", { name: "Open Now Playing" }))
-      .toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Open Now Playing" }),
+    ).toBeInTheDocument();
     expect(mocks.fetchAlbum).not.toHaveBeenCalled();
     await waitFor(() => expect(mocks.fetchStreamUrl).toHaveBeenCalledOnce());
     expect(cachedTracks.map((track) => track.id)).toContain(
@@ -2415,9 +2736,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue(shuffleAlbums);
-    mocks.fetchAlbum.mockImplementation(async (release: Album) =>
-      [trackFor(release)]
-    );
+    mocks.fetchAlbum.mockImplementation(async (release: Album) => [
+      trackFor(release),
+    ]);
     renderApp();
 
     await screen.findByText("Streamed Shuffle Album 0");
@@ -2441,10 +2762,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       songCount: 1,
       tracks: undefined,
     }));
-    const requests = new Map(shuffleAlbums.map((release, index) => [
-      release.id,
-      deferred<Track[]>(),
-    ]));
+    const requests = new Map(
+      shuffleAlbums.map((release, index) => [release.id, deferred<Track[]>()]),
+    );
     const trackFor = (release: Album): Track => ({
       ...tracks[0],
       id: `bounded-${release.id}`,
@@ -2454,38 +2774,46 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue(shuffleAlbums);
-    mocks.fetchAlbum.mockImplementation((release: Album) =>
-      requests.get(release.id)!.promise
+    mocks.fetchAlbum.mockImplementation(
+      (release: Album) => requests.get(release.id)!.promise,
     );
     renderApp();
 
     await screen.findByText("Bounded Shuffle Album 0");
     await startArtistShuffle();
-    await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledTimes(4));
-    const firstRelease = mocks.fetchAlbum.mock.calls[0][0] as Album;
-    await act(async () => {
-      requests.get(firstRelease.id)!.resolve([trackFor(firstRelease)]);
+    const scopeAlbumIds = new Set(shuffleAlbums.map((release) => release.id));
+    const tracksForAlbum = (albumId: string) => [
+      trackFor(shuffleAlbums.find((release) => release.id === albumId)!),
+    ];
+    await waitFor(() => {
+      expect(uniqueRequestedAlbumIds().length).toBeGreaterThan(0);
+      expectHydrationBoundedToScope(scopeAlbumIds);
+      expect(uniqueRequestedAlbumIds().length).toBeLessThanOrEqual(
+        LIBRARY_HYDRATION_CONCURRENCY,
+      );
     });
-    expect(await screen.findByRole("link", { name: "Open Now Playing" }))
-      .toBeInTheDocument();
+    await resolveAlbumRequestsUntil(requests, tracksForAlbum, () =>
+      Boolean(screen.queryByRole("link", { name: "Open Now Playing" })),
+    );
+    expect(
+      await screen.findByRole("link", { name: "Open Now Playing" }),
+    ).toBeInTheDocument();
 
-    await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledTimes(5));
-    expect(mocks.fetchAlbum).toHaveBeenCalledTimes(5);
     fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
-    expect(await screen.findByText("Loading more tracks…")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Clear next" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Clear next" }));
 
-    await act(async () => {
-      for (const [release] of mocks.fetchAlbum.mock.calls.slice(1)) {
-        const requestedAlbum = release as Album;
-        requests.get(requestedAlbum.id)!.resolve([trackFor(requestedAlbum)]);
-      }
-    });
+    await resolveAlbumRequests(requests, tracksForAlbum);
     await waitFor(() => {
       expect(screen.getByText("End of the queue")).toBeInTheDocument();
     });
-    expect(mocks.fetchAlbum).toHaveBeenCalledTimes(5);
+    expectHydrationBoundedToScope(scopeAlbumIds);
+    expect(uniqueRequestedAlbumIds().length).toBeLessThanOrEqual(
+      scopeAlbumIds.size,
+    );
+    expect(
+      screen.queryByText(/^[1-9]\d* tracks? next$/),
+    ).not.toBeInTheDocument();
   });
 
   it("restores the saved queue paused and applies its position after media metadata loads", async () => {
@@ -2494,7 +2822,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     mocks.loadPlayerState.mockResolvedValue({
       version: 1,
       savedAt: Date.now(),
-      queue: tracks.map(({ streamUrl: _streamUrl, artworkUrl: _artworkUrl, ...track }) => track),
+      queue: tracks.map(
+        ({ streamUrl: _streamUrl, artworkUrl: _artworkUrl, ...track }) => track,
+      ),
       currentIndex: 1,
       positionSeconds: 42,
       volume: 0.44,
@@ -2511,14 +2841,18 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
     const { container } = renderApp();
 
-    expect(await screen.findByRole("link", { name: "Open Now Playing" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Open Now Playing" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Show queue" })).toHaveAttribute(
       "aria-pressed",
       "false",
     );
     expect(screen.getAllByText("Afterimage").length).toBeGreaterThan(0);
-    await waitFor(() => expect(mocks.fetchStreamUrl).toHaveBeenCalledWith("track-2"));
+    await waitFor(() =>
+      expect(mocks.fetchStreamUrl).toHaveBeenCalledWith("track-2"),
+    );
 
     const audio = container.querySelector("audio");
     expect(audio).not.toBeNull();
@@ -2528,8 +2862,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
     fireEvent.loadedMetadata(audio!);
     expect(audio!.currentTime).toBe(42);
-    expect(screen.getByRole("slider", { name: "Track position" }))
-      .toHaveValue("42");
+    expect(screen.getByRole("slider", { name: "Track position" })).toHaveValue(
+      "42",
+    );
   });
 
   it("refreshes a restored Radio show and resumes its saved playhead without a connection", async () => {
@@ -2537,16 +2872,18 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     mocks.loadPlayerState.mockResolvedValue({
       version: 1,
       savedAt: Date.now(),
-      queue: [{
-        id: "radio:979",
-        title: "The Coda Broadcast",
-        artist: "Bandcamp Radio",
-        album: "Bandcamp Weekly",
-        albumId: "radio:979",
-        duration: 3_600,
-        track: 1,
-        palette: ["#ca6954", "#241b1a"],
-      }],
+      queue: [
+        {
+          id: "radio:979",
+          title: "The Coda Broadcast",
+          artist: "Bandcamp Radio",
+          album: "Bandcamp Weekly",
+          albumId: "radio:979",
+          duration: 3_600,
+          track: 1,
+          palette: ["#ca6954", "#241b1a"],
+        },
+      ],
       currentIndex: 0,
       positionSeconds: 65,
       volume: 0.7,
@@ -2636,16 +2973,18 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     mocks.loadPlayerState.mockResolvedValue({
       version: 1,
       savedAt: Date.now(),
-      queue: [{
-        id: "radio:979",
-        title: "The Coda Broadcast",
-        artist: "Bandcamp Radio",
-        album: "The Hip Hop Show",
-        albumId: "radio:979",
-        duration: 3_600,
-        track: 1,
-        palette: ["#ca6954", "#241b1a"],
-      }],
+      queue: [
+        {
+          id: "radio:979",
+          title: "The Coda Broadcast",
+          artist: "Bandcamp Radio",
+          album: "The Hip Hop Show",
+          albumId: "radio:979",
+          duration: 3_600,
+          track: 1,
+          palette: ["#ca6954", "#241b1a"],
+        },
+      ],
       currentIndex: 0,
       positionSeconds: 65,
       volume: 0.7,
@@ -2655,9 +2994,11 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     renderApp();
 
     await waitFor(() => expect(mocks.fetchRadioShow).toHaveBeenCalledWith(979));
-    fireEvent.click(await screen.findByRole("link", {
-      name: "Open Now Playing",
-    }));
+    fireEvent.click(
+      await screen.findByRole("link", {
+        name: "Open Now Playing",
+      }),
+    );
     const nowPlaying = await screen.findByRole("article");
     const originalDescriptor = Object.getOwnPropertyDescriptor(
       document,
@@ -2685,21 +3026,29 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
 
     try {
-      fireEvent.click(within(nowPlaying).getByRole("link", {
-        name: "Bandcamp Radio",
-      }));
+      fireEvent.click(
+        within(nowPlaying).getByRole("link", {
+          name: "Bandcamp Radio",
+        }),
+      );
 
       expect(startViewTransition).toHaveBeenCalledOnce();
       const radioNavigation = await screen.findByRole("navigation", {
         name: "Bandcamp Radio shows",
       });
-      expect(within(radioNavigation).getByRole("link", {
-        name: "All shows",
-      })).toHaveAttribute("aria-current", "page");
-      await waitFor(() => expect(transitionSnapshots).toEqual([{
-        className: expect.stringContaining("coda-transition--page-forward"),
-        radioArtworkSources: 0,
-      }]));
+      expect(
+        within(radioNavigation).getByRole("link", {
+          name: "All shows",
+        }),
+      ).toHaveAttribute("aria-current", "page");
+      await waitFor(() =>
+        expect(transitionSnapshots).toEqual([
+          {
+            className: expect.stringContaining("coda-transition--page-forward"),
+            radioArtworkSources: 0,
+          },
+        ]),
+      );
       await waitFor(() =>
         expect(mocks.fetchRadioShows).toHaveBeenCalledWith({
           cursor: undefined,
@@ -2791,16 +3140,18 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     mocks.loadPlayerState.mockResolvedValue({
       version: 1,
       savedAt: Date.now(),
-      queue: [{
-        id: "radio:979",
-        title: "The Coda Broadcast",
-        artist: "Bandcamp Radio",
-        album: "Bandcamp Weekly",
-        albumId: "radio:979",
-        duration: 3_600,
-        track: 1,
-        palette: ["#ca6954", "#241b1a"],
-      }],
+      queue: [
+        {
+          id: "radio:979",
+          title: "The Coda Broadcast",
+          artist: "Bandcamp Radio",
+          album: "Bandcamp Weekly",
+          albumId: "radio:979",
+          duration: 3_600,
+          track: 1,
+          palette: ["#ca6954", "#241b1a"],
+        },
+      ],
       currentIndex: 0,
       positionSeconds: 60,
       volume: 0.7,
@@ -2818,13 +3169,15 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     fireEvent.loadedMetadata(audio);
     fireEvent.click(await screen.findByRole("button", { name: "Play" }));
     fireEvent.playing(audio);
-    await waitFor(() => expect(mocks.updateLastFmNowPlaying).toHaveBeenCalledWith(
-      expect.objectContaining({
-        artist: "Night Archive",
-        title: "Second signal",
-        chosenByUser: false,
-      }),
-    ));
+    await waitFor(() =>
+      expect(mocks.updateLastFmNowPlaying).toHaveBeenCalledWith(
+        expect.objectContaining({
+          artist: "Night Archive",
+          title: "Second signal",
+          chosenByUser: false,
+        }),
+      ),
+    );
 
     for (let position = 70; position <= 300; position += 10) {
       audio.currentTime = position;
@@ -2872,7 +3225,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     const queueRegion = await screen.findByRole("region", {
       name: "Upcoming tracks",
     });
-    expect(within(queueRegion).queryAllByRole("listitem").length).toBeLessThan(40);
+    expect(within(queueRegion).queryAllByRole("listitem").length).toBeLessThan(
+      40,
+    );
     expect(screen.queryByText("Large queue track 299")).not.toBeInTheDocument();
     expect(screen.getByText("299 tracks next")).toBeInTheDocument();
   });
@@ -2891,9 +3246,11 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     fireEvent.click(screen.getByRole("button", { name: /Singles\s*1/ }));
     expect(await screen.findByText("Streetlight")).toBeInTheDocument();
     expect(screen.queryByText("Soft Focus")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", {
-      name: "Surprise me from the singles view",
-    })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Surprise me from the singles view",
+      }),
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("link", { name: "Open Streetlight" }));
     const singlePage = await screen.findByRole("article", {
@@ -2903,12 +3260,15 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     const singleTrackControl = within(singlePage).getByRole("button", {
       name: "Play Streetlight",
     });
-    expect(within(singleTrackControl.parentElement!).getByText("2:44"))
-      .toBeInTheDocument();
+    expect(
+      within(singleTrackControl.parentElement!).getByText("2:44"),
+    ).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "1 song" })).toBeInTheDocument();
-    expect(screen.getByRole("button", {
-      name: "Surprise me from Streetlight",
-    })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Surprise me from Streetlight",
+      }),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
     fireEvent.click(await screen.findByTitle("Browse Glass Taxi"));
@@ -2918,13 +3278,18 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(artistHeading).toBeInTheDocument();
     expect(artistHeading.previousElementSibling).toHaveClass("block");
     expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Play all" })).toBeInTheDocument();
-    expect(screen.getByRole("button", {
-      name: "Surprise me from Glass Taxi",
-    })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Play all" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Surprise me from Glass Taxi",
+      }),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Shuffle" }));
-    expect(await screen.findByRole("link", { name: "Open Now Playing" }))
-      .toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Open Now Playing" }),
+    ).toBeInTheDocument();
     expect(screen.getAllByText("Streetlight").length).toBeGreaterThan(0);
   });
 
@@ -2943,11 +3308,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(within(player).getByText("First Light")).toBeInTheDocument();
   });
 
-  it.each([
-    ["Play all"],
-    ["Shuffle"],
-    ["Add all"],
-  ] as const)(
+  it.each([["Play all"], ["Shuffle"], ["Add all"]] as const)(
     "scopes %s to the selected artist on a compilation",
     async (actionName) => {
       const guestArtist = "Guest Artist";
@@ -2988,15 +3349,19 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       renderApp();
 
       await screen.findByText("Night Compendium");
-      fireEvent.click(screen.getByRole("link", {
-        name: "Open Night Compendium",
-      }));
+      fireEvent.click(
+        screen.getByRole("link", {
+          name: "Open Night Compendium",
+        }),
+      );
       const albumPage = await screen.findByRole("article", {
         name: "Night Compendium release details",
       });
-      fireEvent.click(within(albumPage).getByRole("link", {
-        name: guestArtist,
-      }));
+      fireEvent.click(
+        within(albumPage).getByRole("link", {
+          name: guestArtist,
+        }),
+      );
 
       const heading = await screen.findByRole("heading", { name: guestArtist });
       const artistHero = heading.closest("section");
@@ -3004,86 +3369,96 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         throw new Error("Expected the artist heading in its hero");
       }
       expect(artistHero).toHaveTextContent("1 release · 1 track · 3:00");
-      expect(screen.getByRole("link", { name: "Open Night Compendium" }))
-        .toBeInTheDocument();
-      fireEvent.click(within(artistHero).getByRole("button", {
-        name: actionName,
-      }));
+      expect(
+        screen.getByRole("link", { name: "Open Night Compendium" }),
+      ).toBeInTheDocument();
+      fireEvent.click(
+        within(artistHero).getByRole("button", {
+          name: actionName,
+        }),
+      );
 
       const player = await screen.findByRole("contentinfo");
       await within(player).findByText("Guest Selection");
-      expect(within(player).queryByText("Other Selection"))
-        .not.toBeInTheDocument();
-      expect(within(player).getByRole("button", { name: "Next" }))
-        .toBeDisabled();
+      expect(
+        within(player).queryByText("Other Selection"),
+      ).not.toBeInTheDocument();
+      expect(
+        within(player).getByRole("button", { name: "Next" }),
+      ).toBeDisabled();
     },
   );
 
-  it(
-    "scopes the Surprise Me track branch to the selected compilation artist",
-    async () => {
-      const compilationTracks = [
-        {
-          ...tracks[0],
-          id: "track-compilation-guest",
-          title: "Guest Selection",
-          artist: "Guest Artist",
-          albumArtist: "Various Artists",
-          album: "Night Compendium",
-          albumId: "album-compilation",
-        },
-        {
-          ...tracks[1],
-          id: "track-compilation-other",
-          title: "Other Selection",
-          artist: "Other Artist",
-          albumArtist: "Various Artists",
-          album: "Night Compendium",
-          albumId: "album-compilation",
-        },
-      ];
-      const compilation = {
-        ...album,
-        id: "album-compilation",
-        title: "Night Compendium",
-        artist: "Various Artists",
-        tracks: compilationTracks,
-        songCount: compilationTracks.length,
-      };
-      mocks.hasConnection.mockResolvedValue(true);
-      mocks.fetchLibrary.mockResolvedValue([compilation]);
-      mocks.fetchAlbum.mockResolvedValue(compilationTracks);
-      let random: ReturnType<typeof vi.spyOn> | undefined;
-      try {
-        renderApp();
+  it("scopes the Surprise Me track branch to the selected compilation artist", async () => {
+    const compilationTracks = [
+      {
+        ...tracks[0],
+        id: "track-compilation-guest",
+        title: "Guest Selection",
+        artist: "Guest Artist",
+        albumArtist: "Various Artists",
+        album: "Night Compendium",
+        albumId: "album-compilation",
+      },
+      {
+        ...tracks[1],
+        id: "track-compilation-other",
+        title: "Other Selection",
+        artist: "Other Artist",
+        albumArtist: "Various Artists",
+        album: "Night Compendium",
+        albumId: "album-compilation",
+      },
+    ];
+    const compilation = {
+      ...album,
+      id: "album-compilation",
+      title: "Night Compendium",
+      artist: "Various Artists",
+      tracks: compilationTracks,
+      songCount: compilationTracks.length,
+    };
+    mocks.hasConnection.mockResolvedValue(true);
+    mocks.fetchLibrary.mockResolvedValue([compilation]);
+    mocks.fetchAlbum.mockResolvedValue(compilationTracks);
+    let random: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      renderApp();
 
-        await screen.findByText("Night Compendium");
-        fireEvent.click(screen.getByRole("link", {
+      await screen.findByText("Night Compendium");
+      fireEvent.click(
+        screen.getByRole("link", {
           name: "Open Night Compendium",
-        }));
-        const albumPage = await screen.findByRole("article", {
-          name: "Night Compendium release details",
-        });
-        fireEvent.click(within(albumPage).getByRole("link", {
+        }),
+      );
+      const albumPage = await screen.findByRole("article", {
+        name: "Night Compendium release details",
+      });
+      fireEvent.click(
+        within(albumPage).getByRole("link", {
           name: "Guest Artist",
-        }));
+        }),
+      );
 
-        await screen.findByRole("heading", { name: "Guest Artist" });
-        random = vi.spyOn(Math, "random").mockReturnValue(0.75);
-        fireEvent.click(await screen.findByRole("button", {
+      await screen.findByRole("heading", { name: "Guest Artist" });
+      random = vi.spyOn(Math, "random").mockReturnValue(0.75);
+      fireEvent.click(
+        await screen.findByRole("button", {
           name: "Surprise me from Guest Artist",
-        }));
-        const player = await screen.findByRole("contentinfo");
-        await within(player).findByText("Guest Selection");
-        expect(within(player).queryByText("Other Selection"))
-          .not.toBeInTheDocument();
-        expect(within(player).getByRole("button", { name: "Next" }))
-          .toBeDisabled();
-      } finally {
-        random?.mockRestore();
-      }
-    },
-  );
+        }),
+      );
+      const player = await screen.findByRole("contentinfo");
+      await within(player).findByText("Guest Selection");
+      expect(
+        within(player).queryByText("Other Selection"),
+      ).not.toBeInTheDocument();
+      expect(
+        within(player).getByRole("button", { name: "Next" }),
+      ).toBeDisabled();
+    } finally {
+      random?.mockRestore();
+    }
+  });
 
   it("keeps artist navigation selected while a deferred search clears", async () => {
     const unrelatedAlbum = {
@@ -3104,15 +3479,19 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     fireEvent.change(search, { target: { value: "Unrelated Echo" } });
     await screen.findByRole("link", { name: "Open Unrelated Echo" });
 
-    fireEvent.click(within(player).getByRole("link", {
-      name: "Night Archive",
-    }));
+    fireEvent.click(
+      within(player).getByRole("link", {
+        name: "Night Archive",
+      }),
+    );
 
-    expect(await screen.findByRole("heading", { name: "Night Archive" }))
-      .toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Night Archive" }),
+    ).toBeInTheDocument();
     expect(search).toHaveValue("");
-    expect(screen.getByRole("link", { name: "Open Soft Focus" }))
-      .toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Open Soft Focus" }),
+    ).toBeInTheDocument();
   });
 
   it("applies a new search entered from an artist page", async () => {
@@ -3129,17 +3508,23 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
     await screen.findByText("Soft Focus");
     fireEvent.click(screen.getByTitle("Browse Night Archive"));
-    expect(await screen.findByRole("heading", { name: "Night Archive" }))
-      .toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Night Archive" }),
+    ).toBeInTheDocument();
 
-    fireEvent.change(
-      screen.getByPlaceholderText("Search your collection"),
-      { target: { value: "Unrelated Echo" } },
-    );
+    fireEvent.change(screen.getByPlaceholderText("Search your collection"), {
+      target: { value: "Unrelated Echo" },
+    });
 
-    expect(await screen.findByText("Other Artist")).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Night Archive" }))
-      .not.toBeInTheDocument();
+    expect(
+      await screen.findByRole("link", { name: "Unrelated Echo" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Other Artist" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Night Archive" }),
+    ).not.toBeInTheDocument();
   });
 
   it("preloads album tracks after startup and reuses the request on activation", async () => {
@@ -3161,9 +3546,11 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       name: "Soft Focus release details",
     });
     expect(screen.getAllByRole("status")).toHaveLength(1);
-    expect(within(albumPage).getByRole("status", {
-      name: "Loading album tracks",
-    })).toBeInTheDocument();
+    expect(
+      within(albumPage).getByRole("status", {
+        name: "Loading album tracks",
+      }),
+    ).toBeInTheDocument();
     expect(mocks.fetchAlbum).toHaveBeenCalledOnce();
 
     await act(async () => request.resolve(tracks));
@@ -3171,13 +3558,15 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
   });
 
   it("keeps a cold album busy when an older album request settles", async () => {
-    const secondTracks: Track[] = [{
-      ...tracks[0],
-      id: "track-second",
-      title: "Other Light",
-      album: "Other Focus",
-      albumId: "album-2",
-    }];
+    const secondTracks: Track[] = [
+      {
+        ...tracks[0],
+        id: "track-second",
+        title: "Other Light",
+        album: "Other Focus",
+        albumId: "album-2",
+      },
+    ];
     const secondAlbum: Album = {
       ...album,
       id: "album-2",
@@ -3223,22 +3612,20 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       "startViewTransition",
     );
     const snapshots: Array<{ source: number; destination: number }> = [];
-    const startViewTransition = vi.fn(
-      (update: () => void | Promise<void>) => {
-        const source = document.querySelectorAll(
-          ".coda-album-artwork-source",
-        ).length;
-        const updateCallbackDone = Promise.resolve(update()).then(() => {
-          snapshots.push({
-            source,
-            destination: document.querySelectorAll(
-              ".album-detail__artwork [data-slot='cover']",
-            ).length,
-          });
+    const startViewTransition = vi.fn((update: () => void | Promise<void>) => {
+      const source = document.querySelectorAll(
+        ".coda-album-artwork-source",
+      ).length;
+      const updateCallbackDone = Promise.resolve(update()).then(() => {
+        snapshots.push({
+          source,
+          destination: document.querySelectorAll(
+            ".album-detail__artwork [data-slot='cover']",
+          ).length,
         });
-        return { finished: updateCallbackDone, updateCallbackDone };
-      },
-    );
+      });
+      return { finished: updateCallbackDone, updateCallbackDone };
+    });
     Object.defineProperty(document, "startViewTransition", {
       configurable: true,
       value: startViewTransition,
@@ -3259,22 +3646,28 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       expect(startViewTransition).toHaveBeenCalledOnce();
       expect(snapshots).toEqual([{ source: 1, destination: 1 }]);
       expect(screen.getAllByRole("status")).toHaveLength(1);
-      expect(within(albumPage).getByRole("status", {
-        name: "Loading album tracks",
-      })).toBeInTheDocument();
+      expect(
+        within(albumPage).getByRole("status", {
+          name: "Loading album tracks",
+        }),
+      ).toBeInTheDocument();
       expect(trackList).toHaveAttribute("aria-busy", "true");
-      expect(screen.queryByRole("status", {
-        name: "Loading Soft Focus",
-      })).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("status", {
+          name: "Loading Soft Focus",
+        }),
+      ).not.toBeInTheDocument();
 
       await act(async () => {
         requestSettled = true;
         request.resolve(tracks);
       });
       await waitFor(() =>
-        expect(within(albumPage).queryByRole("status", {
-          name: "Loading album tracks",
-        })).not.toBeInTheDocument(),
+        expect(
+          within(albumPage).queryByRole("status", {
+            name: "Loading album tracks",
+          }),
+        ).not.toBeInTheDocument(),
       );
       expect(trackList).not.toHaveAttribute("aria-busy");
       expect(within(albumPage).getByText("First Light")).toBeInTheDocument();
@@ -3283,7 +3676,11 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         await act(async () => request.resolve(tracks));
       }
       if (originalDescriptor) {
-        Object.defineProperty(document, "startViewTransition", originalDescriptor);
+        Object.defineProperty(
+          document,
+          "startViewTransition",
+          originalDescriptor,
+        );
       } else {
         Reflect.deleteProperty(document, "startViewTransition");
       }
@@ -3311,26 +3708,34 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       name: "Soft Focus release details",
     });
     await waitFor(() =>
-      expect(within(albumPage).getByRole("heading", { name: "Soft Focus" }))
-        .toHaveFocus(),
+      expect(
+        within(albumPage).getByRole("heading", { name: "Soft Focus" }),
+      ).toHaveFocus(),
     );
-    expect(within(albumPage).getByRole("status", {
-      name: "Loading album tracks",
-    })).toBeInTheDocument();
+    expect(
+      within(albumPage).getByRole("status", {
+        name: "Loading album tracks",
+      }),
+    ).toBeInTheDocument();
     expect(libraryPane.scrollTop).toBe(0);
 
     await act(async () => request.resolve(tracks));
-    fireEvent.click(within(albumPage).getByRole("button", {
-      name: "Back",
-    }));
+    fireEvent.click(
+      within(albumPage).getByRole("button", {
+        name: "Back",
+      }),
+    );
 
-    expect(await screen.findByRole("list", {
-      name: "All releases",
-    })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("list", {
+        name: "All releases",
+      }),
+    ).toBeInTheDocument();
     expect(libraryPane.scrollTop).toBe(312);
     await waitFor(() =>
-      expect(screen.getByRole("link", { name: "Open Soft Focus" }))
-        .toHaveFocus(),
+      expect(
+        screen.getByRole("link", { name: "Open Soft Focus" }),
+      ).toHaveFocus(),
     );
   });
 
@@ -3368,28 +3773,36 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
 
     try {
-      fireEvent.click(within(albumPage).getByRole("button", {
-        name: "Back",
-      }));
+      fireEvent.click(
+        within(albumPage).getByRole("button", {
+          name: "Back",
+        }),
+      );
 
-      expect(await screen.findByRole("list", {
-        name: "All releases",
-      })).toBeInTheDocument();
-      expect(startViewTransition).toHaveBeenCalledOnce();
-      await waitFor(() => expect(transitionClasses).toEqual([
-        expect.stringContaining("coda-transition--album-detail-close"),
-      ]));
+      expect(
+        await screen.findByRole("list", {
+          name: "All releases",
+        }),
+      ).toBeInTheDocument();
+      expect(startViewTransition).not.toHaveBeenCalled();
+      expect(transitionClasses).toEqual([]);
       expect(libraryPane.scrollTop).toBe(312);
 
       await act(async () => request.resolve(tracks));
 
-      expect(screen.getByRole("list", {
-        name: "All releases",
-      })).toBeInTheDocument();
+      expect(
+        screen.getByRole("list", {
+          name: "All releases",
+        }),
+      ).toBeInTheDocument();
       expect(libraryPane.scrollTop).toBe(312);
     } finally {
       if (originalDescriptor) {
-        Object.defineProperty(document, "startViewTransition", originalDescriptor);
+        Object.defineProperty(
+          document,
+          "startViewTransition",
+          originalDescriptor,
+        );
       } else {
         Reflect.deleteProperty(document, "startViewTransition");
       }
@@ -3411,15 +3824,14 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       document,
       "startViewTransition",
     );
-    const startViewTransition = vi.fn((
-      update: () => void | Promise<void>,
-    ) => {
+    const startViewTransition = vi.fn((update: () => void | Promise<void>) => {
       const sourceBeforeUpdate = document.querySelectorAll(
         "[data-coda-album-title-source]",
       ).length;
-      const sourceIsStaticText = document.querySelector(
-        "[data-coda-album-title-source]",
-      )?.matches('[data-slot="overflow-marquee-text"]') ?? false;
+      const sourceIsStaticText =
+        document
+          .querySelector("[data-coda-album-title-source]")
+          ?.matches('[data-slot="overflow-marquee-text"]') ?? false;
       const updateCallbackDone = Promise.resolve(update()).then(() => {
         capturedTransitionClasses.push(document.documentElement.className);
         titleSnapshots.push({
@@ -3464,40 +3876,52 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       expect(capturedTransitionClasses).toEqual([
         expect.stringContaining("coda-transition--album-detail"),
       ]);
-      expect(titleSnapshots).toEqual([{
-        sourceBeforeUpdate: 1,
-        sourceIsStaticText: true,
-        detailAfterUpdate: 1,
-        detailSurfaceAfterUpdate: 1,
-        metadataDetailAfterUpdate: 1,
-      }]);
+      expect(titleSnapshots).toEqual([
+        {
+          sourceBeforeUpdate: 1,
+          sourceIsStaticText: true,
+          detailAfterUpdate: 1,
+          detailSurfaceAfterUpdate: 1,
+          metadataDetailAfterUpdate: 1,
+        },
+      ]);
       expect(screen.queryByRole("status")).not.toBeInTheDocument();
       expect(within(albumPage).getByText("First Light")).toBeInTheDocument();
       expect(within(albumPage).queryByRole("status")).not.toBeInTheDocument();
 
-      fireEvent.click(within(albumPage).getByRole("button", {
-        name: "Back",
-      }));
+      fireEvent.click(
+        within(albumPage).getByRole("button", {
+          name: "Back",
+        }),
+      );
 
-      expect(startViewTransition).toHaveBeenCalledTimes(2);
-      expect(await screen.findByRole("list", {
-        name: "All releases",
-      })).toBeInTheDocument();
+      expect(startViewTransition).toHaveBeenCalledOnce();
+      expect(
+        await screen.findByRole("list", {
+          name: "All releases",
+        }),
+      ).toBeInTheDocument();
       expect(
         document.querySelector("[data-coda-album-title-source]"),
       ).not.toBeInTheDocument();
       expect(libraryPane.scrollTop).toBe(312);
       await waitFor(() =>
-        expect(screen.getByRole("link", {
-          name: "Open Soft Focus",
-        })).toHaveFocus()
+        expect(
+          screen.getByRole("link", {
+            name: "Open Soft Focus",
+          }),
+        ).toHaveFocus(),
       );
     } finally {
       document.documentElement.classList.remove(
         "coda-transition--album-detail",
       );
       if (originalDescriptor) {
-        Object.defineProperty(document, "startViewTransition", originalDescriptor);
+        Object.defineProperty(
+          document,
+          "startViewTransition",
+          originalDescriptor,
+        );
       } else {
         Reflect.deleteProperty(document, "startViewTransition");
       }
@@ -3532,45 +3956,43 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       document,
       "startViewTransition",
     );
-    const startViewTransition = vi.fn(
-      (update: () => void | Promise<void>) => {
-        const className = document.documentElement.className;
-        const artworkSourceBeforeUpdate = document.querySelectorAll(
-          ".coda-album-artwork-source",
-        ).length;
-        const titleSourceBeforeUpdate = document.querySelectorAll(
-          "[data-coda-album-title-source]",
-        ).length;
-        const artworkDetailBeforeUpdate = document.querySelectorAll(
-          "[data-coda-album-artwork-detail]",
-        ).length;
-        const titleDetailBeforeUpdate = document.querySelectorAll(
-          "[data-coda-album-title-detail]",
-        ).length;
-        const updateCallbackDone = Promise.resolve(update()).then(() => {
-          snapshots.push({
-            artworkDetailAfterUpdate: document.querySelectorAll(
-              "[data-coda-album-artwork-detail]",
-            ).length,
-            artworkDetailBeforeUpdate,
-            artworkReturnAfterUpdate: document.querySelectorAll(
-              "[data-coda-album-artwork-return]",
-            ).length,
-            artworkSourceBeforeUpdate,
-            className,
-            titleDetailAfterUpdate: document.querySelectorAll(
-              "[data-coda-album-title-detail]",
-            ).length,
-            titleDetailBeforeUpdate,
-            titleReturnAfterUpdate: document.querySelectorAll(
-              "[data-coda-album-title-return]",
-            ).length,
-            titleSourceBeforeUpdate,
-          });
+    const startViewTransition = vi.fn((update: () => void | Promise<void>) => {
+      const className = document.documentElement.className;
+      const artworkSourceBeforeUpdate = document.querySelectorAll(
+        ".coda-album-artwork-source",
+      ).length;
+      const titleSourceBeforeUpdate = document.querySelectorAll(
+        "[data-coda-album-title-source]",
+      ).length;
+      const artworkDetailBeforeUpdate = document.querySelectorAll(
+        "[data-coda-album-artwork-detail]",
+      ).length;
+      const titleDetailBeforeUpdate = document.querySelectorAll(
+        "[data-coda-album-title-detail]",
+      ).length;
+      const updateCallbackDone = Promise.resolve(update()).then(() => {
+        snapshots.push({
+          artworkDetailAfterUpdate: document.querySelectorAll(
+            "[data-coda-album-artwork-detail]",
+          ).length,
+          artworkDetailBeforeUpdate,
+          artworkReturnAfterUpdate: document.querySelectorAll(
+            "[data-coda-album-artwork-return]",
+          ).length,
+          artworkSourceBeforeUpdate,
+          className,
+          titleDetailAfterUpdate: document.querySelectorAll(
+            "[data-coda-album-title-detail]",
+          ).length,
+          titleDetailBeforeUpdate,
+          titleReturnAfterUpdate: document.querySelectorAll(
+            "[data-coda-album-title-return]",
+          ).length,
+          titleSourceBeforeUpdate,
         });
-        return { finished: updateCallbackDone, updateCallbackDone };
-      },
-    );
+      });
+      return { finished: updateCallbackDone, updateCallbackDone };
+    });
     Object.defineProperty(document, "startViewTransition", {
       configurable: true,
       value: startViewTransition,
@@ -3600,26 +4022,13 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         titleSourceBeforeUpdate: 1,
       });
 
-      fireEvent.click(
-        within(albumPage).getByRole("button", { name: "Back" }),
-      );
+      fireEvent.click(within(albumPage).getByRole("button", { name: "Back" }));
 
       expect(
         await screen.findByRole("heading", { name: "Night Archive" }),
       ).toBeInTheDocument();
-      expect(snapshots.at(-1)).toEqual({
-        artworkDetailAfterUpdate: 0,
-        artworkDetailBeforeUpdate: 1,
-        artworkReturnAfterUpdate: 1,
-        artworkSourceBeforeUpdate: 0,
-        className: expect.stringContaining(
-          "coda-transition--album-detail-close",
-        ),
-        titleDetailAfterUpdate: 0,
-        titleDetailBeforeUpdate: 1,
-        titleReturnAfterUpdate: 1,
-        titleSourceBeforeUpdate: 0,
-      });
+      expect(startViewTransition).toHaveBeenCalledOnce();
+      expect(snapshots).toHaveLength(1);
       expect(libraryPane.scrollTop).toBe(246);
       await waitFor(() =>
         expect(
@@ -3658,9 +4067,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       document,
       "startViewTransition",
     );
-    const startViewTransition = vi.fn((
-      update: () => void | Promise<void>,
-    ) => {
+    const startViewTransition = vi.fn((update: () => void | Promise<void>) => {
       const artworkSourceBeforeUpdate = document.querySelectorAll(
         "[data-coda-artist-artwork-source]",
       ).length;
@@ -3722,48 +4129,39 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         name: "Night Archive",
       });
       expect(startViewTransition).toHaveBeenCalledOnce();
-      expect(snapshots).toEqual([{
-        className: expect.stringContaining(
-          "coda-transition--artist-detail",
-        ),
-        artworkSourceBeforeUpdate: 1,
-        artworkDetailBeforeUpdate: 0,
-        artworkDetailAfterUpdate: 1,
-        artworkReturnAfterUpdate: 0,
-        nameSourceBeforeUpdate: 1,
-        nameDetailBeforeUpdate: 0,
-        nameDetailAfterUpdate: 1,
-        nameReturnAfterUpdate: 0,
-        metadataDetailAfterUpdate: 1,
-      }]);
+      expect(snapshots).toEqual([
+        {
+          className: expect.stringContaining("coda-transition--artist-detail"),
+          artworkSourceBeforeUpdate: 1,
+          artworkDetailBeforeUpdate: 0,
+          artworkDetailAfterUpdate: 1,
+          artworkReturnAfterUpdate: 0,
+          nameSourceBeforeUpdate: 1,
+          nameDetailBeforeUpdate: 0,
+          nameDetailAfterUpdate: 1,
+          nameReturnAfterUpdate: 0,
+          metadataDetailAfterUpdate: 1,
+        },
+      ]);
       await waitFor(() => expect(artistHeading).toHaveFocus());
       expect(libraryPane.scrollTop).toBe(0);
 
       fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
-      expect(startViewTransition).toHaveBeenCalledTimes(2);
-      expect(await screen.findByRole("list", {
-        name: "Artists",
-      })).toBeInTheDocument();
-      expect(snapshots.at(-1)).toEqual({
-        className: expect.stringContaining(
-          "coda-transition--artist-detail-close",
-        ),
-        artworkSourceBeforeUpdate: 0,
-        artworkDetailBeforeUpdate: 1,
-        artworkDetailAfterUpdate: 0,
-        artworkReturnAfterUpdate: 1,
-        nameSourceBeforeUpdate: 0,
-        nameDetailBeforeUpdate: 1,
-        nameDetailAfterUpdate: 0,
-        nameReturnAfterUpdate: 1,
-        metadataDetailAfterUpdate: 0,
-      });
+      expect(startViewTransition).toHaveBeenCalledOnce();
+      expect(
+        await screen.findByRole("list", {
+          name: "Artists",
+        }),
+      ).toBeInTheDocument();
+      expect(snapshots).toHaveLength(1);
       expect(libraryPane.scrollTop).toBe(312);
       await waitFor(() =>
-        expect(screen.getByRole("link", {
-          name: "Browse Night Archive",
-        })).toHaveFocus()
+        expect(
+          screen.getByRole("link", {
+            name: "Browse Night Archive",
+          }),
+        ).toHaveFocus(),
       );
       expect(
         document.querySelector("[data-coda-artist-artwork-detail]"),
@@ -3779,7 +4177,11 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         "coda-transition--artist-detail",
       );
       if (originalDescriptor) {
-        Object.defineProperty(document, "startViewTransition", originalDescriptor);
+        Object.defineProperty(
+          document,
+          "startViewTransition",
+          originalDescriptor,
+        );
       } else {
         Reflect.deleteProperty(document, "startViewTransition");
       }
@@ -3800,9 +4202,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       document,
       "startViewTransition",
     );
-    const startViewTransition = vi.fn((
-      update: () => void | Promise<void>,
-    ) => {
+    const startViewTransition = vi.fn((update: () => void | Promise<void>) => {
       const nameSourceBeforeUpdate = document.querySelectorAll(
         "[data-coda-artist-name-source]",
       ).length;
@@ -3833,7 +4233,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
       await screen.findByText("Soft Focus");
       queryClient.setQueryData(albumQueryKey(album.id), tracks);
-    fireEvent.click(screen.getByRole("link", { name: "Open Soft Focus" }));
+      fireEvent.click(screen.getByRole("link", { name: "Open Soft Focus" }));
       const albumPage = await screen.findByRole("article", {
         name: "Soft Focus release details",
       });
@@ -3848,15 +4248,15 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         name: "Night Archive",
       });
       expect(startViewTransition).toHaveBeenCalledOnce();
-      expect(snapshots).toEqual([{
-        className: expect.stringContaining(
-          "coda-transition--artist-detail",
-        ),
-        nameSourceBeforeUpdate: 1,
-        nameDetailAfterUpdate: 1,
-        detailSurfaceAfterUpdate: 1,
-        releaseGridAfterUpdate: 1,
-      }]);
+      expect(snapshots).toEqual([
+        {
+          className: expect.stringContaining("coda-transition--artist-detail"),
+          nameSourceBeforeUpdate: 1,
+          nameDetailAfterUpdate: 1,
+          detailSurfaceAfterUpdate: 1,
+          releaseGridAfterUpdate: 1,
+        },
+      ]);
       expect(document.documentElement).not.toHaveClass(
         "coda-transition--page-forward",
       );
@@ -3867,7 +4267,11 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         "coda-transition--page-forward",
       );
       if (originalDescriptor) {
-        Object.defineProperty(document, "startViewTransition", originalDescriptor);
+        Object.defineProperty(
+          document,
+          "startViewTransition",
+          originalDescriptor,
+        );
       } else {
         Reflect.deleteProperty(document, "startViewTransition");
       }
@@ -3881,24 +4285,42 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
     await screen.findByText("Soft Focus");
     fireEvent.click(screen.getByRole("link", { name: "Open Soft Focus" }));
-    const albumPage = await screen.findByRole("article", { name: "Soft Focus release details" });
-    fireEvent.click(within(albumPage).getByRole("button", { name: "Play album" }));
+    const albumPage = await screen.findByRole("article", {
+      name: "Soft Focus release details",
+    });
+    fireEvent.click(
+      within(albumPage).getByRole("button", { name: "Play album" }),
+    );
 
-    fireEvent.click(await screen.findByRole("link", { name: "Open Now Playing" }));
-    const nowPlaying = await screen.findByRole("article", { name: "First Light" });
+    fireEvent.click(
+      await screen.findByRole("link", { name: "Open Now Playing" }),
+    );
+    const nowPlaying = await screen.findByRole("article", {
+      name: "First Light",
+    });
     expect(within(nowPlaying).getByText("Playing now")).toBeInTheDocument();
-    expect(within(nowPlaying).queryByText("Now playing")).not.toBeInTheDocument();
-    expect(within(nowPlaying).getByRole("button", { name: "Pause" })).toBeInTheDocument();
+    expect(
+      within(nowPlaying).queryByText("Now playing"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(nowPlaying).getByRole("button", { name: "Pause" }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("contentinfo")).not.toBeInTheDocument();
-    expect(within(nowPlaying).getByRole("heading", { name: "First Light" })).toHaveFocus();
+    expect(
+      within(nowPlaying).getByRole("heading", { name: "First Light" }),
+    ).toHaveFocus();
     expect(document.title).toBe("First Light — Coda");
 
-    fireEvent.click(within(nowPlaying).getByRole("button", {
-      name: "Back",
-    }));
-    expect(await screen.findByRole("article", {
-      name: "Soft Focus release details",
-    })).toBeInTheDocument();
+    fireEvent.click(
+      within(nowPlaying).getByRole("button", {
+        name: "Back",
+      }),
+    );
+    expect(
+      await screen.findByRole("article", {
+        name: "Soft Focus release details",
+      }),
+    ).toBeInTheDocument();
     const miniArtwork = await screen.findByRole("link", {
       name: "Open Now Playing",
     });
@@ -3916,21 +4338,27 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     const albumPage = await screen.findByRole("article", {
       name: "Soft Focus release details",
     });
-    fireEvent.click(within(albumPage).getByRole("button", { name: "Play album" }));
+    fireEvent.click(
+      within(albumPage).getByRole("button", { name: "Play album" }),
+    );
 
-    expect(await within(albumPage).findByRole("button", {
-      name: "Pause Soft Focus",
-    })).toHaveAttribute("aria-pressed", "true");
+    expect(
+      await within(albumPage).findByRole("button", {
+        name: "Pause Soft Focus",
+      }),
+    ).toHaveAttribute("aria-pressed", "true");
     const pauseTrack = within(albumPage).getByRole("button", {
       name: "Pause First Light",
     });
     expect(pauseTrack).toHaveAttribute("aria-pressed", "true");
 
     fireEvent.click(pauseTrack);
-    expect(within(albumPage).getByRole("button", { name: "Resume Soft Focus" }))
-      .toHaveAttribute("aria-pressed", "false");
-    expect(within(albumPage).getByRole("button", { name: "Resume First Light" }))
-      .toHaveAttribute("aria-pressed", "false");
+    expect(
+      within(albumPage).getByRole("button", { name: "Resume Soft Focus" }),
+    ).toHaveAttribute("aria-pressed", "false");
+    expect(
+      within(albumPage).getByRole("button", { name: "Resume First Light" }),
+    ).toHaveAttribute("aria-pressed", "false");
   });
 
   it("bounds a 25,000-track album while keeping visible track controls accessible", async () => {
@@ -3941,27 +4369,35 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       disconnect() {}
       observe(target: Element) {
         const bounds = target.getBoundingClientRect();
-        this.callback([{
-          borderBoxSize: [{
-            blockSize: bounds.height,
-            inlineSize: bounds.width,
-          }],
-          contentRect: bounds,
-          target,
-        } as unknown as ResizeObserverEntry], this);
+        this.callback(
+          [
+            {
+              borderBoxSize: [
+                {
+                  blockSize: bounds.height,
+                  inlineSize: bounds.width,
+                },
+              ],
+              contentRect: bounds,
+              target,
+            } as unknown as ResizeObserverEntry,
+          ],
+          this,
+        );
       }
       unobserve() {}
     }
     globalThis.ResizeObserver = ResizeObserverMock;
-    HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
-      if (this.hasAttribute("data-coda-library-scroll")) {
-        return new DOMRect(0, 0, 360, 240);
-      }
-      if (this.getAttribute("aria-label") === "Album tracks") {
-        return new DOMRect(0, 90, 360, 0);
-      }
-      return originalRect.call(this);
-    };
+    HTMLElement.prototype.getBoundingClientRect =
+      function getBoundingClientRect() {
+        if (this.hasAttribute("data-coda-library-scroll")) {
+          return new DOMRect(0, 0, 360, 240);
+        }
+        if (this.getAttribute("aria-label") === "Album tracks") {
+          return new DOMRect(0, 90, 360, 0);
+        }
+        return originalRect.call(this);
+      };
     const largeTracks: Track[] = Array.from({ length: 25_000 }, (_, index) => ({
       ...tracks[0],
       id: `large-track-${index + 1}`,
@@ -3978,7 +4414,12 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     mocks.fetchLibrary.mockResolvedValue([largeAlbum]);
     mocks.fetchAlbum.mockResolvedValue(largeTracks);
     mocks.fetchFavorites
-      .mockResolvedValueOnce({ albumIds: [], songIds: [], albums: [], tracks: [] })
+      .mockResolvedValueOnce({
+        albumIds: [],
+        songIds: [],
+        albums: [],
+        tracks: [],
+      })
       .mockResolvedValue({
         albumIds: [],
         songIds: [largeTracks[0].id],
@@ -3997,30 +4438,42 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         name: "Album tracks",
       });
 
-      await waitFor(() => {
-        const visibleRows = within(trackList).getAllByRole("listitem");
-        expect(visibleRows.length).toBeGreaterThan(0);
-        expect(visibleRows.length).toBeLessThan(30);
-      }, { timeout: 5_000 });
+      await waitFor(
+        () => {
+          const visibleRows = within(trackList).getAllByRole("listitem");
+          expect(visibleRows.length).toBeGreaterThan(0);
+          expect(visibleRows.length).toBeLessThan(30);
+        },
+        { timeout: 5_000 },
+      );
       const firstRow = within(trackList).getAllByRole("listitem")[0];
       expect(firstRow).toHaveAttribute("aria-posinset", "1");
       expect(firstRow).toHaveAttribute("aria-setsize", "25000");
-      expect(within(trackList).queryByText("Album track 25000"))
-        .not.toBeInTheDocument();
+      expect(
+        within(trackList).queryByText("Album track 25000"),
+      ).not.toBeInTheDocument();
 
-      fireEvent.click(within(trackList).getByRole("button", {
-        name: "Play Album track 1",
-      }));
-      expect(await within(trackList).findByRole("button", {
-        name: "Pause Album track 1",
-      })).toHaveAttribute("aria-pressed", "true");
+      fireEvent.click(
+        within(trackList).getByRole("button", {
+          name: "Play Album track 1",
+        }),
+      );
+      expect(
+        await within(trackList).findByRole("button", {
+          name: "Pause Album track 1",
+        }),
+      ).toHaveAttribute("aria-pressed", "true");
 
-      fireEvent.click(within(trackList).getByRole("button", {
-        name: "Add Album track 1 to favorites",
-      }));
-      expect(await within(trackList).findByRole("button", {
-        name: "Remove Album track 1 from favorites",
-      })).toHaveAttribute("aria-pressed", "true");
+      fireEvent.click(
+        within(trackList).getByRole("button", {
+          name: "Add Album track 1 to favorites",
+        }),
+      );
+      expect(
+        await within(trackList).findByRole("button", {
+          name: "Remove Album track 1 from favorites",
+        }),
+      ).toHaveAttribute("aria-pressed", "true");
     } finally {
       HTMLElement.prototype.getBoundingClientRect = originalRect;
       globalThis.ResizeObserver = originalResizeObserver;
@@ -4038,9 +4491,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       compactAfterUpdate: number;
       detailAfterUpdate: number;
     }> = [];
-    const startViewTransition = vi.fn((
-      update: () => void | Promise<void>,
-    ) => {
+    const startViewTransition = vi.fn((update: () => void | Promise<void>) => {
       const compactBeforeUpdate = document.querySelectorAll(
         "[data-coda-now-playing-title-compact]",
       ).length;
@@ -4073,39 +4524,42 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
       await screen.findByText("Soft Focus");
       fireEvent.click(screen.getByRole("button", { name: "Play Soft Focus" }));
-      fireEvent.click(await screen.findByRole("link", { name: "Open Now Playing" }));
+      fireEvent.click(
+        await screen.findByRole("link", { name: "Open Now Playing" }),
+      );
 
-      const nowPlaying = await screen.findByRole("article", { name: "First Light" });
+      const nowPlaying = await screen.findByRole("article", {
+        name: "First Light",
+      });
       expect(startViewTransition).toHaveBeenCalledOnce();
-      expect(titleSnapshots).toEqual([{
-        compactBeforeUpdate: 1,
-        detailBeforeUpdate: 0,
-        compactAfterUpdate: 0,
-        detailAfterUpdate: 1,
-      }]);
-
-      fireEvent.click(within(nowPlaying).getByRole("button", {
-        name: "Back",
-      }));
-      await screen.findByRole("link", { name: "Open Now Playing" });
-      expect(startViewTransition).toHaveBeenCalledTimes(2);
-      await waitFor(() => expect(titleSnapshots).toHaveLength(2));
       expect(titleSnapshots).toEqual([
         {
           compactBeforeUpdate: 1,
           detailBeforeUpdate: 0,
-          compactAfterUpdate: 0,
+          compactAfterUpdate: 1,
           detailAfterUpdate: 1,
         },
+      ]);
+
+      fireEvent.click(
+        within(nowPlaying).getByRole("button", {
+          name: "Back",
+        }),
+      );
+      await screen.findByRole("link", { name: "Open Now Playing" });
+      expect(startViewTransition).toHaveBeenCalledOnce();
+      expect(titleSnapshots).toEqual([
         {
-          compactBeforeUpdate: 0,
-          detailBeforeUpdate: 1,
+          compactBeforeUpdate: 1,
+          detailBeforeUpdate: 0,
           compactAfterUpdate: 1,
-          detailAfterUpdate: 0,
+          detailAfterUpdate: 1,
         },
       ]);
       await waitFor(() =>
-        expect(screen.getByRole("link", { name: "Open Now Playing" })).toHaveFocus(),
+        expect(
+          screen.getByRole("link", { name: "Open Now Playing" }),
+        ).toHaveFocus(),
       );
     } finally {
       document.documentElement.classList.remove(
@@ -4113,7 +4567,11 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         "coda-view-transitions-supported",
       );
       if (originalDescriptor) {
-        Object.defineProperty(document, "startViewTransition", originalDescriptor);
+        Object.defineProperty(
+          document,
+          "startViewTransition",
+          originalDescriptor,
+        );
       } else {
         Reflect.deleteProperty(document, "startViewTransition");
       }
@@ -4127,31 +4585,45 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
     await screen.findByText("Soft Focus");
     fireEvent.click(screen.getByRole("button", { name: "Play Soft Focus" }));
-    fireEvent.click(await screen.findByRole("link", { name: "Open Now Playing" }));
-    let nowPlaying = await screen.findByRole("article", { name: "First Light" });
+    fireEvent.click(
+      await screen.findByRole("link", { name: "Open Now Playing" }),
+    );
+    let nowPlaying = await screen.findByRole("article", {
+      name: "First Light",
+    });
     const currentTrack = within(nowPlaying).getByRole("region", {
       name: "Current track",
     });
-    fireEvent.click(within(currentTrack).getByRole("link", {
-      name: "Night Archive",
-    }));
-    expect(await screen.findByRole("heading", { name: "Night Archive" })).toBeInTheDocument();
+    fireEvent.click(
+      within(currentTrack).getByRole("link", {
+        name: "Night Archive",
+      }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Night Archive" }),
+    ).toBeInTheDocument();
 
     unmount();
     renderApp();
     await screen.findByText("Soft Focus");
     fireEvent.click(screen.getByRole("button", { name: "Play Soft Focus" }));
-    fireEvent.click(await screen.findByRole("link", { name: "Open Now Playing" }));
+    fireEvent.click(
+      await screen.findByRole("link", { name: "Open Now Playing" }),
+    );
     nowPlaying = await screen.findByRole("article", { name: "First Light" });
     const currentTrackAgain = within(nowPlaying).getByRole("region", {
       name: "Current track",
     });
-    fireEvent.click(within(currentTrackAgain).getByRole("link", {
-      name: "Soft Focus",
-    }));
-    expect(await screen.findByRole("article", {
-      name: "Soft Focus release details",
-    })).toBeInTheDocument();
+    fireEvent.click(
+      within(currentTrackAgain).getByRole("link", {
+        name: "Soft Focus",
+      }),
+    );
+    expect(
+      await screen.findByRole("article", {
+        name: "Soft Focus release details",
+      }),
+    ).toBeInTheDocument();
   });
 
   it("keeps Now Playing open when an artist destination cannot be resolved", async () => {
@@ -4191,21 +4663,26 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     try {
       renderApp();
 
-      fireEvent.click(await screen.findByRole("link", {
-        name: "Open Now Playing",
-      }));
+      fireEvent.click(
+        await screen.findByRole("link", {
+          name: "Open Now Playing",
+        }),
+      );
       const nowPlaying = await screen.findByRole("article", {
         name: "First Light",
       });
       startViewTransition.mockClear();
 
-      fireEvent.click(within(nowPlaying).getByRole("link", {
-        name: "Missing Artist",
-      }));
+      fireEvent.click(
+        within(nowPlaying).getByRole("link", {
+          name: "Missing Artist",
+        }),
+      );
 
       expect(startViewTransition).not.toHaveBeenCalled();
-      expect(screen.getByRole("article", { name: "First Light" }))
-        .toBeInTheDocument();
+      expect(
+        screen.getByRole("article", { name: "First Light" }),
+      ).toBeInTheDocument();
       expect(screen.getByRole("alert")).toHaveTextContent(
         "Could not find a saved release for Missing Artist.",
       );
@@ -4237,46 +4714,69 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     await screen.findByText("Blue Hours");
     const libraryPane = screen.getByRole("main");
     libraryPane.scrollTop = 312;
-    fireEvent.click(screen.getByRole("button", { name: "Preview Glass Lines" }));
-    fireEvent.click(await screen.findByRole("link", { name: "Open Now Playing" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Preview Glass Lines" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("link", { name: "Open Now Playing" }),
+    );
 
-    const nowPlaying = await screen.findByRole("article", { name: "Glass Lines" });
+    const nowPlaying = await screen.findByRole("article", {
+      name: "Glass Lines",
+    });
     expect(libraryPane.scrollTop).toBe(0);
     libraryPane.scrollTop = 88;
     mocks.fetchAlbum.mockClear();
-    fireEvent.click(within(nowPlaying).getByRole("link", { name: "Blue Hours" }));
+    fireEvent.click(
+      within(nowPlaying).getByRole("link", { name: "Blue Hours" }),
+    );
 
     const releaseDetail = await screen.findByRole("article", {
       name: "Blue Hours",
     });
     await waitFor(() =>
-      expect(within(releaseDetail).getByRole("heading", { name: "Blue Hours" }))
-        .toHaveFocus(),
+      expect(
+        within(releaseDetail).getByRole("heading", { name: "Blue Hours" }),
+      ).toHaveFocus(),
     );
-    expect(within(releaseDetail).getByRole("button", { name: "Signal Garden" }))
-      .toBeInTheDocument();
+    expect(
+      within(releaseDetail).getByRole("button", { name: "Signal Garden" }),
+    ).toBeInTheDocument();
     expect(mocks.fetchAlbum).not.toHaveBeenCalled();
 
-    fireEvent.click(within(releaseDetail).getByRole("button", { name: "Back" }));
-    const restoredNowPlaying = await screen.findByRole("article", { name: "Glass Lines" });
+    fireEvent.click(
+      within(releaseDetail).getByRole("button", { name: "Back" }),
+    );
+    const restoredNowPlaying = await screen.findByRole("article", {
+      name: "Glass Lines",
+    });
     expect(restoredNowPlaying).toBeInTheDocument();
     await waitFor(() =>
-      expect(within(restoredNowPlaying).getByRole("heading", {
-        name: "Glass Lines",
-      })).toHaveFocus(),
+      expect(
+        within(restoredNowPlaying).getByRole("heading", {
+          name: "Glass Lines",
+        }),
+      ).toHaveFocus(),
     );
     await waitFor(() => expect(libraryPane.scrollTop).toBe(88));
     expect(mocks.fetchAlbum).not.toHaveBeenCalled();
 
-    fireEvent.click(within(restoredNowPlaying).getByRole("button", { name: "Back" }));
-    expect(await screen.findByRole("heading", { name: "Discover" }))
-      .toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Rock" }))
-      .toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(
+      within(restoredNowPlaying).getByRole("button", { name: "Back" }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Discover" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Rock" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     await waitFor(() => expect(libraryPane.scrollTop).toBe(312));
-    expect(within(screen.getByRole("main")).getByRole("link", {
-      name: "Blue Hours",
-    })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("main")).getByRole("link", {
+        name: "Blue Hours",
+      }),
+    ).toBeInTheDocument();
   });
 
   it("morphs Now Playing artwork and release title into Discover detail", async () => {
@@ -4284,11 +4784,17 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
     fireEvent.click(await screen.findByRole("link", { name: "Discover" }));
     await screen.findByText("Blue Hours");
-    fireEvent.click(screen.getByRole("button", { name: "Preview Glass Lines" }));
-    fireEvent.click(await screen.findByRole("link", {
-      name: "Open Now Playing",
-    }));
-    const nowPlaying = await screen.findByRole("article", { name: "Glass Lines" });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Preview Glass Lines" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("link", {
+        name: "Open Now Playing",
+      }),
+    );
+    const nowPlaying = await screen.findByRole("article", {
+      name: "Glass Lines",
+    });
     const snapshots: Array<{
       className: string;
       artworkSourceBeforeUpdate: number;
@@ -4328,34 +4834,41 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
 
     try {
-      fireEvent.click(within(nowPlaying).getByRole("link", {
-        name: "Blue Hours",
-      }));
+      fireEvent.click(
+        within(nowPlaying).getByRole("link", {
+          name: "Blue Hours",
+        }),
+      );
 
       expect(startViewTransition).toHaveBeenCalledOnce();
       await waitFor(() =>
-        expect(snapshots).toEqual([{
-          className: expect.stringContaining(
-            "coda-transition--discover-detail",
-          ),
-          artworkSourceBeforeUpdate: 1,
-          titleSourceBeforeUpdate: 1,
-          artworkDetailAfterUpdate: 1,
-          titleDetailAfterUpdate: 1,
-        }]),
+        expect(snapshots).toEqual([
+          {
+            className: expect.stringContaining(
+              "coda-transition--discover-detail",
+            ),
+            artworkSourceBeforeUpdate: 1,
+            titleSourceBeforeUpdate: 1,
+            artworkDetailAfterUpdate: 1,
+            titleDetailAfterUpdate: 1,
+          },
+        ]),
       );
       const releaseDetail = await screen.findByRole("article", {
         name: "Blue Hours",
       });
-      fireEvent.click(within(releaseDetail).getByRole("button", {
-        name: "Back",
-      }));
+      fireEvent.click(
+        within(releaseDetail).getByRole("button", {
+          name: "Back",
+        }),
+      );
 
       // Returning to the non-card Now Playing context is a snapshot-free live
       // page Back; only the forward shared-element morph owns a native one.
       expect(startViewTransition).toHaveBeenCalledOnce();
-      expect(await screen.findByRole("article", { name: "Glass Lines" }))
-        .toBeInTheDocument();
+      expect(
+        await screen.findByRole("article", { name: "Glass Lines" }),
+      ).toBeInTheDocument();
     } finally {
       document.documentElement.classList.remove(
         "coda-transition--discover-detail",
@@ -4385,7 +4898,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       ),
     );
     await screen.findByText("Blue Hours");
-    fireEvent.click(screen.getByRole("button", { name: "Preview Glass Lines" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Preview Glass Lines" }),
+    );
 
     const libraryPane = screen.getByRole("main");
     libraryPane.scrollTop = 312;
@@ -4399,14 +4914,18 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       name: "Blue Hours",
     });
     libraryPane.scrollTop = 88;
-    fireEvent.click(within(player).getByRole("link", {
-      name: "Blue Hours",
-    }));
+    fireEvent.click(
+      within(player).getByRole("link", {
+        name: "Blue Hours",
+      }),
+    );
     releaseDetail = await screen.findByRole("article", { name: "Blue Hours" });
     libraryPane.scrollTop = 88;
-    fireEvent.click(within(player).getByRole("link", {
-      name: "Open Now Playing",
-    }));
+    fireEvent.click(
+      within(player).getByRole("link", {
+        name: "Open Now Playing",
+      }),
+    );
 
     const nowPlaying = await screen.findByRole("article", {
       name: "Glass Lines",
@@ -4417,18 +4936,25 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     releaseDetail = await screen.findByRole("article", { name: "Blue Hours" });
     expect(libraryPane.scrollTop).toBe(88);
     await waitFor(() =>
-      expect(within(releaseDetail).getByRole("heading", { name: "Blue Hours" }))
-        .toHaveFocus(),
+      expect(
+        within(releaseDetail).getByRole("heading", { name: "Blue Hours" }),
+      ).toHaveFocus(),
     );
-    fireEvent.click(within(releaseDetail).getByRole("button", { name: "Back" }));
+    fireEvent.click(
+      within(releaseDetail).getByRole("button", { name: "Back" }),
+    );
 
-    expect(await screen.findByRole("button", { name: "Rock" }))
-      .toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByRole("button", { name: "Rock" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     expect(libraryPane.scrollTop).toBe(312);
     await waitFor(() =>
-      expect(within(screen.getByRole("contentinfo")).getByRole("link", {
-        name: "Blue Hours",
-      })).toHaveFocus(),
+      expect(
+        within(screen.getByRole("contentinfo")).getByRole("link", {
+          name: "Blue Hours",
+        }),
+      ).toHaveFocus(),
     );
   });
 
@@ -4461,16 +4987,21 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     const releaseDetail = await screen.findByRole("article", {
       name: "Blue Hours",
     });
-    const backButton = within(releaseDetail).getByRole("button", { name: "Back" });
+    const backButton = within(releaseDetail).getByRole("button", {
+      name: "Back",
+    });
     await waitFor(() =>
-      expect(within(releaseDetail).getByRole("heading", { name: "Blue Hours" }))
-        .toHaveFocus(),
+      expect(
+        within(releaseDetail).getByRole("heading", { name: "Blue Hours" }),
+      ).toHaveFocus(),
     );
     libraryPane.scrollTop = 0;
     fireEvent.click(backButton);
 
-    expect(await screen.findByRole("button", { name: "Rock" }))
-      .toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByRole("button", { name: "Rock" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     expect(screen.getByLabelText("Search Discover by tag")).toHaveValue("rock");
     await waitFor(() => expect(libraryPane.scrollTop).toBe(312));
     await waitFor(() => expect(artworkLink).toHaveFocus());
@@ -4529,27 +5060,34 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       fireEvent.click(titleLink);
 
       expect(startViewTransition).toHaveBeenCalledOnce();
-      await waitFor(() => expect(snapshots).toEqual([{
-        className: expect.stringContaining(
-          "coda-transition--discover-detail",
-        ),
-        artworkSourceBeforeUpdate: 1,
-        artworkDetailAfterUpdate: 1,
-        titleSourceBeforeUpdate: 1,
-        titleDetailAfterUpdate: 1,
-        detailSurfaceAfterUpdate: 1,
-      }]));
+      await waitFor(() =>
+        expect(snapshots).toEqual([
+          {
+            className: expect.stringContaining(
+              "coda-transition--discover-detail",
+            ),
+            artworkSourceBeforeUpdate: 1,
+            artworkDetailAfterUpdate: 1,
+            titleSourceBeforeUpdate: 1,
+            titleDetailAfterUpdate: 1,
+            detailSurfaceAfterUpdate: 1,
+          },
+        ]),
+      );
       const releaseDetail = await screen.findByRole("article", {
         name: "Blue Hours",
       });
 
-      fireEvent.click(within(releaseDetail).getByRole("button", {
-        name: "Back",
-      }));
+      fireEvent.click(
+        within(releaseDetail).getByRole("button", {
+          name: "Back",
+        }),
+      );
 
-      expect(startViewTransition).toHaveBeenCalledTimes(2);
-      expect(await screen.findByRole("link", { name: "Blue Hours" }))
-        .toBeInTheDocument();
+      expect(startViewTransition).toHaveBeenCalledOnce();
+      expect(
+        await screen.findByRole("link", { name: "Blue Hours" }),
+      ).toBeInTheDocument();
       expect(
         document.querySelector("[data-coda-discover-title-source]"),
       ).not.toBeInTheDocument();
@@ -4588,19 +5126,24 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
     const libraryPane = screen.getByRole("main");
     libraryPane.scrollTop = 312;
-    fireEvent.click(screen.getByRole("link", {
-      name: "Open Blue Hours Discover details",
-    }));
+    fireEvent.click(
+      screen.getByRole("link", {
+        name: "Open Blue Hours Discover details",
+      }),
+    );
     await screen.findByRole("article", { name: "Blue Hours" });
     libraryPane.scrollTop = 88;
 
     discoverNavigation.focus();
     fireEvent.click(discoverNavigation);
 
-    expect(await screen.findByRole("button", { name: "Rock" }))
-      .toHaveAttribute("aria-pressed", "true");
-    expect(screen.queryByRole("article", { name: "Blue Hours" }))
-      .not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Rock" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(
+      screen.queryByRole("article", { name: "Blue Hours" }),
+    ).not.toBeInTheDocument();
     expect(libraryPane.scrollTop).toBe(312);
     expect(discoverNavigation).toHaveFocus();
   });
@@ -4623,26 +5166,30 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
   it("keeps loaded Discover pages mounted while viewing release details", async () => {
     mocks.fetchDiscover
       .mockResolvedValueOnce({
-        results: [{
-          id: "discover:release-1",
-          title: "Blue Hours",
-          artist: "Signal Garden",
-          location: "Chicago, Illinois",
-          itemUrl: "https://signal-garden.bandcamp.com/album/blue-hours",
-          artworkUrl: "https://f4.bcbits.com/img/blue-hours.jpg",
-        }],
+        results: [
+          {
+            id: "discover:release-1",
+            title: "Blue Hours",
+            artist: "Signal Garden",
+            location: "Chicago, Illinois",
+            itemUrl: "https://signal-garden.bandcamp.com/album/blue-hours",
+            artworkUrl: "https://f4.bcbits.com/img/blue-hours.jpg",
+          },
+        ],
         resultCount: 2,
         hasMore: true,
         cursor: "next-page",
       })
       .mockResolvedValueOnce({
-        results: [{
-          id: "discover:release-2",
-          title: "Amber Transit",
-          artist: "Signal Garden",
-          location: "Chicago, Illinois",
-          itemUrl: "https://signal-garden.bandcamp.com/album/amber-transit",
-        }],
+        results: [
+          {
+            id: "discover:release-2",
+            title: "Amber Transit",
+            artist: "Signal Garden",
+            location: "Chicago, Illinois",
+            itemUrl: "https://signal-garden.bandcamp.com/album/amber-transit",
+          },
+        ],
         resultCount: 2,
         hasMore: false,
       });
@@ -4650,19 +5197,25 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
     fireEvent.click(await screen.findByRole("link", { name: "Discover" }));
     await screen.findByText("Blue Hours");
-    fireEvent.click(screen.getByRole("button", {
-      name: "View more discoveries",
-    }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "View more discoveries",
+      }),
+    );
     expect(await screen.findByText("Amber Transit")).toBeInTheDocument();
     expect(mocks.fetchDiscover).toHaveBeenCalledTimes(2);
 
-    fireEvent.click(screen.getByRole("link", {
-      name: "Open Blue Hours Discover details",
-    }));
+    fireEvent.click(
+      screen.getByRole("link", {
+        name: "Open Blue Hours Discover details",
+      }),
+    );
     const releaseDetail = await screen.findByRole("article", {
       name: "Blue Hours",
     });
-    fireEvent.click(within(releaseDetail).getByRole("button", { name: "Back" }));
+    fireEvent.click(
+      within(releaseDetail).getByRole("button", { name: "Back" }),
+    );
 
     expect(await screen.findByText("Blue Hours")).toBeInTheDocument();
     expect(screen.getByText("Amber Transit")).toBeInTheDocument();
@@ -4688,40 +5241,53 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
     fireEvent.click(await screen.findByRole("link", { name: "Discover" }));
     await screen.findByText("Blue Hours");
-    fireEvent.click(screen.getByRole("button", { name: "Preview Glass Lines" }));
-    fireEvent.click(await screen.findByRole("link", { name: "Open Now Playing" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Preview Glass Lines" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("link", { name: "Open Now Playing" }),
+    );
 
-    const nowPlaying = await screen.findByRole("article", { name: "Glass Lines" });
+    const nowPlaying = await screen.findByRole("article", {
+      name: "Glass Lines",
+    });
     mocks.fetchAlbum.mockClear();
-    fireEvent.click(within(nowPlaying).getByRole("button", {
-      name: "Open artist Signal Garden on Bandcamp",
-    }));
+    fireEvent.click(
+      within(nowPlaying).getByRole("button", {
+        name: "Open artist Signal Garden on Bandcamp",
+      }),
+    );
 
     await waitFor(() =>
       expect(mocks.openBandcampUrl).toHaveBeenCalledWith(
         "https://signal-garden.bandcamp.com/",
       ),
     );
-    expect(screen.getByRole("article", { name: "Glass Lines" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Signal Garden" }))
-      .not.toBeInTheDocument();
+    expect(
+      screen.getByRole("article", { name: "Glass Lines" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Signal Garden" }),
+    ).not.toBeInTheDocument();
     expect(mocks.fetchAlbum).not.toHaveBeenCalled();
   });
 
   it("keeps Now Playing intact when a Discover release destination is invalid", async () => {
     mocks.fetchDiscover.mockResolvedValue({
-      results: [{
-        id: "release-without-discover-provenance",
-        title: "Blue Hours",
-        artist: "Signal Garden",
-        itemUrl: "https://signal-garden.bandcamp.com/album/blue-hours",
-        featuredTrack: {
-          id: "discover:preview-1",
-          title: "Glass Lines",
-          duration: 201,
-          streamUrl: "https://t4.bcbits.com/stream/blue-hours",
+      results: [
+        {
+          id: "release-without-discover-provenance",
+          title: "Blue Hours",
+          artist: "Signal Garden",
+          itemUrl: "https://signal-garden.bandcamp.com/album/blue-hours",
+          featuredTrack: {
+            id: "discover:preview-1",
+            title: "Glass Lines",
+            duration: 201,
+            streamUrl: "https://t4.bcbits.com/stream/blue-hours",
+          },
         },
-      }],
+      ],
       resultCount: 1,
       hasMore: false,
     });
@@ -4729,17 +5295,28 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
     fireEvent.click(await screen.findByRole("link", { name: "Discover" }));
     await screen.findByText("Blue Hours");
-    fireEvent.click(screen.getByRole("button", { name: "Preview Glass Lines" }));
-    fireEvent.click(await screen.findByRole("link", { name: "Open Now Playing" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Preview Glass Lines" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("link", { name: "Open Now Playing" }),
+    );
 
-    const nowPlaying = await screen.findByRole("article", { name: "Glass Lines" });
+    const nowPlaying = await screen.findByRole("article", {
+      name: "Glass Lines",
+    });
     mocks.fetchAlbum.mockClear();
-    fireEvent.click(within(nowPlaying).getByRole("button", { name: "Blue Hours" }));
+    fireEvent.click(
+      within(nowPlaying).getByRole("button", { name: "Blue Hours" }),
+    );
 
-    expect(screen.getByRole("article", { name: "Glass Lines" })).toBeInTheDocument();
-    expect((await screen.findAllByText(
-      "Could not open Blue Hours from Discover",
-    )).length).toBeGreaterThan(0);
+    expect(
+      screen.getByRole("article", { name: "Glass Lines" }),
+    ).toBeInTheDocument();
+    expect(
+      (await screen.findAllByText("Could not open Blue Hours from Discover"))
+        .length,
+    ).toBeGreaterThan(0);
     expect(mocks.fetchAlbum).not.toHaveBeenCalled();
   });
 
@@ -4755,18 +5332,26 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     const albumPage = await screen.findByRole("article", {
       name: "Soft Focus release details",
     });
-    fireEvent.click(within(albumPage).getByRole("button", { name: "Favorite" }));
+    fireEvent.click(
+      within(albumPage).getByRole("button", { name: "Favorite" }),
+    );
 
     expect(mocks.setFavorite).not.toHaveBeenCalled();
-    expect((await screen.findAllByText(
-      "Favorites are still loading. Try again in a moment.",
-    )).length).toBeGreaterThan(0);
+    expect(
+      (
+        await screen.findAllByText(
+          "Favorites are still loading. Try again in a moment.",
+        )
+      ).length,
+    ).toBeGreaterThan(0);
 
     await act(async () => favoritesRequest.resolve(albumFavorites));
 
-    expect(await within(albumPage).findByRole("button", {
-      name: "Favorited",
-    })).toHaveAttribute("aria-pressed", "true");
+    expect(
+      await within(albumPage).findByRole("button", {
+        name: "Favorited",
+      }),
+    ).toHaveAttribute("aria-pressed", "true");
     expect(mocks.setFavorite).not.toHaveBeenCalled();
   });
 
@@ -4774,7 +5359,12 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue([album]);
     mocks.fetchFavorites
-      .mockResolvedValueOnce({ albumIds: [], songIds: [], albums: [], tracks: [] })
+      .mockResolvedValueOnce({
+        albumIds: [],
+        songIds: [],
+        albums: [],
+        tracks: [],
+      })
       .mockResolvedValue(albumFavorites);
     renderApp();
 
@@ -4783,19 +5373,25 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     const albumPage = await screen.findByRole("article", {
       name: "Soft Focus release details",
     });
-    fireEvent.click(within(albumPage).getByRole("button", { name: "Favorite" }));
+    fireEvent.click(
+      within(albumPage).getByRole("button", { name: "Favorite" }),
+    );
 
-    await waitFor(() => expect(mocks.setFavorite).toHaveBeenCalledWith({
-      id: album.id,
-      kind: "album",
-      favorite: true,
-    }));
+    await waitFor(() =>
+      expect(mocks.setFavorite).toHaveBeenCalledWith({
+        id: album.id,
+        kind: "album",
+        favorite: true,
+      }),
+    );
     expect(mocks.writeLocalFavoritesAsync).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("link", { name: "Favorites" }));
-    expect(await screen.findByText(
-      "Music favorites sync through Bandcamp’s Subsonic service, separate from the Bandcamp website. Track listings can lag, so Coda confirms them as albums load and on Refresh. Radio shows stay on this device.",
-    )).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "Music favorites sync through Bandcamp’s Subsonic service, separate from the Bandcamp website. Track listings can lag, so Coda confirms them as albums load and on Refresh. Radio shows stay on this device.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText("Soft Focus")).toBeInTheDocument();
     const favoriteAlbumTrigger = screen.getByRole("link", {
       name: "Soft Focus",
@@ -4807,16 +5403,19 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
     expect(within(reopenedAlbum).getByText("First Light")).toBeInTheDocument();
 
-    fireEvent.click(within(reopenedAlbum).getByRole("button", {
-      name: "Back",
-    }));
+    fireEvent.click(
+      within(reopenedAlbum).getByRole("button", {
+        name: "Back",
+      }),
+    );
 
-    expect(await screen.findByText(
-      "Music favorites sync through Bandcamp’s Subsonic service, separate from the Bandcamp website. Track listings can lag, so Coda confirms them as albums load and on Refresh. Radio shows stay on this device.",
-    )).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "Music favorites sync through Bandcamp’s Subsonic service, separate from the Bandcamp website. Track listings can lag, so Coda confirms them as albums load and on Refresh. Radio shows stay on this device.",
+      ),
+    ).toBeInTheDocument();
     await waitFor(() =>
-      expect(screen.getByRole("link", { name: "Soft Focus" }))
-        .toHaveFocus(),
+      expect(screen.getByRole("link", { name: "Soft Focus" })).toHaveFocus(),
     );
   });
 
@@ -4832,20 +5431,26 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     const albumPage = await screen.findByRole("article", {
       name: "Soft Focus release details",
     });
-    fireEvent.click(within(albumPage).getByRole("button", { name: "Favorite" }));
+    fireEvent.click(
+      within(albumPage).getByRole("button", { name: "Favorite" }),
+    );
 
-    expect(await within(albumPage).findByRole("button", { name: "Favorited" }))
-      .toHaveAttribute("aria-pressed", "true");
+    expect(
+      await within(albumPage).findByRole("button", { name: "Favorited" }),
+    ).toHaveAttribute("aria-pressed", "true");
     await act(async () => {
       writeRequest.reject(new Error("Bandcamp Favorites could not be saved."));
     });
-    expect((await screen.findAllByText(
-      "Bandcamp Favorites could not be saved.",
-    )).length).toBeGreaterThan(0);
-    expect(await within(albumPage).findByRole("button", { name: "Favorite" }))
-      .toHaveAttribute("aria-pressed", "false");
-    expect(screen.queryByText("Saved to Bandcamp Subsonic Favorites"))
-      .not.toBeInTheDocument();
+    expect(
+      (await screen.findAllByText("Bandcamp Favorites could not be saved."))
+        .length,
+    ).toBeGreaterThan(0);
+    expect(
+      await within(albumPage).findByRole("button", { name: "Favorite" }),
+    ).toHaveAttribute("aria-pressed", "false");
+    expect(
+      screen.queryByText("Saved to Bandcamp Subsonic Favorites"),
+    ).not.toBeInTheDocument();
   });
 
   it("reuses favorite release artwork and title for a warm album detail", async () => {
@@ -4871,7 +5476,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         document.querySelector(
           '[data-album-card="album-1"] [data-slot="cover"]',
         ),
-      ).toBeInTheDocument()
+      ).toBeInTheDocument(),
     );
 
     const snapshots: Array<{
@@ -4913,28 +5518,34 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
 
     try {
-      fireEvent.click(screen.getByRole("link", {
-        name: "Soft Focus",
-      }));
+      fireEvent.click(
+        screen.getByRole("link", {
+          name: "Soft Focus",
+        }),
+      );
 
       expect(startViewTransition).toHaveBeenCalledOnce();
-      await waitFor(() => expect(snapshots).toEqual([{
-        className: expect.stringContaining(
-          "coda-transition--album-detail",
-        ),
-        artworkSourceBeforeUpdate: 1,
-        titleSourceBeforeUpdate: 1,
-        artworkDetailAfterUpdate: 1,
-        titleDetailAfterUpdate: 1,
-      }]));
+      await waitFor(() =>
+        expect(snapshots).toEqual([
+          {
+            className: expect.stringContaining("coda-transition--album-detail"),
+            artworkSourceBeforeUpdate: 1,
+            titleSourceBeforeUpdate: 1,
+            artworkDetailAfterUpdate: 1,
+            titleDetailAfterUpdate: 1,
+          },
+        ]),
+      );
       const albumPage = await screen.findByRole("article", {
         name: "Soft Focus release details",
       });
-      fireEvent.click(within(albumPage).getByRole("button", {
-        name: "Back",
-      }));
+      fireEvent.click(
+        within(albumPage).getByRole("button", {
+          name: "Back",
+        }),
+      );
 
-      expect(startViewTransition).toHaveBeenCalledTimes(2);
+      expect(startViewTransition).toHaveBeenCalledOnce();
     } finally {
       document.documentElement.classList.remove(
         "coda-transition--album-detail",
@@ -4987,20 +5598,24 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     });
 
     try {
-      fireEvent.click(within(albumPage).getByRole("button", {
-        name: "Back",
-      }));
+      fireEvent.click(
+        within(albumPage).getByRole("button", {
+          name: "Back",
+        }),
+      );
 
       await screen.findByText(
-      "Music favorites sync through Bandcamp’s Subsonic service, separate from the Bandcamp website. Track listings can lag, so Coda confirms them as albums load and on Refresh. Radio shows stay on this device.",
+        "Music favorites sync through Bandcamp’s Subsonic service, separate from the Bandcamp website. Track listings can lag, so Coda confirms them as albums load and on Refresh. Radio shows stay on this device.",
       );
 
       await act(async () => transitionFinished.resolve());
       await waitFor(() =>
-        expect(getNavigationSlotLink(
-          "Open Soft Focus album",
-          "favorite-track:track-1",
-        )).toHaveFocus(),
+        expect(
+          getNavigationSlotLink(
+            "Open Soft Focus album",
+            "favorite-track:track-1",
+          ),
+        ).toHaveFocus(),
       );
     } finally {
       if (originalDescriptor) {
@@ -5038,17 +5653,20 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     await screen.findByText("Soft Focus");
     fireEvent.click(screen.getByRole("link", { name: "Favorites" }));
     const favoriteTracks = await screen.findByLabelText("Favorite tracks");
-    fireEvent.click(within(favoriteTracks).getByRole("button", {
-      name: "Play First Light",
-    }));
+    fireEvent.click(
+      within(favoriteTracks).getByRole("button", {
+        name: "Play First Light",
+      }),
+    );
 
     const nowPlayingLink = await screen.findByRole("link", {
       name: "Open Now Playing",
     });
     fireEvent.click(nowPlayingLink);
 
-    expect(await screen.findByRole("article", { name: "First Light" }))
-      .toBeInTheDocument();
+    expect(
+      await screen.findByRole("article", { name: "First Light" }),
+    ).toBeInTheDocument();
   });
 
   it("shares a favorite track album title when artwork is unavailable", async () => {
@@ -5103,17 +5721,21 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     try {
       fireEvent.click(albumLink);
 
-      await waitFor(() => expect(snapshots).toEqual([{
-        className: expect.stringContaining(
-          "coda-transition--album-detail",
-        ),
-        artworkSourceBeforeUpdate: 1,
-        titleSourceBeforeUpdate: 1,
-        titleDetailAfterUpdate: 1,
-      }]));
-      expect(await screen.findByRole("article", {
-        name: "Soft Focus release details",
-      })).toBeInTheDocument();
+      await waitFor(() =>
+        expect(snapshots).toEqual([
+          {
+            className: expect.stringContaining("coda-transition--album-detail"),
+            artworkSourceBeforeUpdate: 1,
+            titleSourceBeforeUpdate: 1,
+            titleDetailAfterUpdate: 1,
+          },
+        ]),
+      );
+      expect(
+        await screen.findByRole("article", {
+          name: "Soft Focus release details",
+        }),
+      ).toBeInTheDocument();
     } finally {
       document.documentElement.classList.remove(
         "coda-transition--album-detail",
@@ -5140,13 +5762,15 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         albums: [],
         tracks: [],
         radioShowIds: [979],
-        radioShows: [{
-          id: 979,
-          subtitle: "The Coda Broadcast",
-          title: "Bandcamp Weekly",
-          description: "A broadcast from Bandcamp.",
-          publishedAt: "2026-07-20T12:00:00Z",
-        }],
+        radioShows: [
+          {
+            id: 979,
+            subtitle: "The Coda Broadcast",
+            title: "Bandcamp Weekly",
+            description: "A broadcast from Bandcamp.",
+            publishedAt: "2026-07-20T12:00:00Z",
+          },
+        ],
       }),
     );
     mocks.hasConnection.mockResolvedValue(true);
@@ -5173,22 +5797,28 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       await screen.findByText("Soft Focus");
       fireEvent.click(screen.getByRole("link", { name: "Favorites" }));
       await screen.findByText(
-      "Music favorites sync through Bandcamp’s Subsonic service, separate from the Bandcamp website. Track listings can lag, so Coda confirms them as albums load and on Refresh. Radio shows stay on this device.",
+        "Music favorites sync through Bandcamp’s Subsonic service, separate from the Bandcamp website. Track listings can lag, so Coda confirms them as albums load and on Refresh. Radio shows stay on this device.",
       );
       startViewTransition.mockClear();
       transitionClasses.length = 0;
 
-      fireEvent.click(screen.getByRole("link", {
-        name: "Open The Coda Broadcast details",
-      }));
+      fireEvent.click(
+        screen.getByRole("link", {
+          name: "Open The Coda Broadcast details",
+        }),
+      );
 
-      expect(await screen.findByRole("heading", {
-        name: "Songs in this show",
-      })).toBeInTheDocument();
+      expect(
+        await screen.findByRole("heading", {
+          name: "Songs in this show",
+        }),
+      ).toBeInTheDocument();
       expect(startViewTransition).toHaveBeenCalledOnce();
-      await waitFor(() => expect(transitionClasses).toEqual([
-        expect.stringContaining("coda-transition--page-forward"),
-      ]));
+      await waitFor(() =>
+        expect(transitionClasses).toEqual([
+          expect.stringContaining("coda-transition--page-forward"),
+        ]),
+      );
     } finally {
       if (originalDescriptor) {
         Object.defineProperty(
@@ -5236,12 +5866,18 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         name: "Soft Focus release details",
       });
       expect(within(albumPage).getByText("First Light")).toBeInTheDocument();
-      expect(within(albumPage).queryByText("Loading tracks…")).not.toBeInTheDocument();
+      expect(
+        within(albumPage).queryByText("Loading tracks…"),
+      ).not.toBeInTheDocument();
       expect(within(albumPage).getByText("Afterimage")).toBeInTheDocument();
       expect(mocks.fetchAlbum).not.toHaveBeenCalled();
     } finally {
       if (originalDescriptor) {
-        Object.defineProperty(document, "startViewTransition", originalDescriptor);
+        Object.defineProperty(
+          document,
+          "startViewTransition",
+          originalDescriptor,
+        );
       } else {
         Reflect.deleteProperty(document, "startViewTransition");
       }

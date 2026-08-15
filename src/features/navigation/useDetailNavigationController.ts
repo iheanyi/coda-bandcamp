@@ -352,7 +352,6 @@ export function useDetailNavigationController(
               params: { artistKey: request.artistKey },
               search: {
                 ...(request.collectionSearch ?? destination.collectionSearch),
-                mode: "artists",
                 ...(request.sourceAlbumId
                   ? { albumId: request.sourceAlbumId }
                   : {}),
@@ -453,18 +452,11 @@ export function useDetailNavigationController(
     async (detail: CoordinatedDetailDestination) => {
       switch (detail.kind) {
         case "album":
+        case "artist":
         case "now-playing":
           await navigate({
             replace: true,
             search: destination.collectionSearch,
-            to: "/collection",
-            viewTransition: false,
-          });
-          return;
-        case "artist":
-          await navigate({
-            replace: true,
-            search: { ...destination.collectionSearch, mode: "artists" },
             to: "/collection",
             viewTransition: false,
           });
@@ -476,6 +468,11 @@ export function useDetailNavigationController(
             to: "/discover",
             viewTransition: false,
           });
+          return;
+        default: {
+          const exhaustive: never = detail;
+          return exhaustive;
+        }
       }
     },
     [destination.collectionSearch, destination.discoverSearch, navigate],
@@ -532,45 +529,37 @@ export function useDetailNavigationController(
             } else {
               await commitFallback(detail);
             }
-            if (detail.kind === "album" && transaction) {
-              replacementAfterBack = await awaitVirtualReturnTrigger({
-                findTrigger: () =>
-                  replacementNavigationTrigger(transaction, detail),
-                isCurrent: isCurrentReturn,
-                scrollRoot: scrollRootRef.current,
-                scrollTop: returnScrollTop,
-              });
-              releaseReturnDestination = markAlbumReturnDestination(
-                replacementAfterBack,
-                detail.albumId,
-              );
-            } else if (detail.kind === "artist" && transaction) {
-              replacementAfterBack = await awaitVirtualReturnTrigger({
-                findTrigger: () =>
-                  replacementNavigationTrigger(transaction, detail),
-                isCurrent: isCurrentReturn,
-                scrollRoot: scrollRootRef.current,
-                scrollTop: returnScrollTop,
-              });
-              releaseReturnDestination = markArtistReturnDestination(
-                replacementAfterBack,
-                detail.artistKey,
-              );
-            } else if (
-              detail.kind === "discover-release" &&
-              discoverCardReturn
+            // Mark a return card that is already mounted. Do not wait on the
+            // virtualizer here: those frames would hold the View Transition
+            // update and stretch Back by up to eight rAFs.
+            if (
+              transaction &&
+              (detail.kind === "album" ||
+                detail.kind === "artist" ||
+                discoverCardReturn)
             ) {
-              replacementAfterBack = await awaitVirtualReturnTrigger({
-                findTrigger: () =>
-                  replacementNavigationTrigger(transaction, detail),
-                isCurrent: isCurrentReturn,
-                scrollRoot: scrollRootRef.current,
-                scrollTop: returnScrollTop,
-              });
-              releaseReturnDestination = markDiscoverReturnDestination(
-                replacementAfterBack,
-                detail.releaseId,
+              replacementAfterBack = replacementNavigationTrigger(
+                transaction,
+                detail,
               );
+              if (replacementAfterBack) {
+                if (detail.kind === "album") {
+                  releaseReturnDestination = markAlbumReturnDestination(
+                    replacementAfterBack,
+                    detail.albumId,
+                  );
+                } else if (detail.kind === "artist") {
+                  releaseReturnDestination = markArtistReturnDestination(
+                    replacementAfterBack,
+                    detail.artistKey,
+                  );
+                } else {
+                  releaseReturnDestination = markDiscoverReturnDestination(
+                    replacementAfterBack,
+                    detail.releaseId,
+                  );
+                }
+              }
             }
           },
           transitionKind,
@@ -578,6 +567,22 @@ export function useDetailNavigationController(
             ? { routerOwnedPage: true }
             : undefined,
         );
+
+        if (
+          transaction &&
+          !replacementAfterBack &&
+          (detail.kind === "album" ||
+            detail.kind === "artist" ||
+            discoverCardReturn)
+        ) {
+          replacementAfterBack = await awaitVirtualReturnTrigger({
+            findTrigger: () =>
+              replacementNavigationTrigger(transaction, detail),
+            isCurrent: isCurrentReturn,
+            scrollRoot: scrollRootRef.current,
+            scrollTop: returnScrollTop,
+          });
+        }
 
         // WebKit can move focus while tearing down the View Transition
         // snapshots. Reassert the exact source only after the animation has

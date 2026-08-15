@@ -41,7 +41,7 @@ beforeEach(() => {
 });
 
 describe("CoverArt", () => {
-  it("restores a previously painted cover eagerly on remount", () => {
+  it("keeps warm card covers lazy and async on remount so Collection Back is not decode-bound", () => {
     const warmUrl = "https://bandcamp.com/warm-cover.jpg";
     const first = render(<CoverArt album={album(warmUrl)} />);
     const firstImage = screen.getByRole("img", { name: "Test Album cover" });
@@ -55,8 +55,9 @@ describe("CoverArt", () => {
     const restoredImage = screen.getByRole("img", {
       name: "Test Album cover",
     });
-    expect(restoredImage).toHaveAttribute("loading", "eager");
-    expect(restoredImage).toHaveAttribute("decoding", "sync");
+    expect(restoredImage).toHaveAttribute("src", warmUrl);
+    expect(restoredImage).toHaveAttribute("loading", "lazy");
+    expect(restoredImage).toHaveAttribute("decoding", "async");
   });
 
   it("renders a resolved runtime URL on the first remount commit", () => {

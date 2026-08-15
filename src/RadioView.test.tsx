@@ -606,7 +606,7 @@ describe("Bandcamp Radio", () => {
       fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
       await screen.findByRole("heading", { name: "Kinrose" });
-      expect(startViewTransition).toHaveBeenCalledTimes(2);
+      expect(startViewTransition).toHaveBeenCalledOnce();
       expect(mocks.transitionKinds).toEqual([
         "radio-detail",
         "radio-detail-close",
@@ -619,13 +619,11 @@ describe("Bandcamp Radio", () => {
           detailAfter: "979",
           detailTitleAfter: "979",
         }),
-        expect.objectContaining({
-          returningAfter: "979",
-          returningTitleAfter: "979",
-          scrollTopAfter: 287,
-          focusedShowAfter: "979",
-        }),
       ]);
+      expect(scrollRoot?.scrollTop).toBe(287);
+      expect(
+        (document.activeElement as HTMLElement | null)?.dataset.radioShowOpen,
+      ).toBe("979");
       await waitFor(() =>
         expect(
           document.querySelector(
@@ -739,13 +737,6 @@ describe("Bandcamp Radio", () => {
           detailTitle: "978",
           returningTitleIsStatic: false,
           returningTitleCount: 0,
-        }),
-        expect.objectContaining({
-          sourceTitleCount: 0,
-          sourceTitleIsStatic: false,
-          returningTitle: "978",
-          returningTitleIsStatic: true,
-          returningTitleCount: 1,
         }),
       ]);
       await waitFor(() =>

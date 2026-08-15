@@ -226,7 +226,11 @@ describe("Playlist file routes", () => {
       canPreloadAuthenticatedRoute: false,
       connection: "connected",
     });
-    const router = createCodaMemoryRouter(queryClient, ["/collection"], librarySession);
+    const router = createCodaMemoryRouter(
+      queryClient,
+      ["/collection"],
+      librarySession,
+    );
     await router.load();
 
     await router.preloadRoute({ to: "/playlists" });
@@ -246,7 +250,11 @@ describe("Playlist file routes", () => {
       queryClient,
     });
     librarySession.commands.acceptConnectedLibrary([], { announce: false });
-    const router = createCodaMemoryRouter(queryClient, ["/collection"], librarySession);
+    const router = createCodaMemoryRouter(
+      queryClient,
+      ["/collection"],
+      librarySession,
+    );
     await router.load();
     const playlistId = parsePlaylistIdParam(summary.id);
 
@@ -357,26 +365,14 @@ describe("Playlist file routes", () => {
       expect(scrollRoot?.scrollTop).toBe(173);
     });
 
-    expect(snapshots).toHaveLength(2);
-    expect(snapshots).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          afterDetail: summary.id,
-          beforeSource: summary.id,
-          className: expect.stringContaining(
-            "coda-transition--playlist-detail",
-          ),
-        }),
-        expect.objectContaining({
-          afterReturn: summary.id,
-          afterTitleReturn: summary.id,
-          beforeDetail: summary.id,
-          className: expect.stringContaining(
-            "coda-transition--playlist-detail-close",
-          ),
-        }),
-      ]),
-    );
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots).toEqual([
+      expect.objectContaining({
+        afterDetail: summary.id,
+        beforeSource: summary.id,
+        className: expect.stringContaining("coda-transition--playlist-detail"),
+      }),
+    ]);
     await waitFor(() => {
       expect(
         document.querySelectorAll(

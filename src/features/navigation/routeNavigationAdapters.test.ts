@@ -1,5 +1,5 @@
 import { act, renderHook } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   parsePlaylistIdParam,
@@ -35,10 +35,15 @@ vi.mock("@tanstack/react-router", () => ({
 import {
   awaitRouterBackAfterRender,
   awaitRouterNavigationAfterRender,
+  ROUTER_NAVIGATION_RENDER_TIMEOUT_MS,
   useDailyRouteNavigationAdapter,
   usePlaylistRouteNavigationAdapter,
   useRadioRouteNavigationAdapter,
 } from "./routeNavigationAdapters";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 beforeEach(() => {
   adapterMocks.nextRenderKey = 3;
@@ -102,6 +107,67 @@ describe("route navigation adapters", () => {
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
 
+  it("finishes a hung navigate so the view-transition update can settle", async () => {
+    vi.useFakeTimers();
+    const unsubscribe = vi.fn();
+    adapterMocks.router.subscribe.mockImplementation(() => unsubscribe);
+    const navigate = vi.fn().mockReturnValue(new Promise(() => {}));
+    let settled = false;
+
+    const navigation = awaitRouterNavigationAfterRender(
+      adapterMocks.router as never,
+      navigate,
+    ).then(() => {
+      settled = true;
+    });
+
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(ROUTER_NAVIGATION_RENDER_TIMEOUT_MS);
+    await navigation;
+
+    expect(settled).toBe(true);
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    vi.useRealTimers();
+  });
+
+  it("finishes a no-op navigate that never renders a new route entry", async () => {
+    vi.useFakeTimers();
+    let onRendered:
+      | ((
+          event: Readonly<{ toLocation: { state: { __TSR_key: string } } }>,
+        ) => void)
+      | undefined;
+    const unsubscribe = vi.fn();
+    adapterMocks.router.subscribe.mockImplementation(
+      (_event: string, listener: typeof onRendered) => {
+        onRendered = listener;
+        return unsubscribe;
+      },
+    );
+    const navigate = vi.fn().mockResolvedValue(undefined);
+    let settled = false;
+
+    const navigation = awaitRouterNavigationAfterRender(
+      adapterMocks.router as never,
+      navigate,
+    ).then(() => {
+      settled = true;
+    });
+
+    await Promise.resolve();
+    onRendered?.({ toLocation: { state: { __TSR_key: "entry-2" } } });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(ROUTER_NAVIGATION_RENDER_TIMEOUT_MS);
+    await navigation;
+
+    expect(settled).toBe(true);
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
   it("settles browser Back only after a different history entry renders", async () => {
     let onRendered:
       | ((
@@ -130,6 +196,29 @@ describe("route navigation adapters", () => {
 
     onRendered?.({ toLocation: { state: { __TSR_key: "entry-1" } } });
     await back;
+    expect(settled).toBe(true);
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it("finishes a hung Back so the view-transition update can settle", async () => {
+    vi.useFakeTimers();
+    const unsubscribe = vi.fn();
+    adapterMocks.router.subscribe.mockImplementation(() => unsubscribe);
+    let settled = false;
+
+    const back = awaitRouterBackAfterRender(adapterMocks.router as never).then(
+      () => {
+        settled = true;
+      },
+    );
+
+    expect(adapterMocks.router.history.back).toHaveBeenCalledOnce();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(ROUTER_NAVIGATION_RENDER_TIMEOUT_MS);
+    await back;
+
     expect(settled).toBe(true);
     expect(unsubscribe).toHaveBeenCalledOnce();
   });

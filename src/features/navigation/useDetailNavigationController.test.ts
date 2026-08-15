@@ -243,6 +243,10 @@ describe("useDetailNavigationController", () => {
     expect(captures).toEqual([
       { artwork: true, kind: "album-detail", titleIdentity: albumId },
     ]);
+    expect(controllerMocks.transition).toHaveBeenCalledWith(
+      expect.any(Function),
+      "album-detail",
+    );
     expect(source.cover).not.toHaveClass("coda-album-artwork-source");
     expect(source.title).not.toHaveAttribute("data-coda-album-title-source");
     expect(controllerMocks.navigate).toHaveBeenCalledWith(
@@ -566,6 +570,57 @@ describe("useDetailNavigationController", () => {
     expect(kinds).not.toContain("page-crossfade");
   });
 
+  it("keeps the origin collection browse mode when opening an artist", async () => {
+    const artistKey = parseArtistKeyParam("night archive");
+    const source = artistCard(artistKey);
+    const { result } = renderHook(() =>
+      useDetailNavigationController(destination(undefined, "entry-1")),
+    );
+
+    await act(() =>
+      result.current.open({
+        artistKey,
+        kind: "artist",
+        sourceTrigger: source.link,
+      }),
+    );
+
+    expect(controllerMocks.navigate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: { artistKey },
+        search: expect.objectContaining({ mode: "releases" }),
+        to: "/collection/artists/$artistKey",
+        viewTransition: false,
+      }),
+    );
+  });
+
+  it("keeps Artists mode when that was the origin browse mode", async () => {
+    const artistKey = parseArtistKeyParam("night archive");
+    const source = artistCard(artistKey);
+    const artistsSearch = validateCollectionSearch({ mode: "artists" });
+    const { result } = renderHook(() =>
+      useDetailNavigationController(destination(undefined, "entry-1")),
+    );
+
+    await act(() =>
+      result.current.open({
+        artistKey,
+        collectionSearch: artistsSearch,
+        kind: "artist",
+        sourceTrigger: source.link,
+      }),
+    );
+
+    expect(controllerMocks.navigate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: { artistKey },
+        search: expect.objectContaining({ mode: "artists" }),
+        to: "/collection/artists/$artistKey",
+      }),
+    );
+  });
+
   it("refocuses an already-active destination without adding history", async () => {
     const albumId = parseAlbumIdParam("album-1");
     const heading = document.createElement("h1");
@@ -593,6 +648,125 @@ describe("useDetailNavigationController", () => {
     expect(beforeCommit).toHaveBeenCalledOnce();
     expect(controllerMocks.navigate).not.toHaveBeenCalled();
     expect(controllerMocks.transition).not.toHaveBeenCalled();
+  });
+
+  it("still transitions a second open while a morph is in flight", async () => {
+    const albumId = parseAlbumIdParam("album-1");
+    const artistKey = parseArtistKeyParam("night archive");
+    const albumSource = albumCard(albumId);
+    const artistSource = artistCard(artistKey);
+    const albumMorph = deferred();
+    controllerMocks.transition.mockImplementation(
+      async (update: () => void | Promise<void>, kind: string) => {
+        controllerMocks.capture?.(kind, {});
+        await update();
+        if (kind === "album-detail") await albumMorph.promise;
+      },
+    );
+    const { result, rerender } = renderHook(
+      ({ route }) => useDetailNavigationController(route),
+      { initialProps: { route: destination(undefined, "entry-1") } },
+    );
+
+    let firstOutcome: string | undefined;
+    act(() => {
+      void result.current
+        .open({
+          albumId,
+          kind: "album",
+          sourceTrigger: albumSource.artworkLink,
+        })
+        .then((outcome) => {
+          firstOutcome = outcome;
+        });
+    });
+
+    await waitFor(() =>
+      expect(controllerMocks.transition).toHaveBeenCalledWith(
+        expect.any(Function),
+        "album-detail",
+      ),
+    );
+
+    rerender({
+      route: destination({ kind: "album", albumId }, "entry-2"),
+    });
+
+    let secondOutcome: string | undefined;
+    await act(async () => {
+      secondOutcome = await result.current.open({
+        artistKey,
+        kind: "artist",
+        sourceTrigger: artistSource.link,
+      });
+    });
+
+    expect(secondOutcome).toBe("navigated");
+    expect(secondOutcome).not.toBe("ignored");
+    expect(controllerMocks.transition).toHaveBeenCalledWith(
+      expect.any(Function),
+      "artist-detail",
+    );
+    expect(controllerMocks.navigate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: { artistKey },
+        to: "/collection/artists/$artistKey",
+      }),
+    );
+
+    albumMorph.resolve();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(firstOutcome).toBe("navigated");
+  });
+
+  it("does not block Back's view-transition update on virtualizer frames", async () => {
+    const albumId = parseAlbumIdParam("album-1");
+    const source = albumCard(albumId);
+    let rafDuringCloseUpdate = 0;
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      rafDuringCloseUpdate += 1;
+      callback(0);
+      return 1;
+    });
+    controllerMocks.transition.mockImplementation(
+      async (update: () => void | Promise<void>, kind: string) => {
+        controllerMocks.capture?.(kind, {});
+        if (kind === "album-detail-close") {
+          rafDuringCloseUpdate = 0;
+          await update();
+          expect(rafDuringCloseUpdate).toBe(0);
+          return;
+        }
+        await update();
+      },
+    );
+    const { result, rerender } = renderHook(
+      ({ route }) => useDetailNavigationController(route),
+      { initialProps: { route: destination(undefined, "entry-1") } },
+    );
+
+    await act(() =>
+      result.current.open({
+        albumId,
+        kind: "album",
+        sourceTrigger: source.artworkLink,
+      }),
+    );
+    rerender({
+      route: destination({ kind: "album", albumId }, "entry-2"),
+    });
+    source.card.remove();
+
+    await act(() => result.current.back());
+
+    expect(controllerMocks.transition).toHaveBeenCalledWith(
+      expect.any(Function),
+      "album-detail-close",
+      undefined,
+    );
+    vi.restoreAllMocks();
   });
 
   it("restores virtualized source focus and scroll after fallback Back", async () => {
@@ -650,8 +824,8 @@ describe("useDetailNavigationController", () => {
     expect(scrollRoot.scrollTop).toBe(312);
     expect(kinds).toEqual(["album-detail", "album-detail-close"]);
     expect(returnMarkers.at(-1)).toEqual({
-      artwork: albumId,
-      title: albumId,
+      artwork: undefined,
+      title: undefined,
     });
     expect(replacementCard?.cover).not.toHaveAttribute(
       "data-coda-album-artwork-return",
@@ -767,8 +941,8 @@ describe("useDetailNavigationController", () => {
     expect(scrollRoot.scrollTop).toBe(428);
     expect(kinds).toEqual(["discover-detail", "discover-detail-close"]);
     expect(returnMarkers.at(-1)).toEqual({
-      artwork: releaseId,
-      title: releaseId,
+      artwork: undefined,
+      title: undefined,
     });
     expect(replacement?.artwork).not.toHaveAttribute(
       "data-coda-discover-artwork-return",

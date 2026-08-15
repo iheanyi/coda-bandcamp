@@ -1,0 +1,21 @@
+Instrument: /tmp/coda-nav/navbench
+Signal: macOS window title substring (AX), not compositor paint.
+8s figures are the click-title timeout when the title never changed.
+
+BEFORE kind class on Motion path (already-warm Collection, Open HX.26):
+target=Open HX.26 waitTitle=HX.26 appeared=false ms=8006.0 polls=656
+title stayed Communitism — Coda. Back was absent. Open HX.26 still present.
+
+AFTER kind class, fresh Coda Dev.app, All releases 1909, then:
+target=Open HX.26 waitTitle=HX.26 appeared=true ms=317.9 polls=26 after=HX.26 — Coda
+target=Back waitTitle=Communitism appeared=true ms=291.1 polls=25
+target=Open VGM.43 waitTitle=VGM.43 appeared=true ms=317.3 polls=22
+target=Back waitTitle=Communitism appeared=true ms=281.6 polls=24
+
+Artist open after settle:
+target=Knxwledge. waitTitle=Knxwledge appeared=true ms=504.1
+target=Back waitTitle=Communitism appeared=true ms=476.0
+
+Rapid artist Back without waiting for the open animation was observed to miss once
+(title stayed Knxwledge for the full 5s timeout). interrupt:"immediate" was tried
+and reverted because Motion 12.43 drops the async Router commit.

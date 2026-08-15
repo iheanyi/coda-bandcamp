@@ -190,7 +190,7 @@ describe("library route search controller", () => {
 
     expect(prepared.search).toEqual({
       genre: "All",
-      mode: "artists",
+      mode: "releases",
       q: "",
       sort: "recent",
     });
@@ -214,5 +214,58 @@ describe("library route search controller", () => {
     await waitFor(() =>
       expect(result.current.state.ignoreDeferredArtistQuery).toBe(false),
     );
+  });
+
+  it("keeps Artists mode when preparing artist search from the Artists tab", () => {
+    const initialSearch = validateCollectionSearch({
+      genre: "Jazz",
+      mode: "artists",
+      q: "night",
+    });
+    const { result } = renderHook(() =>
+      useLibraryRouteSearchController({
+        routeInput: deriveLibraryRouteInput({
+          screen: "collection",
+          search: initialSearch,
+        }),
+        search: initialSearch,
+      }),
+    );
+
+    expect(result.current.commands.prepareArtistSearch().search).toEqual({
+      genre: "All",
+      mode: "artists",
+      q: "",
+      sort: "recent",
+    });
+  });
+
+  it("keeps All releases mode when searching from an artist opened in that mode", () => {
+    const artistSearch = validateCollectionSearch({ mode: "releases", q: "" });
+    const { result } = renderHook(() =>
+      useLibraryRouteSearchController({
+        routeInput: deriveLibraryRouteInput({
+          artistKey: "guest voice",
+          screen: "artist",
+          search: artistSearch,
+        }),
+        search: artistSearch,
+      }),
+    );
+
+    act(() => result.current.commands.changeQuery("  ambient  "));
+
+    expect(routerMocks.navigate).toHaveBeenLastCalledWith({
+      replace: true,
+      resetScroll: false,
+      search: {
+        genre: "All",
+        mode: "releases",
+        q: "ambient",
+        sort: "recent",
+      },
+      to: "/collection",
+      viewTransition: false,
+    });
   });
 });

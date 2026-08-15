@@ -8,7 +8,6 @@ import {
   type LibraryBrowseMode,
 } from "@/libraryBrowse";
 import { cachedAlbumTracks } from "@/libraryQueries";
-import type { LibraryRouteInput } from "@/routing/libraryRouteInput";
 import {
   missingRouteResource,
   pendingRouteResource,
@@ -67,7 +66,6 @@ export type LibraryArtistRouteRuntime = Readonly<{
   onPlay: ArtistScreenActions["artist"]["onPlay"];
   onQueue: ArtistScreenActions["artist"]["onQueue"];
   onShuffle: ArtistScreenActions["artist"]["onShuffle"];
-  routeInput: LibraryRouteInput;
   shuffleInProgress: boolean;
 }>;
 
@@ -185,15 +183,14 @@ export function useLibraryRouteRuntimeAdapter({
           },
         });
       },
-      resolveArtistScreen: (artistKeyValue, sourceAlbumId) => {
-        if (
-          artist.routeInput.kind !== "artist" ||
-          artist.routeInput.artistKey !== artistKeyValue ||
-          artist.routeInput.sourceAlbumId !== sourceAlbumId
-        ) {
-          return pendingRouteResource();
-        }
-        if (!artist.group) {
+      resolveArtistScreen: (artistKeyValue, _sourceAlbumId) => {
+        const group =
+          artist.group?.key === artistKeyValue
+            ? artist.group
+            : screens.artistResultsModel.groups.find(
+                (item) => item.key === artistKeyValue,
+              );
+        if (!group) {
           return initialLoading
             ? pendingRouteResource()
             : missingRouteResource();
@@ -202,18 +199,15 @@ export function useLibraryRouteRuntimeAdapter({
         const currentTrack = playback.currentTrack;
         const active = Boolean(
           currentTrack &&
-          artist.group.albums.some(
-            (item) => item.id === currentTrack.albumId,
-          ) &&
-          (!artist.group.trackFilterArtistKey ||
-            artist.group.trackFilterAlbumId !== currentTrack.albumId ||
-            artistKey(currentTrack.artist) ===
-              artist.group.trackFilterArtistKey),
+          group.albums.some((item) => item.id === currentTrack.albumId) &&
+          (!group.trackFilterArtistKey ||
+            group.trackFilterAlbumId !== currentTrack.albumId ||
+            artistKey(currentTrack.artist) === group.trackFilterArtistKey),
         );
         const loading =
           artist.action ??
           (artist.shuffleInProgress &&
-          artist.activeShuffleArtistKey === artist.group.key
+          artist.activeShuffleArtistKey === group.key
             ? "shuffle"
             : undefined);
 
@@ -221,14 +215,14 @@ export function useLibraryRouteRuntimeAdapter({
           model: {
             availability: screens.availabilityModel,
             artist: {
-              group: artist.group,
+              group,
               loading,
               active,
               playing: playback.playing,
             },
             results: {
               ...screens.releaseResultsModel,
-              albums: artist.group.albums,
+              albums: group.albums,
               title: "Releases",
             },
           },

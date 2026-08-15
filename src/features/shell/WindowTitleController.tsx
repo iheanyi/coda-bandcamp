@@ -1,9 +1,10 @@
-import { memo, useEffect, useRef } from "react";
+import { memo, useLayoutEffect, useRef } from "react";
 import { useCurrentRadioChapter } from "@/features/player/playbackClockHooks";
 import { isDesktop } from "@/lib";
 import {
-  applyCurrentNativeWindowTitle,
   getWindowTitle,
+  publishDocumentTitle,
+  publishNativeWindowTitle,
   type WindowTitleControllerProps,
 } from "./windowTitle";
 
@@ -21,6 +22,7 @@ export const WindowTitleController = memo(function WindowTitleController({
     radioTimeline,
   );
   const nativeTitleGenerationRef = useRef(0);
+  const publishedTitleRef = useRef<string>(undefined);
   const windowTitle = getWindowTitle({
     activeArtistName,
     currentRadioChapter,
@@ -30,18 +32,18 @@ export const WindowTitleController = memo(function WindowTitleController({
     view,
   });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (publishedTitleRef.current === windowTitle) return;
+    publishedTitleRef.current = windowTitle;
+    publishDocumentTitle(windowTitle);
+    if (!isDesktop()) return;
     const generation = nativeTitleGenerationRef.current + 1;
     nativeTitleGenerationRef.current = generation;
-    document.title = windowTitle;
-    if (!isDesktop()) return;
-    void applyCurrentNativeWindowTitle(
+    void publishNativeWindowTitle(
       windowTitle,
       generation,
       () => nativeTitleGenerationRef.current,
-    ).catch(() => {
-      // The static native title remains a safe fallback.
-    });
+    );
     return () => {
       if (nativeTitleGenerationRef.current === generation) {
         nativeTitleGenerationRef.current += 1;

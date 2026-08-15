@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  isCompositorOnlyKeyframeKeys,
+  keyframePropertyNames,
+} from "./compositorViewTransition";
 import { codaViewTransitionMotion } from "./motion";
 import { transitionCodaViewWithMotion } from "./motionViewTransitions";
+import type { CodaViewTransitionKind } from "./viewTransitions";
 
 function deferred() {
   let resolve!: () => void;
@@ -105,6 +110,7 @@ afterEach(() => {
   document.body.replaceChildren();
   Reflect.deleteProperty(document, "getAnimations");
   Reflect.deleteProperty(document, "startViewTransition");
+  Reflect.deleteProperty(document, "activeViewTransition");
 });
 
 describe("Motion-backed route View Transitions", () => {
@@ -434,4 +440,68 @@ describe("Motion-backed route View Transitions", () => {
     expect(artworkNameAtCapture).not.toBe("none");
     expect(titleNameAtCapture).not.toBe("none");
   });
+
+  it.each([
+    ["radio-detail", "coda-radio-artwork"],
+    ["playlist-detail", "coda-playlist-identity"],
+    ["now-playing-open", "coda-now-playing-artwork"],
+  ] as const satisfies ReadonlyArray<
+    readonly [CodaViewTransitionKind, string]
+  >)(
+    "rewrites %s layout groups to transform/opacity before the builder settles",
+    async (kind, groupName) => {
+      const setKeyframes = vi.fn();
+      Object.defineProperty(document, "getAnimations", {
+        configurable: true,
+        value: () => [
+          {
+            playState: "running",
+            effect: {
+              pseudoElement: `::view-transition-group(${groupName})`,
+              getKeyframes: () => [
+                {
+                  width: "80px",
+                  height: "80px",
+                  transform: "none",
+                  backdropFilter: "blur(8px)",
+                },
+                {
+                  width: "160px",
+                  height: "160px",
+                  transform: "none",
+                  backdropFilter: "none",
+                },
+              ],
+              setKeyframes,
+            },
+          },
+        ],
+      });
+      Object.defineProperty(document, "startViewTransition", {
+        configurable: true,
+        value: vi.fn((update: () => void | Promise<void>) => {
+          const updateCallbackDone = Promise.resolve(update());
+          return {
+            finished: updateCallbackDone,
+            ready: Promise.resolve(),
+            skipTransition: vi.fn(),
+            updateCallbackDone,
+          };
+        }),
+      });
+      Object.defineProperty(document, "activeViewTransition", {
+        configurable: true,
+        value: { ready: Promise.resolve(), skipTransition: vi.fn() },
+      });
+
+      await transitionCodaViewWithMotion(async () => undefined, kind);
+
+      expect(setKeyframes).toHaveBeenCalled();
+      const frames = setKeyframes.mock.calls[0]?.[0] as Keyframe[];
+      expect(frames.length).toBeGreaterThan(0);
+      expect(isCompositorOnlyKeyframeKeys(keyframePropertyNames(frames))).toBe(
+        true,
+      );
+    },
+  );
 });

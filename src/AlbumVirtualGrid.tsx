@@ -28,11 +28,13 @@ const ALBUM_GRID_LAYOUTS = [
 export default function AlbumVirtualGrid({
   ariaLabel,
   items,
+  onVisibleItems,
   renderItem,
   scrollElementRef,
 }: {
   ariaLabel: string;
   items: readonly Album[];
+  onVisibleItems?: (albums: readonly Album[]) => void;
   renderItem: (album: Album) => ReactNode;
   scrollElementRef: RefObject<HTMLElement | null>;
 }) {
@@ -43,6 +45,7 @@ export default function AlbumVirtualGrid({
       getItemKey={(album) => album.id}
       items={items}
       layouts={ALBUM_GRID_LAYOUTS}
+      onVisibleItems={onVisibleItems}
       renderItem={renderItem}
       scrollElementRef={scrollElementRef}
     />

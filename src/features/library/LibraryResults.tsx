@@ -229,6 +229,7 @@ export type ReleaseResultsActions = Readonly<{
   onTogglePlayback: () => void;
   onQueueSearchResults: () => void;
   onClearFilters: () => void;
+  onVisibleAlbums?: (albums: readonly Album[]) => void;
 }>;
 
 export type ReleaseResultsProps = {
@@ -282,6 +283,7 @@ export function ReleaseResults({
           <AlbumVirtualGrid
             ariaLabel={model.title}
             items={model.albums}
+            onVisibleItems={actions.onVisibleAlbums}
             renderItem={(album) => (
               <AlbumCard
                 album={album}

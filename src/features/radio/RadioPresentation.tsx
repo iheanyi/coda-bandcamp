@@ -582,7 +582,7 @@ export const RadioCard = memo(function RadioCard({
                   : "translateY(10px)",
               }}
               className={cn(
-                "absolute bottom-2 left-2 z-10 overflow-hidden rounded-lg border border-white/10 bg-[#101214]/92 p-1.5 shadow-[0_8px_22px_rgba(0,0,0,0.34)] backdrop-blur-md transition-[width] duration-300 ease-coda-enter motion-reduce:transition-none",
+                "absolute bottom-2 left-2 z-10 overflow-hidden rounded-lg border border-white/10 bg-[#101214]/92 p-1.5 shadow-[0_8px_22px_rgba(0,0,0,0.34)] backdrop-blur-md",
                 actionsExpanded ? "pointer-events-auto" : "pointer-events-none",
               )}
               initial={false}

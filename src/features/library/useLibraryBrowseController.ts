@@ -87,7 +87,6 @@ function matchingAlbums({
   deferredQuery,
   effectiveBrowseMode,
   genre,
-  ignoreDeferredArtistQuery,
   sort,
   view,
 }: Readonly<{
@@ -95,24 +94,18 @@ function matchingAlbums({
   deferredQuery: string;
   effectiveBrowseMode: LibraryBrowseMode;
   genre: string;
-  ignoreDeferredArtistQuery: boolean;
   sort: SortMode;
   view: CodaPrimaryView;
 }>): Album[] {
-  const searchIndex = new Map(
-    albums.map((album) => [
-      album.id,
-      `${album.title} ${album.artist} ${album.genre ?? ""}`.toLowerCase(),
-    ]),
-  );
   const filtered = albums.filter((album) => {
     if (genre !== "All" && genreKey(album.genre) !== genreKey(genre)) {
       return false;
     }
     if (
       deferredQuery &&
-      !ignoreDeferredArtistQuery &&
-      !searchIndex.get(album.id)?.includes(deferredQuery)
+      !`${album.title} ${album.artist} ${album.genre ?? ""}`
+        .toLowerCase()
+        .includes(deferredQuery)
     ) {
       return false;
     }
@@ -179,6 +172,112 @@ function resolveActiveArtist({
   };
 }
 
+type LibraryBrowseCatalog = Readonly<{
+  albums: readonly Album[];
+  artistGroups: ArtistGroup[];
+  counts: LibraryBrowseCounts;
+  matches: Album[];
+  orderedGenreTabs: string[];
+}>;
+
+function appliedSearchQuery(
+  deferredQuery: string,
+  ignoreDeferredArtistQuery: boolean,
+) {
+  return deferredQuery && !ignoreDeferredArtistQuery ? deferredQuery : "";
+}
+
+function matchingBrowseMode(
+  browseMode: LibraryBrowseMode,
+  view: CodaPrimaryView,
+): LibraryBrowseMode {
+  if (view !== "library") return "releases";
+  return browseMode === "artists" ? "releases" : browseMode;
+}
+
+function presentationBrowseMode(
+  browseMode: LibraryBrowseMode,
+  view: CodaPrimaryView,
+): LibraryBrowseMode {
+  return view === "library" ? browseMode : "releases";
+}
+
+function deriveLibraryBrowseCatalog({
+  albums,
+  browseMode,
+  deferredQuery,
+  genre,
+  ignoreDeferredArtistQuery,
+  sort,
+  view,
+}: Omit<
+  LibraryBrowseControllerInput,
+  "fallbackAlbumCandidateTracks" | "selectedArtist" | "selectedArtistFallback"
+>): LibraryBrowseCatalog {
+  const matches = matchingAlbums({
+    albums,
+    deferredQuery: appliedSearchQuery(deferredQuery, ignoreDeferredArtistQuery),
+    effectiveBrowseMode: matchingBrowseMode(browseMode, view),
+    genre,
+    sort,
+    view,
+  });
+  return {
+    albums,
+    artistGroups: groupAlbumsByArtist(matches),
+    counts: browseCounts(albums),
+    matches,
+    orderedGenreTabs: orderedGenres(albums),
+  };
+}
+
+function applySelectedArtist(
+  catalog: LibraryBrowseCatalog,
+  {
+    browseMode,
+    fallbackAlbumCandidateTracks,
+    selectedArtist,
+    selectedArtistFallback,
+    view,
+  }: Pick<
+    LibraryBrowseControllerInput,
+    | "browseMode"
+    | "fallbackAlbumCandidateTracks"
+    | "selectedArtist"
+    | "selectedArtistFallback"
+    | "view"
+  >,
+): LibraryBrowseController {
+  const effectiveBrowseMode = presentationBrowseMode(browseMode, view);
+  const fallbackAlbumId =
+    selectedArtistFallback && selectedArtistFallback.key === selectedArtist
+      ? selectedArtistFallback.albumId
+      : undefined;
+  const visibleAlbums =
+    effectiveBrowseMode === "artists" && selectedArtist
+      ? catalog.matches.filter(
+          (album) =>
+            artistKey(album.artist) === selectedArtist ||
+            album.id === fallbackAlbumId,
+        )
+      : catalog.matches;
+
+  return {
+    activeArtist: resolveActiveArtist({
+      albums: catalog.albums,
+      artistGroups: catalog.artistGroups,
+      fallbackAlbumCandidateTracks,
+      selectedArtist,
+      selectedArtistFallback,
+    }),
+    artistGroups: catalog.artistGroups,
+    counts: catalog.counts,
+    effectiveBrowseMode,
+    orderedGenreTabs: catalog.orderedGenreTabs,
+    visibleAlbums,
+  };
+}
+
 export function deriveLibraryBrowseController({
   albums,
   browseMode,
@@ -191,44 +290,24 @@ export function deriveLibraryBrowseController({
   sort,
   view,
 }: LibraryBrowseControllerInput): LibraryBrowseController {
-  const effectiveBrowseMode = view === "library" ? browseMode : "releases";
-  const matches = matchingAlbums({
-    albums,
-    deferredQuery,
-    effectiveBrowseMode,
-    genre,
-    ignoreDeferredArtistQuery,
-    sort,
-    view,
-  });
-  const artistGroups = groupAlbumsByArtist(matches);
-  const fallbackAlbumId =
-    selectedArtistFallback && selectedArtistFallback.key === selectedArtist
-      ? selectedArtistFallback.albumId
-      : undefined;
-  const visibleAlbums =
-    effectiveBrowseMode === "artists" && selectedArtist
-      ? matches.filter(
-          (album) =>
-            artistKey(album.artist) === selectedArtist ||
-            album.id === fallbackAlbumId,
-        )
-      : matches;
-
-  return {
-    activeArtist: resolveActiveArtist({
+  return applySelectedArtist(
+    deriveLibraryBrowseCatalog({
       albums,
-      artistGroups,
+      browseMode,
+      deferredQuery,
+      genre,
+      ignoreDeferredArtistQuery,
+      sort,
+      view,
+    }),
+    {
+      browseMode,
       fallbackAlbumCandidateTracks,
       selectedArtist,
       selectedArtistFallback,
-    }),
-    artistGroups,
-    counts: browseCounts(albums),
-    effectiveBrowseMode,
-    orderedGenreTabs: orderedGenres(albums),
-    visibleAlbums,
-  };
+      view,
+    },
+  );
 }
 
 export function useLibraryBrowseController(
@@ -246,30 +325,39 @@ export function useLibraryBrowseController(
     sort,
     view,
   } = input;
-  return useMemo(
+  const searchQuery = appliedSearchQuery(
+    deferredQuery,
+    ignoreDeferredArtistQuery,
+  );
+  const catalogMode = matchingBrowseMode(browseMode, view);
+  const catalog = useMemo(
     () =>
-      deriveLibraryBrowseController({
+      deriveLibraryBrowseCatalog({
         albums,
-        browseMode,
-        deferredQuery,
-        fallbackAlbumCandidateTracks,
+        browseMode: catalogMode,
+        deferredQuery: searchQuery,
         genre,
-        ignoreDeferredArtistQuery,
-        selectedArtist,
-        selectedArtistFallback,
+        ignoreDeferredArtistQuery: false,
         sort,
         view,
       }),
+    [albums, catalogMode, genre, searchQuery, sort, view],
+  );
+  return useMemo(
+    () =>
+      applySelectedArtist(catalog, {
+        browseMode,
+        fallbackAlbumCandidateTracks,
+        selectedArtist,
+        selectedArtistFallback,
+        view,
+      }),
     [
-      albums,
       browseMode,
-      deferredQuery,
+      catalog,
       fallbackAlbumCandidateTracks,
-      genre,
-      ignoreDeferredArtistQuery,
       selectedArtist,
       selectedArtistFallback,
-      sort,
       view,
     ],
   );

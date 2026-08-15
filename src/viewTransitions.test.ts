@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 const motionMocks = vi.hoisted(() => ({
   animate: vi.fn(),
@@ -16,6 +18,7 @@ import {
   transitionCodaView,
   type CodaViewTransitionKind,
 } from "./viewTransitions";
+import { supersedeMotionViewTransition } from "./motionViewTransitions";
 import {
   resetMotionProfileStoreForTests,
   selectMotionPreset,
@@ -28,6 +31,10 @@ const originalStartViewTransition = Object.getOwnPropertyDescriptor(
 const originalGetAnimations = Object.getOwnPropertyDescriptor(
   document,
   "getAnimations",
+);
+const originalActiveViewTransition = Object.getOwnPropertyDescriptor(
+  document,
+  "activeViewTransition",
 );
 const originalMatchMedia = window.matchMedia;
 
@@ -136,7 +143,9 @@ afterEach(() => {
     "coda-view-transitioning",
     "coda-view-transitions-supported",
     "coda-transition--album-detail",
+    "coda-transition--album-detail-close",
     "coda-transition--artist-detail",
+    "coda-transition--artist-detail-close",
     "coda-transition--daily-detail",
     "coda-transition--daily-detail-close",
     "coda-transition--discover-detail",
@@ -164,6 +173,15 @@ afterEach(() => {
     Object.defineProperty(document, "getAnimations", originalGetAnimations);
   } else {
     Reflect.deleteProperty(document, "getAnimations");
+  }
+  if (originalActiveViewTransition) {
+    Object.defineProperty(
+      document,
+      "activeViewTransition",
+      originalActiveViewTransition,
+    );
+  } else {
+    Reflect.deleteProperty(document, "activeViewTransition");
   }
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
@@ -234,8 +252,14 @@ describe("transitionCodaView", () => {
     expect(motionMocks.animate).toHaveBeenCalledOnce();
     expect(motionMocks.animate).toHaveBeenCalledWith(
       pane,
-      expect.objectContaining({ opacity: [0, 1] }),
-      expect.objectContaining({ duration: 0.18, delay: 0.015 }),
+      expect.objectContaining({
+        opacity: [0, 1],
+        transform: [
+          expect.stringMatching(/^translateX\(28px\)/),
+          "translateX(0px) scale(1)",
+        ],
+      }),
+      expect.objectContaining({ duration: 0.18, delay: 0 }),
     );
     expect(document.documentElement).not.toHaveClass(
       "coda-view-transitioning",
@@ -243,6 +267,35 @@ describe("transitionCodaView", () => {
     );
     expect(pane.style.opacity).toBe("");
     expect(pane.style.transform).toBe("");
+    pane.remove();
+  });
+
+  it("animates router-owned Back in the reverse direction without a native snapshot", async () => {
+    const pane = document.createElement("main");
+    pane.className = "library-pane";
+    document.body.append(pane);
+    const startViewTransition = vi.fn();
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: startViewTransition,
+    });
+    const update = vi.fn();
+
+    await transitionCodaView(update, "page-back", { routerOwnedPage: true });
+
+    expect(startViewTransition).not.toHaveBeenCalled();
+    expect(motionMocks.animateView).not.toHaveBeenCalled();
+    expect(motionMocks.animate).toHaveBeenCalledWith(
+      pane,
+      expect.objectContaining({
+        opacity: [0, 1],
+        transform: [
+          expect.stringMatching(/^translateX\(-28px\)/),
+          "translateX(0px) scale(1)",
+        ],
+      }),
+      expect.objectContaining({ duration: 0.18, delay: 0 }),
+    );
     pane.remove();
   });
 
@@ -297,15 +350,10 @@ describe("transitionCodaView", () => {
       ["album-detail", "coda-transition--album-detail"],
       ["artist-detail", "coda-transition--artist-detail"],
       ["daily-detail", "coda-transition--daily-detail"],
-      ["daily-detail-close", "coda-transition--daily-detail-close"],
       ["discover-detail", "coda-transition--discover-detail"],
-      ["discover-detail-close", "coda-transition--discover-detail-close"],
       ["playlist-detail", "coda-transition--playlist-detail"],
-      ["playlist-detail-close", "coda-transition--playlist-detail-close"],
       ["radio-detail", "coda-transition--radio-detail"],
-      ["radio-detail-close", "coda-transition--radio-detail-close"],
       ["now-playing-open", "coda-transition--now-playing-open"],
-      ["now-playing-close", "coda-transition--now-playing-close"],
       ["page-forward", "coda-transition--page-forward"],
       ["page-back", "coda-transition--page-back"],
       ["page-crossfade", "coda-transition--page-crossfade"],
@@ -792,50 +840,29 @@ describe("transitionCodaView with Motion view transitions", () => {
     expect(commitSettled).toBe(true);
   });
 
-  it.each(["current", "crossfade-baseline"])(
-    "keeps album-return artwork stable with the %s profile without holding decode open",
-    async (presetId) => {
+  it.each([
+    ["album-detail", "coda-transition--album-detail"],
+    ["artist-detail", "coda-transition--artist-detail"],
+    ["now-playing-open", "coda-transition--now-playing-open"],
+  ] as const)(
+    "applies %s on the document before Motion snapshots",
+    async (kind, transitionClass) => {
       enableMotionViewTransitions();
-      selectMotionPreset(presetId);
-      const source = document.createElement("div");
-      source.dataset.codaAlbumArtworkDetail = "album-1";
-      source.append(document.createElement("img"));
-      document.body.append(source);
-      const imageDecoded = deferred();
-      const decodeImage = vi.fn(() => imageDecoded.promise);
-      const builder = motionBuilder();
-      let capturedCommit: void | Promise<void>;
-      motionMocks.animateView.mockImplementation(
-        (update: () => void | Promise<void>) => {
-          capturedCommit = update();
-          return builder;
-        },
-      );
+      let classesDuringSnapshot = "";
+      motionMocks.animateView.mockImplementation((update: () => void) => {
+        classesDuringSnapshot = document.documentElement.className;
+        update();
+        return motionBuilder();
+      });
 
-      const transition = transitionCodaView(() => {
-        const destination = document.createElement("div");
-        destination.dataset.codaAlbumArtworkReturn = "album-1";
-        destination.dataset.slot = "cover";
-        const image = document.createElement("img");
-        image.decode = decodeImage;
-        destination.append(image);
-        document.body.append(destination);
-      }, "album-detail-close");
+      await transitionCodaView(vi.fn(), kind);
 
-      await vi.waitFor(() => expect(decodeImage).toHaveBeenCalledOnce());
-      await expect(capturedCommit!).resolves.toBeUndefined();
-      expect(builder.old).toHaveBeenCalledWith(
-        { opacity: [1, 1] },
-        expect.any(Object),
+      expect(classesDuringSnapshot).toContain(transitionClass);
+      expect(classesDuringSnapshot).toContain("coda-view-transitioning");
+      expect(document.documentElement).not.toHaveClass(transitionClass);
+      expect(document.documentElement).not.toHaveClass(
+        "coda-view-transitioning",
       );
-      expect(builder.new).toHaveBeenCalledWith(
-        { opacity: [0, 0] },
-        expect.any(Object),
-      );
-
-      imageDecoded.resolve();
-      await Promise.all([capturedCommit!, transition]);
-      document.querySelector("[data-coda-album-artwork-return]")?.remove();
     },
   );
 
@@ -888,8 +915,8 @@ describe("transitionCodaView with Motion view transitions", () => {
     expect(motionMocks.animateView).toHaveBeenCalledWith(expect.any(Function), {
       interrupt: "wait",
       type: motionMocks.spring,
-      visualDuration: 0.2,
-      bounce: 0.1,
+      visualDuration: 0.38,
+      bounce: 0.12,
     });
     expect(builder.add).toHaveBeenCalledWith(
       source,
@@ -910,20 +937,98 @@ describe("transitionCodaView with Motion view transitions", () => {
     expect(builder.layout).toHaveBeenCalledWith(
       expect.objectContaining({
         type: motionMocks.spring,
-        visualDuration: 0.2,
-        bounce: 0.1,
+        visualDuration: 0.38,
+        bounce: 0.12,
       }),
     );
     expect(builder.new).not.toHaveBeenCalled();
-    expect(builder.old).toHaveBeenCalledWith(
-      {
-        opacity: 0,
-        transform: "translateY(6px)",
-      },
+  });
+
+  it("morphs compact artwork instead of the whole player bar", async () => {
+    enableMotionViewTransitions();
+    const footer = document.createElement("footer");
+    footer.dataset.playerMode = "full";
+    const art = document.createElement("a");
+    art.className = "player__art-link";
+    art.dataset.codaTrackId = "track-1";
+    footer.append(art);
+    document.body.append(footer);
+    const builder = motionBuilder();
+    motionMocks.animateView.mockImplementation((update: () => void) => {
+      update();
+      return builder;
+    });
+
+    await transitionCodaView(vi.fn(), "now-playing-open");
+
+    expect(builder.add).not.toHaveBeenCalledWith(
+      footer,
+      "[data-coda-now-playing-surface]",
+    );
+    expect(builder.add).toHaveBeenCalledWith(
+      art,
+      '.now-playing__artwork[data-coda-track-id="track-1"]',
+    );
+    expect(builder.add).not.toHaveBeenCalledWith(
+      "[data-coda-player-transport]",
+    );
+  });
+
+  it("returns now-playing artwork on a bounce-free diagonal without sliding the dock", async () => {
+    enableMotionViewTransitions();
+    const source = document.createElement("div");
+    source.className = "now-playing__artwork";
+    source.dataset.codaTrackId = "track-1";
+    document.body.append(source);
+    const builder = motionBuilder();
+    motionMocks.animateView.mockImplementation((update: () => void) => {
+      update();
+      return builder;
+    });
+
+    await transitionCodaView(vi.fn(), "now-playing-close");
+
+    expect(motionMocks.animateView).toHaveBeenCalledWith(expect.any(Function), {
+      interrupt: "wait",
+      type: motionMocks.spring,
+      visualDuration: 0.38,
+      bounce: 0,
+    });
+    expect(builder.add).toHaveBeenCalledWith(
+      source,
+      '.player__art-link[data-coda-track-id="track-1"]',
+    );
+    expect(builder.layout).toHaveBeenCalledWith(
       expect.objectContaining({
-        duration: 0.1,
-        ease: [0.22, 1, 0.36, 1],
+        type: motionMocks.spring,
+        visualDuration: 0.38,
+        bounce: 0,
       }),
+    );
+    expect(builder.new).not.toHaveBeenCalled();
+  });
+
+  it("morphs Now Playing artwork back to the compact cover", async () => {
+    enableMotionViewTransitions();
+    const art = document.createElement("div");
+    art.className = "now-playing__artwork";
+    art.dataset.codaTrackId = "track-1";
+    document.body.append(art);
+    const builder = motionBuilder();
+    motionMocks.animateView.mockImplementation((update: () => void) => {
+      update();
+      return builder;
+    });
+
+    await transitionCodaView(vi.fn(), "now-playing-close");
+
+    expect(builder.add).toHaveBeenCalledWith(
+      art,
+      '.player__art-link[data-coda-track-id="track-1"]',
+    );
+    expect(builder.add).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "footer[data-player-mode]",
     );
   });
 
@@ -960,21 +1065,9 @@ describe("transitionCodaView with Motion view transitions", () => {
       "coda-motion-shared-artwork",
     ],
     [
-      "daily-detail-close",
-      "data-coda-daily-artwork-detail",
-      "[data-coda-daily-artwork-return]",
-      "coda-motion-shared-artwork",
-    ],
-    [
       "discover-detail",
       "data-coda-discover-artwork-source",
       "[data-coda-discover-artwork-detail]",
-      "coda-motion-shared-artwork",
-    ],
-    [
-      "discover-detail-close",
-      "data-coda-discover-artwork-detail",
-      "[data-coda-discover-artwork-return]",
       "coda-motion-shared-artwork",
     ],
     [
@@ -984,21 +1077,9 @@ describe("transitionCodaView with Motion view transitions", () => {
       "coda-motion-shared-artwork",
     ],
     [
-      "radio-detail-close",
-      "data-coda-radio-artwork-detail",
-      "[data-coda-radio-artwork-return]",
-      "coda-motion-shared-artwork",
-    ],
-    [
       "playlist-detail",
       "data-coda-playlist-identity-source",
       "[data-coda-playlist-identity-detail]",
-      "coda-motion-shared-identity",
-    ],
-    [
-      "playlist-detail-close",
-      "data-coda-playlist-identity-detail",
-      "[data-coda-playlist-identity-return]",
       "coda-motion-shared-identity",
     ],
   ] as const)(
@@ -1021,8 +1102,8 @@ describe("transitionCodaView with Motion view transitions", () => {
       expect(builder.layout).toHaveBeenCalledWith(
         expect.objectContaining({
           type: motionMocks.spring,
-          bounce:
-            transitionClass === "coda-motion-shared-artwork" ? 0.06 : 0.04,
+          visualDuration: kind.endsWith("close") ? 0.13 : 0.22,
+          bounce: kind.endsWith("close") ? 0 : 0.08,
         }),
       );
     },
@@ -1069,14 +1150,68 @@ describe("transitionCodaView with Motion view transitions", () => {
     expect(sourceTitle.style.getPropertyValue("view-transition-name")).toBe("");
   });
 
-  it("pairs Discover detail artwork and title back to one validated release", async () => {
+  it("keeps now-playing-open on shared-element animateView", async () => {
     enableMotionViewTransitions();
-    const releaseId = 'discover:release-"one"';
-    const detailArtwork = document.createElement("div");
-    detailArtwork.dataset.codaDiscoverArtworkDetail = releaseId;
-    const detailTitle = document.createElement("span");
-    detailTitle.dataset.codaDiscoverTitleDetail = releaseId;
-    document.body.append(detailArtwork, detailTitle);
+    const pane = document.createElement("main");
+    pane.className = "library-pane";
+    document.body.append(pane);
+    const builder = motionBuilder();
+    motionMocks.animateView.mockImplementation((update: () => void) => {
+      update();
+      return builder;
+    });
+
+    await transitionCodaView(vi.fn(), "now-playing-open");
+
+    expect(motionMocks.animateView).toHaveBeenCalledOnce();
+    expect(motionMocks.animate).not.toHaveBeenCalled();
+    pane.remove();
+  });
+
+  it.each([
+    "album-detail-close",
+    "artist-detail-close",
+    "playlist-detail-close",
+    "radio-detail-close",
+    "discover-detail-close",
+    "daily-detail-close",
+    "now-playing-close",
+  ] as const)(
+    "reverses %s with shared-element animateView instead of a Collection snapshot",
+    async (kind) => {
+      enableMotionViewTransitions();
+      const builder = motionBuilder();
+      motionMocks.animateView.mockImplementation((update: () => void) => {
+        update();
+        return builder;
+      });
+
+      await transitionCodaView(vi.fn(), kind);
+
+      expect(motionMocks.animateView).toHaveBeenCalledOnce();
+      expect(motionMocks.animate).not.toHaveBeenCalled();
+      expect(builder.add).not.toHaveBeenCalledWith(".library-pane");
+    },
+  );
+
+  it("lets album Back resolve after the reverse morph snapshot, not a live-pane spring", async () => {
+    enableMotionViewTransitions();
+    const builder = motionBuilder();
+    motionMocks.animateView.mockImplementation((update: () => void) => {
+      update();
+      return builder;
+    });
+    const update = vi.fn();
+
+    await transitionCodaView(update, "album-detail-close");
+
+    expect(update).toHaveBeenCalledOnce();
+    expect(motionMocks.animateView).toHaveBeenCalledOnce();
+    expect(motionMocks.animate).not.toHaveBeenCalled();
+  });
+
+  it("does not snapshot Discover, Daily, or Now Playing panes on detail Back", async () => {
+    enableMotionViewTransitions();
     const builder = motionBuilder();
     motionMocks.animateView.mockImplementation((update: () => void) => {
       update();
@@ -1084,18 +1219,279 @@ describe("transitionCodaView with Motion view transitions", () => {
     });
 
     await transitionCodaView(vi.fn(), "discover-detail-close");
+    await transitionCodaView(vi.fn(), "daily-detail-close");
+    await transitionCodaView(vi.fn(), "now-playing-close");
 
-    expect(builder.add).toHaveBeenCalledWith(
-      detailArtwork,
-      '[data-coda-discover-artwork-return="discover:release-\\"one\\""]',
-    );
-    expect(builder.add).toHaveBeenCalledWith(
-      detailTitle,
-      '[data-coda-discover-title-return="discover:release-\\"one\\""]',
-    );
-    expect(builder.class).toHaveBeenCalledWith("coda-motion-shared-artwork");
-    expect(builder.class).toHaveBeenCalledWith("coda-motion-shared-title");
+    expect(motionMocks.animateView).toHaveBeenCalledTimes(3);
+    expect(motionMocks.animate).not.toHaveBeenCalled();
     expect(builder.add).not.toHaveBeenCalledWith(".library-pane");
+  });
+
+  it("does not snapshot the Collection pane for album or artist detail morphs", async () => {
+    enableMotionViewTransitions();
+    const builder = motionBuilder();
+    motionMocks.animateView.mockImplementation((update: () => void) => {
+      update();
+      return builder;
+    });
+
+    await transitionCodaView(vi.fn(), "album-detail");
+    await transitionCodaView(vi.fn(), "artist-detail");
+
+    expect(motionMocks.animateView).toHaveBeenCalledTimes(2);
+    expect(motionMocks.animate).not.toHaveBeenCalled();
+    expect(builder.add).not.toHaveBeenCalledWith(".library-pane");
+  });
+
+  it("finishes view-transition animations that are not rooted on html", () => {
+    const finish = vi.fn();
+    const target = document.createElement("div");
+    Object.defineProperty(document, "getAnimations", {
+      configurable: true,
+      value: () => [
+        {
+          finish,
+          cancel: vi.fn(),
+          effect: {
+            target,
+            pseudoElement: "::view-transition-group(motion-view-1)",
+          },
+        },
+      ],
+    });
+
+    supersedeMotionViewTransition();
+
+    expect(finish).toHaveBeenCalledOnce();
+  });
+
+  it("skips the active native view transition so a leftover overlay cannot eat clicks", () => {
+    const skipTransition = vi.fn();
+    Object.defineProperty(document, "activeViewTransition", {
+      configurable: true,
+      value: { skipTransition },
+    });
+
+    supersedeMotionViewTransition();
+
+    expect(skipTransition).toHaveBeenCalledOnce();
+  });
+
+  it("does not skip the incoming artist transition after animateView starts", async () => {
+    enableMotionViewTransitions();
+    const hung = deferred();
+    const nested = {
+      animation: {
+        cancel: vi.fn(),
+        finish: vi.fn(),
+        onfinish: null as ((this: Animation, event: Event) => void) | null,
+      },
+      finished: hung.promise,
+      notifyFinished: vi.fn(() => hung.resolve()),
+      stop: vi.fn(),
+    };
+    const firstBuilder = motionBuilder({ finished: hung.promise });
+    Object.assign(firstBuilder.controls, {
+      animations: [nested],
+      complete: vi.fn(),
+    });
+    const secondBuilder = motionBuilder();
+    const staleSkip = vi.fn();
+    let incomingAborted = false;
+    const incomingSkip = vi.fn(() => {
+      incomingAborted = true;
+    });
+    let active = { skipTransition: staleSkip };
+    Object.defineProperty(document, "activeViewTransition", {
+      configurable: true,
+      get: () => active,
+    });
+    let phase = 0;
+    motionMocks.animateView.mockImplementation((update: () => void) => {
+      phase += 1;
+      if (phase === 1) {
+        active = { skipTransition: staleSkip };
+        update();
+        return firstBuilder;
+      }
+      active = { skipTransition: incomingSkip };
+      queueMicrotask(() => {
+        if (!incomingAborted) update();
+      });
+      return secondBuilder;
+    });
+
+    const first = transitionCodaView(vi.fn(), "album-detail");
+    const secondUpdate = vi.fn();
+    const second = transitionCodaView(secondUpdate, "artist-detail");
+    await Promise.all([first, second]);
+
+    expect(staleSkip).toHaveBeenCalled();
+    expect(incomingSkip).not.toHaveBeenCalled();
+    expect(secondUpdate).toHaveBeenCalledOnce();
+  });
+
+  it("stops a hung now-playing-open animation so the next open can commit", async () => {
+    enableMotionViewTransitions();
+    const hung = deferred();
+    const firstBuilder = motionBuilder({ finished: hung.promise });
+    firstBuilder.controls.stop.mockImplementation(() => hung.resolve());
+    const secondBuilder = motionBuilder();
+    const builders = [firstBuilder, secondBuilder];
+    motionMocks.animateView.mockImplementation((update: () => void) => {
+      update();
+      return builders.shift()!;
+    });
+
+    const first = transitionCodaView(vi.fn(), "now-playing-open");
+    const secondUpdate = vi.fn();
+    const second = transitionCodaView(secondUpdate, "album-detail");
+
+    expect(firstBuilder.controls.stop).toHaveBeenCalledOnce();
+    await Promise.all([first, second]);
+    expect(secondUpdate).toHaveBeenCalledOnce();
+    expect(document.documentElement).not.toHaveClass("coda-view-transitioning");
+  });
+
+  it("notifies a hung close finished when stop() does not, so interrupt:wait can start", async () => {
+    enableMotionViewTransitions();
+    const hung = deferred();
+    const nested = {
+      animation: {
+        cancel: vi.fn(),
+        finish: vi.fn(() => {
+          throw new Error("skipped view transition");
+        }),
+        onfinish: null as ((this: Animation, event: Event) => void) | null,
+      },
+      finished: hung.promise,
+      notifyFinished: vi.fn(() => hung.resolve()),
+      stop: vi.fn(),
+    };
+    const firstBuilder = motionBuilder({ finished: hung.promise });
+    Object.assign(firstBuilder.controls, {
+      animations: [nested],
+      complete: vi.fn(() => {
+        throw new Error("finish after skip");
+      }),
+    });
+    firstBuilder.controls.stop.mockImplementation(() => {
+      // Real Motion NativeAnimation.stop() for view-transition pseudos does
+      // not resolve `finished`. NativeAnimationWrapper.stop() cancels WAAPI
+      // without notifyFinished, which would leave interrupt:wait queued.
+    });
+    const secondBuilder = motionBuilder();
+    let currentFinished: Promise<unknown> | undefined;
+    const queuedStarts: Array<() => void> = [];
+    const builders = [firstBuilder, secondBuilder];
+    motionMocks.animateView.mockImplementation((update: () => void) => {
+      const builder = builders.shift()!;
+      const start = () => {
+        update();
+        currentFinished = Promise.resolve(builder.controls.finished).finally(
+          () => {
+            currentFinished = undefined;
+            queuedStarts.shift()?.();
+          },
+        );
+      };
+      if (currentFinished) {
+        queuedStarts.push(start);
+      } else {
+        start();
+      }
+      return builder;
+    });
+
+    const first = transitionCodaView(vi.fn(), "now-playing-open");
+    const secondUpdate = vi.fn();
+    const second = transitionCodaView(secondUpdate, "album-detail");
+
+    expect(firstBuilder.controls.stop).toHaveBeenCalledOnce();
+    expect(nested.notifyFinished).toHaveBeenCalledOnce();
+    await Promise.all([first, second]);
+    expect(secondUpdate).toHaveBeenCalledOnce();
+    expect(document.documentElement).not.toHaveClass("coda-view-transitioning");
+  });
+
+  it("settles a timed-out morph so a later open can commit after handles drop", async () => {
+    enableMotionViewTransitions();
+    vi.useFakeTimers();
+    const skipTransition = vi.fn();
+    Object.defineProperty(document, "activeViewTransition", {
+      configurable: true,
+      value: { skipTransition },
+    });
+    const hung = deferred();
+    const nested = {
+      animation: {
+        cancel: vi.fn(),
+        finish: vi.fn(),
+        onfinish: null as ((this: Animation, event: Event) => void) | null,
+      },
+      finished: hung.promise,
+      notifyFinished: vi.fn(() => hung.resolve()),
+      stop: vi.fn(),
+    };
+    const firstControls = {
+      animations: [nested],
+      complete: vi.fn(),
+      finished: hung.promise,
+      stop: vi.fn(),
+    };
+    const firstBuilder = {
+      add: vi.fn().mockReturnThis(),
+      class: vi.fn().mockReturnThis(),
+      crop: vi.fn().mockReturnThis(),
+      enter: vi.fn().mockReturnThis(),
+      exit: vi.fn().mockReturnThis(),
+      group: vi.fn().mockReturnThis(),
+      layout: vi.fn().mockReturnThis(),
+      new: vi.fn().mockReturnThis(),
+      old: vi.fn().mockReturnThis(),
+      then: (
+        resolve?: (value: typeof firstControls) => unknown,
+        reject?: (reason: unknown) => unknown,
+      ) => Promise.resolve(firstControls).then(resolve, reject),
+    };
+    const secondBuilder = motionBuilder();
+    let currentFinished: Promise<unknown> | undefined;
+    const queuedStarts: Array<() => void> = [];
+    const finishedQueue = [hung.promise, Promise.resolve()];
+    const builders: unknown[] = [firstBuilder, secondBuilder];
+    motionMocks.animateView.mockImplementation((update: () => void) => {
+      const builder = builders.shift()!;
+      const start = () => {
+        update();
+        currentFinished = Promise.resolve(finishedQueue.shift()).finally(() => {
+          currentFinished = undefined;
+          queuedStarts.shift()?.();
+        });
+      };
+      if (currentFinished) {
+        queuedStarts.push(start);
+      } else {
+        start();
+      }
+      return builder;
+    });
+
+    const first = transitionCodaView(vi.fn(), "album-detail");
+    await vi.advanceTimersByTimeAsync(400);
+    await first;
+    expect(nested.notifyFinished).toHaveBeenCalledOnce();
+    expect(skipTransition).toHaveBeenCalled();
+    expect(firstBuilder).not.toHaveProperty("controls");
+
+    const secondUpdate = vi.fn();
+    const second = transitionCodaView(secondUpdate, "album-detail");
+    await second;
+    expect(secondUpdate).toHaveBeenCalledOnce();
+    expect(motionMocks.animateView).toHaveBeenNthCalledWith(
+      2,
+      expect.any(Function),
+      expect.objectContaining({ interrupt: "wait" }),
+    );
   });
 
   it("resolves a superseded transition against the latest validated identity", async () => {
@@ -1175,19 +1571,9 @@ describe("transitionCodaView with Motion view transitions", () => {
       "[data-coda-album-title-detail]",
     ],
     [
-      "album-detail-close",
-      "data-coda-album-title-detail",
-      "[data-coda-album-title-return]",
-    ],
-    [
       "artist-detail",
       "data-coda-artist-name-source",
       "[data-coda-artist-name-detail]",
-    ],
-    [
-      "artist-detail-close",
-      "data-coda-artist-name-detail",
-      "[data-coda-artist-name-return]",
     ],
     [
       "daily-detail",
@@ -1195,19 +1581,9 @@ describe("transitionCodaView with Motion view transitions", () => {
       "[data-coda-daily-title-detail]",
     ],
     [
-      "daily-detail-close",
-      "data-coda-daily-title-detail",
-      "[data-coda-daily-title-return]",
-    ],
-    [
       "discover-detail",
       "data-coda-discover-title-source",
       "[data-coda-discover-title-detail]",
-    ],
-    [
-      "discover-detail-close",
-      "data-coda-discover-title-detail",
-      "[data-coda-discover-title-return]",
     ],
     [
       "radio-detail",
@@ -1215,29 +1591,14 @@ describe("transitionCodaView with Motion view transitions", () => {
       "[data-coda-radio-title-detail]",
     ],
     [
-      "radio-detail-close",
-      "data-coda-radio-title-detail",
-      "[data-coda-radio-title-return]",
-    ],
-    [
       "playlist-detail",
       "data-coda-playlist-title-source",
       "[data-coda-playlist-title-detail]",
     ],
     [
-      "playlist-detail-close",
-      "data-coda-playlist-title-detail",
-      "[data-coda-playlist-title-return]",
-    ],
-    [
       "now-playing-open",
       "data-coda-now-playing-title-compact",
       "[data-coda-now-playing-title-detail]",
-    ],
-    [
-      "now-playing-close",
-      "data-coda-now-playing-title-detail",
-      "[data-coda-now-playing-title-compact]",
     ],
   ] as const)(
     "pairs the identity title separately for %s",
@@ -1262,43 +1623,21 @@ describe("transitionCodaView with Motion view transitions", () => {
         expect(builder.layout).toHaveBeenCalledWith(
           expect.objectContaining({
             type: motionMocks.spring,
-            visualDuration: 0.18,
+            visualDuration: 0.28,
             bounce: 0.05,
           }),
         );
         expect(builder.old).toHaveBeenCalledWith(
           { opacity: [1, 0] },
           expect.objectContaining({
-            duration: 0.13,
+            duration: 0.16,
             ease: [0.22, 1, 0.36, 1],
           }),
         );
         expect(builder.new).toHaveBeenCalledWith(
           { opacity: [0, 1] },
           expect.objectContaining({
-            duration: 0.13,
-            ease: [0.22, 1, 0.36, 1],
-          }),
-        );
-      } else if (kind.startsWith("album-detail")) {
-        expect(builder.layout).toHaveBeenCalledWith(
-          expect.objectContaining({
-            type: motionMocks.spring,
-            visualDuration: 0.19,
-            bounce: 0.04,
-          }),
-        );
-        expect(builder.old).toHaveBeenCalledWith(
-          { opacity: [1, 0] },
-          expect.objectContaining({
-            duration: 0.13,
-            ease: [0.22, 1, 0.36, 1],
-          }),
-        );
-        expect(builder.new).toHaveBeenCalledWith(
-          { opacity: [0, 1] },
-          expect.objectContaining({
-            duration: 0.13,
+            duration: 0.16,
             ease: [0.22, 1, 0.36, 1],
           }),
         );
@@ -1306,22 +1645,22 @@ describe("transitionCodaView with Motion view transitions", () => {
         expect(builder.layout).toHaveBeenCalledWith(
           expect.objectContaining({
             type: motionMocks.spring,
-            visualDuration: 0.26,
-            bounce: 0,
+            visualDuration: kind.endsWith("close") ? 0.11 : 0.19,
+            bounce: kind.endsWith("close") ? 0 : 0.04,
           }),
         );
         expect(builder.old).toHaveBeenCalledWith(
           { opacity: [1, 0] },
           expect.objectContaining({
-            duration: 0.2,
-            ease: "linear",
+            duration: 0.13,
+            ease: [0.22, 1, 0.36, 1],
           }),
         );
         expect(builder.new).toHaveBeenCalledWith(
           { opacity: [0, 1] },
           expect.objectContaining({
-            duration: 0.2,
-            ease: "linear",
+            duration: 0.13,
+            ease: [0.22, 1, 0.36, 1],
           }),
         );
       }
@@ -1354,7 +1693,7 @@ describe("transitionCodaView with Motion view transitions", () => {
           transform: ["translateY(8px)", "translateY(0px)"],
         },
         expect.objectContaining({
-          duration: 0.3,
+          duration: 0.13,
           ease: [0.22, 1, 0.36, 1],
         }),
       );
@@ -1410,64 +1749,8 @@ describe("transitionCodaView with Motion view transitions", () => {
     expect(builder.layout).toHaveBeenCalledWith(
       expect.objectContaining({
         type: motionMocks.spring,
-        visualDuration: 0.3,
-        bounce: 0.06,
-      }),
-    );
-  });
-
-  it("pairs album artwork back to its exact return target", async () => {
-    enableMotionViewTransitions();
-    const source = document.createElement("div");
-    source.dataset.codaAlbumArtworkDetail = "album-1";
-    source.dataset.slot = "cover";
-    document.body.append(source);
-    const builder = motionBuilder();
-    motionMocks.animateView.mockImplementation((update: () => void) => {
-      update();
-      return builder;
-    });
-
-    await transitionCodaView(vi.fn(), "album-detail-close");
-
-    expect(builder.add).toHaveBeenCalledWith(
-      source,
-      '[data-coda-album-artwork-return="album-1"]',
-    );
-    expect(builder.class).toHaveBeenCalledWith("coda-motion-shared-artwork");
-    expect(builder.layout).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: motionMocks.spring,
         visualDuration: 0.22,
         bounce: 0.08,
-      }),
-    );
-  });
-
-  it("pairs artist artwork back to its exact return target", async () => {
-    enableMotionViewTransitions();
-    const source = document.createElement("div");
-    source.dataset.codaArtistArtworkDetail = "night-archive";
-    source.dataset.slot = "cover";
-    document.body.append(source);
-    const builder = motionBuilder();
-    motionMocks.animateView.mockImplementation((update: () => void) => {
-      update();
-      return builder;
-    });
-
-    await transitionCodaView(vi.fn(), "artist-detail-close");
-
-    expect(builder.add).toHaveBeenCalledWith(
-      source,
-      '[data-coda-artist-artwork-return="night-archive"]',
-    );
-    expect(builder.class).toHaveBeenCalledWith("coda-motion-shared-artwork");
-    expect(builder.layout).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: motionMocks.spring,
-        visualDuration: 0.3,
-        bounce: 0.06,
       }),
     );
   });
@@ -1484,6 +1767,79 @@ describe("transitionCodaView with Motion view transitions", () => {
 
     expect(update).toHaveBeenCalledOnce();
     expect(motionMocks.animateView).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "album-detail",
+    "album-detail-close",
+    "artist-detail",
+    "artist-detail-close",
+    "daily-detail",
+    "daily-detail-close",
+    "discover-detail",
+    "discover-detail-close",
+    "playlist-detail",
+    "playlist-detail-close",
+    "radio-detail",
+    "radio-detail-close",
+    "now-playing-open",
+    "now-playing-close",
+    "page-forward",
+    "page-back",
+    "page-crossfade",
+  ] as const satisfies readonly CodaViewTransitionKind[])(
+    "skips animateView for %s when reduced motion is requested",
+    async (kind) => {
+      enableMotionViewTransitions();
+      const startViewTransition = vi.fn();
+      Object.defineProperty(document, "startViewTransition", {
+        configurable: true,
+        value: startViewTransition,
+      });
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        value: vi.fn((query: string) => ({
+          matches: query.includes("prefers-reduced-motion"),
+        })),
+      });
+      const update = vi.fn();
+
+      await transitionCodaView(update, kind);
+
+      expect(update).toHaveBeenCalledOnce();
+      expect(update).toHaveBeenCalledWith(false);
+      expect(motionMocks.animateView).not.toHaveBeenCalled();
+      expect(motionMocks.animate).not.toHaveBeenCalled();
+      expect(startViewTransition).not.toHaveBeenCalled();
+    },
+  );
+
+  it("zeros CSS motion duration under prefers-reduced-motion", () => {
+    const css = readFileSync(join(process.cwd(), "src/styles.css"), "utf8");
+    expect(css).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*animation-duration:\s*0\.01ms\s*!important/,
+    );
+    expect(css).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)[\s\S]*transition-duration:\s*0\.01ms\s*!important/,
+    );
+    expect(css).toMatch(
+      /html:is\(\s*\n\s*\.coda-transition--album-detail,[\s\S]*\.coda-transition--now-playing-open,[\s\S]*view-transition-name:\s*none;/,
+    );
+    expect(css).toMatch(/--duration-coda-shared-detail-close:\s*130ms;/);
+    expect(css).toMatch(/--duration-coda-shared-title-close:\s*110ms;/);
+    expect(css).toMatch(
+      /animation:\s*coda-detail-surface-in var\(--duration-coda-view\)/,
+    );
+    expect(css).not.toMatch(/coda-detail-surface-in 300ms/);
+    expect(css).toMatch(
+      /::view-transition,\s*\n::view-transition-group\(\*\),\s*\n::view-transition-old\(\*\),\s*\n::view-transition-new\(\*\)\s*\{[\s\S]*pointer-events:\s*none;/,
+    );
+    const drawer = readFileSync(
+      join(process.cwd(), "src/components/ui/drawer.tsx"),
+      "utf8",
+    );
+    expect(drawer).toMatch(/transition-\[transform,opacity\]/);
+    expect(drawer).not.toMatch(/transition-\[transform,height/);
   });
 
   it("falls back to the requested state when Motion cannot start", async () => {

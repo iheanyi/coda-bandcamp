@@ -82,6 +82,19 @@ describe("AppShell", () => {
     expect(onQueueOpenChange.mock.calls[0]?.[0]).toBe(true);
   });
 
+  it("projects persistent services before route content so title can publish before the pane paint", () => {
+    render(shell(<section data-testid="route-outlet">Collection</section>));
+
+    const main = screen.getByRole("main");
+    const services = screen.getByTestId("persistent-services");
+    const chrome = screen.getByTestId("route-chrome");
+    expect(main).toContainElement(services);
+    expect(
+      services.compareDocumentPosition(chrome) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
   it("uses the immersive one-row layout without padding the route pane", () => {
     render(
       shell(<section data-testid="route-outlet">Now playing</section>, {

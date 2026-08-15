@@ -6,6 +6,7 @@ import type { LibrarySessionCommands } from "@/features/library-session";
 import type { DetailNavigationController } from "@/features/navigation/useDetailNavigationController";
 import { tracksForArtistGroupAlbum, type ArtistGroup } from "@/libraryBrowse";
 import {
+  albumQueryKey,
   cachedAlbumTracks,
   libraryQueryKey,
   revalidateAlbumQueryData,
@@ -82,6 +83,7 @@ export type LibraryActionsCommands = Readonly<{
     scopeName: string,
     artistScope?: ArtistGroup,
   ) => Promise<void>;
+  prefetchVisibleAlbums: (albums: readonly Album[]) => Promise<void>;
   queueAlbum: (album: Album) => Promise<boolean>;
   queueAlbums: (albums: readonly Album[]) => Promise<void>;
   queueArtist: (group: ArtistGroup) => void;
@@ -144,6 +146,7 @@ export function useLibraryActionsController({
     useState<QueueSearchProgress>();
   const [randomPickLoading, setRandomPickLoading] = useState(false);
   const randomPickActiveRef = useRef(false);
+  const coldLoadAlbumIdRef = useRef<string>();
 
   const selectedAlbum = selectedAlbumId
     ? selectedAlbumSnapshot?.id === selectedAlbumId
@@ -183,6 +186,9 @@ export function useLibraryActionsController({
       let albumForDetail = coldLoad
         ? album
         : albumWithTracks(album, cachedTracks);
+      if (coldLoad) {
+        coldLoadAlbumIdRef.current = album.id;
+      }
 
       void detailNavigation
         .open({
@@ -190,8 +196,13 @@ export function useLibraryActionsController({
           albumId: parseAlbumIdParam(album.id),
           coldLoad,
           sourceTrigger,
-          beforeCommit: () =>
-            setLoadingAlbumId(coldLoad ? album.id : undefined),
+          beforeCommit: () => {
+            // Hydration can finish before the view-transition update runs.
+            // A late beforeCommit must not turn the card spinner back on.
+            if (coldLoad && coldLoadAlbumIdRef.current === album.id) {
+              setLoadingAlbumId(album.id);
+            }
+          },
         })
         .then(() => {
           if (!session.generation.isCurrent(sessionGeneration)) return;
@@ -232,6 +243,9 @@ export function useLibraryActionsController({
           notify(String(cause), "bad");
         }
       } finally {
+        if (coldLoadAlbumIdRef.current === album.id) {
+          coldLoadAlbumIdRef.current = undefined;
+        }
         if (coldLoad) {
           setLoadingAlbumId((current) =>
             current === album.id ? undefined : current,
@@ -247,6 +261,30 @@ export function useLibraryActionsController({
       session,
       updateAlbums,
     ],
+  );
+
+  const prefetchVisibleAlbums = useCallback(
+    async (albums: readonly Album[]) => {
+      const generation = session.generation.current();
+      const coldAlbums = albums.filter(
+        (album) => cachedAlbumTracks(queryClient, album) === undefined,
+      );
+      if (!coldAlbums.length) return;
+      try {
+        const result = await session.ensureAlbums(coldAlbums, {
+          concurrency: ALBUM_BATCH_CONCURRENCY,
+          mode: "preload",
+        });
+        if (result.stale || !session.generation.isCurrent(generation)) return;
+        for (const hydrated of result.albums) {
+          if (!hydrated?.tracks?.length) continue;
+          queryClient.setQueryData(albumQueryKey(hydrated.id), hydrated.tracks);
+        }
+      } catch {
+        // Visible prefetch is best-effort. Open still hydrates on click.
+      }
+    },
+    [queryClient, session],
   );
 
   const playAlbum = useCallback(
@@ -501,6 +539,7 @@ export function useLibraryActionsController({
 
   const resetTransientState = useCallback(() => {
     randomPickActiveRef.current = false;
+    coldLoadAlbumIdRef.current = undefined;
     setLoadingAlbumId(undefined);
     setArtistAction(undefined);
     setQueueSearchProgress(undefined);
@@ -547,6 +586,7 @@ export function useLibraryActionsController({
       playArtist: (group) => void loadArtistTracks(group, "play"),
       playRandomTrack,
       playSurprise,
+      prefetchVisibleAlbums,
       queueAlbum,
       queueAlbums,
       queueArtist: (group) => void loadArtistTracks(group, "queue"),
@@ -563,6 +603,7 @@ export function useLibraryActionsController({
       playAlbum,
       playRandomTrack,
       playSurprise,
+      prefetchVisibleAlbums,
       queueAlbum,
       queueAlbums,
       refreshArtwork,

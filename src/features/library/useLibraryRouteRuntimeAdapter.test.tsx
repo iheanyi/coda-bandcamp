@@ -4,7 +4,6 @@ import { createRef, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { albumQueryKey } from "@/libraryQueries";
-import { deriveLibraryRouteInput } from "@/routing/libraryRouteInput";
 import {
   parseAlbumIdParam,
   parseArtistKeyParam,
@@ -119,11 +118,6 @@ function createOptions(): LibraryRouteRuntimeAdapterOptions {
       onPlay: vi.fn(),
       onQueue: vi.fn(),
       onShuffle: vi.fn(),
-      routeInput: deriveLibraryRouteInput({
-        artistKey: group.key,
-        screen: "artist",
-        search: undefined,
-      }),
       shuffleInProgress: true,
     },
     catalog: {
@@ -256,6 +250,25 @@ describe("useLibraryRouteRuntimeAdapter", () => {
     ).toBe("not-found");
   });
 
+  it("resolves an artist page from catalog groups before routeInput catches up", () => {
+    const options = createOptions();
+    const group = options.artist.group;
+    if (!group) throw new Error("expected artist group fixture");
+    options.artist.group = undefined;
+    options.screens.artistResultsModel = {
+      ...options.screens.artistResultsModel,
+      groups: [group],
+    };
+    const { result } = renderRuntime(options);
+    const resource = result.current.resolveArtistScreen(
+      parseArtistKeyParam("signal garden"),
+    );
+
+    expect(resource.status).toBe("ready");
+    if (resource.status !== "ready") return;
+    expect(resource.value.model.artist.group).toEqual(group);
+  });
+
   it("validates artist route identity and derives active shuffle state", () => {
     const options = createOptions();
     const { result } = renderRuntime(options);
@@ -265,7 +278,7 @@ describe("useLibraryRouteRuntimeAdapter", () => {
       result.current.resolveArtistScreen(
         parseArtistKeyParam("different artist"),
       ).status,
-    ).toBe("pending");
+    ).toBe("not-found");
 
     const resource = result.current.resolveArtistScreen(artistId);
     expect(resource.status).toBe("ready");

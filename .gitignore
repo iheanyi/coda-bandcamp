@@ -4,6 +4,8 @@ src-tauri/target
 src-tauri/gen
 .playwright-cli
 output/playwright
+output/verify-coda
+.cursor/skills/verify-coda/scripts/.build
 coverage
 .DS_Store
 *.log

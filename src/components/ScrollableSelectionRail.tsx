@@ -94,6 +94,7 @@ export function ScrollableSelectionRail({
                     className="pointer-events-none absolute inset-0 z-0 rounded-sm bg-coda-active"
                     data-selection-rail-indicator=""
                     data-selection-travel-steps={indicatorMotion.travelSteps}
+                    layout="position"
                     layoutId={indicatorLayoutId}
                     style={INDICATOR_STYLE}
                     transition={indicatorMotion.transition}

@@ -8,6 +8,7 @@ import { codaMotion } from "@/motion";
 import { ScrollableSelectionRail } from "./ScrollableSelectionRail";
 
 type CapturedIndicator = Readonly<{
+  layout?: unknown;
   layoutId?: string;
   transition?: unknown;
 }>;
@@ -20,11 +21,12 @@ vi.mock("motion/react-m", async () => {
     div: forwardRef<
       HTMLDivElement,
       HTMLAttributes<HTMLDivElement> & {
+        layout?: unknown;
         layoutId?: string;
         transition?: unknown;
       }
-    >(function MotionDiv({ layoutId, transition, ...props }, ref) {
-      capturedIndicators.push({ layoutId, transition });
+    >(function MotionDiv({ layout, layoutId, transition, ...props }, ref) {
+      capturedIndicators.push({ layout, layoutId, transition });
       return <div ref={ref} {...props} />;
     }),
   };
@@ -152,6 +154,9 @@ describe("ScrollableSelectionRail", () => {
 
     const initialLayoutIds = capturedIndicators.map(({ layoutId }) => layoutId);
     expect(new Set(initialLayoutIds)).toHaveLength(2);
+    expect(
+      capturedIndicators.every(({ layout }) => layout === "position"),
+    ).toBe(true);
     expect(
       capturedIndicators.every(
         ({ transition }) =>
