@@ -12,6 +12,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Drawer } from "@/components/ui/drawer";
+import { resetDetailNavigation } from "@/detailNavigation";
 import { createPlaybackClock } from "@/playbackClock";
 import { boundRadioChapters } from "@/radioPlayback";
 import { createCodaMemoryRouter } from "@/router";
@@ -122,6 +123,7 @@ function linkLocation(link: HTMLElement) {
 }
 
 beforeEach(() => {
+  resetDetailNavigation();
   openBandcampUrl.mockReset().mockResolvedValue(undefined);
 });
 
