@@ -1,9 +1,11 @@
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Radio, RefreshCw } from "lucide-react";
-import { useCallback, useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import type { RouteCommitOutcome } from "@/features/navigation/routeCommit";
+import { useActivateDetailDestination } from "@/features/navigation/useActivateDetailDestination";
 import { openBandcampUrl } from "@/lib";
 import {
   type RadioArchiveScope,
@@ -21,7 +23,7 @@ import type { RadioPlaybackProps } from "./radioScreenTypes";
 export type RadioShowScreenProps = RadioPlaybackProps &
   Readonly<{
     showId: RadioShowId;
-    onBack: () => void;
+    onBack: () => Promise<RouteCommitOutcome>;
     onBrowseSeries: (seriesId?: RadioSeriesId) => void;
     openExternal?: (url: string) => Promise<void>;
     preferredSummaryScope?: RadioArchiveScope;
@@ -78,12 +80,11 @@ export function RadioShowScreen({
   const summary = details ?? cachedSummary;
   const [actionError, setActionError] = useState("");
 
-  useLayoutEffect(() => {
-    if (!summary) return;
-    document
-      .getElementById("radio-detail-title")
-      ?.focus({ preventScroll: true });
-  }, [showId, summary?.id]);
+  useActivateDetailDestination(
+    "radio",
+    `radio:${String(showId)}`,
+    Boolean(summary),
+  );
 
   const openItem = useCallback((url: string) => {
     setActionError("");

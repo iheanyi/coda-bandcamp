@@ -5,6 +5,7 @@ import type { RadioShow, RadioShowSummary, RadioShowsPage } from "@/types";
 import {
   findRadioShowSummaryInCache,
   radioShowQueryOptions,
+  radioShowRestoreQueryOptions,
   radioShowsInfiniteQueryOptions,
   type RadioQueryRepository,
 } from "./radioQueries";
@@ -99,6 +100,33 @@ describe("Radio query options", () => {
     expect(options.gcTime).toBeUndefined();
     expect(await queryClient.fetchQuery(options)).toEqual(show);
     expect(repository.fetchShow).toHaveBeenCalledWith(979);
+    expect(await queryClient.fetchQuery(options)).toEqual(show);
+    expect(repository.fetchShow).toHaveBeenCalledTimes(1);
+  });
+
+  it("bypasses a warm show cache when restoring a signed stream", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const staleShow: RadioShow = {
+      ...show,
+      streamUrl: "https://bandcamp.com/stale-signed-stream",
+    };
+    queryClient.setQueryData(radioShowQueryOptions(979).queryKey, staleShow);
+    repository.fetchShow.mockResolvedValue(show);
+
+    const restored = await queryClient.fetchQuery(
+      radioShowRestoreQueryOptions(979, repository),
+    );
+
+    expect(radioShowRestoreQueryOptions(979).queryKey).toEqual([
+      "bandcamp-radio-show",
+      979,
+    ]);
+    expect(radioShowRestoreQueryOptions(979).staleTime).toBe(0);
+    expect(repository.fetchShow).toHaveBeenCalledWith(979);
+    expect(restored.streamUrl).toBe(show.streamUrl);
+    expect(restored.streamUrl).not.toBe(staleShow.streamUrl);
   });
 
   it("resolves a stripped archive summary without creating another cache", () => {

@@ -1,4 +1,5 @@
 import type { PlaybackClock } from "@/playbackClock";
+import type { RouteCommitOutcome } from "@/features/navigation/routeCommit";
 import type { RadioQueryRepository } from "@/queries/radioQueries";
 import type { RadioSeriesId, RadioShowId } from "@/routing/routeContracts";
 import type { RadioShowSummary, Track } from "@/types";
@@ -27,20 +28,18 @@ export type RadioArchivePlaybackProps = Pick<
 >;
 
 export type RadioOpenShowRequest = Readonly<{
+  returnScrollTop: number;
+  sharedIdentityAvailable: boolean;
   showId: RadioShowId;
   sourceTrigger?: HTMLElement;
-  sourceArtwork?: HTMLElement;
-  sourceTitle?: HTMLElement;
-  returnScrollTop: number;
 }>;
 
 export type RadioArchiveScreenProps = RadioArchivePlaybackProps &
   Readonly<{
     seriesId?: RadioSeriesId;
     onSelectSeries: (seriesId?: RadioSeriesId) => void | Promise<void>;
-    onOpenShow: (request: RadioOpenShowRequest) => void | Promise<void>;
+    onOpenShow: (request: RadioOpenShowRequest) => Promise<RouteCommitOutcome>;
     openExternal?: (url: string) => Promise<void>;
     repository?: RadioQueryRepository;
-    returningArtworkId?: RadioShowId;
     seriesTravelSteps?: number;
   }>;

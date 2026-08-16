@@ -88,7 +88,6 @@ function RadioArchiveScreen({
   onOpenShow,
   openExternal = openBandcampUrl,
   repository,
-  returningArtworkId,
   seriesTravelSteps,
 }: RadioArchiveScreenProps) {
   const queryClient = useQueryClient();
@@ -173,30 +172,13 @@ function RadioArchiveScreen({
       const returnScrollTop =
         document.querySelector<HTMLElement>("[data-coda-library-scroll]")
           ?.scrollTop ?? 0;
-      const sourceArticle = sourceTrigger?.closest<HTMLElement>("article");
-      const sourceArtwork =
-        sourceArticle?.querySelector<HTMLElement>(
-          `[data-radio-show-artwork="${show.id}"]`,
-        ) ?? undefined;
-      const sourceTitleRoot = sourceArtwork
-        ? sourceArticle?.querySelector<HTMLElement>(
-            `[data-radio-show-title="${show.id}"]`,
-          )
-        : undefined;
-      const sourceTitle =
-        sourceTitleRoot?.querySelector<HTMLElement>(
-          ':is([data-slot="overflow-marquee-text"], [data-coda-radio-title-text])',
-        ) ??
-        sourceTitleRoot ??
-        undefined;
       setActionError("");
       try {
         await onOpenShow({
+          returnScrollTop,
+          sharedIdentityAvailable: true,
           showId: parsedShowId,
           sourceTrigger,
-          sourceArtwork,
-          sourceTitle,
-          returnScrollTop,
         });
       } catch (cause) {
         setActionError(String(cause).replace(/^Error:\s*/, ""));
@@ -358,11 +340,7 @@ function RadioArchiveScreen({
       {seriesNavigation}
       <article className="relative mb-9 grid grid-cols-[minmax(13rem,20rem)_minmax(0,1fr)] items-center gap-16 overflow-hidden rounded-xl border border-(--line) bg-[radial-gradient(circle_at_88%_7%,rgba(221,101,73,0.2),transparent_34%),radial-gradient(circle_at_5%_100%,rgba(115,77,151,0.11),transparent_38%),linear-gradient(135deg,#202325_0%,#17191b_72%)] p-12 shadow-[0_22px_58px_rgba(0,0,0,0.16)] before:pointer-events-none before:absolute before:-top-36 before:-right-24 before:size-90 before:rounded-full before:border before:border-white/4 before:shadow-[0_0_0_46px_rgba(255,255,255,0.012),0_0_0_92px_rgba(255,255,255,0.008)] before:content-[''] max-xl:grid-cols-[12rem_minmax(0,1fr)] max-xl:gap-6 max-xl:p-6 max-lg:grid-cols-[8rem_minmax(0,1fr)] max-lg:items-start max-lg:gap-4 max-lg:p-5">
         <div className="relative z-1 min-w-0 drop-shadow-[0_24px_32px_rgba(0,0,0,0.33)]">
-          <RadioArtwork
-            show={featured}
-            eager
-            returning={returningArtworkId === featured.id}
-          />
+          <RadioArtwork show={featured} eager />
           {featuredShowIdParam ? (
             <Link
               aria-label={`Open ${featured.subtitle}`}
@@ -395,9 +373,6 @@ function RadioArchiveScreen({
               <Link
                 className="inline-block max-w-full align-top outline-none hover:text-[#f09a83] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                 data-coda-radio-title-text={featured.id}
-                data-coda-radio-title-return={
-                  returningArtworkId === featured.id ? featured.id : undefined
-                }
                 data-radio-show-navigation-slot="title"
                 data-radio-show-open={featured.id}
                 onClick={(event) =>
@@ -589,7 +564,6 @@ function RadioArchiveScreen({
               onToggleFavorite={onToggleFavorite}
               onOpenItem={openItem}
               onBrowseSeries={selectSeries}
-              returningArtwork={returningArtworkId === show.id}
             />
           );
         }}

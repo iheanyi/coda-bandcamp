@@ -66,6 +66,20 @@ export function radioShowQueryOptions(
   });
 }
 
+/**
+ * Session restore and media reacquisition must fetch a live signed stream.
+ * In-session Radio queueing keeps `radioShowQueryOptions` and its 10-minute cache.
+ */
+export function radioShowRestoreQueryOptions(
+  showId: number,
+  repository: RadioQueryRepository = defaultRadioQueryRepository,
+) {
+  return queryOptions({
+    ...radioShowQueryOptions(showId, repository),
+    staleTime: 0,
+  });
+}
+
 function radioArchiveScopeFromQueryKey(
   queryKey: readonly unknown[],
 ): RadioArchiveScope | undefined {

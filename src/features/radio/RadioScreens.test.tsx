@@ -13,7 +13,7 @@ import { parseRadioShowIdParam } from "@/routing/routeContracts";
 import type { RadioShow, RadioShowSummary } from "@/types";
 
 import { RadioArtwork } from "./RadioPresentation";
-import { RadioShowScreen } from "./RadioScreens";
+import { RadioShowScreen } from "./RadioShowScreen";
 
 const repository: RadioQueryRepository = {
   fetchShow: vi.fn(),
@@ -80,9 +80,10 @@ it("loads a direct show screen by ID without requesting the archive", async () =
 
   resolveShow(show);
 
-  expect(
-    await screen.findByRole("heading", { name: show.subtitle }),
-  ).toBeInTheDocument();
+  const detailHeading = await screen.findByRole("heading", {
+    name: show.subtitle,
+  });
+  expect(detailHeading).toHaveFocus();
   expect(
     screen.getByRole("heading", { name: "Songs in this show" }),
   ).toBeInTheDocument();
@@ -225,7 +226,6 @@ it("recovers Radio artwork by URL while preserving transition identity", () => {
   const { container, rerender } = render(
     <RadioArtwork
       detail
-      returning
       show={{ ...show, artworkUrl: firstArtworkUrl }}
     />,
   );
@@ -243,7 +243,6 @@ it("recovers Radio artwork by URL while preserving transition identity", () => {
   rerender(
     <RadioArtwork
       detail
-      returning
       show={{ ...show, artworkUrl: nextArtworkUrl }}
     />,
   );
@@ -263,10 +262,6 @@ it("recovers Radio artwork by URL while preserving transition identity", () => {
   ).not.toBeInTheDocument();
   expect(artwork).toHaveAttribute(
     "data-coda-radio-artwork-detail",
-    String(show.id),
-  );
-  expect(artwork).toHaveAttribute(
-    "data-coda-radio-artwork-return",
     String(show.id),
   );
 });
