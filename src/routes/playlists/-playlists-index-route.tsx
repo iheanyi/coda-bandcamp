@@ -1,18 +1,10 @@
-import type { ComponentType } from "react";
 import { useLayoutEffect } from "react";
 
-import {
-  PlaylistsScreen as DefaultPlaylistsScreen,
-  type PlaylistsScreenProps,
-} from "@/SavedLibraryView";
+import { PlaylistsScreen } from "@/features/saved-library";
 import { usePlaylistRouteNavigation } from "@/features/saved-library/playlistRouteNavigation";
 import { useSavedLibraryRuntime } from "@/features/saved-library/SavedLibraryRuntimeContext";
 
-export function PlaylistsIndexRoute({
-  Screen = DefaultPlaylistsScreen,
-}: Readonly<{
-  Screen?: ComponentType<PlaylistsScreenProps>;
-}> = {}) {
+export function PlaylistsIndexRoute() {
   const runtime = useSavedLibraryRuntime();
   const navigation = usePlaylistRouteNavigation();
 
@@ -21,7 +13,7 @@ export function PlaylistsIndexRoute({
   }, [navigation.restoreListContext]);
 
   return (
-    <Screen
+    <PlaylistsScreen
       connected={runtime.connected}
       onNotify={runtime.onNotify}
       onOpenPlaylist={navigation.openPlaylist}

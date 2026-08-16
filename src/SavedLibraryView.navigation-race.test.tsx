@@ -1,16 +1,12 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { RouterContextProvider } from "@tanstack/react-router";
-import { act, fireEvent, render, screen } from "@testing-library/react";
-import type { ComponentProps } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { CodaMotionProvider } from "@/MotionProvider";
 import {
   PLAYLISTS_QUERY_KEY,
   playlistQueryKey,
 } from "@/queries/savedLibraryQueries";
-import { createCodaMemoryRouter } from "@/router";
 import type { PlaylistDetail, PlaylistSummary, Track } from "@/types";
+import { renderSavedLibraryRoute } from "@/test/savedLibraryViewTestHarness";
 
 type PendingTransition = Readonly<{
   kind: string;
@@ -18,29 +14,37 @@ type PendingTransition = Readonly<{
   resolve: () => void;
 }>;
 
-import SavedLibraryView from "@/SavedLibraryView";
-
-type SavedLibraryTransition = NonNullable<
-  NonNullable<ComponentProps<typeof SavedLibraryView>>["transition"]
->;
-
 type PendingTransitions = {
   pending: PendingTransition[];
 };
 
 const transitions: PendingTransitions = { pending: [] };
-const transition = vi.fn<SavedLibraryTransition>((update, kind) => {
+const originalStartViewTransition = Object.getOwnPropertyDescriptor(
+  document,
+  "startViewTransition",
+);
+const startViewTransition = vi.fn((update: () => void | Promise<void>) => {
   let resolveCompletion!: () => void;
   const completion = new Promise<void>((resolve) => {
     resolveCompletion = resolve;
   });
-  const promise = Promise.resolve(update()).then(() => completion);
+  const updateCallbackDone = Promise.resolve(update());
+  const promise = updateCallbackDone.then(() => completion);
+  const kind = document.documentElement.classList.contains(
+    "coda-transition--playlist-detail-close",
+  )
+    ? "playlist-detail-close"
+    : "playlist-detail";
   transitions.pending.push({
     kind,
     promise,
     resolve: resolveCompletion,
   });
-  return promise;
+  return {
+    finished: promise,
+    skipTransition: resolveCompletion,
+    updateCallbackDone,
+  };
 });
 
 const track: Track = {
@@ -78,58 +82,23 @@ const secondDetail: PlaylistDetail = {
   tracks: [track],
 };
 
-const props = {
-  connected: true,
-  favoritesLoading: false,
-  onAddToPlaylist: vi.fn(),
-  onNotify: vi.fn(),
-  onOpenAlbum: vi.fn(),
-  onOpenArtist: vi.fn(),
-  onOpenRadioSeries: vi.fn(),
-  onOpenRadioShow: vi.fn(),
-  onOpenTrackAlbum: vi.fn(),
-  onPlayTrack: vi.fn(),
-  onPlayTracks: vi.fn(),
-  onQueueTrack: vi.fn(),
-  onQueueTracks: vi.fn(),
-  onRefreshFavorites: vi.fn(),
-  onToggleFavorite: vi.fn(),
-  onTogglePlayback: vi.fn(),
-  onToggleRadioFavorite: vi.fn(),
-  playing: false,
-} as const;
-
 function renderSavedLibrary(includeSecondPlaylist = false) {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      mutations: { retry: false },
-      queries: { retry: false },
+  return renderSavedLibraryRoute({
+    initialEntry: "/playlists",
+    seedQueryClient: (queryClient) => {
+      queryClient.setQueryData(
+        PLAYLISTS_QUERY_KEY,
+        includeSecondPlaylist ? [summary, secondSummary] : [summary],
+      );
+      queryClient.setQueryData(playlistQueryKey(summary.id), detail);
+      if (includeSecondPlaylist) {
+        queryClient.setQueryData(
+          playlistQueryKey(secondSummary.id),
+          secondDetail,
+        );
+      }
     },
   });
-  queryClient.setQueryData(
-    PLAYLISTS_QUERY_KEY,
-    includeSecondPlaylist ? [summary, secondSummary] : [summary],
-  );
-  queryClient.setQueryData(playlistQueryKey(summary.id), detail);
-  if (includeSecondPlaylist) {
-    queryClient.setQueryData(playlistQueryKey(secondSummary.id), secondDetail);
-  }
-  const router = createCodaMemoryRouter(queryClient, ["/playlists"]);
-  render(
-    <CodaMotionProvider>
-      <QueryClientProvider client={queryClient}>
-        <RouterContextProvider router={router}>
-          <div data-coda-library-scroll>
-            <SavedLibraryView
-              mode="playlists"
-              transition={transition}
-              {...props}
-            />
-          </div>
-        </RouterContextProvider>
-      </QueryClientProvider>
-    </CodaMotionProvider>,
-  );
 }
 
 async function settleTransition(index: number) {
@@ -154,7 +123,27 @@ function expectReturnMarkers() {
 
 beforeEach(() => {
   transitions.pending.length = 0;
-  transition.mockClear();
+  startViewTransition.mockClear();
+  Object.defineProperty(document, "startViewTransition", {
+    configurable: true,
+    value: startViewTransition,
+  });
+});
+
+afterEach(() => {
+  document.documentElement.classList.remove(
+    "coda-transition--playlist-detail",
+    "coda-transition--playlist-detail-close",
+  );
+  if (originalStartViewTransition) {
+    Object.defineProperty(
+      document,
+      "startViewTransition",
+      originalStartViewTransition,
+    );
+  } else {
+    Reflect.deleteProperty(document, "startViewTransition");
+  }
 });
 
 describe("Saved Library playlist transition race cleanup", () => {

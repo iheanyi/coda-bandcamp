@@ -1,5 +1,3 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { RouterContextProvider } from "@tanstack/react-router";
 import type { InvokeArgs } from "@tauri-apps/api/core";
 import {
   act,
@@ -10,26 +8,37 @@ import {
 } from "@testing-library/react";
 import { afterAll, beforeEach, expect, it, vi } from "vitest";
 
-import { CodaMotionProvider } from "@/MotionProvider";
-import { createCodaMemoryRouter } from "@/router";
 import {
   installTauriEventPluginTestInternals,
   readTauriInvokeArguments,
   tauriString,
 } from "@/test/tauriInvoke";
+import {
+  commonProps,
+  renderSavedLibraryRoute,
+} from "@/test/savedLibraryViewTestHarness";
 import type { Album, LocalFavoriteCollection } from "@/types";
+
+type CoverArtOrderingReceipt = Readonly<{ sequence: string }>;
 
 const artworkBridge = {
   convertFileSrc: vi.fn(
     (path: string, protocol: string) => `${protocol}:${path}`,
   ),
-  invalidate: vi.fn<(coverArtId: string) => Promise<void>>(),
+  invalidate: vi.fn<(coverArtId: string) => Promise<CoverArtOrderingReceipt>>(),
   listen: vi.fn<() => Promise<number>>(),
 };
 
 import { clearCoverArtRendererState } from "@/coverArtSource";
 import { CoverArt } from "@/features/artwork/CoverArt";
-import { FavoritesScreen } from "@/features/saved-library";
+
+let nextOrderingSequence = 1n;
+
+function takeOrderingReceipt() {
+  const sequence = nextOrderingSequence;
+  nextOrderingSequence += 1n;
+  return { sequence: sequence.toString() };
+}
 
 const directArtworkUrl = "https://bandcamp.com/direct-expired.jpg";
 const laterArtworkUrl = "https://bandcamp.com/later-direct-cover.jpg";
@@ -102,40 +111,27 @@ const actions = {
   onToggleRadioFavorite: vi.fn(),
 };
 
-function screenFor(favorites: LocalFavoriteCollection) {
-  return (
-    <FavoritesScreen
-      {...actions}
-      favorites={favorites}
-      favoritesLoading={false}
-      favoritesLocal
-      onNotify={vi.fn()}
-      playing={false}
-    />
-  );
+function favoriteRuntime(favorites: LocalFavoriteCollection) {
+  return {
+    ...commonProps,
+    ...actions,
+    favorites,
+    favoritesLocal: true,
+    onNotify: vi.fn(),
+  };
 }
 
-function testTree(
-  queryClient: QueryClient,
-  favorites: LocalFavoriteCollection,
-) {
-  const router = createCodaMemoryRouter(queryClient, ["/favorites"]);
-  return (
-    <CodaMotionProvider>
-      <QueryClientProvider client={queryClient}>
-        <RouterContextProvider router={router}>
-          {screenFor(favorites)}
-        </RouterContextProvider>
-      </QueryClientProvider>
-    </CodaMotionProvider>
-  );
+function renderFavoriteRoute(favorites: LocalFavoriteCollection) {
+  return renderSavedLibraryRoute({ runtime: favoriteRuntime(favorites) });
 }
 
 beforeEach(() => {
   installArtworkBridge();
   act(() => clearCoverArtRendererState());
   artworkBridge.convertFileSrc.mockClear();
-  artworkBridge.invalidate.mockReset().mockResolvedValue(undefined);
+  artworkBridge.invalidate
+    .mockReset()
+    .mockImplementation(() => Promise.resolve(takeOrderingReceipt()));
   artworkBridge.listen.mockReset().mockResolvedValue(1);
   Object.values(actions).forEach((action) => action.mockReset());
 });
@@ -145,16 +141,12 @@ afterAll(() => {
   Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
 });
 
-it("reveals cold authenticated Favorite artwork over its base color", () => {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+it("reveals cold authenticated Favorite artwork over its base color", async () => {
+  renderFavoriteRoute(favoriteCollection());
 
-  render(testTree(queryClient, favoriteCollection()));
-
-  const artwork = screen
-    .getByRole("link", { name: "Open Mirage" })
-    .querySelector<HTMLElement>("[data-slot=cover]");
+  const artwork = (
+    await screen.findByRole("link", { name: "Open Mirage" })
+  ).querySelector<HTMLElement>("[data-slot=cover]");
   const image = artwork?.querySelector("img");
   expect(image?.getAttribute("src")).toMatch(
     /^coda-cover:\/v1\/600\/album-cover-id\?v=0&s=[a-f0-9]{32}$/,
@@ -175,21 +167,18 @@ it("reveals cold authenticated Favorite artwork over its base color", () => {
   expect(image).not.toHaveAttribute("data-cover-art-reveal");
 });
 
-it("shares painted local sources across collection and Favorite remounts", () => {
+it("shares painted local sources across collection and Favorite remounts", async () => {
   const sourceAlbum = favoriteCollection().albums[0];
   const primer = render(<CoverArt album={sourceAlbum} size="small" />);
   const primerImage = screen.getByRole("img", { name: "Mirage cover" });
   fireEvent.load(primerImage);
   primer.unmount();
 
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  render(testTree(queryClient, favoriteCollection()));
+  renderFavoriteRoute(favoriteCollection());
 
-  const image = screen
-    .getByRole("link", { name: "Open Mirage" })
-    .querySelector("img");
+  const image = (
+    await screen.findByRole("link", { name: "Open Mirage" })
+  ).querySelector("img");
   expect(image).toHaveAttribute("loading", "eager");
   expect(image).toHaveAttribute("decoding", "sync");
   expect(image).not.toHaveAttribute("data-cover-art-pending");
@@ -197,13 +186,8 @@ it("shares painted local sources across collection and Favorite remounts", () =>
 });
 
 it("invalidates failed Favorite artwork once, then falls back without a loop", async () => {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  const view = render(
-    testTree(queryClient, favoriteCollection(directArtworkUrl)),
-  );
-  const releaseLink = screen.getByRole("link", { name: "Open Mirage" });
+  const view = renderFavoriteRoute(favoriteCollection(directArtworkUrl));
+  const releaseLink = await screen.findByRole("link", { name: "Open Mirage" });
   let artwork = releaseLink.querySelector<HTMLElement>("[data-slot=cover]");
   const directImage = artwork?.querySelector("img");
   const initialSource = directImage?.getAttribute("src");
@@ -241,7 +225,8 @@ it("invalidates failed Favorite artwork once, then falls back without a loop", a
     artwork?.querySelector("[data-favorite-artwork-fallback]"),
   ).toBeInTheDocument();
 
-  view.rerender(testTree(queryClient, favoriteCollection(laterArtworkUrl)));
+  view.rerenderRuntime(favoriteRuntime(favoriteCollection(laterArtworkUrl)));
+  await screen.findByRole("link", { name: "Open Mirage" });
   artwork = screen
     .getByRole("link", { name: "Open Mirage" })
     .querySelector<HTMLElement>("[data-slot=cover]");

@@ -2,10 +2,12 @@ export {
   FavoritesScreen,
   PlaylistDetailScreen,
   PlaylistsScreen,
-  type FavoritesScreenProps,
-  type PlaylistDetailScreenProps,
-  type PlaylistsScreenProps,
-} from "@/SavedLibraryView";
+} from "./SavedLibraryRoutes";
+export type {
+  FavoritesScreenProps,
+  PlaylistDetailScreenProps,
+  PlaylistsScreenProps,
+} from "./savedLibraryTypes";
 export {
   type SavedLibraryRuntimeValue,
   useSavedLibraryRuntime,
