@@ -3,7 +3,7 @@ import type { QueryClient } from "@tanstack/react-query";
 
 import type { ToastNotifier } from "@/components/ui/toastManager";
 import type { LibrarySessionCommands } from "@/features/library-session";
-import type { DetailNavigationController } from "@/features/navigation/useDetailNavigationController";
+import type { DetailNavigationController } from "@/features/navigation/useDetailNavigation";
 import { tracksForArtistGroupAlbum, type ArtistGroup } from "@/libraryBrowse";
 import {
   cachedAlbumTracks,

@@ -4,12 +4,13 @@ import {
   parseAlbumIdParam,
   validateCollectionSearch,
 } from "@/routing/routeContracts";
+import type { OwnDataValue } from "@/ownData";
 
 export type LibraryArtistRouteSearch = CollectionRouteSearch &
   Readonly<{ albumId?: AlbumId }>;
 
-export function libraryArtistRouteSearch<Search>(
-  value: Search,
+export function libraryArtistRouteSearch(
+  value: OwnDataValue,
   sourceAlbumId?: string,
 ): LibraryArtistRouteSearch {
   const search: LibraryArtistRouteSearch = {

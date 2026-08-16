@@ -1,104 +1,84 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-  createCodaDataBridge,
-  fetchFavorites,
-  reconcileFavoriteTracks,
-  setFavorite,
-} from "./lib";
+  parseNativeFavoriteCollection,
+  parseNativeFavoriteMutationResult,
+  parseNativeFavoriteTrackReconciliation,
+} from "./data-bridge/favorites";
 
-const mocks = {
-  invoke: vi.fn(),
+const nativeAlbum = {
+  id: "album-1",
+  title: "Soft Focus",
+  artist: "Night Archive",
+  songCount: 1,
+  duration: 245,
 };
-const bridge = createCodaDataBridge(mocks.invoke);
 
-describe("Favorites bridge", () => {
-  beforeEach(() => {
-    mocks.invoke.mockReset();
-  });
+const nativeTrack = {
+  id: "song-1",
+  title: "Afterimage",
+  artist: "Night Archive",
+  album: "Soft Focus",
+  albumId: "album-1",
+  duration: 245,
+  track: 1,
+};
 
-  it("hydrates server-starred albums and tracks", async () => {
-    mocks.invoke.mockResolvedValue({
+describe("Favorites native decoders", () => {
+  it("decodes bounded server-starred albums and tracks", () => {
+    expect(parseNativeFavoriteCollection({
       albumIds: ["album-1"],
       songIds: ["song-1"],
-      albums: [{
-        id: "album-1",
-        title: "Soft Focus",
-        artist: "Night Archive",
-        songCount: 1,
-        duration: 245,
-      }],
-      tracks: [{
-        id: "song-1",
-        title: "Afterimage",
-        artist: "Night Archive",
-        album: "Soft Focus",
-        albumId: "album-1",
-        duration: 245,
-        track: 1,
-      }],
-    });
-
-    await expect(fetchFavorites(bridge)).resolves.toMatchObject({
+      albums: [nativeAlbum],
+      tracks: [nativeTrack],
+    })).toEqual({
       albumIds: ["album-1"],
       songIds: ["song-1"],
-      albums: [expect.objectContaining({
-        id: "album-1",
-        palette: expect.any(Array),
-      })],
-      tracks: [expect.objectContaining({
-        id: "song-1",
-        palette: expect.any(Array),
-      })],
+      albums: [nativeAlbum],
+      tracks: [nativeTrack],
     });
-    expect(mocks.invoke).toHaveBeenCalledWith("fetch_favorites");
   });
 
-  it("passes a bounded favorite mutation to the native boundary", async () => {
-    mocks.invoke.mockResolvedValue({
+  it("decodes accepted mutation verification without copying extra data", () => {
+    expect(parseNativeFavoriteMutationResult({
+      accepted: true,
+      verification: "notRequired",
+      favorite: false,
+      credentials: "must-not-cross-the-bridge",
+    })).toEqual({
       accepted: true,
       verification: "notRequired",
       favorite: false,
     });
-
-    await setFavorite(
-      { id: "album-1", kind: "album", favorite: false },
-      bridge,
-    );
-
-    expect(mocks.invoke).toHaveBeenCalledWith("set_favorite", {
-      input: { id: "album-1", kind: "album", favorite: false },
-    });
   });
 
-  it("hydrates bounded track reconciliation results", async () => {
-    mocks.invoke.mockResolvedValue({
+  it("decodes bounded track reconciliation results", () => {
+    expect(parseNativeFavoriteTrackReconciliation({
       tracks: [{
-        id: "song-1",
-        title: "Afterimage",
-        artist: "Night Archive",
-        album: "Soft Focus",
-        albumId: "album-1",
-        duration: 245,
-        track: 1,
+        ...nativeTrack,
+        starredAt: "2026-08-12T18:01:00Z",
+      }],
+      unstarredIds: ["song-2"],
+      unavailableTrackCount: 1,
+    })).toEqual({
+      tracks: [{
+        ...nativeTrack,
         starredAt: "2026-08-12T18:01:00Z",
       }],
       unstarredIds: ["song-2"],
       unavailableTrackCount: 1,
     });
+  });
 
-    await expect(reconcileFavoriteTracks(
-      [{ id: "song-1", albumId: "album-1" }],
-      bridge,
-    )).resolves.toMatchObject({
-      tracks: [expect.objectContaining({
-        id: "song-1",
-        palette: expect.any(Array),
-      })],
-      unstarredIds: ["song-2"],
-      unavailableTrackCount: 1,
-    });
-    expect(mocks.invoke).toHaveBeenCalledWith("reconcile_favorite_tracks", {
-      tracks: [{ id: "song-1", albumId: "album-1" }],
-    });
+  it("fails closed on rejected or oversized native values", () => {
+    expect(() => parseNativeFavoriteMutationResult({
+      accepted: false,
+      verification: "notRequired",
+    })).toThrow("set_favorite.accepted");
+    expect(() => parseNativeFavoriteCollection({
+      albumIds: ["a".repeat(513)],
+      songIds: [],
+      albums: [],
+      tracks: [],
+    })).toThrow("fetch_favorites.albumIds[0]");
   });
 });

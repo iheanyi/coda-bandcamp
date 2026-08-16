@@ -100,7 +100,7 @@ describe("native player-state contract negotiation", () => {
       if (command === "player_state_contract_version") {
         return Promise.reject(new Error("Command not found"));
       }
-      if (command === "save_player_state") return Promise.resolve(payload);
+      if (command === "save_player_state") return Promise.resolve();
       if (command === "checkpoint_player_state") return Promise.resolve(true);
       return Promise.reject(new Error(`Unexpected command: ${command}`));
     });
@@ -137,7 +137,7 @@ describe("native player-state contract negotiation", () => {
     mockIPC((command, payload) => {
       recordInvocation(command, payload);
       if (command === "player_state_contract_version") return Promise.resolve(2);
-      if (command === "save_player_state") return Promise.resolve(payload);
+      if (command === "save_player_state") return Promise.resolve();
       return Promise.reject(new Error(`Unexpected command: ${command}`));
     });
     const { savePlayerState } = await import("./lib");
@@ -164,7 +164,7 @@ describe("native player-state contract negotiation", () => {
     mockIPC((command, payload) => {
       recordInvocation(command, payload);
       if (command === "player_state_contract_version") return Promise.resolve(2);
-      if (command === "save_player_state") return Promise.resolve(payload);
+      if (command === "save_player_state") return Promise.resolve();
       return Promise.reject(new Error(`Unexpected command: ${command}`));
     });
     const { savePlayerState } = await import("./lib");

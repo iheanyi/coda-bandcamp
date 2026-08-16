@@ -1,3 +1,4 @@
+import type { OwnDataValue } from "./ownData";
 import type { Album, ItemDate } from "./types";
 
 const BANDCAMP_DATE_PATTERN =
@@ -233,11 +234,11 @@ export function sortAlbumsByNewestAdded<T extends AddedAlbum>(
     .map(({ album }) => album);
 }
 
-function isValidItemDatePart<Value>(
-  value: Value,
+function isValidItemDatePart(
+  value: OwnDataValue,
   minimum: number,
   maximum: number,
-): value is Value & (number | undefined) {
+): value is number | undefined {
   if (value === undefined) return true;
   const numericValue = Number(value);
   return (
@@ -248,7 +249,7 @@ function isValidItemDatePart<Value>(
   );
 }
 
-export function isItemDate<Value>(value: Value): value is Value & ItemDate {
+export function isItemDate(value: OwnDataValue): value is ItemDate {
   if (!(value instanceof Object) || Array.isArray(value) || !("year" in value)) {
     return false;
   }

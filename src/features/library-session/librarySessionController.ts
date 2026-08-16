@@ -27,6 +27,7 @@ import {
   awaitLibraryStartupStep,
   LIBRARY_STARTUP_STEP_TIMEOUT_MS,
 } from "@/libraryStartup";
+import { isStringValue } from "@/ownData";
 import type { Album, Track } from "@/types";
 
 export const LIBRARY_METADATA_CONCURRENCY = 6;
@@ -228,18 +229,19 @@ function freezeState(state: LibrarySessionState): LibrarySessionState {
   return Object.freeze({ artwork, connection: state.connection, sync });
 }
 
-function isPrimitiveString<Value>(value: Value): value is Value & string {
-  return (
-    Object.prototype.toString.call(value) === "[object String]" &&
-    value === String(value)
-  );
+function isAlbumIdString(value: Album | string): value is string {
+  return typeof value === "string";
+}
+
+function isPrimitiveErrorMessage(cause: unknown): cause is string {
+  return isStringValue(cause);
 }
 
 function errorMessage(cause: unknown, fallback: string): string {
   const message =
     cause instanceof Error
       ? cause.message
-      : isPrimitiveString(cause)
+      : isPrimitiveErrorMessage(cause)
         ? cause
         : fallback;
   const normalized = message
@@ -807,7 +809,7 @@ export function createLibrarySessionController({
     preloadAlbum: (albumOrId) => {
       if (state.connection !== "connected" || disconnectRequest) return;
       const album =
-        isPrimitiveString(albumOrId)
+        isAlbumIdString(albumOrId)
           ? queryClient
               .getQueryData<Album[]>(libraryQueryKey)
               ?.find((candidate) => candidate.id === albumOrId)

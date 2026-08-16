@@ -1,6 +1,7 @@
 import { fetchDailyArticle, paletteFor } from "@/lib";
 import { DAILY_CATEGORIES } from "@/dailyCatalog";
 export { DAILY_CATEGORIES, DAILY_CATEGORY_GROUPS } from "@/dailyCatalog";
+import { isStringValue, type OwnDataValue } from "@/ownData";
 import type {
   DailyArticle,
   DailyArticleSummary,
@@ -10,31 +11,21 @@ import type {
   Track,
 } from "@/types";
 
-function primitiveString<Value>(value: Value): string | undefined {
-  if (
-    Object.prototype.toString.call(value) !== "[object String]" ||
-    Object(value) === value
-  ) {
-    return undefined;
-  }
-  return String(value);
-}
-
-export function isDailyCategory<Value>(
-  value: Value,
-): value is Value & DailyCategory {
+export function isDailyCategory(value: OwnDataValue): value is DailyCategory {
   return DAILY_CATEGORIES.some((category) => category.value === value);
 }
 
-export function parseDailyCategory<Value>(value: Value): DailyCategory {
+export function parseDailyCategory(value: string): DailyCategory;
+export function parseDailyCategory(value: OwnDataValue): DailyCategory {
   if (!isDailyCategory(value)) {
     throw new TypeError("Bandcamp Daily category is invalid");
   }
   return value;
 }
 
-export function parseDailyArticleSlug<Value>(value: Value): string {
-  const slug = primitiveString(value);
+export function parseDailyArticleSlug(value: string): string;
+export function parseDailyArticleSlug(value: OwnDataValue): string {
+  const slug = isStringValue(value) ? value : undefined;
   if (
     slug === undefined ||
     slug.length === 0 ||
@@ -46,17 +37,16 @@ export function parseDailyArticleSlug<Value>(value: Value): string {
   return slug;
 }
 
-export function parseDailyArticleSection<Value>(value: Value): string {
+export function parseDailyArticleSection(value: string): string;
+export function parseDailyArticleSection(value: OwnDataValue): string {
   if (!isDailyArticleSection(value)) {
     throw new TypeError("Bandcamp Daily article section is invalid");
   }
   return String(value);
 }
 
-export function isDailyArticleSection<Value>(
-  value: Value,
-): value is Value & string {
-  const section = primitiveString(value);
+export function isDailyArticleSection(value: OwnDataValue): value is string {
+  const section = isStringValue(value) ? value : undefined;
   return (
     section !== undefined &&
     section.length > 0 &&

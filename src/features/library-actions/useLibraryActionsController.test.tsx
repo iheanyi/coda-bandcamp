@@ -107,7 +107,7 @@ function renderController(
     open: vi.fn(async (request) => {
       if (options.autoCommitNavigation !== false) request.beforeCommit?.();
       await options.navigationFinish;
-      return "navigated" as const;
+      return "rendered" as const;
     }),
   } satisfies LibraryActionsControllerOptions["detailNavigation"];
   const queryClient = options.queryClient ?? new QueryClient();

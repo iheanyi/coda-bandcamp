@@ -1,29 +1,38 @@
 import type { InvokeArgs } from "@tauri-apps/api/core";
 
+import {
+  isBooleanValue,
+  isDataArray,
+  isNumberValue,
+  isStringValue,
+  type OwnDataRecord,
+  type OwnDataValue,
+} from "../ownData";
+
 export type TauriInvokeTestArguments = Readonly<{
-  coverArtId?: unknown;
-  cursor?: unknown;
-  input?: unknown;
-  name?: unknown;
-  onProgress?: unknown;
-  playlistId?: unknown;
-  seriesId?: unknown;
-  showId?: unknown;
-  songIds?: unknown;
-  token?: unknown;
-  trackId?: unknown;
-  url?: unknown;
+  coverArtId?: OwnDataValue;
+  cursor?: OwnDataValue;
+  input?: OwnDataValue;
+  name?: OwnDataValue;
+  onProgress?: OwnDataValue;
+  playlistId?: OwnDataValue;
+  seriesId?: OwnDataValue;
+  showId?: OwnDataValue;
+  songIds?: OwnDataValue;
+  token?: OwnDataValue;
+  trackId?: OwnDataValue;
+  url?: OwnDataValue;
 }>;
 
 export type DiscoverInvokeTestInput = Readonly<{
-  cursor?: unknown;
-  sort?: unknown;
-  tag?: unknown;
+  cursor?: OwnDataValue;
+  sort?: OwnDataValue;
+  tag?: OwnDataValue;
 }>;
 
-function isDiscoverInvokeTestInput<Value>(
-  value: Value,
-): value is Value & DiscoverInvokeTestInput {
+function isDiscoverInvokeTestInput(
+  value: OwnDataValue,
+): value is OwnDataRecord {
   return value !== null && Object(value) === value && !Array.isArray(value);
 }
 
@@ -39,19 +48,24 @@ export function readTauriInvokeArguments(
     return {};
   }
   return {
-    coverArtId: args.coverArtId,
-    cursor: args.cursor,
-    input: args.input,
-    name: args.name,
-    onProgress: args.onProgress,
-    playlistId: args.playlistId,
-    seriesId: args.seriesId,
-    showId: args.showId,
-    songIds: args.songIds,
-    token: args.token,
-    trackId: args.trackId,
-    url: args.url,
+    coverArtId: ownDataInvokeField(args.coverArtId),
+    cursor: ownDataInvokeField(args.cursor),
+    input: ownDataInvokeField(args.input),
+    name: ownDataInvokeField(args.name),
+    onProgress: ownDataInvokeField(args.onProgress),
+    playlistId: ownDataInvokeField(args.playlistId),
+    seriesId: ownDataInvokeField(args.seriesId),
+    showId: ownDataInvokeField(args.showId),
+    songIds: ownDataInvokeField(args.songIds),
+    token: ownDataInvokeField(args.token),
+    trackId: ownDataInvokeField(args.trackId),
+    url: ownDataInvokeField(args.url),
   };
+}
+
+function ownDataInvokeField<Value>(value: Value): OwnDataValue {
+  // SAFETY: Tauri test invoke bags are JSON-compatible command arguments.
+  return value as OwnDataValue;
 }
 
 export function installTauriEventPluginTestInternals(): void {
@@ -78,44 +92,34 @@ export function readDiscoverInvokeInput(
 }
 
 export function tauriString<Value>(value: Value, field: string): string {
-  if (
-    Object.prototype.toString.call(value) !== "[object String]" ||
-    Object(value) === value
-  ) {
+  if (!isStringValue(value)) {
     throw new TypeError(`Tauri test argument ${field} is invalid`);
   }
-  return String(value);
+  return value;
 }
 
 export function tauriNumber<Value>(value: Value, field: string): number {
-  if (
-    Object.prototype.toString.call(value) !== "[object Number]" ||
-    Object(value) === value
-  ) {
+  if (!isNumberValue(value)) {
     throw new TypeError(`Tauri test argument ${field} is invalid`);
   }
-  const number = Number(value);
-  if (!Number.isSafeInteger(number)) {
+  if (!Number.isSafeInteger(value)) {
     throw new TypeError(`Tauri test argument ${field} is invalid`);
   }
-  return number;
+  return value;
 }
 
 export function tauriBoolean<Value>(value: Value, field: string): boolean {
-  if (
-    Object.prototype.toString.call(value) !== "[object Boolean]" ||
-    Object(value) === value
-  ) {
+  if (!isBooleanValue(value)) {
     throw new TypeError(`Tauri test argument ${field} is invalid`);
   }
-  return Boolean(value);
+  return value;
 }
 
 export function tauriStringList<Value>(
   value: Value,
   field: string,
 ): string[] {
-  if (!Array.isArray(value)) {
+  if (!isDataArray(value)) {
     throw new TypeError(`Tauri test argument ${field} is invalid`);
   }
   return value.map((entry) => tauriString(entry, field));
@@ -125,7 +129,7 @@ export function tauriNumberList<Value>(
   value: Value,
   field: string,
 ): number[] {
-  if (!Array.isArray(value)) {
+  if (!isDataArray(value)) {
     throw new TypeError(`Tauri test argument ${field} is invalid`);
   }
   return value.map((entry) => tauriNumber(entry, field));
