@@ -1,7 +1,10 @@
 import { act, render, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { createPlaybackClock } from "./playbackClock";
-import type { MiniPlayerSnapshot } from "./miniPlayer";
+import type {
+  MiniPlayerSnapshot,
+  MiniPlayerWireValue,
+} from "./miniPlayer";
 import {
   MiniPlayerBridge,
   type MiniPlayerEventBridge,
@@ -11,7 +14,7 @@ import type { Track } from "./types";
 class MemoryMiniPlayerBridge implements MiniPlayerEventBridge {
   snapshots: MiniPlayerSnapshot[] = [];
   requestState?: () => void;
-  command?: (payload: unknown) => void;
+  command?: (payload: MiniPlayerWireValue) => void;
   requestDisposed = vi.fn();
   commandDisposed = vi.fn();
 
@@ -24,7 +27,9 @@ class MemoryMiniPlayerBridge implements MiniPlayerEventBridge {
     return this.requestDisposed;
   };
 
-  listenForCommand = async (handler: (payload: unknown) => void) => {
+  listenForCommand = async (
+    handler: (payload: MiniPlayerWireValue) => void,
+  ) => {
     this.command = handler;
     return this.commandDisposed;
   };

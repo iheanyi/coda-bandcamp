@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterContextProvider } from "@tanstack/react-router";
+import type { InvokeArgs } from "@tauri-apps/api/core";
 import {
   fireEvent,
   render,
@@ -10,23 +11,59 @@ import {
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createCodaMemoryRouter } from "@/router";
-import type { DiscoverFilters, Track } from "@/types";
-
-const mocks = vi.hoisted(() => ({
-  fetchDiscover: vi.fn(),
-  openBandcampUrl: vi.fn(),
-}));
-
-vi.mock("@/lib", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib")>();
-  return {
-    ...actual,
-    fetchDiscover: mocks.fetchDiscover,
-    openBandcampUrl: mocks.openBandcampUrl,
-  };
-});
-
+import { validateDiscoverSearch } from "@/routing/routeContracts";
+import {
+  readDiscoverInvokeInput,
+  tauriString,
+} from "@/test/tauriInvoke";
+import type { DiscoverFilters, DiscoverPage, Track } from "@/types";
 import DiscoverView, { DiscoverScreen } from "./DiscoverView";
+
+const mocks = {
+  fetchDiscover:
+    vi.fn<
+      (filters: DiscoverFilters, cursor: string) => Promise<DiscoverPage>
+    >(),
+};
+
+function installDiscoverBridge(): void {
+  Object.defineProperty(window, "__TAURI_INTERNALS__", {
+    configurable: true,
+    value: {
+      invoke: async (command: string, args?: InvokeArgs) => {
+        if (command !== "discover") {
+          throw new Error(`Unexpected Discover command: ${command}`);
+        }
+        const input = readDiscoverInvokeInput(args);
+        const filters = validateDiscoverSearch({
+          sort: input.sort,
+          tag: input.tag,
+        });
+        return mocks.fetchDiscover(
+          filters,
+          tauriString(input.cursor, "cursor"),
+        );
+      },
+    },
+  });
+}
+
+function resizeObserverEntry(
+  target: Element,
+  bounds: DOMRectReadOnly,
+): ResizeObserverEntry {
+  const size: ResizeObserverSize = {
+    blockSize: bounds.height,
+    inlineSize: bounds.width,
+  };
+  return {
+    borderBoxSize: [size],
+    contentBoxSize: [size],
+    contentRect: bounds,
+    devicePixelContentBoxSize: [size],
+    target,
+  };
+}
 
 function renderDiscover(
   onQueue = vi.fn(),
@@ -73,7 +110,7 @@ function renderDiscover(
 }
 
 beforeEach(() => {
-  mocks.openBandcampUrl.mockReset();
+  installDiscoverBridge();
   mocks.fetchDiscover.mockReset().mockResolvedValue({
     results: [
       {
@@ -212,10 +249,10 @@ describe("Discover", () => {
     const actionOverlay = releaseCard.querySelector(
       '[data-slot="card-action-overlay"]',
     );
-    expect(actionOverlay).toBeInTheDocument();
-    expect(
-      within(actionOverlay as HTMLElement).getAllByRole("button"),
-    ).toHaveLength(1);
+    if (!(actionOverlay instanceof HTMLElement)) {
+      throw new Error("Expected Discover card action overlay");
+    }
+    expect(within(actionOverlay).getAllByRole("button")).toHaveLength(1);
     expect(
       within(releaseCard).queryByRole("button", {
         name: "Open Blue Hours on Bandcamp",
@@ -414,8 +451,6 @@ describe("Discover", () => {
       }),
       artwork,
     );
-    expect(mocks.openBandcampUrl).not.toHaveBeenCalled();
-
     fireEvent.click(screen.getByRole("button", { name: "Signal Garden" }));
 
     expect(onOpenArtist).toHaveBeenCalledWith(expect.objectContaining({
@@ -423,7 +458,6 @@ describe("Discover", () => {
       artist: "Signal Garden",
     }));
     expect(onPlay).not.toHaveBeenCalled();
-    expect(mocks.openBandcampUrl).not.toHaveBeenCalled();
   });
 
   it("keeps an invalid release identity as a safe action instead of an unsafe link", async () => {
@@ -553,14 +587,7 @@ describe("Discover", () => {
         if (this.observed.has(target)) return;
         this.observed.add(target);
         const bounds = target.getBoundingClientRect();
-        this.callback([{
-          borderBoxSize: [{
-            blockSize: bounds.height,
-            inlineSize: bounds.width,
-          }],
-          contentRect: bounds,
-          target,
-        } as unknown as ResizeObserverEntry], this);
+        this.callback([resizeObserverEntry(target, bounds)], this);
       }
       unobserve() {}
     }

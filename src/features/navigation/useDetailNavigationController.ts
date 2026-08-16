@@ -33,6 +33,7 @@ import {
 import {
   awaitRouterBackAfterRender,
   awaitRouterNavigationAfterRender,
+  type RenderedNavigationRouter,
 } from "./routeNavigationAdapters";
 import { awaitVirtualReturnTrigger } from "./virtualReturnEndpoint";
 import {
@@ -104,6 +105,12 @@ export type DetailNavigationController = Readonly<{
   transitionPrimary: (update: CodaViewTransitionUpdate) => Promise<void>;
 }>;
 
+export type DetailNavigationRuntime = Readonly<{
+  navigate: ReturnType<typeof useNavigate>;
+  router: RenderedNavigationRouter;
+  transition: typeof transitionCodaView;
+}>;
+
 type DetailCoordinator = {
   focusedIdentity: number;
   navigation: NavigationTransactionState;
@@ -120,19 +127,19 @@ type ManualFocusRequest = Readonly<{
   target: CoordinatedDetailDestination;
 }>;
 
-const DESTINATION_HEADING_IDS: Record<CoordinatedDetailKind, string> = {
+const DESTINATION_HEADING_IDS = {
   album: "album-detail-heading",
   artist: "artist-detail-heading",
   "discover-release": "discover-release-heading",
   "now-playing": "now-playing-heading",
-};
+} satisfies Record<CoordinatedDetailKind, string>;
 
-const ROUTE_KEYS: Record<CoordinatedDetailKind, string> = {
+const ROUTE_KEYS = {
   album: "album-detail",
   artist: "artist-detail",
   "discover-release": "discover-detail",
   "now-playing": "now-playing-detail",
-};
+} satisfies Record<CoordinatedDetailKind, string>;
 
 const DETAIL_TRANSITIONS = {
   album: {
@@ -166,6 +173,12 @@ const DETAIL_TRANSITIONS = {
 
 const MAX_DOM_RESTORE_ATTEMPTS = 8;
 
+function isAnimationFrameRequester<Value>(
+  value: Value,
+): value is Value & ((callback: FrameRequestCallback) => number) {
+  return Object.prototype.toString.call(value) === "[object Function]";
+}
+
 function createCoordinator(): DetailCoordinator {
   return {
     focusedIdentity: 0,
@@ -176,13 +189,13 @@ function createCoordinator(): DetailCoordinator {
   };
 }
 
-function createDetailCoordinators(): DetailCoordinators {
+function createDetailCoordinators() {
   return {
     album: createCoordinator(),
     artist: createCoordinator(),
     "discover-release": createCoordinator(),
     "now-playing": createCoordinator(),
-  };
+  } satisfies DetailCoordinators;
 }
 
 function targetFromRequest(
@@ -192,13 +205,16 @@ function targetFromRequest(
     case "album":
       return { kind: "album", albumId: request.albumId };
     case "artist":
-      return {
-        kind: "artist",
-        artistKey: request.artistKey,
-        ...(request.sourceAlbumId
-          ? { sourceAlbumId: request.sourceAlbumId }
-          : {}),
-      };
+      return request.sourceAlbumId
+        ? {
+            kind: "artist",
+            artistKey: request.artistKey,
+            sourceAlbumId: request.sourceAlbumId,
+          }
+        : {
+            kind: "artist",
+            artistKey: request.artistKey,
+          };
     case "discover-release":
       return { kind: "discover-release", releaseId: request.releaseId };
     case "now-playing":
@@ -368,6 +384,17 @@ export function useDetailNavigationController(
 ): DetailNavigationController {
   const navigate = useNavigate();
   const router = useRouter();
+  return useDetailNavigationControllerWithRuntime(destination, {
+    navigate,
+    router,
+    transition: transitionCodaView,
+  });
+}
+
+export function useDetailNavigationControllerWithRuntime(
+  destination: CodaRouteDestination,
+  { navigate, router, transition }: DetailNavigationRuntime,
+): DetailNavigationController {
   const scrollRootRef = useRef<HTMLElement>(null);
   const pendingScrollTopRef = useRef<number | undefined>(undefined);
   const coordinatorsRef = useRef<DetailCoordinators>(
@@ -406,13 +433,18 @@ export function useDetailNavigationController(
           await awaitRouterNavigationAfterRender(router, () =>
             navigate({
               params: { artistKey: request.artistKey },
-              search: {
-                ...(request.collectionSearch ?? destination.collectionSearch),
-                mode: "artists",
-                ...(request.sourceAlbumId
-                  ? { albumId: request.sourceAlbumId }
-                  : {}),
-              },
+              search: request.sourceAlbumId
+                ? {
+                    ...(request.collectionSearch ??
+                      destination.collectionSearch),
+                    albumId: request.sourceAlbumId,
+                    mode: "artists",
+                  }
+                : {
+                    ...(request.collectionSearch ??
+                      destination.collectionSearch),
+                    mode: "artists",
+                  },
               to: "/collection/artists/$artistKey",
               viewTransition: false,
             }),
@@ -491,7 +523,7 @@ export function useDetailNavigationController(
         : () => {};
       activeSourceReleaseRef.current = clearMarkers;
       try {
-        await transitionCodaView(
+        await transition(
           async () => {
             request.beforeCommit?.();
             await commitNavigation(request);
@@ -524,7 +556,7 @@ export function useDetailNavigationController(
       }
       return "navigated";
     },
-    [commitNavigation, destination],
+    [commitNavigation, destination, transition],
   );
 
   const commitFallback = useCallback(
@@ -593,7 +625,7 @@ export function useDetailNavigationController(
       let releaseReturnDestination = () => {};
       const transitionKind = transitionKindForBack(detail, transaction);
       try {
-        await transitionCodaView(async () => {
+        await transition(async () => {
           if (router.history.canGoBack()) {
             await awaitRouterBackAfterRender(router);
           } else {
@@ -673,7 +705,7 @@ export function useDetailNavigationController(
         releaseReturnDestination();
       }
     },
-    [commitFallback, destination.detail, router],
+    [commitFallback, destination.detail, router, transition],
   );
 
   const back = useCallback<DetailNavigationController["back"]>(
@@ -698,8 +730,8 @@ export function useDetailNavigationController(
 
   const transitionPrimary = useCallback(
     (update: CodaViewTransitionUpdate) =>
-      transitionCodaView(update, "page-forward"),
-    [],
+      transition(update, "page-forward"),
+    [transition],
   );
 
   useLayoutEffect(() => {
@@ -742,8 +774,9 @@ export function useDetailNavigationController(
           return;
         }
         attempts += 1;
-        if (typeof window.requestAnimationFrame === "function") {
-          frame = window.requestAnimationFrame(run);
+        const requestFrame = window.requestAnimationFrame;
+        if (isAnimationFrameRequester(requestFrame)) {
+          frame = requestFrame.call(window, run);
         } else {
           timer = window.setTimeout(run, 0);
         }

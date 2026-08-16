@@ -5,7 +5,9 @@ import {
   type RadioShowId,
 } from "@/routing/routeContracts";
 
-export function radioSeriesId(value: unknown): RadioSeriesId | undefined {
+export function radioSeriesId(
+  value: number | undefined,
+): RadioSeriesId | undefined {
   try {
     return parseRadioSeriesIdParam(value);
   } catch {
@@ -13,7 +15,7 @@ export function radioSeriesId(value: unknown): RadioSeriesId | undefined {
   }
 }
 
-export function radioShowId(value: unknown): RadioShowId | undefined {
+export function radioShowId(value: number | undefined): RadioShowId | undefined {
   try {
     return parseRadioShowIdParam(value);
   } catch {

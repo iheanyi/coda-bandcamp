@@ -19,12 +19,16 @@ export type CurrentFavoriteControllerOptions = Readonly<{
   notify: ToastNotifier;
 }>;
 
+export type CurrentFavoriteController = Readonly<{
+  toggle: () => void;
+}>;
+
 /** Resolves the current queue item's Bandcamp or device-local Radio favorite identity. */
 export function useCurrentFavoriteController({
   currentTrack,
   favorites,
   notify,
-}: CurrentFavoriteControllerOptions): Readonly<{ toggle: () => void }> {
+}: CurrentFavoriteControllerOptions): CurrentFavoriteController {
   const queryClient = useQueryClient();
 
   const toggle = useCallback(() => {

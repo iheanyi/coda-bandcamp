@@ -47,16 +47,15 @@ function successfulMutation(
       favorite: input.favorite,
     };
   }
+  const favoriteTrack: Track = { ...track };
+  if (input.favorite) {
+    favoriteTrack.starredAt = "2026-08-12T18:01:00Z";
+  }
   return {
     accepted: true,
     verification: "verified",
     favorite: input.favorite,
-    track: {
-      ...track,
-      ...(input.favorite
-        ? { starredAt: "2026-08-12T18:01:00Z" }
-        : {}),
-    },
+    track: favoriteTrack,
   };
 }
 

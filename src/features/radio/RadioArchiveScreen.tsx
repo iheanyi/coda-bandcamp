@@ -57,7 +57,6 @@ import { showDate } from "./radioPresentationFormatting";
 import { radioShowId } from "./radioRouteIds";
 import type {
   RadioArchiveScreenProps,
-  RadioOpenShowRequest,
 } from "./radioScreenTypes";
 
 const RADIO_ARCHIVE_GRID_LAYOUTS = [
@@ -87,6 +86,8 @@ function RadioArchiveScreen({
   seriesId,
   onSelectSeries,
   onOpenShow,
+  openExternal = openBandcampUrl,
+  repository,
   returningArtworkId,
   seriesTravelSteps,
 }: RadioArchiveScreenProps) {
@@ -100,7 +101,9 @@ function RadioArchiveScreen({
       element?.parentElement ??
       null;
   }, []);
-  const showsQuery = useInfiniteQuery(radioShowsInfiniteQueryOptions(seriesId));
+  const showsQuery = useInfiniteQuery(
+    radioShowsInfiniteQueryOptions(seriesId, repository),
+  );
   const [busy, setBusy] = useState<{
     id: number;
     action: "play" | "queue";
@@ -127,7 +130,7 @@ function RadioArchiveScreen({
 
   const loadShow = useCallback(
     async (summary: RadioShowSummary) => {
-      const options = radioShowQueryOptions(summary.id);
+      const options = radioShowQueryOptions(summary.id, repository);
       const loaded = await queryClient.fetchQuery(options);
       const details =
         loaded.series || !summary.series
@@ -138,7 +141,7 @@ function RadioArchiveScreen({
       }
       return details;
     },
-    [queryClient],
+    [queryClient, repository],
   );
 
   const actOnShow = useCallback(
@@ -204,10 +207,10 @@ function RadioArchiveScreen({
 
   const openItem = useCallback((url: string) => {
     setActionError("");
-    void openBandcampUrl(url).catch((cause) => {
+    void openExternal(url).catch((cause) => {
       setActionError(String(cause).replace(/^Error:\s*/, ""));
     });
-  }, []);
+  }, [openExternal]);
 
   const actionFor = (show: RadioShowSummary) =>
     busy?.id === show.id ? busy.action : undefined;
@@ -249,15 +252,16 @@ function RadioArchiveScreen({
 
   useEffect(() => {
     const target = paginationRef.current;
+    const Observer = globalThis.IntersectionObserver;
     if (
       !target ||
       !showsQuery.hasNextPage ||
       showsQuery.isFetchingNextPage ||
-      typeof IntersectionObserver === "undefined"
+      !Observer
     ) {
       return;
     }
-    const observer = new IntersectionObserver(
+    const observer = new Observer(
       ([entry]) => {
         if (entry?.isIntersecting) void showsQuery.fetchNextPage();
       },

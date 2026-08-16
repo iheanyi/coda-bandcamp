@@ -78,9 +78,11 @@ function markDailyReturnDestination(
 export function DailyRouteNavigationProvider({
   adapter,
   children,
+  transition = transitionCodaView,
 }: Readonly<{
   adapter: DailyRouteNavigationAdapter;
   children: ReactNode;
+  transition?: typeof transitionCodaView;
 }>) {
   const navigationRef = useRef(createNavigationTransactionState());
   const activeSourceReleaseRef = useRef<(() => void) | undefined>(undefined);
@@ -131,7 +133,7 @@ export function DailyRouteNavigationProvider({
       ]);
       activeSourceReleaseRef.current = releaseSourceMarkers;
 
-      return transitionCodaView(
+      return transition(
         () =>
           adapter.goToArticle({
             articleSection: request.articleSection,
@@ -146,7 +148,7 @@ export function DailyRouteNavigationProvider({
         }
       });
     },
-    [adapter],
+    [adapter, transition],
   );
 
   const closeArticle = useCallback(
@@ -165,7 +167,7 @@ export function DailyRouteNavigationProvider({
       let releaseReturnDestination = () => {};
 
       try {
-        await transitionCodaView(
+        await transition(
           async () => {
             await adapter.goBack(category);
             const scrollRoot = document.querySelector<HTMLElement>(
@@ -205,7 +207,7 @@ export function DailyRouteNavigationProvider({
         releaseReturnDestination();
       }
     },
-    [adapter],
+    [adapter, transition],
   );
 
   useEffect(

@@ -4,6 +4,22 @@ const paintedCoverSources = new Set<string>();
 const paintedLocalCoverKeys = loadPaintedLocalCoverKeys();
 let persistenceQueued = false;
 
+type PaintedCoverWireRecord = {
+  [field: string]: PaintedCoverWireValue;
+};
+
+type PaintedCoverWireValue =
+  | string
+  | number
+  | boolean
+  | null
+  | PaintedCoverWireValue[]
+  | PaintedCoverWireRecord;
+
+function isPaintedCoverKey(value: PaintedCoverWireValue): value is string {
+  return String(value) === value && /^[a-f0-9]{8}$/.test(value);
+}
+
 function isLocalCoverSource(source: string): boolean {
   try {
     const url = new URL(source);
@@ -31,14 +47,11 @@ function loadPaintedLocalCoverKeys(): Set<string> {
       PAINTED_COVER_STORAGE_KEY,
     );
     if (!stored) return new Set();
-    const parsed: unknown = JSON.parse(stored);
+    const parsed: PaintedCoverWireValue = JSON.parse(stored);
     if (!Array.isArray(parsed)) return new Set();
     return new Set(
       parsed
-        .filter(
-          (value): value is string =>
-            typeof value === "string" && /^[a-f0-9]{8}$/.test(value),
-        )
+        .filter(isPaintedCoverKey)
         .slice(-MAX_PAINTED_COVER_SOURCES),
     );
   } catch {

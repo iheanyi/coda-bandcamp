@@ -1,16 +1,23 @@
 import {
   type InfiniteData,
   type QueryClient,
+  type QueryFunctionContext,
   infiniteQueryOptions,
   queryOptions,
   skipToken,
 } from "@tanstack/react-query";
 import { fetchRadioShow, fetchRadioShows } from "@/lib";
+import { BANDCAMP_RADIO_SERIES } from "@/radioSeries";
 import type { RadioShowSummary, RadioShowsPage } from "@/types";
 
 const RADIO_STALE_TIME_MS = 10 * 60 * 1_000;
 
 export type RadioArchiveScope = number | "all";
+type RadioArchiveQueryKey = readonly [
+  "bandcamp-radio",
+  RadioArchiveScope,
+];
+type RadioArchivePageParam = string | null;
 
 export type RadioShowSummaryCandidate = Readonly<{
   dataUpdatedAt: number;
@@ -18,25 +25,43 @@ export type RadioShowSummaryCandidate = Readonly<{
   summary: RadioShowSummary;
 }>;
 
-export function radioShowsInfiniteQueryOptions(seriesId?: number) {
+export type RadioQueryRepository = Readonly<{
+  fetchShow: typeof fetchRadioShow;
+  fetchShows: typeof fetchRadioShows;
+}>;
+
+const defaultRadioQueryRepository: RadioQueryRepository = {
+  fetchShow: fetchRadioShow,
+  fetchShows: fetchRadioShows,
+};
+
+export function radioShowsInfiniteQueryOptions(
+  seriesId?: number,
+  repository: RadioQueryRepository = defaultRadioQueryRepository,
+) {
   return infiniteQueryOptions({
     queryKey: ["bandcamp-radio", seriesId ?? "all"] as const,
-    queryFn: ({ pageParam }) =>
-      fetchRadioShows({
+    queryFn: ({
+      pageParam,
+    }: QueryFunctionContext<RadioArchiveQueryKey, RadioArchivePageParam>) =>
+      repository.fetchShows({
         seriesId,
         cursor: pageParam ?? undefined,
       }),
-    initialPageParam: null as string | null,
-    getNextPageParam: (page) =>
+    initialPageParam: null,
+    getNextPageParam: (page): string | null | undefined =>
       page.hasMore && page.cursor ? page.cursor : undefined,
     staleTime: RADIO_STALE_TIME_MS,
   });
 }
 
-export function radioShowQueryOptions(showId: number) {
+export function radioShowQueryOptions(
+  showId: number,
+  repository: RadioQueryRepository = defaultRadioQueryRepository,
+) {
   return queryOptions({
     queryKey: ["bandcamp-radio-show", showId] as const,
-    queryFn: () => fetchRadioShow(showId),
+    queryFn: () => repository.fetchShow(showId),
     staleTime: RADIO_STALE_TIME_MS,
   });
 }
@@ -49,11 +74,7 @@ function radioArchiveScopeFromQueryKey(
   }
   const scope = queryKey[1];
   if (scope === "all") return scope;
-  return typeof scope === "number" &&
-    Number.isSafeInteger(scope) &&
-    scope > 0
-    ? scope
-    : undefined;
+  return BANDCAMP_RADIO_SERIES.find((series) => series.id === scope)?.id;
 }
 
 function radioShowSummaryFromArchive(
@@ -63,22 +84,21 @@ function radioShowSummaryFromArchive(
   for (const page of archive?.pages ?? []) {
     const show = page.results.find((candidate) => candidate.id === showId);
     if (!show) continue;
-    return {
+    const summary: RadioShowSummary = {
       id: show.id,
       subtitle: show.subtitle,
       description: show.description,
       publishedAt: show.publishedAt,
-      ...(show.artworkUrl ? { artworkUrl: show.artworkUrl } : {}),
-      ...(show.series
-        ? {
-            series: {
-              id: show.series.id,
-              title: show.series.title,
-              slug: show.series.slug,
-            },
-          }
-        : {}),
     };
+    if (show.artworkUrl) summary.artworkUrl = show.artworkUrl;
+    if (show.series) {
+      summary.series = {
+        id: show.series.id,
+        title: show.series.title,
+        slug: show.series.slug,
+      };
+    }
+    return summary;
   }
   return undefined;
 }

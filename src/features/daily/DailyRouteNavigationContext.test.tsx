@@ -1,18 +1,18 @@
 import { act, renderHook } from "@testing-library/react";
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-
-const transitionMock = vi.hoisted(() => vi.fn());
-
-vi.mock("@/viewTransitions", () => ({
-  transitionCodaView: transitionMock,
-}));
 
 import { DailyRouteNavigationProvider } from "./DailyRouteNavigationContext";
 import {
   type DailyRouteNavigationAdapter,
   useDailyRouteNavigation,
 } from "./DailyRouteNavigationState";
+
+type DailyTransition = NonNullable<
+  ComponentProps<typeof DailyRouteNavigationProvider>["transition"]
+>;
+
+const transitionMock = vi.fn<DailyTransition>();
 
 const adapter: DailyRouteNavigationAdapter = {
   goBack: vi.fn(async () => undefined),
@@ -46,7 +46,7 @@ it("keeps Daily artwork and title identity through forward and focused Back navi
   transitionMock.mockImplementation(
     async (
       update: () => void | Promise<void>,
-      _kind: "daily-detail" | "daily-detail-close",
+      _kind,
     ) => {
       const snapshot = {
         beforeArtworkDetail: document.querySelector<HTMLElement>(
@@ -90,7 +90,7 @@ it("keeps Daily artwork and title identity through forward and focused Back navi
   document.body.append(scrollRoot);
 
   const wrapper = ({ children }: { children: ReactNode }) => (
-    <DailyRouteNavigationProvider adapter={adapter}>
+    <DailyRouteNavigationProvider adapter={adapter} transition={transitionMock}>
       {children}
     </DailyRouteNavigationProvider>
   );

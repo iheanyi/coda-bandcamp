@@ -143,7 +143,7 @@ export type LibrarySessionRouteReader = Readonly<{
   preloadAlbum: (album: string | Album) => void;
 }>;
 
-type LibrarySessionDependencies = Readonly<{
+export type LibrarySessionDependencies = Readonly<{
   checkConnection: () => Promise<boolean>;
   clearArtworkUrls: () => void;
   clearRuntimeData: () => void;
@@ -205,27 +205,41 @@ const defaultDependencies: LibrarySessionDependencies = {
 };
 
 function freezeState(state: LibrarySessionState): LibrarySessionState {
-  const artwork = Object.freeze({
-    refreshing: state.artwork.refreshing,
-    ...(state.artwork.progress
-      ? { progress: Object.freeze({ ...state.artwork.progress }) }
-      : {}),
-  });
-  const sync = Object.freeze({
-    error: state.sync.error,
-    status: state.sync.status,
-    ...(state.sync.progress
-      ? { progress: Object.freeze({ ...state.sync.progress }) }
-      : {}),
-  });
+  const artwork = Object.freeze(
+    state.artwork.progress
+      ? {
+          progress: Object.freeze({ ...state.artwork.progress }),
+          refreshing: state.artwork.refreshing,
+        }
+      : { refreshing: state.artwork.refreshing },
+  );
+  const sync = Object.freeze(
+    state.sync.progress
+      ? {
+          error: state.sync.error,
+          progress: Object.freeze({ ...state.sync.progress }),
+          status: state.sync.status,
+        }
+      : {
+          error: state.sync.error,
+          status: state.sync.status,
+        },
+  );
   return Object.freeze({ artwork, connection: state.connection, sync });
+}
+
+function isPrimitiveString<Value>(value: Value): value is Value & string {
+  return (
+    Object.prototype.toString.call(value) === "[object String]" &&
+    value === String(value)
+  );
 }
 
 function errorMessage(cause: unknown, fallback: string): string {
   const message =
     cause instanceof Error
       ? cause.message
-      : typeof cause === "string"
+      : isPrimitiveString(cause)
         ? cause
         : fallback;
   const normalized = message
@@ -367,7 +381,7 @@ export function createLibrarySessionController({
   ) => {
     publish({
       ...state,
-      sync: { error, status, ...(progress ? { progress } : {}) },
+      sync: progress ? { error, progress, status } : { error, status },
     });
   };
 
@@ -377,7 +391,7 @@ export function createLibrarySessionController({
   ) => {
     publish({
       ...state,
-      artwork: { refreshing, ...(progress ? { progress } : {}) },
+      artwork: progress ? { progress, refreshing } : { refreshing },
     });
   };
 
@@ -793,7 +807,7 @@ export function createLibrarySessionController({
     preloadAlbum: (albumOrId) => {
       if (state.connection !== "connected" || disconnectRequest) return;
       const album =
-        typeof albumOrId === "string"
+        isPrimitiveString(albumOrId)
           ? queryClient
               .getQueryData<Album[]>(libraryQueryKey)
               ?.find((candidate) => candidate.id === albumOrId)

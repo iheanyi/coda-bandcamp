@@ -9,13 +9,41 @@ import {
   type MotionPhaseTimings,
   updateMotionDiagnostic,
 } from "@/motionDiagnostics";
-import type { CodaRouter } from "@/router";
 import {
   stringifyRadioSeriesIdParam,
   stringifyRadioShowIdParam,
 } from "@/routing/routeContracts";
 
-const backNavigationInFlight = new WeakMap<CodaRouter, Promise<void>>();
+export type RenderedRouterLocation = Readonly<{
+  href?: string;
+  state: Readonly<{ __TSR_key?: string }>;
+}>;
+
+export type RenderedRouterEvent = Readonly<{
+  toLocation: RenderedRouterLocation;
+}>;
+
+export type RenderedNavigationRouter = Readonly<{
+  history: Readonly<{
+    back: () => void;
+    canGoBack: () => boolean;
+  }>;
+  state: Readonly<{ location: RenderedRouterLocation }>;
+  subscribe: (
+    event: "onRendered",
+    listener: (event: RenderedRouterEvent) => void,
+  ) => () => void;
+}>;
+
+export type RouteNavigationAdapterRuntime = Readonly<{
+  navigate: ReturnType<typeof useNavigate>;
+  router: RenderedNavigationRouter;
+}>;
+
+const backNavigationInFlight = new WeakMap<
+  RenderedNavigationRouter,
+  Promise<void>
+>();
 
 function activeMotionDiagnosticId(): number | undefined {
   const diagnostic = getMotionDiagnostic();
@@ -30,10 +58,7 @@ function recordRouterPhases(
   updateMotionDiagnostic(diagnosticId, { phaseTimings });
 }
 
-function renderedLocationKey(location: {
-  href?: string;
-  state: { __TSR_key?: string };
-}) {
+function renderedLocationKey(location: RenderedRouterLocation) {
   return location.state.__TSR_key ?? location.href;
 }
 
@@ -45,7 +70,7 @@ function renderedLocationKey(location: {
  * transition after the destination DOM is available.
  */
 export function awaitRouterNavigationAfterRender(
-  router: CodaRouter,
+  router: RenderedNavigationRouter,
   navigate: () => void | Promise<void>,
 ): Promise<void> {
   const navigationStartedAt = performance.now();
@@ -102,7 +127,9 @@ export function awaitRouterNavigationAfterRender(
  * different history entry has rendered so View Transition snapshots, focus,
  * and scroll restoration all observe the destination DOM.
  */
-export function awaitRouterBackAfterRender(router: CodaRouter): Promise<void> {
+export function awaitRouterBackAfterRender(
+  router: RenderedNavigationRouter,
+): Promise<void> {
   const active = backNavigationInFlight.get(router);
   if (active) return active;
   const navigationStartedAt = performance.now();
@@ -161,6 +188,13 @@ export function awaitRouterBackAfterRender(router: CodaRouter): Promise<void> {
 export function useDailyRouteNavigationAdapter(): DailyRouteNavigationAdapter {
   const navigate = useNavigate();
   const router = useRouter();
+  return useDailyRouteNavigationAdapterWithRuntime({ navigate, router });
+}
+
+export function useDailyRouteNavigationAdapterWithRuntime({
+  navigate,
+  router,
+}: RouteNavigationAdapterRuntime): DailyRouteNavigationAdapter {
   const goToIndex = useCallback<DailyRouteNavigationAdapter["goToIndex"]>(
     async (category, replace = false) => {
       await awaitRouterNavigationAfterRender(router, () =>
@@ -212,6 +246,13 @@ export function useDailyRouteNavigationAdapter(): DailyRouteNavigationAdapter {
 export function usePlaylistRouteNavigationAdapter(): PlaylistRouteNavigationAdapter {
   const navigate = useNavigate();
   const router = useRouter();
+  return usePlaylistRouteNavigationAdapterWithRuntime({ navigate, router });
+}
+
+export function usePlaylistRouteNavigationAdapterWithRuntime({
+  navigate,
+  router,
+}: RouteNavigationAdapterRuntime): PlaylistRouteNavigationAdapter {
   const goToIndex = useCallback<PlaylistRouteNavigationAdapter["goToIndex"]>(
     async (replace = false) => {
       await awaitRouterNavigationAfterRender(router, () =>
@@ -262,6 +303,13 @@ export function usePlaylistRouteNavigationAdapter(): PlaylistRouteNavigationAdap
 export function useRadioRouteNavigationAdapter(): RadioRouteNavigationAdapter {
   const navigate = useNavigate();
   const router = useRouter();
+  return useRadioRouteNavigationAdapterWithRuntime({ navigate, router });
+}
+
+export function useRadioRouteNavigationAdapterWithRuntime({
+  navigate,
+  router,
+}: RouteNavigationAdapterRuntime): RadioRouteNavigationAdapter {
   const goToIndex = useCallback<RadioRouteNavigationAdapter["goToIndex"]>(
     async (replace = false) => {
       await awaitRouterNavigationAfterRender(router, () =>

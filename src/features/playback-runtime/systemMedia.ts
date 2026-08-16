@@ -204,7 +204,7 @@ function createSystemMediaCoordinator({
         syncBrowser(positionSeconds);
       };
       const idleWindow: IdleWindow = window;
-      if (typeof idleWindow.requestIdleCallback === "function") {
+      if (idleWindow.requestIdleCallback) {
         const handle = idleWindow.requestIdleCallback(generateArtwork, {
           timeout: SYSTEM_ARTWORK_IDLE_TIMEOUT_MS,
         });

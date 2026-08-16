@@ -9,8 +9,8 @@ import {
   type AlbumId,
   type ArtistKey,
   type CollectionRouteSearch,
-  parseAlbumIdParam,
   parseArtistKeyParam,
+  parseRouteSearchAlbumId,
   stringifyArtistKeyParam,
   validateCollectionSearch,
 } from "@/routing/routeContracts";
@@ -19,27 +19,21 @@ import { codaRouteMeta } from "@/routing/routeMeta";
 export type ArtistRouteSearch = CollectionRouteSearch &
   Readonly<{ albumId?: AlbumId }>;
 
-export function validateArtistRouteSearch(value: unknown): ArtistRouteSearch {
+export function validateArtistRouteSearch<Value>(value: Value): ArtistRouteSearch {
   const collectionSearch = validateCollectionSearch(value);
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return collectionSearch;
-  }
-
-  try {
-    const albumId = parseAlbumIdParam(Reflect.get(value, "albumId"));
-    return { ...collectionSearch, albumId };
-  } catch {
-    return collectionSearch;
-  }
+  const albumId = parseRouteSearchAlbumId(value);
+  return albumId ? { ...collectionSearch, albumId } : collectionSearch;
 }
 
 type ArtistRouteIdentityLoaderInput = Readonly<{
   params: Readonly<{ artistKey: ArtistKey }>;
 }>;
 
+type ArtistRouteIdentity = Readonly<{ artistKey: ArtistKey }>;
+
 export function loadArtistRouteIdentity({
   params,
-}: ArtistRouteIdentityLoaderInput): Readonly<{ artistKey: ArtistKey }> {
+}: ArtistRouteIdentityLoaderInput): ArtistRouteIdentity {
   return { artistKey: params.artistKey };
 }
 

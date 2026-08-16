@@ -21,6 +21,23 @@ export type PreparedDetailSource = Readonly<{
   sourceTrigger?: HTMLElement;
 }>;
 
+type MutablePreparedDetailSource = {
+  applyMarkers: () => () => void;
+  sharedElementOwner?: string;
+  sourceTrigger?: HTMLElement;
+};
+
+function preparedDetailSource(
+  applyMarkers: () => () => void,
+  sharedElementOwner?: string,
+  sourceTrigger?: HTMLElement,
+): PreparedDetailSource {
+  const prepared: MutablePreparedDetailSource = { applyMarkers };
+  if (sharedElementOwner) prepared.sharedElementOwner = sharedElementOwner;
+  if (sourceTrigger) prepared.sourceTrigger = sourceTrigger;
+  return prepared;
+}
+
 function currentNavigationTrigger(): HTMLElement | undefined {
   return document.activeElement instanceof HTMLElement
     ? document.activeElement
@@ -38,10 +55,7 @@ function interactiveTrigger(
 function inertPreparedSource(
   sourceTrigger?: HTMLElement,
 ): PreparedDetailSource {
-  return {
-    applyMarkers: () => () => {},
-    ...(sourceTrigger ? { sourceTrigger } : {}),
-  };
+  return preparedDetailSource(() => () => {}, undefined, sourceTrigger);
 }
 
 function forcePaintedAncestors(element: HTMLElement): () => void {
@@ -148,8 +162,8 @@ function prepareAlbumSource(
       ? staticTitle
       : undefined;
 
-  return {
-    applyMarkers: () =>
+  return preparedDetailSource(
+    () =>
       combineMarkerReleases([
         ...(sourceArtwork
           ? [acquireTemporaryClass(sourceArtwork, "coda-album-artwork-source")]
@@ -164,13 +178,13 @@ function prepareAlbumSource(
             ]
           : []),
       ]),
-    ...(sourceArtwork
-      ? { sharedElementOwner: "coda-album-artwork" }
+    sourceArtwork
+      ? "coda-album-artwork"
       : sourceTitle
-        ? { sharedElementOwner: "coda-album-title" }
-        : {}),
-    ...(sourceTrigger ? { sourceTrigger } : {}),
-  };
+        ? "coda-album-title"
+        : undefined,
+    sourceTrigger,
+  );
 }
 
 export function markAlbumReturnDestination(
@@ -277,8 +291,8 @@ function prepareArtistSource(
       : undefined
     : (staticInlineArtistName ?? inlineArtistNameTarget ?? sourceTrigger);
 
-  return {
-    applyMarkers: () =>
+  return preparedDetailSource(
+    () =>
       combineMarkerReleases([
         ...(sourceArtwork
           ? [
@@ -299,13 +313,13 @@ function prepareArtistSource(
             ]
           : []),
       ]),
-    ...(sourceArtwork
-      ? { sharedElementOwner: "coda-artist-artwork" }
+    sourceArtwork
+      ? "coda-artist-artwork"
       : sourceName
-        ? { sharedElementOwner: "coda-artist-name" }
-        : {}),
+        ? "coda-artist-name"
+        : undefined,
     sourceTrigger,
-  };
+  );
 }
 
 export function markArtistReturnDestination(
@@ -398,8 +412,8 @@ function discoverCardSource(
     sourceTrigger.dataset.navigationSlot = "discover-title";
   }
 
-  return {
-    applyMarkers: () =>
+  return preparedDetailSource(
+    () =>
       combineMarkerReleases([
         ...(sourceArtwork
           ? [
@@ -420,13 +434,13 @@ function discoverCardSource(
             ]
           : []),
       ]),
-    ...(sourceArtwork
-      ? { sharedElementOwner: "coda-discover-artwork" }
+    sourceArtwork
+      ? "coda-discover-artwork"
       : sourceTitle
-        ? { sharedElementOwner: "coda-discover-title" }
-        : {}),
-    ...(sourceTrigger ? { sourceTrigger } : {}),
-  };
+        ? "coda-discover-title"
+        : undefined,
+    sourceTrigger,
+  );
 }
 
 function nowPlayingDiscoverSource(
@@ -457,8 +471,8 @@ function nowPlayingDiscoverSource(
       ? titleCandidate
       : undefined;
 
-  return {
-    applyMarkers: () =>
+  return preparedDetailSource(
+    () =>
       combineMarkerReleases([
         ...(sourceArtwork
           ? [
@@ -479,13 +493,13 @@ function nowPlayingDiscoverSource(
             ]
           : []),
       ]),
-    ...(sourceArtwork
-      ? { sharedElementOwner: "coda-discover-artwork" }
+    sourceArtwork
+      ? "coda-discover-artwork"
       : sourceTitle
-        ? { sharedElementOwner: "coda-discover-title" }
-        : {}),
+        ? "coda-discover-title"
+        : undefined,
     sourceTrigger,
-  };
+  );
 }
 
 function compactPlayerDiscoverSource(
@@ -506,16 +520,16 @@ function compactPlayerDiscoverSource(
     return undefined;
   }
   sourceTrigger.dataset.navigationSlot = "player-album";
-  return {
-    applyMarkers: () =>
+  return preparedDetailSource(
+    () =>
       acquireTemporaryAttribute(
         sourceTitle,
         "data-coda-discover-title-source",
         request.releaseId,
       ),
-    sharedElementOwner: "coda-discover-title",
+    "coda-discover-title",
     sourceTrigger,
-  };
+  );
 }
 
 function prepareDiscoverSource(
@@ -605,14 +619,15 @@ function prepareNowPlayingSource(
       candidate.dataset.codaNowPlayingTitleCompact === request.trackId,
   );
 
-  return {
-    applyMarkers: () => () => {},
-    ...(sourceTrigger
-      ? { sharedElementOwner: "coda-now-playing-artwork", sourceTrigger }
+  return preparedDetailSource(
+    () => () => {},
+    sourceTrigger
+      ? "coda-now-playing-artwork"
       : sourceTitle
-        ? { sharedElementOwner: "coda-now-playing-title" }
-        : {}),
-  };
+        ? "coda-now-playing-title"
+        : undefined,
+    sourceTrigger,
+  );
 }
 
 export function prepareDetailSource(

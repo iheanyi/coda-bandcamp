@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterContextProvider } from "@tanstack/react-router";
+import type { InvokeArgs } from "@tauri-apps/api/core";
 import {
   act,
   fireEvent,
@@ -11,6 +12,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { useRef, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { clearCoverArtRendererState } from "@/coverArtSource";
 import { CodaMotionProvider } from "./MotionProvider";
 import type { AppUpdaterController } from "./appUpdaterController";
 import {
@@ -22,49 +24,129 @@ import { PersistentAppOverlays } from "@/features/settings/PersistentAppOverlays
 import { usePersistentOverlaysController } from "@/features/settings/usePersistentOverlaysController";
 import { createCodaMemoryRouter } from "@/router";
 import { parsePlaylistIdParam } from "@/routing/routeContracts";
+import {
+  installTauriEventPluginTestInternals,
+  readTauriInvokeArguments,
+  tauriBoolean,
+  tauriNumber,
+  tauriNumberList,
+  tauriString,
+  tauriStringList,
+} from "@/test/tauriInvoke";
+import { hydrateTrack } from "./lib";
 import type {
   LocalFavoriteCollection,
   PlaylistDetail,
   PlaylistSummary,
+  PlaylistUpdateInput,
+  RadioShow,
   Track,
 } from "./types";
-
-const mocks = vi.hoisted(() => ({
-  coverArtRevisions: new Map<string, string>(),
-  createPlaylist: vi.fn(),
-  deletePlaylist: vi.fn(),
-  fetchPlaylist: vi.fn(),
-  fetchPlaylists: vi.fn(),
-  fetchRadioShow: vi.fn(),
-  invalidateCoverArt: vi.fn<(coverArtId: string) => Promise<void>>(),
-  updatePlaylist: vi.fn(),
-}));
-
-vi.mock("@/coverArtSource", () => ({
-  clearCoverArtRendererState: () => mocks.coverArtRevisions.clear(),
-  coverArtSource: (coverArtId: string) =>
-    `coda-cover:/v1/600/${encodeURIComponent(coverArtId)}?v=${mocks.coverArtRevisions.get(coverArtId) ?? "0"}&s=0123456789abcdef0123456789abcdef`,
-  invalidateCoverArt: mocks.invalidateCoverArt,
-  useCoverArtSource: (coverArtId: string | undefined) =>
-    coverArtId
-      ? `coda-cover:/v1/600/${encodeURIComponent(coverArtId)}?v=${mocks.coverArtRevisions.get(coverArtId) ?? "0"}&s=0123456789abcdef0123456789abcdef`
-      : undefined,
-}));
-
-vi.mock("./lib", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./lib")>();
-  return {
-    ...actual,
-    createPlaylist: mocks.createPlaylist,
-    deletePlaylist: mocks.deletePlaylist,
-    fetchPlaylist: mocks.fetchPlaylist,
-    fetchPlaylists: mocks.fetchPlaylists,
-    fetchRadioShow: mocks.fetchRadioShow,
-    updatePlaylist: mocks.updatePlaylist,
-  };
-});
-
 import SavedLibraryView, { AddToPlaylistDialog } from "./SavedLibraryView";
+
+const mocks = {
+  createPlaylist:
+    vi.fn<(name: string, songIds: string[]) => Promise<PlaylistDetail>>(),
+  deletePlaylist: vi.fn<(playlistId: string) => Promise<void>>(),
+  fetchPlaylist: vi.fn<(playlistId: string) => Promise<PlaylistDetail>>(),
+  fetchPlaylists: vi.fn<() => Promise<PlaylistSummary[]>>(),
+  fetchRadioShow: vi.fn<(showId: number) => Promise<RadioShow>>(),
+  invalidateCoverArt: vi.fn<(coverArtId: string) => Promise<void>>(),
+  updatePlaylist:
+    vi.fn<
+      (input: PlaylistUpdateInput) => Promise<PlaylistDetail | undefined>
+    >(),
+};
+
+type PlaylistUpdatePayload = Readonly<{
+  comment?: unknown;
+  name?: unknown;
+  playlistId?: unknown;
+  public?: unknown;
+  songIdsToAdd?: unknown;
+  songIndexesToRemove?: unknown;
+}>;
+
+function isPlaylistUpdatePayload<Value>(
+  value: Value,
+): value is Value & PlaylistUpdatePayload {
+  return value !== null && Object(value) === value && !Array.isArray(value);
+}
+
+function playlistUpdateInput<Value>(value: Value): PlaylistUpdateInput {
+  if (!isPlaylistUpdatePayload(value)) {
+    throw new TypeError("Saved-library playlist update is invalid");
+  }
+  const input: PlaylistUpdateInput = {
+    playlistId: tauriString(value.playlistId, "playlistId"),
+  };
+  const { name, comment, public: isPublic, songIdsToAdd, songIndexesToRemove } =
+    value;
+  if (name !== undefined) input.name = tauriString(name, "name");
+  if (comment !== undefined) input.comment = tauriString(comment, "comment");
+  if (isPublic !== undefined) {
+    input.public = tauriBoolean(isPublic, "public");
+  }
+  if (songIdsToAdd !== undefined) {
+    input.songIdsToAdd = tauriStringList(songIdsToAdd, "songIdsToAdd");
+  }
+  if (songIndexesToRemove !== undefined) {
+    input.songIndexesToRemove = tauriNumberList(
+      songIndexesToRemove,
+      "songIndexesToRemove",
+    );
+  }
+  return input;
+}
+
+function installSavedLibraryBridge(): void {
+  let nextCallbackId = 1;
+  installTauriEventPluginTestInternals();
+  Object.defineProperty(window, "__TAURI_INTERNALS__", {
+    configurable: true,
+    value: {
+      convertFileSrc: (path: string, protocol: string) => `${protocol}:${path}`,
+      invoke: async (command: string, args?: InvokeArgs) => {
+        const values = readTauriInvokeArguments(args);
+        switch (command) {
+          case "create_playlist":
+            return mocks.createPlaylist(
+              tauriString(values.name, "name"),
+              tauriStringList(values.songIds, "songIds"),
+            );
+          case "delete_playlist":
+            return mocks.deletePlaylist(
+              tauriString(values.playlistId, "playlistId"),
+            );
+          case "fetch_playlist":
+            return mocks.fetchPlaylist(
+              tauriString(values.playlistId, "playlistId"),
+            );
+          case "fetch_playlists":
+            return mocks.fetchPlaylists();
+          case "invalidate_cover_art":
+            return mocks.invalidateCoverArt(
+              tauriString(values.coverArtId, "coverArtId"),
+            );
+          case "plugin:event|listen":
+            return 1;
+          case "plugin:event|unlisten":
+            return undefined;
+          case "radio_show":
+            return mocks.fetchRadioShow(
+              tauriNumber(values.showId, "showId"),
+            );
+          case "update_playlist":
+            return mocks.updatePlaylist(playlistUpdateInput(values.input));
+          default:
+            throw new Error(`Unexpected saved-library command: ${command}`);
+        }
+      },
+      transformCallback: () => nextCallbackId++,
+      unregisterCallback: () => undefined,
+    },
+  });
+}
 
 const track: Track = {
   id: "song-1",
@@ -95,6 +177,30 @@ const summary: PlaylistSummary = {
 const detail: PlaylistDetail = {
   ...summary,
   tracks: [track],
+};
+
+type PlaylistIdentityTransitionSnapshot = {
+  afterDetail?: string;
+  afterFocusedPlaylist?: string;
+  afterReturn?: string;
+  afterScrollTop?: number;
+  afterTitleDetail?: string;
+  afterTitleReturn?: string;
+  afterTitleReturnIsStatic: boolean;
+  beforeDetail?: string;
+  beforeSource?: string;
+  beforeTitleDetail?: string;
+  beforeTitleSource?: string;
+  beforeTitleSourceIsStatic: boolean;
+  className: string;
+  identityAndTitleAreSeparate?: boolean;
+};
+
+type PlaylistReturnSnapshot = {
+  afterIcon?: string;
+  afterTitle?: string;
+  beforeIcon?: string;
+  beforeTitle?: string;
 };
 
 const otherSummary: PlaylistSummary = {
@@ -166,6 +272,23 @@ function deferred<Value>() {
   return { promise, reject, resolve };
 }
 
+function resizeObserverEntry(
+  target: Element,
+  bounds: DOMRectReadOnly,
+): ResizeObserverEntry {
+  const size: ResizeObserverSize = {
+    blockSize: bounds.height,
+    inlineSize: bounds.width,
+  };
+  return {
+    borderBoxSize: [size],
+    contentBoxSize: [size],
+    contentRect: bounds,
+    devicePixelContentBoxSize: [size],
+    target,
+  };
+}
+
 function mockVirtualizedViewport({
   contentTop,
   height,
@@ -187,21 +310,7 @@ function mockVirtualizedViewport({
       if (this.observed.has(target)) return;
       this.observed.add(target);
       const bounds = target.getBoundingClientRect();
-      this.callback(
-        [
-          {
-            borderBoxSize: [
-              {
-                blockSize: bounds.height,
-                inlineSize: bounds.width,
-              },
-            ],
-            contentRect: bounds,
-            target,
-          } as unknown as ResizeObserverEntry,
-        ],
-        this,
-      );
+      this.callback([resizeObserverEntry(target, bounds)], this);
     }
     unobserve() {}
   }
@@ -328,16 +437,14 @@ const commonProps = {
 };
 
 beforeEach(() => {
+  installSavedLibraryBridge();
+  clearCoverArtRendererState();
   Object.values(mocks).forEach((mock) => {
-    if (typeof mock === "function" && "mockReset" in mock) mock.mockReset();
+    mock.mockReset();
   });
   mocks.fetchPlaylists.mockResolvedValue([summary]);
   mocks.fetchPlaylist.mockResolvedValue(detail);
-  mocks.coverArtRevisions.clear();
-  mocks.invalidateCoverArt.mockReset().mockImplementation((coverArtId) => {
-    mocks.coverArtRevisions.set(coverArtId, "retry");
-    return Promise.resolve();
-  });
+  mocks.invalidateCoverArt.mockResolvedValue(undefined);
   mocks.fetchRadioShow.mockResolvedValue({
     ...favorites.radioShows[0],
     chapters: [],
@@ -349,7 +456,7 @@ beforeEach(() => {
   mocks.updatePlaylist.mockResolvedValue(detail);
   mocks.deletePlaylist.mockResolvedValue(undefined);
   Object.values(commonProps).forEach((value) => {
-    if (typeof value === "function" && "mockClear" in value) value.mockClear();
+    if (vi.isMockFunction(value)) value.mockClear();
   });
 });
 
@@ -538,26 +645,13 @@ describe("saved Bandcamp library views", () => {
 
   it("pairs a warm playlist identity with its detail and returning row", async () => {
     mocks.fetchPlaylists.mockResolvedValueOnce([summary, otherSummary]);
-    const snapshots: Array<{
-      className: string;
-      beforeDetail?: string;
-      beforeSource?: string;
-      beforeTitleDetail?: string;
-      beforeTitleSource?: string;
-      afterDetail?: string;
-      afterReturn?: string;
-      afterTitleDetail?: string;
-      afterTitleReturn?: string;
-      afterFocusedPlaylist?: string;
-      afterScrollTop?: number;
-      identityAndTitleAreSeparate?: boolean;
-    }> = [];
+    const snapshots: PlaylistIdentityTransitionSnapshot[] = [];
     const originalDescriptor = Object.getOwnPropertyDescriptor(
       document,
       "startViewTransition",
     );
     const startViewTransition = vi.fn((update: () => void) => {
-      const snapshot = {
+      const snapshot: PlaylistIdentityTransitionSnapshot = {
         className: document.documentElement.className,
         beforeDetail: document.querySelector<HTMLElement>(
           "[data-coda-playlist-identity-detail]",
@@ -575,14 +669,7 @@ describe("saved Bandcamp library views", () => {
           document
             .querySelector("[data-coda-playlist-title-source]")
             ?.matches('[data-slot="overflow-marquee-text"]') ?? false,
-        afterDetail: undefined as string | undefined,
-        afterReturn: undefined as string | undefined,
-        afterTitleDetail: undefined as string | undefined,
-        afterTitleReturn: undefined as string | undefined,
         afterTitleReturnIsStatic: false,
-        afterFocusedPlaylist: undefined as string | undefined,
-        afterScrollTop: undefined as number | undefined,
-        identityAndTitleAreSeparate: undefined as boolean | undefined,
       };
       expect(
         document.querySelectorAll("[data-coda-playlist-identity-source]"),
@@ -729,12 +816,7 @@ describe("saved Bandcamp library views", () => {
   });
 
   it("keeps the icon pair when Back starts while the playlist name is being edited", async () => {
-    const returnSnapshot: {
-      beforeIcon?: string;
-      beforeTitle?: string;
-      afterIcon?: string;
-      afterTitle?: string;
-    } = {};
+    const returnSnapshot: PlaylistReturnSnapshot = {};
     let transitionCount = 0;
     const originalDescriptor = Object.getOwnPropertyDescriptor(
       document,
@@ -820,6 +902,7 @@ describe("saved Bandcamp library views", () => {
   });
 
   it("opens a synced playlist and exposes playback and editing actions", async () => {
+    const hydratedPlaylistTrack = hydrateTrack(track);
     withQueryClient(<SavedLibraryView mode="playlists" {...commonProps} />);
 
     expect(await screen.findByText("Create a playlist")).toBeInTheDocument();
@@ -841,7 +924,9 @@ describe("saved Bandcamp library views", () => {
       summary.id,
     );
     fireEvent.click(screen.getByRole("button", { name: "Play" }));
-    expect(commonProps.onPlayTracks).toHaveBeenCalledWith([track]);
+    expect(commonProps.onPlayTracks).toHaveBeenCalledWith([
+      hydratedPlaylistTrack,
+    ]);
     const playlistTracks = screen.getByLabelText("Night drive tracks");
     expect(within(playlistTracks).getByRole("listitem")).toHaveClass(
       "h-16",
@@ -867,7 +952,7 @@ describe("saved Bandcamp library views", () => {
     expect(commonProps.onOpenArtist).toHaveBeenCalledWith(
       "Sweeps",
       "album-1",
-      track,
+      hydratedPlaylistTrack,
       expect.any(HTMLElement),
     );
     const playlistAlbumButton = within(playlistTracks)
@@ -883,7 +968,7 @@ describe("saved Bandcamp library views", () => {
     );
     fireEvent.click(playlistAlbumButton);
     expect(commonProps.onOpenTrackAlbum).toHaveBeenCalledWith(
-      track,
+      hydratedPlaylistTrack,
       playlistAlbumButton,
     );
 
@@ -896,6 +981,8 @@ describe("saved Bandcamp library views", () => {
       expect(mocks.updatePlaylist.mock.calls[0]?.[0]).toEqual({
         playlistId: "playlist-1",
         name: "After hours",
+        songIdsToAdd: [],
+        songIndexesToRemove: [],
       }),
     );
   });
@@ -912,9 +999,10 @@ describe("saved Bandcamp library views", () => {
     fireEvent.click(await screen.findByRole("link", { name: /Night drive/ }));
 
     await waitFor(() =>
-      expect(container.querySelector("header img")).toHaveAttribute(
-        "src",
-        "coda-cover:/v1/600/first-track-cover?v=0&s=0123456789abcdef0123456789abcdef",
+      expect(
+        container.querySelector("header img")?.getAttribute("src"),
+      ).toMatch(
+        /^coda-cover:\/v1\/600\/first-track-cover\?v=0&s=[a-f0-9]{32}$/u,
       ),
     );
   });
@@ -930,9 +1018,10 @@ describe("saved Bandcamp library views", () => {
 
     fireEvent.click(await screen.findByRole("link", { name: /Night drive/ }));
     await waitFor(() =>
-      expect(container.querySelector("header img")).toHaveAttribute(
-        "src",
-        "coda-cover:/v1/600/first-track-cover?v=0&s=0123456789abcdef0123456789abcdef",
+      expect(
+        container.querySelector("header img")?.getAttribute("src"),
+      ).toMatch(
+        /^coda-cover:\/v1\/600\/first-track-cover\?v=0&s=[a-f0-9]{32}$/u,
       ),
     );
 
@@ -945,9 +1034,8 @@ describe("saved Bandcamp library views", () => {
     const nextImage = await waitFor(() => {
       const image = container.querySelector<HTMLImageElement>("header img");
       if (!image) throw new Error("Expected replacement playlist artwork");
-      expect(image).toHaveAttribute(
-        "src",
-        "coda-cover:/v1/600/next-track-cover?v=0&s=0123456789abcdef0123456789abcdef",
+      expect(image.getAttribute("src")).toMatch(
+        /^coda-cover:\/v1\/600\/next-track-cover\?v=0&s=[a-f0-9]{32}$/u,
       );
       expect(image).not.toHaveClass("invisible");
       expect(image).toHaveAttribute("data-cover-art-pending");
@@ -975,9 +1063,8 @@ describe("saved Bandcamp library views", () => {
     const expired = await waitFor(() => {
       const image = container.querySelector<HTMLImageElement>("header img");
       if (!image) throw new Error("Expected playlist artwork");
-      expect(image).toHaveAttribute(
-        "src",
-        "coda-cover:/v1/600/first-track-cover?v=0&s=0123456789abcdef0123456789abcdef",
+      expect(image.getAttribute("src")).toMatch(
+        /^coda-cover:\/v1\/600\/first-track-cover\?v=0&s=[a-f0-9]{32}$/u,
       );
       return image;
     });
@@ -991,9 +1078,8 @@ describe("saved Bandcamp library views", () => {
     const retried = await waitFor(() => {
       const image = container.querySelector<HTMLImageElement>("header img");
       if (!image) throw new Error("Expected retried playlist artwork");
-      expect(image).toHaveAttribute(
-        "src",
-        "coda-cover:/v1/600/first-track-cover?v=retry&s=0123456789abcdef0123456789abcdef",
+      expect(image.getAttribute("src")).toMatch(
+        /^coda-cover:\/v1\/600\/first-track-cover\?v=retry-\d+&s=[a-f0-9]{32}$/u,
       );
       return image;
     });
@@ -1684,21 +1770,7 @@ describe("saved Bandcamp library views", () => {
         if (this.observed.has(target)) return;
         this.observed.add(target);
         const bounds = target.getBoundingClientRect();
-        this.callback(
-          [
-            {
-              borderBoxSize: [
-                {
-                  blockSize: bounds.height,
-                  inlineSize: bounds.width,
-                },
-              ],
-              contentRect: bounds,
-              target,
-            } as unknown as ResizeObserverEntry,
-          ],
-          this,
-        );
+        this.callback([resizeObserverEntry(target, bounds)], this);
       }
       unobserve() {}
     }
@@ -1781,21 +1853,7 @@ describe("saved Bandcamp library views", () => {
         if (this.observed.has(target)) return;
         this.observed.add(target);
         const bounds = target.getBoundingClientRect();
-        this.callback(
-          [
-            {
-              borderBoxSize: [
-                {
-                  blockSize: bounds.height,
-                  inlineSize: bounds.width,
-                },
-              ],
-              contentRect: bounds,
-              target,
-            } as unknown as ResizeObserverEntry,
-          ],
-          this,
-        );
+        this.callback([resizeObserverEntry(target, bounds)], this);
       }
       unobserve() {}
     }
@@ -1876,21 +1934,7 @@ describe("saved Bandcamp library views", () => {
         if (this.observed.has(target)) return;
         this.observed.add(target);
         const bounds = target.getBoundingClientRect();
-        this.callback(
-          [
-            {
-              borderBoxSize: [
-                {
-                  blockSize: bounds.height,
-                  inlineSize: bounds.width,
-                },
-              ],
-              contentRect: bounds,
-              target,
-            } as unknown as ResizeObserverEntry,
-          ],
-          this,
-        );
+        this.callback([resizeObserverEntry(target, bounds)], this);
       }
       unobserve() {}
     }
@@ -2143,6 +2187,7 @@ describe("saved Bandcamp library views", () => {
       expect(mocks.updatePlaylist).toHaveBeenCalledWith({
         playlistId: playlists[0].id,
         songIdsToAdd: [track.id],
+        songIndexesToRemove: [],
       });
 
       pendingAdd.reject(new Error("Add failed"));

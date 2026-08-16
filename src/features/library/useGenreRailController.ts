@@ -31,8 +31,7 @@ const INITIAL_EDGES: GenreRailEdges = Object.freeze({
 
 function reducedMotionPreferred(): boolean {
   return (
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false
   );
 }
 
@@ -64,17 +63,12 @@ export function useGenreRailController({
       const left =
         rail.scrollLeft +
         direction * Math.max(160, Math.round(rail.clientWidth * 0.7));
-      if (typeof rail.scrollTo === "function") {
-        rail.scrollTo({
-          behavior: reducedMotionPreferred() ? "auto" : "smooth",
-          left,
-        });
-        return;
-      }
-      rail.scrollLeft = left;
-      updateEdges(rail);
+      rail.scrollTo({
+        behavior: reducedMotionPreferred() ? "auto" : "smooth",
+        left,
+      });
     },
-    [updateEdges],
+    [],
   );
 
   useLayoutEffect(() => {
@@ -90,11 +84,7 @@ export function useGenreRailController({
     if (genre !== "All") return;
     const rail = ref.current;
     if (!rail) return;
-    if (typeof rail.scrollTo === "function") {
-      rail.scrollTo({ behavior: "auto", left: 0 });
-    } else {
-      rail.scrollLeft = 0;
-    }
+    rail.scrollTo({ behavior: "auto", left: 0 });
     updateEdges(rail);
   }, [genre, updateEdges]);
 

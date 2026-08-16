@@ -72,20 +72,11 @@ const radioSeriesNavItems = [
 const hoverCapabilityQuery = "(hover: hover) and (pointer: fine)";
 
 function getHoverCapability() {
-  return (
-    typeof window === "undefined" ||
-    typeof window.matchMedia !== "function" ||
-    window.matchMedia(hoverCapabilityQuery).matches
-  );
+  return window.matchMedia?.(hoverCapabilityQuery).matches ?? true;
 }
 
 function subscribeToHoverCapability(onChange: () => void) {
-  if (
-    typeof window === "undefined" ||
-    typeof window.matchMedia !== "function"
-  ) {
-    return () => undefined;
-  }
+  if (!window.matchMedia) return () => undefined;
   const query = window.matchMedia(hoverCapabilityQuery);
   query.addEventListener("change", onChange);
   return () => query.removeEventListener("change", onChange);
@@ -531,7 +522,11 @@ export const RadioCard = memo(function RadioCard({
       )}
       data-radio-card=""
       onBlurCapture={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+        const relatedTarget = event.relatedTarget;
+        if (
+          !(relatedTarget instanceof Node) ||
+          !event.currentTarget.contains(relatedTarget)
+        ) {
           setKeyboardFocusWithin(false);
         }
       }}

@@ -1,10 +1,15 @@
 import type { Track } from "./types";
 
+export type ActivatedTrack = {
+  queue: Track[];
+  currentIndex: number;
+};
+
 export function activateTrack(
   queue: Track[],
   currentIndex: number,
   track: Track,
-): { queue: Track[]; currentIndex: number } {
+): ActivatedTrack {
   const existingIndex = queue.findIndex((item) => item.id === track.id);
   if (existingIndex >= 0) {
     return { queue, currentIndex: existingIndex };

@@ -8,7 +8,16 @@ import {
 } from "./queue";
 import type { Track } from "./types";
 
-const track = (id: string) => ({ id }) as Track;
+const track = (id: string): Track => ({
+  id,
+  title: id,
+  artist: "Queue test artist",
+  album: "Queue test album",
+  albumId: `album-${id}`,
+  duration: 180,
+  track: 1,
+  palette: ["#111111", "#222222"],
+});
 
 describe("queue helpers", () => {
   it("appends tracks without introducing duplicate ids", () => {

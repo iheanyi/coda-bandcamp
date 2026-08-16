@@ -1,5 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
+import type { LibrarySyncProgress } from "@/lib";
 import { albumQueryKey, libraryQueryKey } from "@/libraryQueries";
 import type { Album, Track } from "@/types";
 import {
@@ -8,6 +9,7 @@ import {
   MAX_ARTWORK_DETAILS_PER_REFRESH,
   createLibrarySessionController,
   type LibrarySessionController,
+  type LibrarySessionDependencies,
 } from "./librarySessionController";
 
 function album(id: string, overrides: Partial<Album> = {}): Album {
@@ -38,12 +40,10 @@ function track(albumId: string, overrides: Partial<Track> = {}): Track {
 
 function deferred<Value>() {
   let resolve!: (value: Value) => void;
-  let reject!: (cause: unknown) => void;
-  const promise = new Promise<Value>((resolvePromise, rejectPromise) => {
+  const promise = new Promise<Value>((resolvePromise) => {
     resolve = resolvePromise;
-    reject = rejectPromise;
   });
-  return { promise, reject, resolve };
+  return { promise, resolve };
 }
 
 function queryClient() {
@@ -52,7 +52,21 @@ function queryClient() {
   });
 }
 
-function dependencies(overrides: Record<string, unknown> = {}) {
+type LibrarySessionDependencyOverrides = Readonly<{
+  checkConnection?: LibrarySessionDependencies["checkConnection"];
+  clearArtworkUrls?: LibrarySessionDependencies["clearArtworkUrls"];
+  clearRuntimeData?: LibrarySessionDependencies["clearRuntimeData"];
+  disconnect?: LibrarySessionDependencies["disconnect"];
+  emitArtworkRefresh?: LibrarySessionDependencies["emitArtworkRefresh"];
+  ensureAlbumTracks?: LibrarySessionDependencies["ensureAlbumTracks"];
+  loadCachedLibrary?: LibrarySessionDependencies["loadCachedLibrary"];
+  refreshAlbumTracks?: LibrarySessionDependencies["refreshAlbumTracks"];
+  syncLibrary?: LibrarySessionDependencies["syncLibrary"];
+}>;
+
+function dependencies(
+  overrides: LibrarySessionDependencyOverrides = {},
+): LibrarySessionDependencies {
   return {
     checkConnection: vi.fn(async () => false),
     clearArtworkUrls: vi.fn(),
@@ -270,13 +284,7 @@ describe("library session startup", () => {
   it("streams progressive pages into Query and replaces them with the final library", async () => {
     const client = queryClient();
     const sync = deferred<Album[]>();
-    let onPage:
-      | ((progress: {
-          albums: Album[];
-          loaded: number;
-          pageIndex: number;
-        }) => void)
-      | undefined;
+    let onPage: ((progress: LibrarySyncProgress) => void) | undefined;
     const deps = dependencies({
       checkConnection: vi.fn(async () => true),
       syncLibrary: vi.fn(
@@ -327,7 +335,10 @@ describe("library session startup", () => {
       checkConnection: vi.fn(async () => true),
       loadCachedLibrary: vi.fn(async () => hangingCache.promise),
       syncLibrary: vi.fn(
-        async (_onPage: unknown, options: Readonly<{ forceFull: boolean }>) => {
+        async (
+          _onPage: Parameters<LibrarySessionDependencies["syncLibrary"]>[0],
+          options: Readonly<{ forceFull: boolean }>,
+        ) => {
           expect(options).toEqual({ forceFull: false });
           return [album("live")];
         },
@@ -391,7 +402,11 @@ describe("library session metadata orchestration", () => {
       async (_client: QueryClient, release: Album) => {
         active += 1;
         maximumActive = Math.max(maximumActive, active);
-        const tracks = await requests.get(release.id)!.promise;
+        const request = requests.get(release.id);
+        if (!request) {
+          throw new Error(`Missing metadata request for ${release.id}`);
+        }
+        const tracks = await request.promise;
         active -= 1;
         return tracks;
       },
@@ -416,17 +431,21 @@ describe("library session metadata orchestration", () => {
     });
     expect(maximumActive).toBe(LIBRARY_METADATA_CONCURRENCY);
     for (const release of releases.slice(0, LIBRARY_METADATA_CONCURRENCY)) {
-      requests
-        .get(release.id)!
-        .resolve([track(release.id, { coverArt: `cover-${release.id}` })]);
+      const request = requests.get(release.id);
+      if (!request) {
+        throw new Error(`Missing metadata request for ${release.id}`);
+      }
+      request.resolve([track(release.id, { coverArt: `cover-${release.id}` })]);
     }
     await vi.waitFor(() => {
       expect(ensureAlbumTracks).toHaveBeenCalledTimes(releases.length);
     });
     for (const release of releases.slice(LIBRARY_METADATA_CONCURRENCY)) {
-      requests
-        .get(release.id)!
-        .resolve([track(release.id, { coverArt: `cover-${release.id}` })]);
+      const request = requests.get(release.id);
+      if (!request) {
+        throw new Error(`Missing metadata request for ${release.id}`);
+      }
+      request.resolve([track(release.id, { coverArt: `cover-${release.id}` })]);
     }
 
     const result = await resultPromise;

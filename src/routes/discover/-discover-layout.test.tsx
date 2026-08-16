@@ -1,29 +1,71 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { RouterProvider } from "@tanstack/react-router";
+import {
+  Outlet,
+  RouterProvider,
+  useRouter,
+} from "@tanstack/react-router";
+import type { InvokeArgs } from "@tauri-apps/api/core";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { type DiscoverRuntimeValue } from "@/features/discover/DiscoverRuntimeContext";
 import { DiscoverRuntimeProvider } from "@/features/discover/DiscoverRuntimeProvider";
 import { createCodaMemoryRouter } from "@/router";
-import { parseDiscoverReleaseIdParam } from "@/routing/routeContracts";
+import { Route as RootRoute } from "@/routes/__root";
+import {
+  parseDiscoverReleaseIdParam,
+  validateDiscoverSearch,
+} from "@/routing/routeContracts";
+import {
+  readDiscoverInvokeInput,
+  tauriString,
+} from "@/test/tauriInvoke";
+import type { DiscoverFilters, DiscoverPage } from "@/types";
 
-const mocks = vi.hoisted(() => ({
-  fetchDiscover: vi.fn(),
-}));
+const mocks = {
+  fetchDiscover:
+    vi.fn<
+      (filters: DiscoverFilters, cursor: string) => Promise<DiscoverPage>
+    >(),
+};
 
-vi.mock("@/App", async () => {
-  const { Outlet } = await import("@tanstack/react-router");
-  return { default: Outlet };
-});
+function installDiscoverBridge(): void {
+  Object.defineProperty(window, "__TAURI_INTERNALS__", {
+    configurable: true,
+    value: {
+      invoke: async (command: string, args?: InvokeArgs) => {
+        if (command !== "discover") {
+          throw new Error(`Unexpected Discover command: ${command}`);
+        }
+        const input = readDiscoverInvokeInput(args);
+        return mocks.fetchDiscover(
+          validateDiscoverSearch({ sort: input.sort, tag: input.tag }),
+          tauriString(input.cursor, "cursor"),
+        );
+      },
+    },
+  });
+}
 
-vi.mock("@/lib", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib")>();
-  return {
-    ...actual,
-    fetchDiscover: mocks.fetchDiscover,
-  };
-});
+function DiscoverTestRoot() {
+  const router = useRouter();
+  const LibrarySessionBoundary = router.options.context.librarySessionBoundary;
+  return (
+    <LibrarySessionBoundary>
+      <Outlet />
+    </LibrarySessionBoundary>
+  );
+}
+
+const originalRootComponent = RootRoute.options.component;
 
 function renderDiscoverRoute() {
   const queryClient = new QueryClient({
@@ -62,7 +104,12 @@ function renderDiscoverRoute() {
   return { onPlay, queryClient, router };
 }
 
+beforeAll(() => {
+  RootRoute.update({ component: DiscoverTestRoot });
+});
+
 beforeEach(() => {
+  installDiscoverBridge();
   mocks.fetchDiscover
     .mockReset()
     .mockResolvedValue({
@@ -103,6 +150,11 @@ beforeEach(() => {
       ],
     });
   vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
+});
+
+afterAll(() => {
+  RootRoute.update({ component: originalRootComponent });
+  Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
 });
 
 describe("Discover route layout", () => {

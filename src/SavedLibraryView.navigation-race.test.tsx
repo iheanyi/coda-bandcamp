@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterContextProvider } from "@tanstack/react-router";
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CodaMotionProvider } from "@/MotionProvider";
@@ -17,40 +18,30 @@ type PendingTransition = Readonly<{
   resolve: () => void;
 }>;
 
-const mocks = vi.hoisted(() => ({
-  fetchPlaylist: vi.fn(),
-  fetchPlaylists: vi.fn(),
-  pendingTransitions: [] as PendingTransition[],
-}));
-
-vi.mock("@/lib", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib")>();
-  return {
-    ...actual,
-    fetchPlaylist: mocks.fetchPlaylist,
-    fetchPlaylists: mocks.fetchPlaylists,
-  };
-});
-
-vi.mock("@/viewTransitions", () => ({
-  transitionCodaView: vi.fn(
-    (update: () => void | Promise<void>, kind: string) => {
-      let resolveCompletion!: () => void;
-      const completion = new Promise<void>((resolve) => {
-        resolveCompletion = resolve;
-      });
-      const promise = Promise.resolve(update()).then(() => completion);
-      mocks.pendingTransitions.push({
-        kind,
-        promise,
-        resolve: resolveCompletion,
-      });
-      return promise;
-    },
-  ),
-}));
-
 import SavedLibraryView from "@/SavedLibraryView";
+
+type SavedLibraryTransition = NonNullable<
+  NonNullable<ComponentProps<typeof SavedLibraryView>>["transition"]
+>;
+
+type PendingTransitions = {
+  pending: PendingTransition[];
+};
+
+const transitions: PendingTransitions = { pending: [] };
+const transition = vi.fn<SavedLibraryTransition>((update, kind) => {
+  let resolveCompletion!: () => void;
+  const completion = new Promise<void>((resolve) => {
+    resolveCompletion = resolve;
+  });
+  const promise = Promise.resolve(update()).then(() => completion);
+  transitions.pending.push({
+    kind,
+    promise,
+    resolve: resolveCompletion,
+  });
+  return promise;
+});
 
 const track: Track = {
   album: "Mirage",
@@ -129,7 +120,11 @@ function renderSavedLibrary(includeSecondPlaylist = false) {
       <QueryClientProvider client={queryClient}>
         <RouterContextProvider router={router}>
           <div data-coda-library-scroll>
-            <SavedLibraryView mode="playlists" {...props} />
+            <SavedLibraryView
+              mode="playlists"
+              transition={transition}
+              {...props}
+            />
           </div>
         </RouterContextProvider>
       </QueryClientProvider>
@@ -138,11 +133,13 @@ function renderSavedLibrary(includeSecondPlaylist = false) {
 }
 
 async function settleTransition(index: number) {
-  const transition = mocks.pendingTransitions[index];
-  expect(transition).toBeDefined();
+  const pendingTransition = transitions.pending[index];
+  if (!pendingTransition) {
+    throw new Error(`Expected pending playlist transition ${index}`);
+  }
   await act(async () => {
-    transition!.resolve();
-    await transition!.promise;
+    pendingTransition.resolve();
+    await pendingTransition.promise;
   });
 }
 
@@ -156,9 +153,8 @@ function expectReturnMarkers() {
 }
 
 beforeEach(() => {
-  mocks.pendingTransitions.length = 0;
-  mocks.fetchPlaylist.mockReset().mockResolvedValue(detail);
-  mocks.fetchPlaylists.mockReset().mockResolvedValue([summary]);
+  transitions.pending.length = 0;
+  transition.mockClear();
 });
 
 describe("Saved Library playlist transition race cleanup", () => {
@@ -185,7 +181,7 @@ describe("Saved Library playlist transition race cleanup", () => {
       second.click();
     });
 
-    expect(mocks.pendingTransitions).toHaveLength(2);
+    expect(transitions.pending).toHaveLength(2);
     expect(firstIdentity).not.toHaveAttribute(
       "data-coda-playlist-identity-source",
     );
@@ -221,12 +217,12 @@ describe("Saved Library playlist transition race cleanup", () => {
 
     fireEvent.click(await screen.findByRole("link", { name: /Night drive/u }));
     await screen.findByRole("heading", { name: summary.name });
-    expect(mocks.pendingTransitions[0]?.kind).toBe("playlist-detail");
+    expect(transitions.pending[0]?.kind).toBe("playlist-detail");
     await settleTransition(0);
 
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     await screen.findByRole("link", { name: /Night drive/u });
-    expect(mocks.pendingTransitions[1]?.kind).toBe("playlist-detail-close");
+    expect(transitions.pending[1]?.kind).toBe("playlist-detail-close");
     expectReturnMarkers();
 
     fireEvent.click(screen.getByRole("link", { name: /Night drive/u }));
@@ -234,7 +230,7 @@ describe("Saved Library playlist transition race cleanup", () => {
     await settleTransition(2);
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     await screen.findByRole("link", { name: /Night drive/u });
-    expect(mocks.pendingTransitions[3]?.kind).toBe("playlist-detail-close");
+    expect(transitions.pending[3]?.kind).toBe("playlist-detail-close");
     expectReturnMarkers();
 
     await settleTransition(1);

@@ -40,6 +40,12 @@ export type AppShellProps = Readonly<{
   className?: string;
 }>;
 
+function isRefCallback(
+  ref: Ref<HTMLElement> | undefined,
+): ref is (instance: HTMLElement | null) => void {
+  return Object.prototype.toString.call(ref) === "[object Function]";
+}
+
 function recordRouteRender(
   id: string,
   _phase: "mount" | "update" | "nested-update",
@@ -67,7 +73,7 @@ export function AppShell({
   const setMainRef = useCallback(
     (element: HTMLElement | null) => {
       mainRef.current = element;
-      if (typeof route.libraryPaneRef === "function") {
+      if (isRefCallback(route.libraryPaneRef)) {
         route.libraryPaneRef(element);
       } else if (route.libraryPaneRef) {
         route.libraryPaneRef.current = element;

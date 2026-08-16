@@ -14,15 +14,29 @@ export interface AppUpdate {
   close(): Promise<void>;
 }
 
+export type NativeAppUpdate = Readonly<{
+  body?: unknown;
+  close: Update["close"];
+  date?: unknown;
+  downloadAndInstall: Update["downloadAndInstall"];
+  version: unknown;
+}>;
+
 function isDesktopRuntime(): boolean {
-  return (
-    typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
-  );
+  return "window" in globalThis && "__TAURI_INTERNALS__" in globalThis.window;
 }
 
-function boundedText(value: string | undefined, maxLength: number): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const normalized = value.trim();
+function boundedText<Value>(
+  value: Value,
+  maxLength: number,
+): string | undefined {
+  if (
+    Object.prototype.toString.call(value) !== "[object String]" ||
+    Object(value) === value
+  ) {
+    return undefined;
+  }
+  const normalized = String(value).trim();
   return normalized ? normalized.slice(0, maxLength) : undefined;
 }
 
@@ -30,7 +44,7 @@ function normalizedPercentage(downloadedBytes: number, totalBytes: number): numb
   return Math.min(100, Math.max(0, Math.round((downloadedBytes / totalBytes) * 100)));
 }
 
-function wrapUpdate(update: Update): AppUpdate {
+export function normalizeAppUpdate(update: NativeAppUpdate): AppUpdate {
   return {
     version: boundedText(update.version, MAX_VERSION_LENGTH) ?? "",
     date: boundedText(update.date, MAX_DATE_LENGTH),
@@ -43,7 +57,7 @@ function wrapUpdate(update: Update): AppUpdate {
         if (event.event === "Started") {
           const contentLength = event.data.contentLength;
           totalBytes =
-            typeof contentLength === "number" &&
+            contentLength !== undefined &&
             Number.isFinite(contentLength) &&
             contentLength > 0
               ? contentLength
@@ -79,7 +93,7 @@ export async function checkForAppUpdate(): Promise<AppUpdate | undefined> {
 
   const { check } = await import("@tauri-apps/plugin-updater");
   const update = await check();
-  return update ? wrapUpdate(update) : undefined;
+  return update ? normalizeAppUpdate(update) : undefined;
 }
 
 export async function restartAfterUpdate(): Promise<void> {

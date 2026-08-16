@@ -6,6 +6,11 @@ import { codaMotion, useCodaMotion } from "@/motion";
 const SELECTION_PILL_DURATION_PER_STEP = 0.055;
 const SELECTION_PILL_MAX_DURATION = 0.46;
 
+export type DistanceAwareSelectionPill = Readonly<{
+  transition: Transition;
+  travelSteps: number;
+}>;
+
 function boundedTravelSteps(distanceSteps: number): number {
   if (!Number.isFinite(distanceSteps)) return 0;
   return Math.max(0, Math.round(Math.abs(distanceSteps)));
@@ -33,10 +38,7 @@ export function selectionPillTransitionForDistance(
 export function useDistanceAwareSelectionPill(
   selectedIndex: number,
   distanceOverride?: number,
-): Readonly<{
-  transition: Transition;
-  travelSteps: number;
-}> {
+): DistanceAwareSelectionPill {
   const codaMotion = useCodaMotion();
   const reducedMotion = useReducedMotionConfig() === true;
   const previousIndexRef = useRef(selectedIndex);

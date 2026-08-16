@@ -59,7 +59,7 @@ export function normalizeGenre(value?: string): string | undefined {
 export function summarizeGenres(
   albums: ReadonlyArray<{ genre?: string }>,
   featuredLimit = 5,
-): { all: string[]; featured: string[] } {
+) {
   const counts = new Map<string, { label: string; count: number }>();
   for (const album of albums) {
     const label = normalizeGenre(album.genre);

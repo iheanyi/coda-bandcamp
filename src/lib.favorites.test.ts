@@ -1,14 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  createCodaDataBridge,
+  fetchFavorites,
+  reconcileFavoriteTracks,
+  setFavorite,
+} from "./lib";
 
-const mocks = vi.hoisted(() => ({
+const mocks = {
   invoke: vi.fn(),
-}));
-
-vi.mock("@tauri-apps/api/core", () => ({
-  invoke: mocks.invoke,
-}));
-
-import { fetchFavorites, reconcileFavoriteTracks, setFavorite } from "./lib";
+};
+const bridge = createCodaDataBridge(mocks.invoke);
 
 describe("Favorites bridge", () => {
   beforeEach(() => {
@@ -37,7 +38,7 @@ describe("Favorites bridge", () => {
       }],
     });
 
-    await expect(fetchFavorites()).resolves.toMatchObject({
+    await expect(fetchFavorites(bridge)).resolves.toMatchObject({
       albumIds: ["album-1"],
       songIds: ["song-1"],
       albums: [expect.objectContaining({
@@ -59,7 +60,10 @@ describe("Favorites bridge", () => {
       favorite: false,
     });
 
-    await setFavorite({ id: "album-1", kind: "album", favorite: false });
+    await setFavorite(
+      { id: "album-1", kind: "album", favorite: false },
+      bridge,
+    );
 
     expect(mocks.invoke).toHaveBeenCalledWith("set_favorite", {
       input: { id: "album-1", kind: "album", favorite: false },
@@ -82,9 +86,10 @@ describe("Favorites bridge", () => {
       unavailableTrackCount: 1,
     });
 
-    await expect(reconcileFavoriteTracks([
-      { id: "song-1", albumId: "album-1" },
-    ])).resolves.toMatchObject({
+    await expect(reconcileFavoriteTracks(
+      [{ id: "song-1", albumId: "album-1" }],
+      bridge,
+    )).resolves.toMatchObject({
       tracks: [expect.objectContaining({
         id: "song-1",
         palette: expect.any(Array),

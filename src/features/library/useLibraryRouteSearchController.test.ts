@@ -6,19 +6,15 @@ import {
   DEFAULT_COLLECTION_ROUTE_SEARCH,
   validateCollectionSearch,
 } from "@/routing/routeContracts";
+import {
+  type LibraryRouteNavigate,
+  useLibraryRouteSearchControllerWithNavigation,
+} from "./useLibraryRouteSearchController";
 
-const routerMocks = vi.hoisted(() => ({
-  navigate: vi.fn(),
-}));
-
-vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => routerMocks.navigate,
-}));
-
-import { useLibraryRouteSearchController } from "./useLibraryRouteSearchController";
+const navigate = vi.fn<LibraryRouteNavigate>();
 
 beforeEach(() => {
-  routerMocks.navigate.mockReset();
+  navigate.mockReset();
 });
 
 describe("library route search controller", () => {
@@ -79,15 +75,18 @@ describe("library route search controller", () => {
 
     for (const { expected, routeInput } of cases) {
       const { result, unmount } = renderHook(() =>
-        useLibraryRouteSearchController({
-          routeInput,
-          search: validateCollectionSearch({ q: "drone" }),
-        }),
+        useLibraryRouteSearchControllerWithNavigation(
+          {
+            routeInput,
+            search: validateCollectionSearch({ q: "drone" }),
+          },
+          navigate,
+        ),
       );
 
       act(() => result.current.commands.changeGenre(" Ambient "));
 
-      expect(routerMocks.navigate).toHaveBeenLastCalledWith({
+      expect(navigate).toHaveBeenLastCalledWith({
         ...expected,
         replace: true,
         resetScroll: false,
@@ -104,18 +103,21 @@ describe("library route search controller", () => {
       search: { genre: "Jazz", mode: "artists", q: "night" },
     });
     const { result } = renderHook(() =>
-      useLibraryRouteSearchController({
-        routeInput,
-        search:
-          routeInput.kind === "artist"
-            ? routeInput.collectionSearch
-            : validateCollectionSearch(undefined),
-      }),
+      useLibraryRouteSearchControllerWithNavigation(
+        {
+          routeInput,
+          search:
+            routeInput.kind === "artist"
+              ? routeInput.collectionSearch
+              : validateCollectionSearch(undefined),
+        },
+        navigate,
+      ),
     );
 
     act(() => result.current.commands.changeQuery("  ambient  "));
 
-    expect(routerMocks.navigate).toHaveBeenLastCalledWith({
+    expect(navigate).toHaveBeenLastCalledWith({
       replace: true,
       resetScroll: false,
       search: {
@@ -130,7 +132,7 @@ describe("library route search controller", () => {
 
     act(() => result.current.commands.chooseBrowseMode("singles"));
 
-    expect(routerMocks.navigate).toHaveBeenLastCalledWith({
+    expect(navigate).toHaveBeenLastCalledWith({
       replace: true,
       resetScroll: false,
       search: {
@@ -150,18 +152,21 @@ describe("library route search controller", () => {
       search: { genre: "Jazz", q: "night", sort: "year" },
     });
     const { result } = renderHook(() =>
-      useLibraryRouteSearchController({
-        routeInput,
-        search:
-          routeInput.kind === "recent"
-            ? routeInput.collectionSearch
-            : validateCollectionSearch(undefined),
-      }),
+      useLibraryRouteSearchControllerWithNavigation(
+        {
+          routeInput,
+          search:
+            routeInput.kind === "recent"
+              ? routeInput.collectionSearch
+              : validateCollectionSearch(undefined),
+        },
+        navigate,
+      ),
     );
 
     act(() => result.current.commands.clearFilters());
 
-    expect(routerMocks.navigate).toHaveBeenCalledWith({
+    expect(navigate).toHaveBeenCalledWith({
       replace: true,
       resetScroll: false,
       search: DEFAULT_COLLECTION_ROUTE_SEARCH,
@@ -178,7 +183,10 @@ describe("library route search controller", () => {
     });
     const { result, rerender } = renderHook(
       ({ routeInput, search }) =>
-        useLibraryRouteSearchController({ routeInput, search }),
+        useLibraryRouteSearchControllerWithNavigation(
+          { routeInput, search },
+          navigate,
+        ),
       {
         initialProps: {
           routeInput: initialRoute,

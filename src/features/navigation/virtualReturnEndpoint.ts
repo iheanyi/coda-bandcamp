@@ -8,8 +8,11 @@ const MAX_VIRTUAL_RETURN_ATTEMPTS = 8;
 
 function nextDomOpportunity(): Promise<void> {
   return new Promise((resolve) => {
-    if (typeof window.requestAnimationFrame === "function") {
-      window.requestAnimationFrame(() => resolve());
+    const requestFrame = window.requestAnimationFrame;
+    if (
+      Object.prototype.toString.call(requestFrame) === "[object Function]"
+    ) {
+      requestFrame.call(window, () => resolve());
       return;
     }
     queueMicrotask(resolve);

@@ -1,37 +1,80 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { InvokeArgs } from "@tauri-apps/api/core";
 import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => {
-  const eventHandlers = new Set<(event: { payload: unknown }) => void>();
-  return {
-    convertFileSrc: vi.fn(
-      (path: string, protocol: string) => `${protocol}:${path}`,
-    ),
-    eventHandlers,
-    invoke: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
-    listen: vi.fn(
-      (_event: string, handler: (event: { payload: unknown }) => void) => {
-        eventHandlers.add(handler);
-        return Promise.resolve(() => eventHandlers.delete(handler));
-      },
-    ),
-  };
-});
-
-vi.mock("@tauri-apps/api/core", () => ({
-  convertFileSrc: mocks.convertFileSrc,
-  invoke: mocks.invoke,
-}));
-
-vi.mock("@tauri-apps/api/event", () => ({ listen: mocks.listen }));
-
-vi.mock("@/lib", () => ({
-  initials: (value: string) => value.slice(0, 2),
-}));
-
 import { clearCoverArtRendererState } from "@/coverArtSource";
+import {
+  installTauriEventPluginTestInternals,
+  readTauriInvokeArguments,
+  tauriString,
+} from "@/test/tauriInvoke";
 import { CoverArt, type CoverArtAlbum } from "./CoverArt";
+
+type CoverArtRevisionPayload = Readonly<{
+  coverArtId: string;
+  revision: string;
+}>;
+
+type CoverArtEvent = Readonly<{
+  event: string;
+  id: number;
+  payload: CoverArtRevisionPayload;
+}>;
+
+type CoverArtEventHandler = (event: CoverArtEvent) => void;
+
+const artworkBridge = {
+  callbacks: new Map<number, CoverArtEventHandler>(),
+  convertFileSrc: vi.fn(
+    (path: string, protocol: string) => `${protocol}:${path}`,
+  ),
+  invalidate: vi.fn<(coverArtId: string) => Promise<void>>()
+    .mockResolvedValue(undefined),
+  listen: vi.fn<() => Promise<number>>().mockResolvedValue(1),
+  nextCallbackId: 1,
+};
+
+function installArtworkBridge(): void {
+  installTauriEventPluginTestInternals();
+  Object.defineProperty(window, "__TAURI_INTERNALS__", {
+    configurable: true,
+    value: {
+      convertFileSrc: artworkBridge.convertFileSrc,
+      invoke: async (command: string, args?: InvokeArgs) => {
+        if (command === "plugin:event|listen") return artworkBridge.listen();
+        if (command === "invalidate_cover_art") {
+          return artworkBridge.invalidate(
+            tauriString(
+              readTauriInvokeArguments(args).coverArtId,
+              "coverArtId",
+            ),
+          );
+        }
+        if (command === "plugin:event|unlisten") return undefined;
+        throw new Error(`Unexpected artwork command: ${command}`);
+      },
+      transformCallback: (handler: CoverArtEventHandler) => {
+        const callbackId = artworkBridge.nextCallbackId++;
+        artworkBridge.callbacks.set(callbackId, handler);
+        return callbackId;
+      },
+      unregisterCallback: (callbackId: number) => {
+        artworkBridge.callbacks.delete(callbackId);
+      },
+    },
+  });
+}
+
+function emitArtworkRevision(payload: CoverArtRevisionPayload): void {
+  for (const [id, handler] of artworkBridge.callbacks) {
+    handler({
+      event: "coda://cover-art-updated",
+      id,
+      payload,
+    });
+  }
+}
 
 function album({
   artworkUrl,
@@ -57,14 +100,14 @@ function coverImage(): HTMLImageElement {
 }
 
 beforeEach(() => {
-  Object.defineProperty(window, "__TAURI_INTERNALS__", {
-    configurable: true,
-    value: {},
-  });
+  installArtworkBridge();
   document.documentElement.classList.remove("coda-view-transitioning");
   clearCoverArtRendererState();
-  mocks.convertFileSrc.mockClear();
-  mocks.invoke.mockClear().mockResolvedValue(undefined);
+  artworkBridge.callbacks.clear();
+  artworkBridge.convertFileSrc.mockClear();
+  artworkBridge.invalidate.mockReset().mockResolvedValue(undefined);
+  artworkBridge.listen.mockClear();
+  artworkBridge.nextCallbackId = 1;
 });
 
 describe("CoverArt", () => {
@@ -76,7 +119,7 @@ describe("CoverArt", () => {
     );
     expect(coverImage().parentElement).toHaveClass("bg-(--cover-base)");
     expect(coverImage().parentElement).not.toHaveTextContent("Test Artist");
-    expect(mocks.convertFileSrc).toHaveBeenCalledWith("", "coda-cover");
+    expect(artworkBridge.convertFileSrc).toHaveBeenCalledWith("", "coda-cover");
     expect(coverImage()).toHaveAttribute("data-cover-art-pending");
     expect(coverImage()).not.toHaveAttribute("data-cover-art-reveal");
 
@@ -174,13 +217,12 @@ describe("CoverArt", () => {
       /^coda-cover:\/v1\/600\/revision-cover\?v=0&s=[a-f0-9]{32}$/,
     );
     expect(sessionScope).toBeDefined();
-    expect(mocks.listen).toHaveBeenCalledTimes(1);
+    expect(artworkBridge.listen).toHaveBeenCalledTimes(1);
 
-    for (const handler of mocks.eventHandlers) {
-      handler({
-        payload: { coverArtId: "revision-cover", revision: "sha256_A1" },
-      });
-    }
+    emitArtworkRevision({
+      coverArtId: "revision-cover",
+      revision: "sha256_A1",
+    });
 
     await waitFor(() =>
       expect(coverImage()).toHaveAttribute(
@@ -188,12 +230,12 @@ describe("CoverArt", () => {
         `coda-cover:/v1/600/revision-cover?v=sha256_A1&s=${sessionScope}`,
       ),
     );
-    expect(mocks.listen).toHaveBeenCalledTimes(1);
+    expect(artworkBridge.listen).toHaveBeenCalledTimes(1);
   });
 
   it("invalidates one broken local entry, retries once, then falls back", async () => {
     let finishInvalidation: () => void = () => undefined;
-    mocks.invoke.mockImplementationOnce(
+    artworkBridge.invalidate.mockImplementationOnce(
       () =>
         new Promise<void>((resolve) => {
           finishInvalidation = resolve;
@@ -207,10 +249,8 @@ describe("CoverArt", () => {
 
     fireEvent.error(coverImage());
 
-    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledOnce());
-    expect(mocks.invoke).toHaveBeenCalledWith("invalidate_cover_art", {
-      coverArtId: "broken-cover",
-    });
+    await waitFor(() => expect(artworkBridge.invalidate).toHaveBeenCalledOnce());
+    expect(artworkBridge.invalidate).toHaveBeenCalledWith("broken-cover");
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
     expect(artwork).not.toHaveTextContent("Test Artist");
 
@@ -225,7 +265,7 @@ describe("CoverArt", () => {
       screen.queryByRole("img", { name: "Test Album cover" }),
     ).not.toBeInTheDocument();
     expect(artwork).toHaveTextContent("Test Artist");
-    expect(mocks.invoke).toHaveBeenCalledOnce();
+    expect(artworkBridge.invalidate).toHaveBeenCalledOnce();
   });
 
   it("preserves direct artwork and transition markers", () => {
@@ -257,7 +297,7 @@ describe("CoverArt", () => {
   it("clears a failed source when artwork refresh is requested", async () => {
     render(<CoverArt album={album({ coverArt: "refresh-cover" })} />);
     fireEvent.error(coverImage());
-    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledOnce());
+    await waitFor(() => expect(artworkBridge.invalidate).toHaveBeenCalledOnce());
     fireEvent.error(coverImage());
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
 

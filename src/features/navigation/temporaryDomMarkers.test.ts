@@ -196,9 +196,12 @@ describe("temporary DOM marker leases", () => {
 
     expect(second).toHaveBeenCalledOnce();
     expect(first).toHaveBeenCalledOnce();
-    expect(second.mock.invocationCallOrder[0]).toBeLessThan(
-      first.mock.invocationCallOrder[0]!,
-    );
+    const secondCallOrder = second.mock.invocationCallOrder[0];
+    const firstCallOrder = first.mock.invocationCallOrder[0];
+    if (secondCallOrder === undefined || firstCallOrder === undefined) {
+      throw new Error("Expected both marker releases to be observed");
+    }
+    expect(secondCallOrder).toBeLessThan(firstCallOrder);
   });
 
   it("restores the latest surviving lease across adversarial release orders", () => {
@@ -242,9 +245,14 @@ describe("temporary DOM marker leases", () => {
       const releaseOrder = [...remaining];
       for (let index = releaseOrder.length - 1; index > 0; index -= 1) {
         const swapIndex = Math.floor(random() * (index + 1));
+        const currentValue = releaseOrder[index];
+        const swapValue = releaseOrder[swapIndex];
+        if (currentValue === undefined || swapValue === undefined) {
+          throw new Error("Expected shuffle indexes to remain in bounds");
+        }
         [releaseOrder[index], releaseOrder[swapIndex]] = [
-          releaseOrder[swapIndex]!,
-          releaseOrder[index]!,
+          swapValue,
+          currentValue,
         ];
       }
 

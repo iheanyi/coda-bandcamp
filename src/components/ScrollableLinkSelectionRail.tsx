@@ -61,8 +61,7 @@ const INITIAL_EDGES = Object.freeze({ end: false, start: false });
 
 function reducedMotionPreferred(): boolean {
   return (
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false
   );
 }
 
@@ -144,7 +143,8 @@ export function ScrollableLinkSelectionRail<Value extends string | number>({
       const left =
         rail.scrollLeft +
         direction * Math.max(160, Math.round(rail.clientWidth * 0.7));
-      if (typeof rail.scrollTo === "function") {
+      const supportsScrollTo = Boolean(rail.scrollTo);
+      if (supportsScrollTo) {
         rail.scrollTo({
           behavior: reducedMotionPreferred() ? "auto" : "smooth",
           left,

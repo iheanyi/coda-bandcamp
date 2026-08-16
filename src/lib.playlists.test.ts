@@ -1,14 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  createCodaDataBridge,
+  updatePlaylist,
+} from "./lib";
 
-const mocks = vi.hoisted(() => ({
+const mocks = {
   invoke: vi.fn(),
-}));
-
-vi.mock("@tauri-apps/api/core", () => ({
-  invoke: mocks.invoke,
-}));
-
-import { updatePlaylist } from "./lib";
+};
+const bridge = createCodaDataBridge(mocks.invoke);
 
 describe("playlist mutation bridge", () => {
   beforeEach(() => {
@@ -18,10 +17,13 @@ describe("playlist mutation bridge", () => {
   it("returns no detail when Bandcamp committed an empty playlist update", async () => {
     mocks.invoke.mockResolvedValue(null);
 
-    await expect(updatePlaylist({
-      playlistId: "playlist-1",
-      songIndexesToRemove: [0],
-    })).resolves.toBeUndefined();
+    await expect(updatePlaylist(
+      {
+        playlistId: "playlist-1",
+        songIndexesToRemove: [0],
+      },
+      bridge,
+    )).resolves.toBeUndefined();
   });
 
   it("hydrates playlist detail returned with a committed update", async () => {
@@ -41,10 +43,13 @@ describe("playlist mutation bridge", () => {
       }],
     });
 
-    await expect(updatePlaylist({
-      playlistId: "playlist-1",
-      name: "Night drives",
-    })).resolves.toMatchObject({
+    await expect(updatePlaylist(
+      {
+        playlistId: "playlist-1",
+        name: "Night drives",
+      },
+      bridge,
+    )).resolves.toMatchObject({
       id: "playlist-1",
       tracks: [expect.objectContaining({
         id: "song-1",
@@ -56,9 +61,12 @@ describe("playlist mutation bridge", () => {
   it("still rejects when the native playlist mutation fails", async () => {
     mocks.invoke.mockRejectedValue(new Error("Playlist update failed"));
 
-    await expect(updatePlaylist({
-      playlistId: "playlist-1",
-      name: "Night drives",
-    })).rejects.toThrow("Playlist update failed");
+    await expect(updatePlaylist(
+      {
+        playlistId: "playlist-1",
+        name: "Night drives",
+      },
+      bridge,
+    )).rejects.toThrow("Playlist update failed");
   });
 });

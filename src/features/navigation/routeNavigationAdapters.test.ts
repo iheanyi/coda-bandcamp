@@ -7,14 +7,22 @@ import {
   parseRadioShowIdParam,
 } from "@/routing/routeContracts";
 
-const adapterMocks = vi.hoisted(() => ({
+import {
+  awaitRouterBackAfterRender,
+  awaitRouterNavigationAfterRender,
+  type RenderedRouterEvent,
+  useDailyRouteNavigationAdapterWithRuntime,
+  usePlaylistRouteNavigationAdapterWithRuntime,
+  useRadioRouteNavigationAdapterWithRuntime,
+} from "./routeNavigationAdapters";
+
+type RenderListener = (event: RenderedRouterEvent) => void;
+
+let renderedListener: RenderListener | undefined;
+
+const adapterMocks = {
   navigate: vi.fn(),
   nextRenderKey: 3,
-  onRendered: undefined as
-    | ((
-        event: Readonly<{ toLocation: { state: { __TSR_key: string } } }>,
-      ) => void)
-    | undefined,
   router: {
     history: {
       back: vi.fn(),
@@ -25,29 +33,21 @@ const adapterMocks = vi.hoisted(() => ({
     },
     subscribe: vi.fn(),
   },
-}));
+};
 
-vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => adapterMocks.navigate,
-  useRouter: () => adapterMocks.router,
-}));
-
-import {
-  awaitRouterBackAfterRender,
-  awaitRouterNavigationAfterRender,
-  useDailyRouteNavigationAdapter,
-  usePlaylistRouteNavigationAdapter,
-  useRadioRouteNavigationAdapter,
-} from "./routeNavigationAdapters";
+const adapterRuntime = {
+  navigate: adapterMocks.navigate,
+  router: adapterMocks.router,
+};
 
 beforeEach(() => {
   adapterMocks.nextRenderKey = 3;
-  adapterMocks.onRendered = undefined;
+  renderedListener = undefined;
   adapterMocks.router.state.location.state.__TSR_key = "entry-2";
   adapterMocks.navigate.mockReset().mockImplementation(async () => {
     const nextKey = `entry-${adapterMocks.nextRenderKey++}`;
     adapterMocks.router.state.location.state.__TSR_key = nextKey;
-    adapterMocks.onRendered?.({
+    renderedListener?.({
       toLocation: { state: { __TSR_key: nextKey } },
     });
   });
@@ -56,11 +56,11 @@ beforeEach(() => {
   adapterMocks.router.subscribe
     .mockReset()
     .mockImplementation(
-      (event: string, listener: typeof adapterMocks.onRendered) => {
-        if (event === "onRendered") adapterMocks.onRendered = listener;
+      (event: string, listener: RenderListener) => {
+        if (event === "onRendered") renderedListener = listener;
         return () => {
-          if (adapterMocks.onRendered === listener) {
-            adapterMocks.onRendered = undefined;
+          if (renderedListener === listener) {
+            renderedListener = undefined;
           }
         };
       },
@@ -85,7 +85,7 @@ describe("route navigation adapters", () => {
     let settled = false;
 
     const navigation = awaitRouterNavigationAfterRender(
-      adapterMocks.router as never,
+      adapterMocks.router,
       navigate,
     ).then(() => {
       settled = true;
@@ -124,7 +124,7 @@ describe("route navigation adapters", () => {
     let settled = false;
 
     const navigation = awaitRouterNavigationAfterRender(
-      adapterMocks.router as never,
+      adapterMocks.router,
       navigate,
     ).then(() => {
       settled = true;
@@ -152,7 +152,7 @@ describe("route navigation adapters", () => {
     );
     let settled = false;
 
-    const back = awaitRouterBackAfterRender(adapterMocks.router as never).then(
+    const back = awaitRouterBackAfterRender(adapterMocks.router).then(
       () => {
         settled = true;
       },
@@ -182,8 +182,8 @@ describe("route navigation adapters", () => {
       },
     );
 
-    const first = awaitRouterBackAfterRender(adapterMocks.router as never);
-    const second = awaitRouterBackAfterRender(adapterMocks.router as never);
+    const first = awaitRouterBackAfterRender(adapterMocks.router);
+    const second = awaitRouterBackAfterRender(adapterMocks.router);
 
     expect(second).toBe(first);
     expect(adapterMocks.router.history.back).toHaveBeenCalledOnce();
@@ -196,8 +196,8 @@ describe("route navigation adapters", () => {
     const failure = new Error("history unavailable");
     const unsubscribe = vi.fn();
     adapterMocks.router.subscribe.mockImplementation(
-      (_event: string, listener: typeof adapterMocks.onRendered) => {
-        adapterMocks.onRendered = listener;
+      (_event: string, listener: RenderListener) => {
+        renderedListener = listener;
         return unsubscribe;
       },
     );
@@ -206,12 +206,12 @@ describe("route navigation adapters", () => {
     });
 
     await expect(
-      awaitRouterBackAfterRender(adapterMocks.router as never),
+      awaitRouterBackAfterRender(adapterMocks.router),
     ).rejects.toBe(failure);
     expect(unsubscribe).toHaveBeenCalledOnce();
 
-    const recovered = awaitRouterBackAfterRender(adapterMocks.router as never);
-    adapterMocks.onRendered?.({
+    const recovered = awaitRouterBackAfterRender(adapterMocks.router);
+    renderedListener?.({
       toLocation: { state: { __TSR_key: "entry-1" } },
     });
     await recovered;
@@ -221,7 +221,9 @@ describe("route navigation adapters", () => {
 
   it("provides the existing Playlist context with typed, transition-free commits", async () => {
     const playlistId = parsePlaylistIdParam("playlist-1");
-    const { result } = renderHook(() => usePlaylistRouteNavigationAdapter());
+    const { result } = renderHook(() =>
+      usePlaylistRouteNavigationAdapterWithRuntime(adapterRuntime),
+    );
 
     await act(() => result.current.goToPlaylist(playlistId));
     await act(() => result.current.goBack());
@@ -239,7 +241,9 @@ describe("route navigation adapters", () => {
   });
 
   it("provides Daily article and archive commits without Router-owned transitions", async () => {
-    const { result } = renderHook(() => useDailyRouteNavigationAdapter());
+    const { result } = renderHook(() =>
+      useDailyRouteNavigationAdapterWithRuntime(adapterRuntime),
+    );
 
     await act(() =>
       result.current.goToArticle({
@@ -270,7 +274,9 @@ describe("route navigation adapters", () => {
   it("provides typed Radio index, series, show, and Back fallbacks", async () => {
     const seriesId = parseRadioSeriesIdParam(1);
     const showId = parseRadioShowIdParam(42);
-    const { result } = renderHook(() => useRadioRouteNavigationAdapter());
+    const { result } = renderHook(() =>
+      useRadioRouteNavigationAdapterWithRuntime(adapterRuntime),
+    );
 
     await act(() => result.current.goToSeries(seriesId));
     await act(() => result.current.goToShow(showId));

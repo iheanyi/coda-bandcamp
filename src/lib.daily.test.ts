@@ -1,15 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  createCodaDataBridge,
+  fetchDailyArticle,
+  fetchDailyArticles,
+} from "./lib";
 
-const mocks = vi.hoisted(() => ({
+const mocks = {
   invoke: vi.fn(),
-}));
-
-vi.mock("@tauri-apps/api/core", () => ({
-  Channel: class {},
-  invoke: mocks.invoke,
-}));
-
-import { fetchDailyArticle, fetchDailyArticles } from "./lib";
+};
+const bridge = createCodaDataBridge(mocks.invoke);
 
 describe("Bandcamp Daily native bridge", () => {
   beforeEach(() => {
@@ -21,7 +20,7 @@ describe("Bandcamp Daily native bridge", () => {
   });
 
   it("uses the native section argument for archive listings", async () => {
-    await fetchDailyArticles("album-of-the-day", 2);
+    await fetchDailyArticles("album-of-the-day", 2, bridge);
 
     expect(mocks.invoke).toHaveBeenCalledWith("daily_articles", {
       page: 2,
@@ -30,7 +29,7 @@ describe("Bandcamp Daily native bridge", () => {
   });
 
   it("uses the article's real section when loading mixed genre results", async () => {
-    await fetchDailyArticle("best-jazz", "patient-music");
+    await fetchDailyArticle("best-jazz", "patient-music", bridge);
 
     expect(mocks.invoke).toHaveBeenCalledWith("daily_article", {
       articleSection: "best-jazz",

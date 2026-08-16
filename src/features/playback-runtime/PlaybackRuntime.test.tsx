@@ -151,12 +151,18 @@ function deferred<Value>() {
   return { promise, resolve };
 }
 
+type DesktopHandlerHarness = {
+  current?: DesktopPlaybackControlHandlers;
+};
+
+type RuntimeControllerHarness = {
+  controller?: PlaybackRuntimeController;
+};
+
 function createAdapterHarness(
   load: () => Promise<PlayerStateSnapshot | undefined> = async () => undefined,
 ) {
-  const desktopHandlers: {
-    current?: DesktopPlaybackControlHandlers;
-  } = {};
+  const desktopHandlers: DesktopHandlerHarness = {};
   const persistence = {
     load: vi.fn(load),
     save: vi.fn(async (_input: PlayerStateInput) => undefined),
@@ -241,7 +247,7 @@ function renderRuntime(
     notify?: PlaybackRuntimeOptions["notify"];
   },
 ) {
-  const current: { controller?: PlaybackRuntimeController } = {};
+  const current: RuntimeControllerHarness = {};
   const notify = options.notify ?? vi.fn();
   function Harness() {
     const controller = usePlaybackRuntimeController({

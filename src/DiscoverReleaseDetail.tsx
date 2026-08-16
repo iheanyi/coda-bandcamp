@@ -4,7 +4,7 @@ import {
   MapPin,
   Plus,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PlaybackIcon } from "@/components/ui/playback-icon";
@@ -24,6 +24,11 @@ export type DiscoverReleaseScreenProps = {
   onTogglePlayback: () => void;
   onArtist: (release: DiscoverRelease) => void;
   onOpenBandcamp: (url: string) => void;
+};
+
+type DiscoverReleaseArtworkStyle = CSSProperties & {
+  "--cover-accent": string;
+  "--cover-base": string;
 };
 
 export function DiscoverReleaseScreen({
@@ -51,6 +56,10 @@ export function DiscoverReleaseScreen({
   const artworkLoaded = Boolean(
     artworkEligible && loadedArtworkUrl === artworkUrl,
   );
+  const artworkStyle: DiscoverReleaseArtworkStyle = {
+    "--cover-accent": palette[0],
+    "--cover-base": palette[1],
+  };
 
   useEffect(() => {
     headingRef.current?.focus({ preventScroll: true });
@@ -75,12 +84,7 @@ export function DiscoverReleaseScreen({
         <div
           className="grid size-56 shrink-0 place-items-center overflow-hidden rounded-xl bg-[linear-gradient(145deg,var(--cover-accent),transparent_72%),var(--cover-base)] text-4xl font-bold text-white/80 shadow-2xl max-xl:size-48"
           data-coda-discover-artwork-detail={release.id}
-          style={
-            {
-              "--cover-accent": palette[0],
-              "--cover-base": palette[1],
-            } as React.CSSProperties
-          }
+          style={artworkStyle}
         >
           {artworkEligible && artworkUrl ? (
             <img

@@ -2,25 +2,17 @@ import { QueryClient } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RadioShow, RadioShowSummary, RadioShowsPage } from "@/types";
 
-const mocks = vi.hoisted(() => ({
-  fetchRadioShow: vi.fn(),
-  fetchRadioShows: vi.fn(),
-}));
-
-vi.mock("@/lib", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib")>();
-  return {
-    ...actual,
-    fetchRadioShow: mocks.fetchRadioShow,
-    fetchRadioShows: mocks.fetchRadioShows,
-  };
-});
-
 import {
   findRadioShowSummaryInCache,
   radioShowQueryOptions,
   radioShowsInfiniteQueryOptions,
+  type RadioQueryRepository,
 } from "./radioQueries";
+
+const repository = {
+  fetchShow: vi.fn<RadioQueryRepository["fetchShow"]>(),
+  fetchShows: vi.fn<RadioQueryRepository["fetchShows"]>(),
+};
 
 const page: RadioShowsPage = {
   results: [],
@@ -46,8 +38,8 @@ function archiveData(summary: RadioShowSummary) {
 }
 
 beforeEach(() => {
-  mocks.fetchRadioShows.mockReset().mockResolvedValue(page);
-  mocks.fetchRadioShow.mockReset().mockResolvedValue(show);
+  repository.fetchShows.mockReset().mockResolvedValue(page);
+  repository.fetchShow.mockReset().mockResolvedValue(show);
 });
 
 describe("Radio query options", () => {
@@ -79,21 +71,25 @@ describe("Radio query options", () => {
       defaultOptions: { queries: { retry: false } },
     });
 
-    await queryClient.fetchInfiniteQuery(radioShowsInfiniteQueryOptions());
-    await queryClient.fetchInfiniteQuery(radioShowsInfiniteQueryOptions(5));
+    await queryClient.fetchInfiniteQuery(
+      radioShowsInfiniteQueryOptions(undefined, repository),
+    );
+    await queryClient.fetchInfiniteQuery(
+      radioShowsInfiniteQueryOptions(5, repository),
+    );
 
-    expect(mocks.fetchRadioShows).toHaveBeenNthCalledWith(1, {
+    expect(repository.fetchShows).toHaveBeenNthCalledWith(1, {
       seriesId: undefined,
       cursor: undefined,
     });
-    expect(mocks.fetchRadioShows).toHaveBeenNthCalledWith(2, {
+    expect(repository.fetchShows).toHaveBeenNthCalledWith(2, {
       seriesId: 5,
       cursor: undefined,
     });
   });
 
   it("preserves the show-detail key and stale time", async () => {
-    const options = radioShowQueryOptions(979);
+    const options = radioShowQueryOptions(979, repository);
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
@@ -102,7 +98,7 @@ describe("Radio query options", () => {
     expect(options.staleTime).toBe(10 * 60 * 1_000);
     expect(options.gcTime).toBeUndefined();
     expect(await queryClient.fetchQuery(options)).toEqual(show);
-    expect(mocks.fetchRadioShow).toHaveBeenCalledWith(979);
+    expect(repository.fetchShow).toHaveBeenCalledWith(979);
   });
 
   it("resolves a stripped archive summary without creating another cache", () => {

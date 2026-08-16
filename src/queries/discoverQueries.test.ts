@@ -1,18 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { InvokeArgs } from "@tauri-apps/api/core";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DiscoverFilters, DiscoverPage } from "@/types";
-
-const mocks = vi.hoisted(() => ({
-  fetchDiscover: vi.fn(),
-}));
-
-vi.mock("@/lib", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib")>();
-  return {
-    ...actual,
-    fetchDiscover: mocks.fetchDiscover,
-  };
-});
 
 import { discoverInfiniteQueryOptions } from "./discoverQueries";
 
@@ -24,8 +13,20 @@ const firstPage: DiscoverPage = {
   hasMore: true,
 };
 
+const nativeInvoke = vi.fn<
+  (command: string, args?: InvokeArgs) => Promise<DiscoverPage>
+>();
+
 beforeEach(() => {
-  mocks.fetchDiscover.mockReset().mockResolvedValue(firstPage);
+  nativeInvoke.mockReset().mockResolvedValue(firstPage);
+  Object.defineProperty(window, "__TAURI_INTERNALS__", {
+    configurable: true,
+    value: { invoke: nativeInvoke },
+  });
+});
+
+afterEach(() => {
+  Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
 });
 
 describe("discoverInfiniteQueryOptions", () => {
@@ -47,7 +48,17 @@ describe("discoverInfiniteQueryOptions", () => {
     });
 
     await queryClient.fetchInfiniteQuery(options);
-    expect(mocks.fetchDiscover).toHaveBeenCalledWith(filters, "*");
+    expect(nativeInvoke).toHaveBeenCalledWith(
+      "discover",
+      {
+        input: {
+          cursor: "*",
+          sort: "new",
+          tag: "ambient",
+        },
+      },
+      undefined,
+    );
 
     const getNextPageParam = options.getNextPageParam;
     expect(getNextPageParam?.(firstPage, [firstPage], "*", ["*"]))

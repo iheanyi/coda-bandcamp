@@ -221,7 +221,6 @@ export type DiscoverPage = {
 };
 
 export type { DailyCategory } from "./dailyCatalog";
-import type { DailyCategory } from "./dailyCatalog";
 
 export type DailyArticleSummary = {
   id: string;

@@ -10,17 +10,27 @@ import {
   validateDiscoverSearch,
 } from "@/routing/routeContracts";
 import type { CodaScreen } from "@/routing/routeMeta";
+import type { CodaViewTransitionKind } from "@/viewTransitions";
 
-const controllerMocks = vi.hoisted(() => ({
-  afterUpdate: undefined as (() => void) | undefined,
-  capture: undefined as ((kind: string) => void) | undefined,
+import type { RenderedRouterEvent } from "./routeNavigationAdapters";
+import type {
+  CodaDetailDestination,
+  CodaRouteDestination,
+} from "./useRouteDestination";
+import {
+  type DetailNavigationController,
+  useDetailNavigationControllerWithRuntime,
+} from "./useDetailNavigationController";
+
+type RenderListener = (event: RenderedRouterEvent) => void;
+
+let afterTransitionUpdate: (() => void) | undefined;
+let captureTransition: ((kind: CodaViewTransitionKind) => void) | undefined;
+let renderedListener: RenderListener | undefined;
+
+const controllerMocks = {
   navigate: vi.fn(),
   nextRenderKey: 2,
-  onRendered: undefined as
-    | ((
-        event: Readonly<{ toLocation: { state: { __TSR_key: string } } }>,
-      ) => void)
-    | undefined,
   router: {
     history: {
       back: vi.fn(),
@@ -32,22 +42,13 @@ const controllerMocks = vi.hoisted(() => ({
     subscribe: vi.fn(),
   },
   transition: vi.fn(),
-}));
+};
 
-vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => controllerMocks.navigate,
-  useRouter: () => controllerMocks.router,
-}));
-
-vi.mock("@/viewTransitions", () => ({
-  transitionCodaView: controllerMocks.transition,
-}));
-
-import type {
-  CodaDetailDestination,
-  CodaRouteDestination,
-} from "./useRouteDestination";
-import { useDetailNavigationController } from "./useDetailNavigationController";
+const controllerRuntime = {
+  navigate: controllerMocks.navigate,
+  router: controllerMocks.router,
+  transition: controllerMocks.transition,
+};
 
 const collectionSearch = validateCollectionSearch({});
 const discoverSearch = validateDiscoverSearch({});
@@ -66,9 +67,8 @@ function destination(
     sourceAlbumId: detail?.kind === "artist" ? detail.sourceAlbumId : undefined,
   });
 
-  return {
+  const routeDestination = {
     collectionSearch,
-    ...(detail ? { detail } : {}),
     discoverSearch,
     libraryRouteInput,
     locationKey,
@@ -82,7 +82,9 @@ function destination(
             ? "radio"
             : "library",
     screen,
-  };
+  } satisfies CodaRouteDestination;
+  if (!detail) return routeDestination;
+  return { ...routeDestination, detail };
 }
 
 function albumCard(albumId: string) {
@@ -156,15 +158,15 @@ function deferred() {
 }
 
 beforeEach(() => {
-  controllerMocks.afterUpdate = undefined;
-  controllerMocks.capture = undefined;
+  afterTransitionUpdate = undefined;
+  captureTransition = undefined;
   controllerMocks.nextRenderKey = 2;
-  controllerMocks.onRendered = undefined;
+  renderedListener = undefined;
   controllerMocks.router.state.location.state.__TSR_key = "entry-1";
   controllerMocks.navigate.mockReset().mockImplementation(async () => {
     const nextKey = `entry-${controllerMocks.nextRenderKey++}`;
     controllerMocks.router.state.location.state.__TSR_key = nextKey;
-    controllerMocks.onRendered?.({
+    renderedListener?.({
       toLocation: { state: { __TSR_key: nextKey } },
     });
   });
@@ -173,11 +175,11 @@ beforeEach(() => {
   controllerMocks.router.subscribe
     .mockReset()
     .mockImplementation(
-      (event: string, listener: typeof controllerMocks.onRendered) => {
-        if (event === "onRendered") controllerMocks.onRendered = listener;
+      (event: string, listener: RenderListener) => {
+        if (event === "onRendered") renderedListener = listener;
         return () => {
-          if (controllerMocks.onRendered === listener) {
-            controllerMocks.onRendered = undefined;
+          if (renderedListener === listener) {
+            renderedListener = undefined;
           }
         };
       },
@@ -185,10 +187,13 @@ beforeEach(() => {
   controllerMocks.transition
     .mockReset()
     .mockImplementation(
-      async (update: () => void | Promise<void>, kind: string) => {
-        controllerMocks.capture?.(kind);
+      async (
+        update: () => void | Promise<void>,
+        kind: CodaViewTransitionKind,
+      ) => {
+        captureTransition?.(kind);
         await update();
-        controllerMocks.afterUpdate?.();
+        afterTransitionUpdate?.();
       },
     );
 });
@@ -206,7 +211,7 @@ describe("useDetailNavigationController", () => {
       kind: string;
       titleIdentity: string | null;
     }> = [];
-    controllerMocks.capture = (kind) => {
+    captureTransition = (kind) => {
       captures.push({
         artwork: source.cover.classList.contains("coda-album-artwork-source"),
         kind,
@@ -216,7 +221,10 @@ describe("useDetailNavigationController", () => {
       });
     };
     const { result } = renderHook(() =>
-      useDetailNavigationController(destination(undefined, "entry-1")),
+      useDetailNavigationControllerWithRuntime(
+        destination(undefined, "entry-1"),
+        controllerRuntime,
+      ),
     );
 
     await act(() =>
@@ -246,14 +254,17 @@ describe("useDetailNavigationController", () => {
     const source = albumCard(albumId);
     source.playButton.dataset.albumOpen = albumId;
     const captures: Array<{ artwork: boolean; kind: string }> = [];
-    controllerMocks.capture = (kind) => {
+    captureTransition = (kind) => {
       captures.push({
         artwork: source.cover.classList.contains("coda-album-artwork-source"),
         kind,
       });
     };
     const { result } = renderHook(() =>
-      useDetailNavigationController(destination(undefined, "entry-1")),
+      useDetailNavigationControllerWithRuntime(
+        destination(undefined, "entry-1"),
+        controllerRuntime,
+      ),
     );
 
     await act(() =>
@@ -273,7 +284,7 @@ describe("useDetailNavigationController", () => {
     source.cover.remove();
     source.artworkLink.remove();
     const captures: Array<{ kind: string; titleIdentity: string | null }> = [];
-    controllerMocks.capture = (kind) => {
+    captureTransition = (kind) => {
       captures.push({
         kind,
         titleIdentity: source.title.getAttribute(
@@ -282,7 +293,8 @@ describe("useDetailNavigationController", () => {
       });
     };
     const { result, rerender } = renderHook(
-      ({ route }) => useDetailNavigationController(route),
+      ({ route }) =>
+        useDetailNavigationControllerWithRuntime(route, controllerRuntime),
       {
         initialProps: { route: destination(undefined, "entry-1") },
       },
@@ -314,7 +326,7 @@ describe("useDetailNavigationController", () => {
       kind: string;
       titleIdentity: string | null;
     }> = [];
-    controllerMocks.capture = (kind) => {
+    captureTransition = (kind) => {
       captures.push({
         artwork: source.cover.classList.contains("coda-album-artwork-source"),
         kind,
@@ -324,7 +336,8 @@ describe("useDetailNavigationController", () => {
       });
     };
     const { result, rerender } = renderHook(
-      ({ route }) => useDetailNavigationController(route),
+      ({ route }) =>
+        useDetailNavigationControllerWithRuntime(route, controllerRuntime),
       {
         initialProps: { route: destination(undefined, "entry-1") },
       },
@@ -369,9 +382,12 @@ describe("useDetailNavigationController", () => {
       },
     );
     const { result } = renderHook(() =>
-      useDetailNavigationController(destination(undefined, "entry-1")),
+      useDetailNavigationControllerWithRuntime(
+        destination(undefined, "entry-1"),
+        controllerRuntime,
+      ),
     );
-    let opening!: Promise<unknown>;
+    let opening!: ReturnType<DetailNavigationController["open"]>;
 
     act(() => {
       opening = result.current.open({
@@ -412,10 +428,13 @@ describe("useDetailNavigationController", () => {
       },
     );
     const { result } = renderHook(() =>
-      useDetailNavigationController(destination(undefined, "entry-1")),
+      useDetailNavigationControllerWithRuntime(
+        destination(undefined, "entry-1"),
+        controllerRuntime,
+      ),
     );
-    let firstOpening!: Promise<unknown>;
-    let secondOpening!: Promise<unknown>;
+    let firstOpening!: ReturnType<DetailNavigationController["open"]>;
+    let secondOpening!: ReturnType<DetailNavigationController["open"]>;
 
     act(() => {
       firstOpening = result.current.open({
@@ -485,9 +504,12 @@ describe("useDetailNavigationController", () => {
       },
     );
     const { result } = renderHook(() =>
-      useDetailNavigationController(destination(undefined, "entry-1")),
+      useDetailNavigationControllerWithRuntime(
+        destination(undefined, "entry-1"),
+        controllerRuntime,
+      ),
     );
-    let opening!: Promise<unknown>;
+    let opening!: ReturnType<DetailNavigationController["open"]>;
 
     act(() => {
       opening = result.current.open({
@@ -513,7 +535,7 @@ describe("useDetailNavigationController", () => {
     controllerMocks.router.state.location.state.__TSR_key = "entry-2";
 
     await act(async () => {
-      controllerMocks.onRendered?.({
+      renderedListener?.({
         toLocation: { state: { __TSR_key: "entry-2" } },
       });
       await opening;
@@ -560,7 +582,7 @@ describe("useDetailNavigationController", () => {
       inner: string | undefined;
       link: string | undefined;
     }> = [];
-    controllerMocks.capture = (kind) => {
+    captureTransition = (kind) => {
       kinds.push(kind);
       if (kinds.length === 1) {
         artistNameSources.push({
@@ -570,7 +592,10 @@ describe("useDetailNavigationController", () => {
       }
     };
     const { result } = renderHook(() =>
-      useDetailNavigationController(destination(undefined, "entry-1")),
+      useDetailNavigationControllerWithRuntime(
+        destination(undefined, "entry-1"),
+        controllerRuntime,
+      ),
     );
 
     await act(() =>
@@ -610,9 +635,10 @@ describe("useDetailNavigationController", () => {
     playerArtwork.dataset.codaTrackId = "track-1";
     document.body.append(playerArtwork);
     const kinds: string[] = [];
-    controllerMocks.capture = (kind) => kinds.push(kind);
+    captureTransition = (kind) => kinds.push(kind);
     const { result, rerender } = renderHook(
-      ({ route }) => useDetailNavigationController(route),
+      ({ route }) =>
+        useDetailNavigationControllerWithRuntime(route, controllerRuntime),
       { initialProps: { route: destination(undefined, "entry-1") } },
     );
 
@@ -629,9 +655,10 @@ describe("useDetailNavigationController", () => {
 
   it("pairs Now Playing without artwork with page transitions", async () => {
     const kinds: string[] = [];
-    controllerMocks.capture = (kind) => kinds.push(kind);
+    captureTransition = (kind) => kinds.push(kind);
     const { result, rerender } = renderHook(
-      ({ route }) => useDetailNavigationController(route),
+      ({ route }) =>
+        useDetailNavigationControllerWithRuntime(route, controllerRuntime),
       { initialProps: { route: destination(undefined, "entry-1") } },
     );
 
@@ -655,7 +682,7 @@ describe("useDetailNavigationController", () => {
     const beforeCommit = vi.fn();
     const route = destination({ kind: "album", albumId }, "entry-2");
     const { result } = renderHook(() =>
-      useDetailNavigationController(route),
+      useDetailNavigationControllerWithRuntime(route, controllerRuntime),
     );
     const controller = result.current;
 
@@ -682,7 +709,8 @@ describe("useDetailNavigationController", () => {
     document.body.append(sentinel);
     sentinel.focus();
     const { result, rerender } = renderHook(
-      ({ route }) => useDetailNavigationController(route),
+      ({ route }) =>
+        useDetailNavigationControllerWithRuntime(route, controllerRuntime),
       {
         initialProps: {
           route: destination({ kind: "album", albumId }, "entry-1"),
@@ -716,7 +744,10 @@ describe("useDetailNavigationController", () => {
     let renderCount = 0;
     const { result } = renderHook(() => {
       renderCount += 1;
-      return useDetailNavigationController(destination(undefined, "entry-1"));
+      return useDetailNavigationControllerWithRuntime(
+        destination(undefined, "entry-1"),
+        controllerRuntime,
+      );
     });
     const renderCountBeforeOpen = renderCount;
 
@@ -740,7 +771,8 @@ describe("useDetailNavigationController", () => {
     const failure = new Error("open failed");
     controllerMocks.transition.mockRejectedValueOnce(failure);
     const { result, rerender } = renderHook(
-      ({ route }) => useDetailNavigationController(route),
+      ({ route }) =>
+        useDetailNavigationControllerWithRuntime(route, controllerRuntime),
       { initialProps: { route: destination(undefined, "entry-1") } },
     );
     result.current.scrollRootRef.current = scrollRoot;
@@ -766,7 +798,8 @@ describe("useDetailNavigationController", () => {
     const albumId = parseAlbumIdParam("album-1");
     const source = albumCard(albumId);
     const { result, rerender } = renderHook(
-      ({ route }) => useDetailNavigationController(route),
+      ({ route }) =>
+        useDetailNavigationControllerWithRuntime(route, controllerRuntime),
       { initialProps: { route: destination(undefined, "entry-1") } },
     );
 
@@ -807,7 +840,8 @@ describe("useDetailNavigationController", () => {
       await firstTransitionFinished.promise;
     });
     const { result, rerender } = renderHook(
-      ({ route }) => useDetailNavigationController(route),
+      ({ route }) =>
+        useDetailNavigationControllerWithRuntime(route, controllerRuntime),
       {
         initialProps: {
           route: destination({ kind: "album", albumId }, "entry-1"),
@@ -816,7 +850,7 @@ describe("useDetailNavigationController", () => {
     );
     result.current.scrollRootRef.current = scrollRoot;
 
-    let firstOpen!: Promise<unknown>;
+    let firstOpen!: ReturnType<DetailNavigationController["open"]>;
     act(() => {
       firstOpen = result.current.open({
         artistKey,
@@ -848,8 +882,9 @@ describe("useDetailNavigationController", () => {
     let renderCount = 0;
     const { result } = renderHook(() => {
       renderCount += 1;
-      return useDetailNavigationController(
+      return useDetailNavigationControllerWithRuntime(
         destination({ kind: "now-playing" }, "entry-2"),
+        controllerRuntime,
       );
     });
     const renderCountBeforeBack = renderCount;
@@ -872,7 +907,8 @@ describe("useDetailNavigationController", () => {
     const sentinel = document.createElement("button");
     document.body.append(sentinel);
     const { result, rerender } = renderHook(
-      ({ route }) => useDetailNavigationController(route),
+      ({ route }) =>
+        useDetailNavigationControllerWithRuntime(route, controllerRuntime),
       { initialProps: { route: destination(undefined, "entry-1") } },
     );
     await act(() =>
@@ -923,9 +959,10 @@ describe("useDetailNavigationController", () => {
     document.body.append(scrollRoot, sentinel);
     const failure = new Error("transition failed");
     const kinds: string[] = [];
-    controllerMocks.capture = (kind) => kinds.push(kind);
+    captureTransition = (kind) => kinds.push(kind);
     const { result, rerender } = renderHook(
-      ({ route }) => useDetailNavigationController(route),
+      ({ route }) =>
+        useDetailNavigationControllerWithRuntime(route, controllerRuntime),
       { initialProps: { route: destination(undefined, "entry-1") } },
     );
     result.current.scrollRootRef.current = scrollRoot;
@@ -983,7 +1020,8 @@ describe("useDetailNavigationController", () => {
       },
     );
     const { result, rerender } = renderHook(
-      ({ route }) => useDetailNavigationController(route),
+      ({ route }) =>
+        useDetailNavigationControllerWithRuntime(route, controllerRuntime),
       {
         initialProps: {
           route: destination({ kind: "album", albumId }, "entry-2"),
@@ -1037,7 +1075,8 @@ describe("useDetailNavigationController", () => {
       },
     );
     const { result, rerender } = renderHook(
-      ({ route }) => useDetailNavigationController(route),
+      ({ route }) =>
+        useDetailNavigationControllerWithRuntime(route, controllerRuntime),
       { initialProps: { route: destination(undefined, "entry-1") } },
     );
 
@@ -1082,13 +1121,14 @@ describe("useDetailNavigationController", () => {
       artwork: string | undefined;
       title: string | undefined;
     }> = [];
-    controllerMocks.capture = (kind) => kinds.push(kind);
+    captureTransition = (kind) => kinds.push(kind);
     const scrollRoot = document.createElement("main");
     scrollRoot.scrollTop = 312;
     document.body.append(scrollRoot);
     const initialDestination = destination(undefined, "entry-1");
     const { result, rerender } = renderHook(
-      ({ route }) => useDetailNavigationController(route),
+      ({ route }) =>
+        useDetailNavigationControllerWithRuntime(route, controllerRuntime),
       { initialProps: { route: initialDestination } },
     );
     result.current.scrollRootRef.current = scrollRoot;
@@ -1115,7 +1155,7 @@ describe("useDetailNavigationController", () => {
     window.requestAnimationFrame(() => {
       replacementCard = albumCard(albumId);
     });
-    controllerMocks.afterUpdate = () => {
+    afterTransitionUpdate = () => {
       returnMarkers.push({
         artwork: replacementCard?.cover.dataset.codaAlbumArtworkReturn,
         title: replacementCard?.title.dataset.codaAlbumTitleReturn,
@@ -1151,9 +1191,10 @@ describe("useDetailNavigationController", () => {
     const source = artistCard(artistKey);
     source.cover.remove();
     const kinds: string[] = [];
-    controllerMocks.capture = (kind) => kinds.push(kind);
+    captureTransition = (kind) => kinds.push(kind);
     const { result, rerender } = renderHook(
-      ({ route }) => useDetailNavigationController(route),
+      ({ route }) =>
+        useDetailNavigationControllerWithRuntime(route, controllerRuntime),
       { initialProps: { route: destination(undefined, "entry-1") } },
     );
 
@@ -1180,8 +1221,8 @@ describe("useDetailNavigationController", () => {
       artwork: string | undefined;
       name: string | undefined;
     }> = [];
-    controllerMocks.capture = (kind) => kinds.push(kind);
-    controllerMocks.afterUpdate = () => {
+    captureTransition = (kind) => kinds.push(kind);
+    afterTransitionUpdate = () => {
       returnMarkers.push({
         artwork: source.cover.dataset.codaArtistArtworkReturn,
         name: source.name.dataset.codaArtistNameReturn,
@@ -1189,7 +1230,8 @@ describe("useDetailNavigationController", () => {
     };
     const initialDestination = destination(undefined, "entry-1");
     const { result, rerender } = renderHook(
-      ({ route }) => useDetailNavigationController(route),
+      ({ route }) =>
+        useDetailNavigationControllerWithRuntime(route, controllerRuntime),
       { initialProps: { route: initialDestination } },
     );
 
@@ -1220,9 +1262,10 @@ describe("useDetailNavigationController", () => {
     const source = discoverCard(releaseId);
     source.artwork.remove();
     const kinds: string[] = [];
-    controllerMocks.capture = (kind) => kinds.push(kind);
+    captureTransition = (kind) => kinds.push(kind);
     const { result, rerender } = renderHook(
-      ({ route }) => useDetailNavigationController(route),
+      ({ route }) =>
+        useDetailNavigationControllerWithRuntime(route, controllerRuntime),
       { initialProps: { route: destination(undefined, "entry-1") } },
     );
 
@@ -1253,10 +1296,11 @@ describe("useDetailNavigationController", () => {
     const scrollRoot = document.createElement("main");
     scrollRoot.scrollTop = 428;
     document.body.append(scrollRoot);
-    controllerMocks.capture = (kind) => kinds.push(kind);
+    captureTransition = (kind) => kinds.push(kind);
     const initialDestination = destination(undefined, "entry-1");
     const { result, rerender } = renderHook(
-      ({ route }) => useDetailNavigationController(route),
+      ({ route }) =>
+        useDetailNavigationControllerWithRuntime(route, controllerRuntime),
       { initialProps: { route: initialDestination } },
     );
     result.current.scrollRootRef.current = scrollRoot;
@@ -1284,7 +1328,7 @@ describe("useDetailNavigationController", () => {
     window.requestAnimationFrame(() => {
       replacement = discoverCard(releaseId);
     });
-    controllerMocks.afterUpdate = () => {
+    afterTransitionUpdate = () => {
       returnMarkers.push({
         artwork: replacement?.artwork.dataset.codaDiscoverArtworkReturn,
         title: replacement?.title.dataset.codaDiscoverTitleReturn,
@@ -1327,11 +1371,12 @@ describe("useDetailNavigationController", () => {
     playerAlbumLink.append(playerTitle);
     document.body.append(playerAlbumLink);
     const kinds: string[] = [];
-    controllerMocks.capture = (kind) => {
+    captureTransition = (kind) => {
       kinds.push(kind);
     };
     const { result, rerender } = renderHook(
-      ({ route }) => useDetailNavigationController(route),
+      ({ route }) =>
+        useDetailNavigationControllerWithRuntime(route, controllerRuntime),
       { initialProps: { route: destination(undefined, "entry-1") } },
     );
 

@@ -14,12 +14,34 @@ describe("view transition CSS ownership", () => {
     expect(styles).not.toContain(".coda-motion-");
   });
 
+  it("keeps persistent queue and player chrome out of native snapshot groups", () => {
+    expect(styles).not.toMatch(
+      /view-transition-name:\s*coda-(?:queue|player)\s*;/,
+    );
+    expect(styles).not.toMatch(
+      /::view-transition-(?:group|old|new)\(coda-(?:queue|player)\)/,
+    );
+  });
+
+  it("uses the bounded album header only for the close snapshot", () => {
+    expect(styles).toMatch(
+      /html\.coda-transition--album-detail-close\s+\[data-coda-album-detail-surface\]\s*\{\s*view-transition-name:\s*none;/,
+    );
+    expect(styles).toMatch(
+      /html\.coda-transition--album-detail-close\s+\[data-slot="app-shell-workspace"\]\[data-queue-open="false"\]\s+\[data-coda-album-detail-close-surface\]\s*\{[\s\S]*?contain:\s*paint;[\s\S]*?overflow:\s*clip;[\s\S]*?view-transition-name:\s*coda-detail-surface;/,
+    );
+    expect(
+      styles.match(/\[data-coda-album-detail-close-surface\]/g),
+    ).toHaveLength(1);
+  });
+
   it("isolates every detail from the root snapshot and uses one surface group", () => {
     const rootIsolation = styles.match(
       /html:is\(([\s\S]*?)\)\s*\{\s*view-transition-name:\s*none;/,
     )?.[1];
 
     expect(rootIsolation).toContain(".coda-transition--album-detail");
+    expect(rootIsolation).toContain(".coda-transition--album-detail-close");
     expect(rootIsolation).toContain(".coda-transition--now-playing-open");
     expect(rootIsolation).toContain(".coda-transition--now-playing-close");
     expect(styles).toContain("view-transition-name: coda-detail-surface");

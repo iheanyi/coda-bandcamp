@@ -14,6 +14,22 @@ export type MotionPseudoLayers = Readonly<{
   new: readonly string[];
 }>;
 
+type MutableMotionPseudoLayers = {
+  group: string[];
+  old: string[];
+  new: string[];
+};
+
+type MotionPseudoEffect = Readonly<{
+  getComputedTiming: () => Readonly<{ endTime?: number | null }>;
+  pseudoElement: string | null;
+}>;
+
+export type MotionPseudoAnimation = Readonly<{
+  effect: AnimationEffect | MotionPseudoEffect | null;
+  playState: AnimationPlayState;
+}>;
+
 export type MotionInputType = "pointer" | "keyboard";
 
 export type MotionPhaseTimings = Readonly<{
@@ -278,10 +294,9 @@ function completeDiagnostic(
   const firstVisualAfterCoordinatorMs = firstVisualCandidates.length
     ? Math.min(...firstVisualCandidates)
     : 0;
-  return {
+  const completed: MotionTransitionDiagnostic = {
     ...diagnostic,
     status,
-    ...(reason ? { reason } : {}),
     elapsedMs,
     firstVisualMs:
       (diagnostic.inputToCoordinatorMs ?? 0) + firstVisualAfterCoordinatorMs,
@@ -291,6 +306,7 @@ function completeDiagnostic(
       finishedMs: elapsedMs,
     },
   };
+  return reason ? { ...completed, reason } : completed;
 }
 
 function recordCompletedDiagnostic(diagnostic: MotionTransitionDiagnostic) {
@@ -334,24 +350,69 @@ function pseudoName(value: string) {
   return match?.[1];
 }
 
+function isPrimitiveNumber<Value>(value: Value): value is Value & number {
+  return (
+    Object.prototype.toString.call(value) === "[object Number]" &&
+    value === Number(value)
+  );
+}
+
+function isPrimitiveString<Value>(value: Value): value is Value & string {
+  return (
+    Object.prototype.toString.call(value) === "[object String]" &&
+    value === String(value)
+  );
+}
+
+function isComputedTimingReader<Value>(
+  value: Value,
+): value is Value & (() => Readonly<{ endTime?: number | null }>) {
+  return Object.prototype.toString.call(value) === "[object Function]";
+}
+
+function isMotionPseudoEffect(
+  effect: AnimationEffect | MotionPseudoEffect | null,
+): effect is MotionPseudoEffect {
+  if (
+    !effect ||
+    !("pseudoElement" in effect) ||
+    !("getComputedTiming" in effect)
+  ) {
+    return false;
+  }
+  const pseudoElement = effect.pseudoElement;
+  return (
+    (pseudoElement === null || isPrimitiveString(pseudoElement)) &&
+    isComputedTimingReader(effect.getComputedTiming)
+  );
+}
+
+function isAnimationReader<Value>(
+  value: Value,
+): value is Value & (() => Animation[]) {
+  return Object.prototype.toString.call(value) === "[object Function]";
+}
+
 export function inspectMotionPseudoLayers(
   expectedTransitionNames: readonly string[] = [],
 ) {
-  const layers: { group: string[]; old: string[]; new: string[] } = {
+  const layers: MutableMotionPseudoLayers = {
     group: [],
     old: [],
     new: [],
   };
   const expectedNames = new Set(expectedTransitionNames);
   let actualDurationMs = 0;
-  if (typeof document.getAnimations !== "function") {
+  const getAnimations = document.getAnimations;
+  if (!isAnimationReader(getAnimations)) {
     return { layers, actualDurationMs };
   }
-  for (const animation of document.getAnimations()) {
+  for (const animation of getAnimations.call(document)) {
     if (animation.playState === "finished" || animation.playState === "idle") {
       continue;
     }
-    const effect = animation.effect as KeyframeEffect | null;
+    const effect = animation.effect;
+    if (!isMotionPseudoEffect(effect)) continue;
     const pseudo = effect?.pseudoElement;
     if (!pseudo?.startsWith("::view-transition")) continue;
     const name = pseudoName(pseudo) ?? pseudo;
@@ -361,7 +422,7 @@ export function inspectMotionPseudoLayers(
     const endTime = effect?.getComputedTiming().endTime;
     const tracksConfiguredLayer =
       expectedNames.size === 0 || expectedNames.has(name);
-    if (tracksConfiguredLayer && typeof endTime === "number") {
+    if (tracksConfiguredLayer && isPrimitiveNumber(endTime)) {
       actualDurationMs = Math.max(actualDurationMs, endTime);
     }
   }

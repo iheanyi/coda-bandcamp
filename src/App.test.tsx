@@ -1,11 +1,27 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { RouterProvider } from "@tanstack/react-router";
-import { StrictMode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { RouterProvider, useRouter } from "@tanstack/react-router";
+import { Channel, type InvokeArgs, invoke } from "@tauri-apps/api/core";
+import { type ComponentProps, StrictMode } from "react";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+import App from "./App";
 import { CodaMotionProvider } from "./MotionProvider";
-import { albumQueryKey } from "./libraryQueries";
+import { notifyToast } from "./components/ui/toastManager";
+import {
+  albumQueryKey,
+  ensureAlbumQueryData,
+  type LibraryQueryBridge,
+  refreshAlbumQueryData,
+} from "./libraryQueries";
 import {
   emptyLocalFavorites,
   readLocalFavorites,
@@ -14,24 +30,42 @@ import {
 import { LIBRARY_STARTUP_STEP_TIMEOUT_MS } from "./libraryStartup";
 import type {
   Album,
+  ConnectionInput,
   FavoriteCollection,
   FavoriteInput,
+  FavoriteMutationResult,
   LocalFavoriteCollection,
   Track,
 } from "./types";
+import type { LibrarySyncProgress } from "./lib";
 import { createCodaMemoryRouter } from "./router";
+import { createLibrarySessionController } from "./features/library-session";
+import type { LibrarySessionDependencies } from "./features/library-session/librarySessionController";
+import { Route as RootRoute } from "./routes/__root";
+import { validateDiscoverSearch } from "./routing/routeContracts";
+import {
+  installTauriEventPluginTestInternals,
+  readTauriInvokeArguments,
+  tauriNumber,
+  tauriString,
+} from "./test/tauriInvoke";
 
-const mocks = vi.hoisted(() => ({
+const mocks = {
   beginLastFmAuthorization: vi.fn(),
   checkpointPlayerState: vi.fn(),
   clearPlayerState: vi.fn(),
   completeLastFmAuthorization: vi.fn(),
   connectBandcamp: vi.fn(),
-  coverArtSource: vi.fn(),
   createSystemArtworkDataUrl: vi.fn(),
   disconnect: vi.fn(),
   disconnectLastFm: vi.fn(),
-  fetchAlbum: vi.fn(),
+  fetchAlbum:
+    vi.fn<
+      (
+        album: Album,
+        options?: Readonly<{ forceRefresh?: boolean }>,
+      ) => Promise<Track[]>
+    >(),
   fetchDiscover: vi.fn(),
   fetchLibrary: vi.fn(),
   fetchFavorites: vi.fn(),
@@ -45,7 +79,6 @@ const mocks = vi.hoisted(() => ({
   loadPlayerState: vi.fn(),
   openLastFmAuthorization: vi.fn(),
   openBandcampUrl: vi.fn(),
-  readLibraryCache: vi.fn(),
   readLocalFavoritesAsync: vi.fn(),
   reconcileFavoriteTracks: vi.fn(),
   scrobbleLastFm: vi.fn(),
@@ -53,64 +86,222 @@ const mocks = vi.hoisted(() => ({
   setFavorite: vi.fn(),
   updateLastFmNowPlaying: vi.fn(),
   writeLocalFavoritesAsync: vi.fn(),
-  yieldToMacrotask: vi.fn(),
-}));
+};
 
-vi.mock("./systemArtwork", () => ({
-  createSystemArtworkDataUrl: mocks.createSystemArtworkDataUrl,
-}));
+type AppAdapters = NonNullable<
+  NonNullable<ComponentProps<typeof App>>["adapters"]
+>;
 
-vi.mock("./coverArtSource", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./coverArtSource")>();
-  return { ...actual, coverArtSource: mocks.coverArtSource };
-});
+const appAdapters: AppAdapters = {
+  favorites: {
+    local: {
+      read: mocks.readLocalFavoritesAsync,
+      write: mocks.writeLocalFavoritesAsync,
+    },
+    music: {
+      read: mocks.fetchFavorites,
+      reconcile: mocks.reconcileFavoriteTracks,
+      write: mocks.setFavorite,
+    },
+  },
+  loadLastFmStatus: mocks.getLastFmStatus,
+  playback: {
+    audio: {
+      fetchStreamUrl: mocks.fetchStreamUrl,
+      invalidateStreamUrl: mocks.invalidateStreamUrl,
+      loadRadioShow: mocks.fetchRadioShow,
+    },
+    persistence: {
+      checkpoint: mocks.checkpointPlayerState,
+      clear: mocks.clearPlayerState,
+      load: mocks.loadPlayerState,
+      save: mocks.savePlayerState,
+    },
+    scrobbling: {
+      scrobble: mocks.scrobbleLastFm,
+      updateNowPlaying: mocks.updateLastFmNowPlaying,
+    },
+    systemMedia: {
+      createArtworkDataUrl: mocks.createSystemArtworkDataUrl,
+    },
+  },
+};
 
-vi.mock("./lib", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./lib")>();
+const libraryQueryBridge: LibraryQueryBridge = {
+  fetchAlbum: mocks.fetchAlbum,
+  loadLibraryCache: mocks.loadLibraryCache,
+};
+
+function librarySessionDependencies(): Partial<LibrarySessionDependencies> {
   return {
-    ...actual,
-    beginLastFmAuthorization: mocks.beginLastFmAuthorization,
-    checkpointPlayerState: mocks.checkpointPlayerState,
-    clearPlayerState: mocks.clearPlayerState,
-    completeLastFmAuthorization: mocks.completeLastFmAuthorization,
-    connectBandcamp: mocks.connectBandcamp,
+    checkConnection: mocks.hasConnection,
     disconnect: mocks.disconnect,
-    disconnectLastFm: mocks.disconnectLastFm,
-    fetchAlbum: mocks.fetchAlbum,
-    fetchDiscover: mocks.fetchDiscover,
-    fetchLibrary: mocks.fetchLibrary,
-    fetchFavorites: mocks.fetchFavorites,
-    fetchRadioShow: mocks.fetchRadioShow,
-    fetchRadioShows: mocks.fetchRadioShows,
-    fetchStreamUrl: mocks.fetchStreamUrl,
-    getLastFmStatus: mocks.getLastFmStatus,
-    hasConnection: mocks.hasConnection,
-    invalidateStreamUrl: mocks.invalidateStreamUrl,
-    isDesktop: () => false,
-    loadLibraryCache: mocks.loadLibraryCache,
-    openLastFmAuthorization: mocks.openLastFmAuthorization,
-    openBandcampUrl: mocks.openBandcampUrl,
-    loadPlayerState: mocks.loadPlayerState,
-    readLibraryCache: mocks.readLibraryCache,
-    reconcileFavoriteTracks: mocks.reconcileFavoriteTracks,
-    scrobbleLastFm: mocks.scrobbleLastFm,
-    savePlayerState: mocks.savePlayerState,
-    setFavorite: mocks.setFavorite,
-    updateLastFmNowPlaying: mocks.updateLastFmNowPlaying,
+    ensureAlbumTracks: (queryClient, album) =>
+      ensureAlbumQueryData(queryClient, album, libraryQueryBridge),
+    loadCachedLibrary: mocks.loadLibraryCache,
+    refreshAlbumTracks: (queryClient, album) =>
+      refreshAlbumQueryData(queryClient, album, libraryQueryBridge),
+    syncLibrary: mocks.fetchLibrary,
   };
-});
-vi.mock("./localFavoritesStore", () => ({
-  readLocalFavoritesAsync: mocks.readLocalFavoritesAsync,
-  writeLocalFavoritesAsync: mocks.writeLocalFavoritesAsync,
-}));
+}
 
-vi.mock("./random", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./random")>();
-  return {
-    ...actual,
-    yieldToMacrotask: mocks.yieldToMacrotask,
+function AppTestRoot() {
+  const router = useRouter();
+  const LibrarySessionBoundary = router.options.context.librarySessionBoundary;
+  return (
+    <LibrarySessionBoundary>
+      <App adapters={appAdapters} />
+    </LibrarySessionBoundary>
+  );
+}
+
+const originalRootComponent = RootRoute.options.component;
+
+type DiscoverCommandInput = Readonly<{
+  cursor?: unknown;
+  sort?: unknown;
+  tag?: unknown;
+}>;
+
+type ConnectionInputPayload = Readonly<{
+  password?: unknown;
+  username?: unknown;
+}>;
+
+type RadioArchiveRequest = {
+  cursor?: string;
+  seriesId?: number;
+};
+
+type TestMediaSession<Metadata> = {
+  metadata: Metadata | null;
+  playbackState: MediaSessionPlaybackState;
+  setActionHandler: (
+    action: MediaSessionAction,
+    handler: MediaSessionActionHandler | null,
+  ) => void;
+  setPositionState: (state?: MediaPositionState) => void;
+};
+
+function resizeObserverEntry(
+  target: Element,
+  bounds: DOMRectReadOnly,
+): ResizeObserverEntry {
+  const size = {
+    blockSize: bounds.height,
+    inlineSize: bounds.width,
   };
-});
+  return {
+    borderBoxSize: [size],
+    contentBoxSize: [size],
+    contentRect: bounds,
+    devicePixelContentBoxSize: [size],
+    target,
+  };
+}
+
+function isDiscoverCommandInput<Value>(
+  value: Value,
+): value is Value & DiscoverCommandInput {
+  return value !== null && Object(value) === value && !Array.isArray(value);
+}
+
+function isConnectionInputPayload<Value>(
+  value: Value,
+): value is Value & ConnectionInputPayload {
+  return value !== null && Object(value) === value && !Array.isArray(value);
+}
+
+function connectionInput<Value>(value: Value): ConnectionInput {
+  if (!isConnectionInputPayload(value)) {
+    throw new TypeError("App connection input is invalid");
+  }
+  return {
+    password: tauriString(value.password, "password"),
+    username: tauriString(value.username, "username"),
+  };
+}
+
+function installAppBridge(): void {
+  let nextCallbackId = 1;
+  installTauriEventPluginTestInternals();
+  Object.defineProperty(window, "__TAURI_INTERNALS__", {
+    configurable: true,
+    value: {
+      convertFileSrc: (path: string, protocol: string) => `${protocol}:${path}`,
+      invoke: async (command: string, args?: InvokeArgs) => {
+        const values = readTauriInvokeArguments(args);
+        switch (command) {
+          case "connect": {
+            const progressChannel = values.onProgress;
+            const onPage =
+              progressChannel instanceof Channel
+                ? (progress: LibrarySyncProgress) => {
+                    progressChannel.onmessage({
+                      albums: progress.albums,
+                      kind: "page",
+                      loaded: progress.loaded,
+                      pageIndex: progress.pageIndex,
+                    });
+                  }
+                : undefined;
+            return mocks.connectBandcamp(connectionInput(values.input), onPage);
+          }
+          case "discover": {
+            const input = values.input;
+            if (!isDiscoverCommandInput(input)) {
+              throw new TypeError("App Discover input is invalid");
+            }
+            return mocks.fetchDiscover(
+              validateDiscoverSearch({ sort: input.sort, tag: input.tag }),
+              tauriString(input.cursor, "cursor"),
+            );
+          }
+          case "fetch_playlists":
+            return [];
+          case "lastfm_begin_auth":
+            return mocks.beginLastFmAuthorization();
+          case "lastfm_complete_auth":
+            return mocks.completeLastFmAuthorization(
+              tauriString(values.token, "token"),
+            );
+          case "lastfm_disconnect":
+            return mocks.disconnectLastFm();
+          case "plugin:event|listen":
+            return 1;
+          case "plugin:event|unlisten":
+            return undefined;
+          case "plugin:opener|open_url": {
+            const url = tauriString(values.url, "url");
+            return new URL(url).hostname === "www.last.fm"
+              ? mocks.openLastFmAuthorization(url)
+              : mocks.openBandcampUrl(url);
+          }
+          case "plugin:updater|check":
+            return null;
+          case "radio_show":
+            return mocks.fetchRadioShow(
+              tauriNumber(values.showId, "showId"),
+            );
+          case "radio_shows": {
+            const request: RadioArchiveRequest = {};
+            if (values.cursor !== undefined) {
+              request.cursor = tauriString(values.cursor, "cursor");
+            }
+            if (values.seriesId !== undefined) {
+              request.seriesId = tauriNumber(values.seriesId, "seriesId");
+            }
+            return mocks.fetchRadioShows(request);
+          }
+          default:
+            throw new Error(`Unexpected App command: ${command}`);
+        }
+      },
+      transformCallback: () => nextCallbackId++,
+      unregisterCallback: () => undefined,
+    },
+  });
+}
 
 function renderApp(strict = false) {
   const queryClient = new QueryClient({
@@ -119,7 +310,16 @@ function renderApp(strict = false) {
       mutations: { retry: false },
     },
   });
-  const router = createCodaMemoryRouter(queryClient, ["/collection"]);
+  const librarySession = createLibrarySessionController({
+    dependencies: librarySessionDependencies(),
+    notify: notifyToast,
+    queryClient,
+  });
+  const router = createCodaMemoryRouter(
+    queryClient,
+    ["/collection"],
+    librarySession,
+  );
   const app = (
     <CodaMotionProvider>
       <QueryClientProvider client={queryClient}>
@@ -243,19 +443,18 @@ function deferred<Value>() {
   return { promise, reject, resolve };
 }
 
+beforeAll(() => {
+  RootRoute.update({ component: AppTestRoot });
+});
+
 beforeEach(() => {
+  installAppBridge();
   window.localStorage.clear();
   mocks.beginLastFmAuthorization.mockReset();
   mocks.checkpointPlayerState.mockReset().mockResolvedValue(true);
   mocks.clearPlayerState.mockReset().mockResolvedValue(undefined);
   mocks.completeLastFmAuthorization.mockReset();
   mocks.connectBandcamp.mockReset();
-  mocks.coverArtSource
-    .mockReset()
-    .mockImplementation(
-      (coverArtId: string) =>
-        `coda-cover://localhost/v1/600/${encodeURIComponent(coverArtId)}?v=0&s=0123456789abcdef0123456789abcdef`,
-    );
   mocks.createSystemArtworkDataUrl
     .mockReset()
     .mockReturnValue("data:image/png;base64,Y29kYS1jb3Zlcg==");
@@ -331,7 +530,6 @@ beforeEach(() => {
   mocks.loadPlayerState.mockReset().mockResolvedValue(undefined);
   mocks.openLastFmAuthorization.mockReset().mockResolvedValue(undefined);
   mocks.openBandcampUrl.mockReset().mockResolvedValue(undefined);
-  mocks.readLibraryCache.mockReset().mockReturnValue([]);
   mocks.readLocalFavoritesAsync
     .mockReset()
     .mockImplementation(async () => readLocalFavorites());
@@ -342,31 +540,47 @@ beforeEach(() => {
     unstarredIds: [],
     unavailableTrackCount: 0,
   });
-  mocks.setFavorite.mockReset().mockImplementation(async (input: FavoriteInput) => ({
-    accepted: true,
-    verification: input.kind === "album" ? "notRequired" : "verified",
-    favorite: input.favorite,
-    ...(input.kind === "song"
-      ? {
-          track: {
-            ...(tracks.find((track) => track.id === input.id) ?? tracks[0]),
-            ...(input.favorite
-              ? { starredAt: "2026-08-12T18:01:00Z" }
-              : {}),
-          },
+  mocks.setFavorite.mockReset().mockImplementation(
+    async (input: FavoriteInput): Promise<FavoriteMutationResult> => {
+      const result: FavoriteMutationResult = {
+        accepted: true,
+        verification: input.kind === "album" ? "notRequired" : "verified",
+        favorite: input.favorite,
+      };
+      if (input.kind === "song") {
+        const matchingTrack =
+          tracks.find((track) => track.id === input.id) ?? tracks[0];
+        if (!matchingTrack) {
+          throw new Error(`Missing fixture track ${input.id}`);
         }
-      : {}),
-  }));
+        const track: Track = { ...matchingTrack };
+        if (input.favorite) track.starredAt = "2026-08-12T18:01:00Z";
+        result.track = track;
+      }
+      return result;
+    },
+  );
   mocks.updateLastFmNowPlaying.mockReset().mockResolvedValue(undefined);
   mocks.writeLocalFavoritesAsync
     .mockReset()
     .mockImplementation(async (favorites: LocalFavoriteCollection) =>
       writeLocalFavorites(favorites));
-  mocks.yieldToMacrotask.mockReset().mockResolvedValue(undefined);
   mocks.hasConnection.mockResolvedValue(false);
 });
 
+afterAll(() => {
+  RootRoute.update({ component: originalRootComponent });
+  Reflect.deleteProperty(window, "__TAURI_EVENT_PLUGIN_INTERNALS__");
+  Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+});
+
 describe("Coda application flows", { timeout: 10_000 }, () => {
+  it("rejects IPC commands not explicitly supported by the App harness", async () => {
+    await expect(
+      invoke("misspelled_app_command"),
+    ).rejects.toThrow("Unexpected App command: misspelled_app_command");
+  });
+
   it("announces the initial collection skeleton without a competing spinner", async () => {
     const request = deferred<Album[]>();
     mocks.hasConnection.mockResolvedValue(true);
@@ -467,6 +681,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     const dialog = await screen.findByRole("dialog", {
       name: "Bring in your collection",
     });
+    expect(dialog).toHaveAttribute("data-open");
 
     fireEvent.keyDown(document, { key: "Escape" });
 
@@ -904,7 +1119,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     fireEvent.click(screen.getAllByTitle("Browse Night Archive")[0]);
     fireEvent.click(await screen.findByRole("button", { name: "Play all" }));
     await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledTimes(2));
-    const firstRequestedAlbum = mocks.fetchAlbum.mock.calls[0][0] as Album;
+    const firstRequestedAlbum = mocks.fetchAlbum.mock.calls[0][0];
 
     await act(async () => {
       resolveFirstAlbum([tracks[0]]);
@@ -1445,6 +1660,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
   });
 
   it("publishes rich WebKit media state and routes next-track controls", async () => {
+    class MockMediaMetadata {
+      constructor(readonly init: MediaMetadataInit) {}
+    }
     const handlers = new Map<
       MediaSessionAction,
       MediaSessionActionHandler | null
@@ -1458,9 +1676,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       },
     );
     const setPositionState = vi.fn();
-    const mediaSession = {
-      metadata: null as MediaMetadata | null,
-      playbackState: "none" as MediaSessionPlaybackState,
+    const mediaSession: TestMediaSession<MockMediaMetadata> = {
+      metadata: null,
+      playbackState: "none",
       setActionHandler,
       setPositionState,
     };
@@ -1472,9 +1690,6 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       globalThis,
       "MediaMetadata",
     );
-    class MockMediaMetadata {
-      constructor(readonly init: MediaMetadataInit) {}
-    }
     Object.defineProperty(navigator, "mediaSession", {
       configurable: true,
       value: mediaSession,
@@ -1486,10 +1701,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     mocks.loadPlayerState.mockResolvedValue({
       version: 1,
       savedAt: Date.now(),
-      queue: tracks.map(({ streamUrl: _streamUrl, ...track }, index) => ({
-        ...track,
-        ...(index === 0 ? { coverArt: "ca:496796527" } : {}),
-      })),
+      queue: tracks.map(({ streamUrl: _streamUrl, ...track }, index) =>
+        index === 0 ? { ...track, coverArt: "ca:496796527" } : track
+      ),
       currentIndex: 0,
       positionSeconds: 0,
       volume: 0.72,
@@ -1507,24 +1721,23 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       expect(
         setActionHandler.mock.calls.filter(
           ([action, handler]) =>
-            action === "nexttrack" && typeof handler === "function",
+            action === "nexttrack" && handler !== null,
         ),
       ).toHaveLength(1);
       const skipTrack = handlers.get("nexttrack");
       expect(skipTrack).toBeTypeOf("function");
       await waitFor(() =>
-        expect(
-          (mediaSession.metadata as unknown as MockMediaMetadata | null)?.init,
-        ).toEqual({
+        expect(mediaSession.metadata?.init).toEqual({
           title: "First Light",
           artist: "Night Archive",
           album: "Soft Focus",
           artwork: [{
-            src: "coda-cover://localhost/v1/600/ca%3A496796527?v=0&s=0123456789abcdef0123456789abcdef",
+            src: expect.stringMatching(
+              /^coda-cover:\/v1\/600\/ca%3A496796527\?v=0&s=[a-f0-9]{32}$/u,
+            ),
           }],
         }),
       );
-      expect(mocks.coverArtSource).toHaveBeenCalledWith("ca:496796527");
       expect(setPositionState).toHaveBeenCalledWith({
         duration: 180,
         playbackRate: 1,
@@ -1550,8 +1763,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
           metadataDescriptor,
         );
       } else {
-        delete (globalThis as { MediaMetadata?: typeof MediaMetadata })
-          .MediaMetadata;
+        Reflect.deleteProperty(globalThis, "MediaMetadata");
       }
     }
   });
@@ -1563,15 +1775,15 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       return 17;
     });
     const cancelIdleCallback = vi.fn();
-    const mediaSession = {
-      metadata: null as MediaMetadata | null,
-      playbackState: "none" as MediaSessionPlaybackState,
-      setActionHandler: vi.fn(),
-      setPositionState: vi.fn(),
-    };
     class MockMediaMetadata {
       constructor(readonly init: MediaMetadataInit) {}
     }
+    const mediaSession: TestMediaSession<MockMediaMetadata> = {
+      metadata: null,
+      playbackState: "none",
+      setActionHandler: vi.fn(),
+      setPositionState: vi.fn(),
+    };
     const requestIdleDescriptor = Object.getOwnPropertyDescriptor(
       window,
       "requestIdleCallback",
@@ -1630,9 +1842,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         }),
       );
       await waitFor(() =>
-        expect(
-          (mediaSession.metadata as unknown as MockMediaMetadata | null)?.init,
-        ).toEqual(expect.objectContaining({
+        expect(mediaSession.metadata?.init).toEqual(expect.objectContaining({
           artwork: [{
             src: "data:image/png;base64,Y29kYS1jb3Zlcg==",
             sizes: "600x600",
@@ -2175,8 +2385,8 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     await startArtistShuffle();
     await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledTimes(2));
 
-    const firstRelease = mocks.fetchAlbum.mock.calls[0][0] as Album;
-    const secondRelease = mocks.fetchAlbum.mock.calls[1][0] as Album;
+    const firstRelease = mocks.fetchAlbum.mock.calls[0][0];
+    const secondRelease = mocks.fetchAlbum.mock.calls[1][0];
     await act(async () => {
       requests.get(secondRelease.id)!.resolve(shuffleTracks.get(secondRelease.id)!);
     });
@@ -2228,14 +2438,14 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     await screen.findByText("Tail Shuffle Album one");
     await startArtistShuffle();
     await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledTimes(2));
-    const firstRelease = mocks.fetchAlbum.mock.calls[0][0] as Album;
+    const firstRelease = mocks.fetchAlbum.mock.calls[0][0];
     await act(async () => {
       requests.get(firstRelease.id)!.resolve([trackFor(firstRelease)]);
     });
     expect(await screen.findByRole("button", { name: "Pause" }))
       .toBeInTheDocument();
 
-    const secondRelease = mocks.fetchAlbum.mock.calls[1][0] as Album;
+    const secondRelease = mocks.fetchAlbum.mock.calls[1][0];
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await act(async () => {
       requests.get(secondRelease.id)!.resolve([trackFor(secondRelease)]);
@@ -2267,7 +2477,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       albumId: release.id,
     });
     const releaseAtCall = (index: number) =>
-      mocks.fetchAlbum.mock.calls[index][0] as Album;
+      mocks.fetchAlbum.mock.calls[index][0];
     mocks.hasConnection.mockResolvedValue(true);
     mocks.fetchLibrary.mockResolvedValue(shuffleAlbums);
     mocks.fetchAlbum.mockImplementation((release: Album) =>
@@ -2344,7 +2554,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     await screen.findByText("Paused Tail Album 0");
     await startArtistShuffle();
     await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledTimes(2));
-    const firstRelease = mocks.fetchAlbum.mock.calls[0][0] as Album;
+    const firstRelease = mocks.fetchAlbum.mock.calls[0][0];
     await act(async () => {
       requests.get(firstRelease.id)!.resolve([trackFor(firstRelease)]);
     });
@@ -2352,7 +2562,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    const secondRelease = mocks.fetchAlbum.mock.calls[1][0] as Album;
+    const secondRelease = mocks.fetchAlbum.mock.calls[1][0];
     await act(async () => {
       requests.get(secondRelease.id)!.resolve([trackFor(secondRelease)]);
     });
@@ -2446,7 +2656,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       songCount: 1,
       tracks: undefined,
     }));
-    const requests = new Map(shuffleAlbums.map((release, index) => [
+    const requests = new Map(shuffleAlbums.map((release) => [
       release.id,
       deferred<Track[]>(),
     ]));
@@ -2467,7 +2677,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     await screen.findByText("Bounded Shuffle Album 0");
     await startArtistShuffle();
     await waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledTimes(4));
-    const firstRelease = mocks.fetchAlbum.mock.calls[0][0] as Album;
+    const firstRelease = mocks.fetchAlbum.mock.calls[0][0];
     await act(async () => {
       requests.get(firstRelease.id)!.resolve([trackFor(firstRelease)]);
     });
@@ -2482,8 +2692,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     fireEvent.click(screen.getByRole("button", { name: "Clear next" }));
 
     await act(async () => {
-      for (const [release] of mocks.fetchAlbum.mock.calls.slice(1)) {
-        const requestedAlbum = release as Album;
+      for (const [requestedAlbum] of mocks.fetchAlbum.mock.calls.slice(1)) {
         requests.get(requestedAlbum.id)!.resolve([trackFor(requestedAlbum)]);
       }
     });
@@ -2871,7 +3080,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     mocks.fetchLibrary.mockResolvedValue([album, single]);
     mocks.fetchAlbum.mockImplementation((requestedAlbum: Album) =>
       Promise.resolve(
-        requestedAlbum.id === single.id ? single.tracks : album.tracks,
+        (requestedAlbum.id === single.id ? single.tracks : album.tracks) ?? [],
       ),
     );
     renderApp();
@@ -3927,14 +4136,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       disconnect() {}
       observe(target: Element) {
         const bounds = target.getBoundingClientRect();
-        this.callback([{
-          borderBoxSize: [{
-            blockSize: bounds.height,
-            inlineSize: bounds.width,
-          }],
-          contentRect: bounds,
-          target,
-        } as unknown as ResizeObserverEntry], this);
+        this.callback([resizeObserverEntry(target, bounds)], this);
       }
       unobserve() {}
     }

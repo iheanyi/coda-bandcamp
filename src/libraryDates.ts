@@ -233,22 +233,39 @@ export function sortAlbumsByNewestAdded<T extends AddedAlbum>(
     .map(({ album }) => album);
 }
 
-export function isItemDate(value: unknown): value is ItemDate {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const date = value as ItemDate;
-  const validPart = (part: number | undefined, minimum: number, maximum: number) =>
-    part === undefined || (Number.isInteger(part) && part >= minimum && part <= maximum);
+function isValidItemDatePart<Value>(
+  value: Value,
+  minimum: number,
+  maximum: number,
+): value is Value & (number | undefined) {
+  if (value === undefined) return true;
+  const numericValue = Number(value);
+  return (
+    Object.is(value, numericValue) &&
+    Number.isInteger(numericValue) &&
+    numericValue >= minimum &&
+    numericValue <= maximum
+  );
+}
+
+export function isItemDate<Value>(value: Value): value is Value & ItemDate {
+  if (!(value instanceof Object) || Array.isArray(value) || !("year" in value)) {
+    return false;
+  }
+  const year = value.year;
+  const month = "month" in value ? value.month : undefined;
+  const day = "day" in value ? value.day : undefined;
   if (
-    date.year === undefined ||
-    !validPart(date.year, 1, 9_999) ||
-    !validPart(date.month, 1, 12) ||
-    !validPart(date.day, 1, 31) ||
-    (date.day !== undefined && date.month === undefined)
+    year === undefined ||
+    !isValidItemDatePart(year, 1, 9_999) ||
+    !isValidItemDatePart(month, 1, 12) ||
+    !isValidItemDatePart(day, 1, 31) ||
+    (day !== undefined && month === undefined)
   ) {
     return false;
   }
-  if (date.month !== undefined && date.day !== undefined) {
-    return utcTimestamp(date.year, date.month, date.day, 0, 0, 0, 0) !== undefined;
+  if (month !== undefined && day !== undefined) {
+    return utcTimestamp(year, month, day, 0, 0, 0, 0) !== undefined;
   }
   return true;
 }

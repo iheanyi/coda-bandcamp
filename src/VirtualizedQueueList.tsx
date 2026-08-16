@@ -249,7 +249,11 @@ export function VirtualizedQueueList<Item>({
         className="group/queue-row relative"
         key={key}
         onBlurCapture={(event) => {
-          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          const nextTarget = event.relatedTarget;
+          if (
+            !(nextTarget instanceof Node) ||
+            !event.currentTarget.contains(nextTarget)
+          ) {
             setFocusedIndex((current) => current === index ? undefined : current);
           }
         }}

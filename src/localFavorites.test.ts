@@ -2,12 +2,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   emptyLocalFavorites,
   LOCAL_FAVORITES_KEY,
+  LOCAL_FAVORITES_VERSION,
+  MAX_LOCAL_FAVORITES_BYTES,
+  parseLocalFavoritesSerialized,
   readLocalFavorites,
   repairLocalFavoriteMetadata,
   sanitizeLocalFavorites,
   updateLocalFavorites,
   updateLocalRadioFavorite,
   writeLocalFavorites,
+  type LocalFavoritesWireValue,
 } from "./localFavorites";
 import type { Album, RadioShowSummary, Track } from "./types";
 
@@ -58,6 +62,10 @@ const radioShow: RadioShowSummary = {
     slug: "the-hip-hop-show",
   },
 };
+
+function isWireString(value: LocalFavoritesWireValue): value is string {
+  return String(value) === value;
+}
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -119,6 +127,27 @@ describe("local favorites", () => {
     expect(window.localStorage.getItem(LOCAL_FAVORITES_KEY)).toBeNull();
   });
 
+  it("decodes storage directly into a validated Favorites owner", () => {
+    const snapshot = {
+      version: LOCAL_FAVORITES_VERSION,
+      ...emptyLocalFavorites(),
+      songIds: [track.id],
+      tracks: [track],
+    };
+
+    expect(
+      parseLocalFavoritesSerialized(JSON.stringify(snapshot))?.songIds,
+    ).toEqual([track.id]);
+    expect(parseLocalFavoritesSerialized("{")).toBeUndefined();
+    expect(
+      parseLocalFavoritesSerialized("x".repeat(MAX_LOCAL_FAVORITES_BYTES + 1)),
+    ).toBeUndefined();
+    expect(parseLocalFavoritesSerialized(JSON.stringify({
+      ...snapshot,
+      tracks: [{ ...track, title: "invalid\u009f" }],
+    }))).toBeUndefined();
+  });
+
   it("normalizes nullable native fields and repairs prior ID-only favorites", () => {
     const nativeAlbum = {
       ...album,
@@ -130,12 +159,12 @@ describe("local favorites", () => {
       playedAt: null,
       originalReleaseDate: null,
       releaseDate: null,
-    } as unknown as Album;
+    };
     const nativeTrack = {
       ...track,
       coverArt: null,
       disc: null,
-    } as unknown as Track;
+    };
     const repaired = repairLocalFavoriteMetadata(
       {
         albumIds: ["album-1"],
@@ -174,6 +203,31 @@ describe("local favorites", () => {
     for (const candidate of malformed) {
       expect(sanitizeLocalFavorites(collectionFor(candidate))).toBeUndefined();
     }
+  });
+
+  it("scans full-length UTF-16 text and rejects every control range", () => {
+    const collectionForTitle = (title: string) => ({
+      ...emptyLocalFavorites(),
+      songIds: [track.id],
+      tracks: [{ ...track, title }],
+    });
+    const fullLengthTitle = "🎵".repeat(512);
+
+    expect(fullLengthTitle).toHaveLength(1_024);
+    expect(
+      sanitizeLocalFavorites(collectionForTitle(fullLengthTitle))
+        ?.tracks[0]?.title,
+    ).toBe(fullLengthTitle);
+    for (const control of ["\u0000", "\u001f", "\u007f", "\u009f"]) {
+      expect(
+        sanitizeLocalFavorites(
+          collectionForTitle(`${"a".repeat(1_023)}${control}`),
+        ),
+      ).toBeUndefined();
+    }
+    expect(
+      sanitizeLocalFavorites(collectionForTitle("a".repeat(1_025))),
+    ).toBeUndefined();
   });
 
   it("repairs every preserved album date field and recognizes equal precision", () => {
@@ -303,10 +357,14 @@ describe("local favorites", () => {
     const originalIncludes = Array.prototype.includes;
     let linearCollectionIncludes = 0;
     const includesSpy = vi.spyOn(Array.prototype, "includes").mockImplementation(
-      function (this: unknown[], searchElement: unknown, fromIndex?: number) {
+      function (
+        this: LocalFavoritesWireValue[],
+        searchElement: LocalFavoritesWireValue,
+        fromIndex?: number,
+      ) {
         if (
           this.length === favoriteCount &&
-          typeof searchElement === "string" &&
+          isWireString(searchElement) &&
           searchElement.startsWith("song-linear-")
         ) {
           linearCollectionIncludes += 1;

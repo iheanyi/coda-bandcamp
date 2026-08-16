@@ -11,38 +11,30 @@ import {
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPlaybackClock } from "./playbackClock";
+import type { RadioQueryRepository } from "./queries/radioQueries";
 import { createCodaMemoryRouter } from "./router";
 import type { RadioShow, RadioShowSummary, Track } from "./types";
+import { transitionCodaView } from "./viewTransitions";
 
-const mocks = vi.hoisted(() => ({
-  fetchRadioShow: vi.fn(),
-  fetchRadioShows: vi.fn(),
+type RadioTestServices = RadioQueryRepository &
+  Readonly<{
+    openBandcampUrl: (url: string) => Promise<void>;
+    transitionKinds: Parameters<typeof transitionCodaView>[1][];
+  }>;
+
+const radioServices: RadioTestServices = {
+  fetchShow: vi.fn(),
+  fetchShows: vi.fn(),
   openBandcampUrl: vi.fn(),
-  transitionKinds: [] as string[],
-}));
+  transitionKinds: [],
+};
 
-vi.mock("./lib", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./lib")>();
-  return {
-    ...actual,
-    fetchRadioShow: mocks.fetchRadioShow,
-    fetchRadioShows: mocks.fetchRadioShows,
-    openBandcampUrl: mocks.openBandcampUrl,
-  };
-});
-
-vi.mock("./viewTransitions", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./viewTransitions")>();
-  return {
-    ...actual,
-    transitionCodaView: (
-      ...args: Parameters<typeof actual.transitionCodaView>
-    ) => {
-      mocks.transitionKinds.push(args[1]);
-      return actual.transitionCodaView(...args);
-    },
-  };
-});
+function transition(
+  ...args: Parameters<typeof transitionCodaView>
+): ReturnType<typeof transitionCodaView> {
+  radioServices.transitionKinds.push(args[1]);
+  return transitionCodaView(...args);
+}
 
 import RadioView from "./RadioView";
 
@@ -136,6 +128,9 @@ function renderRadio(
         onSelectSeries={setSelectedSeriesId}
         requestedShowId={requestedShowId}
         onRequestedShowChange={setRequestedShowId}
+        openExternal={radioServices.openBandcampUrl}
+        repository={radioServices}
+        transition={transition}
       />
     );
   }
@@ -161,13 +156,15 @@ function renderRadio(
 }
 
 beforeEach(() => {
-  mocks.fetchRadioShow.mockReset().mockResolvedValue(show);
-  mocks.fetchRadioShows.mockReset().mockResolvedValue({
+  vi.mocked(radioServices.fetchShow).mockReset().mockResolvedValue(show);
+  vi.mocked(radioServices.fetchShows).mockReset().mockResolvedValue({
     results: shows,
     hasMore: false,
   });
-  mocks.openBandcampUrl.mockReset().mockResolvedValue(undefined);
-  mocks.transitionKinds.length = 0;
+  vi.mocked(radioServices.openBandcampUrl)
+    .mockReset()
+    .mockResolvedValue(undefined);
+  radioServices.transitionKinds.length = 0;
 });
 
 afterEach(() => {
@@ -178,7 +175,7 @@ afterEach(() => {
 describe("Bandcamp Radio", () => {
   it("disables playback actions but keeps semantic detail navigation available", async () => {
     let resolveShow!: (value: RadioShow) => void;
-    mocks.fetchRadioShow.mockReturnValue(
+    vi.mocked(radioServices.fetchShow).mockReturnValue(
       new Promise((resolve) => {
         resolveShow = resolve;
       }),
@@ -207,7 +204,9 @@ describe("Bandcamp Radio", () => {
     expect(screen.getByText("2 broadcasts loaded")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Play latest show" }));
 
-    await waitFor(() => expect(mocks.fetchRadioShow).toHaveBeenCalledWith(979));
+    await waitFor(() =>
+      expect(radioServices.fetchShow).toHaveBeenCalledWith(979),
+    );
     expect(onPlay).toHaveBeenCalledWith(
       expect.objectContaining({
         id: "radio:979",
@@ -233,12 +232,12 @@ describe("Bandcamp Radio", () => {
     fireEvent.click(pause);
 
     expect(onTogglePlayback).toHaveBeenCalledOnce();
-    expect(mocks.fetchRadioShow).not.toHaveBeenCalled();
+    expect(radioServices.fetchShow).not.toHaveBeenCalled();
   });
 
   it("adds an archive show to the queue and opens only its verified Bandcamp page", async () => {
     const archiveShow = { ...show, ...shows[1], title: "Bandcamp Weekly" };
-    mocks.fetchRadioShow.mockResolvedValueOnce(archiveShow);
+    vi.mocked(radioServices.fetchShow).mockResolvedValueOnce(archiveShow);
     const { onQueue } = renderRadio();
 
     await screen.findByRole("heading", { name: "The Best of 2026" });
@@ -257,7 +256,7 @@ describe("Bandcamp Radio", () => {
         name: "Open The Best of 2026 on Bandcamp",
       }),
     );
-    expect(mocks.openBandcampUrl).toHaveBeenCalledWith(
+    expect(radioServices.openBandcampUrl).toHaveBeenCalledWith(
       "https://bandcamp.com/radio?show=978",
     );
   });
@@ -272,7 +271,7 @@ describe("Bandcamp Radio", () => {
       })[0],
     );
     await waitFor(() =>
-      expect(mocks.fetchRadioShows).toHaveBeenCalledWith({
+      expect(radioServices.fetchShows).toHaveBeenCalledWith({
         seriesId: 5,
         cursor: undefined,
       }),
@@ -290,9 +289,10 @@ describe("Bandcamp Radio", () => {
       ...shows[0],
       subtitle: "Series anchor",
     };
-    mocks.fetchRadioShows.mockImplementation(({ seriesId }) =>
+    vi.mocked(radioServices.fetchShows).mockImplementation((request) =>
       Promise.resolve({
-        results: seriesId === 5 ? [madlife, seriesAnchor] : [madlife],
+        results:
+          request?.seriesId === 5 ? [madlife, seriesAnchor] : [madlife],
         hasMore: false,
       }),
     );
@@ -316,29 +316,36 @@ describe("Bandcamp Radio", () => {
       "IntersectionObserver",
       class {
         private readonly callback: IntersectionObserverCallback;
+        readonly root = null;
+        readonly rootMargin = "420px 0px";
+        readonly thresholds = [0];
 
         constructor(callback: IntersectionObserverCallback) {
           this.callback = callback;
         }
 
-        observe() {
-          this.callback(
-            [{ isIntersecting: true } as IntersectionObserverEntry],
-            this as unknown as IntersectionObserver,
-          );
+        observe(target: Element) {
+          const bounds = target.getBoundingClientRect();
+          const entry: IntersectionObserverEntry = {
+            boundingClientRect: bounds,
+            intersectionRatio: 1,
+            intersectionRect: bounds,
+            isIntersecting: true,
+            rootBounds: null,
+            target,
+            time: 0,
+          };
+          this.callback([entry], this);
         }
 
         disconnect() {}
-        unobserve() {}
+        unobserve(_target: Element) {}
         takeRecords() {
           return [];
         }
-        root = null;
-        rootMargin = "420px 0px";
-        thresholds = [0];
       },
     );
-    mocks.fetchRadioShows
+    vi.mocked(radioServices.fetchShows)
       .mockResolvedValueOnce({
         results: shows,
         cursor: "1770336000:901",
@@ -360,7 +367,7 @@ describe("Bandcamp Radio", () => {
     expect(
       await screen.findByRole("heading", { name: "Next page" }),
     ).toBeInTheDocument();
-    expect(mocks.fetchRadioShows).toHaveBeenLastCalledWith({
+    expect(radioServices.fetchShows).toHaveBeenLastCalledWith({
       seriesId: undefined,
       cursor: "1770336000:901",
     });
@@ -383,18 +390,14 @@ describe("Bandcamp Radio", () => {
           blockSize: bounds.height,
           inlineSize: bounds.width,
         };
-        this.callback(
-          [
-            {
-              borderBoxSize: [size],
-              contentBoxSize: [size],
-              contentRect: bounds,
-              devicePixelContentBoxSize: [size],
-              target,
-            } as unknown as ResizeObserverEntry,
-          ],
-          this,
-        );
+        const entry: ResizeObserverEntry = {
+          borderBoxSize: [size],
+          contentBoxSize: [size],
+          contentRect: bounds,
+          devicePixelContentBoxSize: [size],
+          target,
+        };
+        this.callback([entry], this);
       }
 
       unobserve() {}
@@ -417,7 +420,7 @@ describe("Bandcamp Radio", () => {
       id: 10_000 - index,
       subtitle: index === 0 ? "Featured broadcast" : `Archive show ${index}`,
     }));
-    mocks.fetchRadioShows.mockResolvedValueOnce({
+    vi.mocked(radioServices.fetchShows).mockResolvedValueOnce({
       results: largeArchive,
       hasMore: false,
     });
@@ -459,12 +462,12 @@ describe("Bandcamp Radio", () => {
     );
 
     expect(onToggleFavorite).toHaveBeenCalledWith(shows[0]);
-    expect(mocks.fetchRadioShow).not.toHaveBeenCalled();
+    expect(radioServices.fetchShow).not.toHaveBeenCalled();
   });
 
   it("commits the safe summary shell before signed show media resolves", async () => {
     let resolveShow!: (value: RadioShow) => void;
-    mocks.fetchRadioShow.mockReturnValue(
+    vi.mocked(radioServices.fetchShow).mockReturnValue(
       new Promise((resolve) => {
         resolveShow = resolve;
       }),
@@ -503,7 +506,7 @@ describe("Bandcamp Radio", () => {
     expect(
       screen.getByRole("button", { name: "Add to queue" }),
     ).toBeDisabled();
-    expect(mocks.fetchRadioShow).toHaveBeenCalledTimes(1);
+    expect(radioServices.fetchShow).toHaveBeenCalledTimes(1);
 
     await act(async () => resolveShow(show));
 
@@ -512,14 +515,14 @@ describe("Bandcamp Radio", () => {
         name: "Play Mirage from 2:00",
       }),
     ).toBeEnabled();
-    expect(mocks.fetchRadioShow).toHaveBeenCalledTimes(1);
+    expect(radioServices.fetchShow).toHaveBeenCalledTimes(1);
   });
 
   it("retains the safe summary shell when signed show loading fails", async () => {
-    let rejectShow!: (reason?: unknown) => void;
-    mocks.fetchRadioShow.mockReturnValue(
+    let rejectShow!: (reason?: Error) => void;
+    vi.mocked(radioServices.fetchShow).mockReturnValue(
       new Promise((_, reject) => {
-        rejectShow = reject;
+        rejectShow = (reason) => reject(reason);
       }),
     );
     renderRadio();
@@ -550,13 +553,13 @@ describe("Bandcamp Radio", () => {
     const { onPlayAt } = renderRadio();
 
     await screen.findByRole("heading", { name: "Kinrose" });
-    expect(mocks.fetchRadioShow).not.toHaveBeenCalled();
+    expect(radioServices.fetchShow).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("link", { name: "View tracklist" }));
 
     await screen.findByRole("button", {
       name: "Play Mirage from 2:00",
     });
-    expect(mocks.fetchRadioShow).toHaveBeenCalledWith(979);
+    expect(radioServices.fetchShow).toHaveBeenCalledWith(979);
 
     expect(onPlayAt).not.toHaveBeenCalled();
 
@@ -637,6 +640,7 @@ describe("Bandcamp Radio", () => {
         "[data-coda-radio-title-source]",
       ).length;
       update();
+      const activeElement = document.activeElement;
       snapshots.push({
         sourceBefore,
         sourceTitleBefore,
@@ -656,8 +660,10 @@ describe("Bandcamp Radio", () => {
         scrollTopAfter:
           document.querySelector<HTMLElement>("[data-coda-library-scroll]")
             ?.scrollTop ?? -1,
-        focusedShowAfter: (document.activeElement as HTMLElement | null)
-          ?.dataset.radioShowOpen,
+        focusedShowAfter:
+          activeElement instanceof HTMLElement
+            ? activeElement.dataset.radioShowOpen
+            : undefined,
       });
       return { finished: Promise.resolve() };
     });
@@ -692,7 +698,7 @@ describe("Bandcamp Radio", () => {
 
       await screen.findByRole("heading", { name: "Kinrose" });
       expect(startViewTransition).toHaveBeenCalledTimes(2);
-      expect(mocks.transitionKinds).toEqual([
+      expect(radioServices.transitionKinds).toEqual([
         "radio-detail",
         "radio-detail-close",
       ]);
@@ -741,7 +747,7 @@ describe("Bandcamp Radio", () => {
       ...shows[1],
       title: "Bandcamp Selects",
     };
-    mocks.fetchRadioShow.mockResolvedValueOnce(archiveShow);
+    vi.mocked(radioServices.fetchShow).mockResolvedValueOnce(archiveShow);
     const snapshots: Array<{
       sourceTitle?: string | null;
       sourceTitleIsStatic: boolean;
@@ -886,7 +892,10 @@ describe("Bandcamp Radio", () => {
       await screen.findByRole("heading", { name: "Kinrose" });
 
       expect(startViewTransition).not.toHaveBeenCalled();
-      expect(mocks.transitionKinds).toEqual(["page-forward", "page-back"]);
+      expect(radioServices.transitionKinds).toEqual([
+        "page-forward",
+        "page-back",
+      ]);
       expect(
         document.querySelector(
           "[data-coda-radio-artwork-return], [data-coda-radio-title-return]",
@@ -933,7 +942,7 @@ describe("Bandcamp Radio", () => {
       subtitle: "Deep Focus",
     };
     let resolveShow!: (value: RadioShow) => void;
-    mocks.fetchRadioShow.mockReturnValue(
+    vi.mocked(radioServices.fetchShow).mockReturnValue(
       new Promise((resolve) => {
         resolveShow = resolve;
       }),

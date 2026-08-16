@@ -12,6 +12,10 @@ type OverflowMarqueeStaticTextProps = ComponentPropsWithoutRef<"span"> & {
   [attribute: `data-${string}`]: string | number | undefined;
 };
 
+type OverflowMarqueeStyle = CSSProperties & {
+  "--marquee-duration": string;
+};
+
 export function OverflowMarquee({
   className,
   staticTextProps,
@@ -32,11 +36,15 @@ export function OverflowMarquee({
 
   useLayoutEffect(() => {
     measure();
-    if (typeof ResizeObserver === "undefined" || !textRef.current) return;
-    const observer = new ResizeObserver(measure);
+    if (!globalThis.ResizeObserver || !textRef.current) return;
+    const observer = new globalThis.ResizeObserver(measure);
     observer.observe(textRef.current);
     return () => observer.disconnect();
   }, [measure, text]);
+
+  const marqueeStyle: OverflowMarqueeStyle = {
+    "--marquee-duration": `${Math.max(6, text.length / 7)}s`,
+  };
 
   return (
     <span
@@ -46,9 +54,7 @@ export function OverflowMarquee({
       )}
       data-overflowing={overflowing || undefined}
       data-testid="overflow-marquee"
-      style={{
-        "--marquee-duration": `${Math.max(6, text.length / 7)}s`,
-      } as CSSProperties}
+      style={marqueeStyle}
     >
       <span
         {...staticTextProps}

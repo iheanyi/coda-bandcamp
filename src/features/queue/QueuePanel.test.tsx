@@ -1,7 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
 import { RouterContextProvider } from "@tanstack/react-router";
 import { createRef } from "react";
-import React from "react";
 import { AnimatePresence } from "motion/react";
 import {
   act,
@@ -19,49 +18,6 @@ import { createCodaMemoryRouter } from "@/router";
 import type { Album, Track } from "@/types";
 import { QueuePanel } from "./QueuePanel";
 import { QueueCurrentPresence } from "./QueueCurrentPresence";
-
-vi.mock("motion/react-m", () => ({
-  div: React.forwardRef<
-    HTMLDivElement,
-    React.HTMLAttributes<HTMLDivElement> & {
-      animate?: unknown;
-      exit?: unknown;
-      initial?: unknown;
-      onAnimationComplete?: () => void;
-    }
-  >(function StalledMotionDiv(
-    {
-      animate: _animate,
-      exit: _exit,
-      initial: _initial,
-      onAnimationComplete: _onAnimationComplete,
-      ...props
-    },
-    ref,
-  ) {
-    return <div ref={ref} {...props} />;
-  }),
-  span: React.forwardRef<
-    HTMLSpanElement,
-    React.HTMLAttributes<HTMLSpanElement> & {
-      animate?: unknown;
-      exit?: unknown;
-      initial?: unknown;
-      onAnimationComplete?: () => void;
-    }
-  >(function StalledMotionSpan(
-    {
-      animate: _animate,
-      exit: _exit,
-      initial: _initial,
-      onAnimationComplete: _onAnimationComplete,
-      ...props
-    },
-    ref,
-  ) {
-    return <span ref={ref} {...props} />;
-  }),
-}));
 
 const currentTrack: Track = {
   id: "current-track",
@@ -102,7 +58,7 @@ afterEach(() => {
 });
 
 describe("QueuePanel recommendations", () => {
-  it("forcibly removes a stalled old Now Playing card after 500 ms", async () => {
+  it("completes the normal old Now Playing exit before the watchdog", async () => {
     vi.useFakeTimers();
     const renderCurrent = (trackId: string) => (
       <CodaMotionProvider>
@@ -123,7 +79,7 @@ describe("QueuePanel recommendations", () => {
     expect(screen.getByText("new-current")).toBeInTheDocument();
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
+      await vi.advanceTimersByTimeAsync(499);
     });
 
     expect(screen.queryByText("old-current")).not.toBeInTheDocument();

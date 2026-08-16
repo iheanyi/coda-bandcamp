@@ -15,8 +15,7 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
-import { AnimatePresence, usePresence } from "motion/react";
-import * as m from "motion/react-m";
+import { AnimatePresence } from "motion/react";
 import { Link } from "@tanstack/react-router";
 import {
   memo,
@@ -33,6 +32,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DrawerTrigger } from "@/components/ui/drawer";
+import { MotionExitPresence } from "@/components/ui/MotionExitPresence";
 import { OverflowMarquee } from "@/components/ui/overflow-marquee";
 import { PlaybackIcon } from "@/components/ui/playback-icon";
 import { Slider } from "@/components/ui/slider";
@@ -42,7 +42,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useMotionExitWatchdog } from "@/components/ui/useMotionExitWatchdog";
 import {
   LibraryAlbumLink,
   LibraryArtistLink,
@@ -125,6 +124,7 @@ export type NowPlayingViewProps = {
   favorite?: boolean;
   onToggleFavorite?: () => void;
   onAddToPlaylist?: () => void;
+  openExternal?: (url: string) => Promise<void>;
 };
 
 function PresencePanel({
@@ -135,16 +135,9 @@ function PresencePanel({
   className: string;
 }) {
   const codaMotion = useCodaMotion();
-  const [isPresent, safeToRemove] = usePresence();
-  const completeExit = useMotionExitWatchdog({
-    open: isPresent,
-    onExitComplete: () => safeToRemove?.(),
-  });
   return (
-    <m.div
-      aria-hidden={!isPresent || undefined}
+    <MotionExitPresence
       className={className}
-      inert={!isPresent || undefined}
       initial={{
         opacity: codaMotion.profile.component.opacityFrom,
         transform: `translateY(${codaMotion.profile.component.translationPx}px) scale(${codaMotion.profile.component.scaleFrom})`,
@@ -159,17 +152,20 @@ function PresencePanel({
         transform: `translateY(${codaMotion.profile.component.translationPx * 0.6}px) scale(${codaMotion.profile.component.scaleFrom})`,
         transition: codaMotion.componentExit,
       }}
-      onAnimationComplete={completeExit}
-      style={{ pointerEvents: isPresent ? "auto" : "none" }}
     >
       {children}
-    </m.div>
+    </MotionExitPresence>
   );
 }
 
 const UPCOMING_PREVIEW_LIMIT = 4;
 const RADIO_TIMELINE_INITIAL_LIMIT = 6;
 const RADIO_TIMELINE_BATCH_SIZE = 12;
+
+type NowPlayingArtworkStyle = CSSProperties & {
+  "--now-playing-accent": string;
+  "--now-playing-base": string;
+};
 
 function useCurrentRadioIndex(
   playbackClock: PlaybackClock,
@@ -596,6 +592,7 @@ function NowPlayingViewComponent({
   favorite = false,
   onToggleFavorite,
   onAddToPlaylist,
+  openExternal = openBandcampUrl,
 }: NowPlayingViewProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const [radioLinkError, setRadioLinkError] = useState("");
@@ -628,10 +625,10 @@ function NowPlayingViewComponent({
 
   const openRadioChapter = useCallback((url: string) => {
     setRadioLinkError("");
-    void openBandcampUrl(url).catch((cause) => {
+    void openExternal(url).catch((cause) => {
       setRadioLinkError(String(cause).replace(/^Error:\s*/, ""));
     });
-  }, []);
+  }, [openExternal]);
   useEffect(() => {
     headingRef.current?.focus({ preventScroll: true });
   }, []);
@@ -661,16 +658,16 @@ function NowPlayingViewComponent({
     };
   }, [supplementalReady]);
 
+  const artworkStyle: NowPlayingArtworkStyle = {
+    "--now-playing-accent": track.palette[0],
+    "--now-playing-base": track.palette[1],
+  };
+
   return (
     <article
       className="relative isolate min-h-full overflow-hidden bg-[linear-gradient(155deg,color-mix(in_srgb,var(--now-playing-base)_34%,#17191b),#111315_62%)] px-16 pt-6 pb-10 max-xl:px-6 max-lg:px-4 max-lg:pt-5 max-lg:pb-8"
       aria-labelledby="now-playing-heading"
-      style={
-        {
-          "--now-playing-accent": track.palette[0],
-          "--now-playing-base": track.palette[1],
-        } as CSSProperties
-      }
+      style={artworkStyle}
     >
       <div
         className="now-playing__wash pointer-events-none absolute inset-0 -z-1 bg-[radial-gradient(circle_at_20%_26%,color-mix(in_srgb,var(--now-playing-accent)_28%,transparent),transparent_37%),radial-gradient(circle_at_82%_8%,color-mix(in_srgb,var(--now-playing-base)_58%,transparent),transparent_35%)] opacity-80 saturate-75 after:absolute after:inset-0 after:bg-[linear-gradient(to_bottom,rgba(17,19,21,0.08),#111315_90%)] after:content-['']"

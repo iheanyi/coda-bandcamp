@@ -6,7 +6,7 @@ const PLAYER_STATE_IDLE_TIMEOUT_MS = 250;
 export type PlayerStateIdleScheduler = (callback: () => void) => void;
 
 function defaultIdleScheduler(callback: () => void): void {
-  if (typeof globalThis.requestIdleCallback === "function") {
+  if (globalThis.requestIdleCallback) {
     globalThis.requestIdleCallback(
       () => callback(),
       { timeout: PLAYER_STATE_IDLE_TIMEOUT_MS },

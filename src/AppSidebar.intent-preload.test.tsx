@@ -1,38 +1,74 @@
 import { QueryClient } from "@tanstack/react-query"
 import { RouterContextProvider } from "@tanstack/react-router"
+import type { InvokeArgs } from "@tauri-apps/api/core"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { AppSidebar } from "@/AppSidebar"
 import { createLibrarySessionController } from "@/features/library-session"
 import { createCodaMemoryRouter } from "@/router"
+import {
+  readTauriInvokeArguments,
+  tauriNumber,
+  tauriString,
+} from "@/test/tauriInvoke"
+import type {
+  PlaylistDetail,
+  PlaylistSummary,
+  RadioShowsPage,
+} from "@/types"
 
-const mocks = vi.hoisted(() => ({
-  fetchPlaylist: vi.fn(),
-  fetchPlaylists: vi.fn(),
-  fetchRadioShows: vi.fn(),
-  fetchStreamUrl: vi.fn(),
-  readLocalFavoritesAsync: vi.fn(),
-}))
+type RadioArchiveRequest = {
+  cursor?: string
+  seriesId?: number
+}
 
-vi.mock("@/lib", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib")>()
-  return {
-    ...actual,
-    fetchPlaylist: mocks.fetchPlaylist,
-    fetchPlaylists: mocks.fetchPlaylists,
-    fetchRadioShows: mocks.fetchRadioShows,
-    fetchStreamUrl: mocks.fetchStreamUrl,
-  }
-})
+const mocks = {
+  fetchPlaylist:
+    vi.fn<(playlistId: string) => Promise<PlaylistDetail>>(),
+  fetchPlaylists: vi.fn<() => Promise<PlaylistSummary[]>>(),
+  fetchRadioShows:
+    vi.fn<(request: RadioArchiveRequest) => Promise<RadioShowsPage>>(),
+  fetchStreamUrl: vi.fn<(trackId: string) => Promise<string>>(),
+}
 
-vi.mock("@/localFavoritesStore", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/localFavoritesStore")>()
-  return {
-    ...actual,
-    readLocalFavoritesAsync: mocks.readLocalFavoritesAsync,
-  }
-})
+function installSidebarBridge(): void {
+  Object.defineProperty(window, "__TAURI_INTERNALS__", {
+    configurable: true,
+    value: {
+      invoke: async (command: string, args?: InvokeArgs) => {
+        const values = readTauriInvokeArguments(args)
+        switch (command) {
+          case "fetch_playlist":
+            return mocks.fetchPlaylist(
+              tauriString(values.playlistId, "playlist ID"),
+            )
+          case "fetch_playlists":
+            return mocks.fetchPlaylists()
+          case "get_stream_url":
+            return mocks.fetchStreamUrl(
+              tauriString(values.trackId, "track ID"),
+            )
+          case "radio_shows": {
+            const request: RadioArchiveRequest = {}
+            if (values.cursor !== undefined) {
+              request.cursor = tauriString(values.cursor, "Radio cursor")
+            }
+            if (values.seriesId !== undefined) {
+              request.seriesId = tauriNumber(
+                values.seriesId,
+                "Radio series ID",
+              )
+            }
+            return mocks.fetchRadioShows(request)
+          }
+          default:
+            throw new Error(`Unexpected Sidebar command: ${command}`)
+        }
+      },
+    },
+  })
+}
 
 async function renderSidebar(connected: boolean) {
   const queryClient = new QueryClient({
@@ -60,6 +96,7 @@ async function renderSidebar(connected: boolean) {
 }
 
 beforeEach(() => {
+  installSidebarBridge()
   mocks.fetchPlaylist.mockReset()
   mocks.fetchPlaylists.mockReset().mockResolvedValue([])
   mocks.fetchRadioShows.mockReset().mockResolvedValue({
@@ -67,11 +104,11 @@ beforeEach(() => {
     results: [],
   })
   mocks.fetchStreamUrl.mockReset()
-  mocks.readLocalFavoritesAsync.mockReset()
 })
 
 afterEach(() => {
   vi.restoreAllMocks()
+  Reflect.deleteProperty(window, "__TAURI_INTERNALS__")
 })
 
 describe("Coda sidebar intent preloading", () => {
@@ -115,7 +152,6 @@ describe("Coda sidebar intent preloading", () => {
     expect(preloadRoute).not.toHaveBeenCalled()
     expect(mocks.fetchPlaylists).not.toHaveBeenCalled()
     expect(mocks.fetchPlaylist).not.toHaveBeenCalled()
-    expect(mocks.readLocalFavoritesAsync).not.toHaveBeenCalled()
     expect(mocks.fetchStreamUrl).not.toHaveBeenCalled()
     expect(onConnect).not.toHaveBeenCalled()
   })
@@ -139,7 +175,6 @@ describe("Coda sidebar intent preloading", () => {
     })
     expect(mocks.fetchPlaylists).toHaveBeenCalledOnce()
     expect(mocks.fetchPlaylist).not.toHaveBeenCalled()
-    expect(mocks.readLocalFavoritesAsync).not.toHaveBeenCalled()
     expect(mocks.fetchStreamUrl).not.toHaveBeenCalled()
   })
 })

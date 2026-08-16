@@ -44,17 +44,28 @@ type CodaViewTransition = {
   updateCallbackDone?: Promise<void>;
 };
 
-type ViewTransitionDocument = Document & {
-  startViewTransition?: (
-    update: () => void | Promise<void>,
-  ) => CodaViewTransition;
-};
-
 export type CodaViewTransitionUpdate = (
   routerViewTransition?: boolean,
 ) => void | Promise<void>;
 
-const TRANSITION_CLASSES: Record<CodaViewTransitionKind, string> = {
+export type ViewTransitionMotionDriver = Readonly<{
+  animate: typeof animate;
+}>;
+
+const defaultMotionDriver: ViewTransitionMotionDriver = { animate };
+let motionDriver = defaultMotionDriver;
+
+export function installViewTransitionMotionDriver(
+  driver: ViewTransitionMotionDriver,
+): () => void {
+  const previous = motionDriver;
+  motionDriver = driver;
+  return () => {
+    if (motionDriver === driver) motionDriver = previous;
+  };
+}
+
+const TRANSITION_CLASSES = {
   "album-detail": "coda-transition--album-detail",
   "album-detail-close": "coda-transition--album-detail-close",
   "artist-detail": "coda-transition--artist-detail",
@@ -72,7 +83,7 @@ const TRANSITION_CLASSES: Record<CodaViewTransitionKind, string> = {
   "page-forward": "coda-transition--page-forward",
   "page-back": "coda-transition--page-back",
   "page-crossfade": "coda-transition--page-crossfade",
-};
+} satisfies Record<CodaViewTransitionKind, string>;
 const TRANSITION_CLASS_NAMES = Object.values(TRANSITION_CLASSES);
 const NATIVE_DETAIL_DURATION_MS = 460;
 const NATIVE_NOW_PLAYING_DURATION_MS = 440;
@@ -110,9 +121,7 @@ function stopActivePageAnimations() {
   releaseActivePageStyles = undefined;
 }
 
-const SHARED_SOURCE_SELECTORS: Partial<
-  Record<CodaViewTransitionKind, readonly string[]>
-> = {
+const SHARED_SOURCE_SELECTORS = {
   "album-detail": [".coda-album-artwork-source"],
   "album-detail-close": ["[data-coda-album-artwork-detail]"],
   "artist-detail": [
@@ -133,11 +142,9 @@ const SHARED_SOURCE_SELECTORS: Partial<
   "radio-detail-close": ["[data-coda-radio-artwork-detail]"],
   "now-playing-open": [".player__art-link"],
   "now-playing-close": [".now-playing__artwork"],
-};
+} satisfies Partial<Record<CodaViewTransitionKind, readonly string[]>>;
 
-const SHARED_DESTINATION_SELECTORS: Partial<
-  Record<CodaViewTransitionKind, readonly string[]>
-> = {
+const SHARED_DESTINATION_SELECTORS = {
   "album-detail": ["[data-coda-album-artwork-detail]"],
   "album-detail-close": ["[data-coda-album-artwork-return]"],
   "artist-detail": [
@@ -155,11 +162,9 @@ const SHARED_DESTINATION_SELECTORS: Partial<
   "radio-detail-close": ["[data-coda-radio-artwork-return]"],
   "now-playing-open": [".now-playing__artwork"],
   "now-playing-close": [".player__art-link"],
-};
+} satisfies Partial<Record<CodaViewTransitionKind, readonly string[]>>;
 
-const DETAIL_TRANSITION_NAMES: Partial<
-  Record<CodaViewTransitionKind, readonly string[]>
-> = {
+const DETAIL_TRANSITION_NAMES = {
   "album-detail": ["coda-album-artwork", "coda-detail-surface"],
   "album-detail-close": ["coda-album-artwork", "coda-detail-surface"],
   "artist-detail": ["coda-artist-artwork", "coda-detail-surface"],
@@ -174,11 +179,18 @@ const DETAIL_TRANSITION_NAMES: Partial<
   "radio-detail-close": ["coda-radio-artwork", "coda-detail-surface"],
   "now-playing-open": ["coda-now-playing-artwork", "coda-detail-surface"],
   "now-playing-close": ["coda-now-playing-artwork", "coda-detail-surface"],
-};
+} satisfies Partial<Record<CodaViewTransitionKind, readonly string[]>>;
+
+function mappedTransitionValues<Value>(
+  mapping: Partial<Record<CodaViewTransitionKind, readonly Value[]>>,
+  kind: CodaViewTransitionKind,
+): readonly Value[] {
+  return mapping[kind] ?? [];
+}
 
 function sharedSourceCandidates(kind: CodaViewTransitionKind) {
   const elements = new Set<HTMLElement>();
-  for (const selector of SHARED_SOURCE_SELECTORS[kind] ?? []) {
+  for (const selector of mappedTransitionValues(SHARED_SOURCE_SELECTORS, kind)) {
     document.querySelectorAll<HTMLElement>(selector).forEach((element) => {
       elements.add(element);
     });
@@ -188,7 +200,10 @@ function sharedSourceCandidates(kind: CodaViewTransitionKind) {
 
 function sharedDestinationCandidates(kind: CodaViewTransitionKind) {
   const elements = new Set<HTMLElement>();
-  for (const selector of SHARED_DESTINATION_SELECTORS[kind] ?? []) {
+  for (const selector of mappedTransitionValues(
+    SHARED_DESTINATION_SELECTORS,
+    kind,
+  )) {
     document.querySelectorAll<HTMLElement>(selector).forEach((element) => {
       elements.add(element);
     });
@@ -233,6 +248,45 @@ function clearTransitionSupport() {
   document.documentElement.classList.remove("coda-view-transitions-supported");
 }
 
+type StartViewTransition = (
+  update: () => void | Promise<void>,
+) => CodaViewTransition;
+
+function isStartViewTransition<Value>(
+  value: Value,
+): value is Value & StartViewTransition {
+  return Object.prototype.toString.call(value) === "[object Function]";
+}
+
+function readStartViewTransition(
+  owner: Document,
+): StartViewTransition | undefined {
+  if (!("startViewTransition" in owner)) return undefined;
+  const candidate = owner.startViewTransition;
+  if (!isStartViewTransition(candidate)) return undefined;
+  return (update) => candidate.call(owner, update);
+}
+
+function isAnimationFrameRequester<Value>(
+  value: Value,
+): value is Value & ((callback: FrameRequestCallback) => number) {
+  return Object.prototype.toString.call(value) === "[object Function]";
+}
+
+function isMediaQueryMatcher<Value>(
+  value: Value,
+): value is Value & ((query: string) => MediaQueryList) {
+  return Object.prototype.toString.call(value) === "[object Function]";
+}
+
+function reducedMotionRequested(): boolean {
+  const matchMedia = window.matchMedia;
+  return (
+    isMediaQueryMatcher(matchMedia) &&
+    matchMedia.call(window, "(prefers-reduced-motion: reduce)").matches
+  );
+}
+
 function isPageTransition(
   kind: CodaViewTransitionKind,
 ): kind is "page-forward" | "page-back" | "page-crossfade" {
@@ -261,7 +315,8 @@ function motionDiagnosticsVisible() {
 }
 
 function beginSharedSourceFeedback(source: HTMLElement | null) {
-  if (!source || typeof requestAnimationFrame !== "function") return undefined;
+  const requestFrame = globalThis.requestAnimationFrame;
+  if (!source || !isAnimationFrameRequester(requestFrame)) return undefined;
   let animation: Animation;
   try {
     animation = source.animate(
@@ -293,7 +348,7 @@ function beginSharedSourceFeedback(source: HTMLElement | null) {
       resolve();
     };
     timeout = window.setTimeout(settle, 32);
-    frame = requestAnimationFrame(() => {
+    frame = requestFrame.call(globalThis, () => {
       resolvePainted();
       settle();
     });
@@ -396,21 +451,15 @@ export function consumePendingPageEntrance(
   const keyframes =
     entrance.opacity === undefined
       ? {
-          transform: [entrance.transform, "translateX(0px) scale(1)"] as [
-            string,
-            string,
-          ],
+          transform: [entrance.transform, "translateX(0px) scale(1)"],
         }
       : {
-          opacity: [entrance.opacity, 1] as [number, number],
-          transform: [entrance.transform, "translateX(0px) scale(1)"] as [
-            string,
-            string,
-          ],
+          opacity: [entrance.opacity, 1],
+          transform: [entrance.transform, "translateX(0px) scale(1)"],
         };
   let controls: AnimationPlaybackControls;
   try {
-    controls = animate(destination, keyframes, entrance.transition);
+    controls = motionDriver.animate(destination, keyframes, entrance.transition);
   } catch {
     entrance.resolve();
     return false;
@@ -488,16 +537,13 @@ async function transitionRouterOwnedPage(
       releaseActivePageStyles = preservePageInlineStyles(source);
       source.style.setProperty("will-change", slide ? "transform" : "opacity");
       try {
-        const exit = animate(
+        const exit = motionDriver.animate(
           source,
           slide
             ? {
-                transform: ["translateX(0px) scale(1)", oldTransform] as [
-                  string,
-                  string,
-                ],
+                transform: ["translateX(0px) scale(1)", oldTransform],
               }
-            : { opacity: [1, crossfadeOpacity] as [number, number] },
+            : { opacity: [1, crossfadeOpacity] },
           motion.viewExit,
         );
         activePageAnimations = [exit];
@@ -506,8 +552,9 @@ async function transitionRouterOwnedPage(
             sourceFeedbackMs: performance.now() - coordinatorStartedAt,
           },
         });
-        if (typeof requestAnimationFrame === "function") {
-          sourcePaintFrame = requestAnimationFrame(() => {
+        const requestFrame = globalThis.requestAnimationFrame;
+        if (isAnimationFrameRequester(requestFrame)) {
+          sourcePaintFrame = requestFrame.call(globalThis, () => {
             updateMotionDiagnostic(diagnosticId, {
               phaseTimings: {
                 sourceFeedbackPaintMs:
@@ -539,10 +586,12 @@ async function transitionRouterOwnedPage(
     }
     const updateStartedAt = performance.now();
     updateMotionDiagnostic(diagnosticId, {
-      phaseTimings: {
-        ...(source ? {} : { exitMs: updateStartedAt - exitStartedAt }),
-        updateStartMs: updateStartedAt - coordinatorStartedAt,
-      },
+      phaseTimings: source
+        ? { updateStartMs: updateStartedAt - coordinatorStartedAt }
+        : {
+            exitMs: updateStartedAt - exitStartedAt,
+            updateStartMs: updateStartedAt - coordinatorStartedAt,
+          },
     });
 
     const entranceFinished = source
@@ -621,15 +670,13 @@ export function transitionCodaView(
   stopActivePageAnimations();
   clearTransitionClasses();
 
-  const prefersReducedMotion =
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const prefersReducedMotion = reducedMotionRequested();
   const pageTransition = isPageTransition(kind);
   if (pageTransition && !prefersReducedMotion) {
     return transitionRouterOwnedPage(update, kind, motionProfile, transitionId);
   }
-  const transitionDocument = document as ViewTransitionDocument;
-  if (!transitionDocument.startViewTransition || prefersReducedMotion) {
+  const startViewTransition = readStartViewTransition(document);
+  if (!startViewTransition || prefersReducedMotion) {
     const coordinatorStartedAt = performance.now();
     const diagnosticId = beginMotionDiagnostic({
       kind,
@@ -801,7 +848,9 @@ export function transitionCodaView(
   };
   const source = sourceCandidates[0] ?? null;
   const sourceCount = sourceCandidates.length;
-  const transitionNames = [...(DETAIL_TRANSITION_NAMES[kind] ?? [])];
+  const transitionNames = [
+    ...mappedTransitionValues(DETAIL_TRANSITION_NAMES, kind),
+  ];
   const diagnosticsVisible = motionDiagnosticsVisible();
   const diagnosticId = beginMotionDiagnostic({
     kind,
@@ -836,12 +885,7 @@ export function transitionCodaView(
       transitionClass,
     );
     try {
-      const transition = transitionDocument.startViewTransition.call(
-        transitionDocument,
-        () => {
-          return commitUpdate(true);
-        },
-      );
+      const transition = startViewTransition(() => commitUpdate(true));
       if (latestTransitionId === transitionId) {
         activeTransition = { id: transitionId, transition };
       } else {

@@ -11,13 +11,15 @@ export function usePlaybackPosition(playbackClock: PlaybackClock): number {
   );
 }
 
+export type CurrentRadioChapterState = {
+  current?: RadioChapter;
+  next?: RadioChapter;
+};
+
 export function useCurrentRadioChapter(
   playbackClock: PlaybackClock,
   timeline: readonly RadioChapter[],
-): {
-  current?: RadioChapter;
-  next?: RadioChapter;
-} {
+): CurrentRadioChapterState {
   const getCurrentIndex = useCallback(
     () =>
       radioAiringIndexesAt(timeline, playbackClock.getSnapshot()).currentIndex,

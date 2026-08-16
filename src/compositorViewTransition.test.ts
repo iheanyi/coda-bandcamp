@@ -6,6 +6,7 @@ import {
   flattenLayoutKeyframesToTransform,
   isCompositorOnlyKeyframeKeys,
   keyframePropertyNames,
+  type CompositorAnimation,
 } from "./compositorViewTransition";
 
 describe("flattenLayoutKeyframesToTransform", () => {
@@ -90,7 +91,7 @@ describe("enforceCompositorOnlyViewTransitions", () => {
           setKeyframes: setUnrelated,
         },
       },
-    ] as unknown as Animation[];
+    ] satisfies readonly CompositorAnimation[];
 
     expect(
       enforceCompositorOnlyViewTransitions(animations, [
@@ -125,7 +126,7 @@ describe("enforceCompositorOnlyViewTransitions", () => {
           setKeyframes,
         },
       },
-    ] as unknown as Animation[];
+    ] satisfies readonly CompositorAnimation[];
 
     expect(
       enforceCompositorOnlyViewTransitions(animations, [
@@ -152,7 +153,7 @@ describe("enforceCompositorOnlyViewTransitions", () => {
           setKeyframes,
         },
       },
-    ] as unknown as Animation[];
+    ] satisfies readonly CompositorAnimation[];
 
     expect(
       enforceCompositorOnlyViewTransitions(animations, [
@@ -170,7 +171,7 @@ describe("enforceCompositorOnlyViewTransitions", () => {
           getKeyframes: () => [{ opacity: 1 }, { opacity: 1 }],
         },
       },
-    ] as unknown as Animation[];
+    ] satisfies readonly CompositorAnimation[];
 
     expect(
       enforceCompositorOnlyViewTransitions(animations, [
@@ -191,7 +192,7 @@ describe("enforceCompositorOnlyViewTransitions", () => {
           ],
         },
       },
-    ] as unknown as Animation[];
+    ] satisfies readonly CompositorAnimation[];
 
     expect(
       enforceCompositorOnlyViewTransitions(animations, [
@@ -210,7 +211,7 @@ describe("enforceCompositorOnlyViewTransitions", () => {
           },
         },
       },
-    ] as unknown as Animation[];
+    ] satisfies readonly CompositorAnimation[];
     const rewriteFailure = [
       {
         effect: {
@@ -224,7 +225,7 @@ describe("enforceCompositorOnlyViewTransitions", () => {
           },
         },
       },
-    ] as unknown as Animation[];
+    ] satisfies readonly CompositorAnimation[];
 
     expect(
       enforceCompositorOnlyViewTransitions(inspectionFailure, [

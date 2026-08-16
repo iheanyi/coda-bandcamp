@@ -13,20 +13,21 @@ import {
   recordMotionInput,
   resetMotionDiagnosticsForTests,
   updateMotionDiagnostic,
+  type MotionPseudoAnimation,
 } from "./motionDiagnostics";
 
 function pseudoAnimation(
   pseudoElement: string,
   endTime: number,
   playState: AnimationPlayState = "running",
-) {
+): MotionPseudoAnimation {
   return {
     playState,
     effect: {
       pseudoElement,
       getComputedTiming: () => ({ endTime }),
     },
-  } as unknown as Animation;
+  };
 }
 
 describe("Motion diagnostics", () => {

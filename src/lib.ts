@@ -23,6 +23,7 @@ import type {
   FavoriteMutationResult,
   FavoriteTrackLocator,
   FavoriteTrackReconciliation,
+  ItemDate,
   LastFmAuthorization,
   LastFmStatus,
   LastFmTrackInput,
@@ -48,10 +49,18 @@ const MAX_CACHED_ALBUMS = 5_000;
 const MAX_MEDIA_URLS = 512;
 const STREAM_URL_CACHE_TTL_MS = 10 * 60 * 1_000;
 
-type LibraryCache = {
-  savedAt: number;
-  albums: Album[];
+type LibraryCacheWireRecord = {
+  [field: string]: LibraryCacheWireValue;
 };
+
+type LibraryCacheWireValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | LibraryCacheWireValue[]
+  | LibraryCacheWireRecord;
 
 export type LibraryCacheSnapshot = {
   savedAt: number;
@@ -70,8 +79,7 @@ export type SystemMediaMetadataInput = {
   artist: string;
   album: string;
   artwork?:
-    | { kind: "cover"; coverArtId: string }
-    | { kind: "remote"; url: string };
+    { kind: "cover"; coverArtId: string } | { kind: "remote"; url: string };
   canPrevious: boolean;
   canNext: boolean;
 };
@@ -97,18 +105,121 @@ type NativeLibrarySyncEvent = {
   albums: Omit<Album, "palette">[];
 };
 
+type NativeAlbum = Omit<Album, "palette">;
+type NativeTrack = Omit<Track, "palette">;
+type NativeFavoriteCollection = {
+  albumIds: string[];
+  songIds: string[];
+  albums: NativeAlbum[];
+  tracks: NativeTrack[];
+};
+type NativeFavoriteMutationResult = Omit<FavoriteMutationResult, "track"> & {
+  track?: NativeTrack;
+};
+type NativeFavoriteTrackReconciliation = Omit<
+  FavoriteTrackReconciliation,
+  "tracks"
+> & {
+  tracks: NativeTrack[];
+};
+type NativePlaylistDetail = Omit<PlaylistDetail, "tracks"> & {
+  tracks: NativeTrack[];
+};
+
+export type NativeChannelFactory = <Event>(
+  onmessage: (event: Event) => void,
+) => {
+  onmessage: (event: Event) => void;
+};
+
+const createTauriChannel: NativeChannelFactory = <Event>(
+  onmessage: (event: Event) => void,
+) => new Channel<Event>(onmessage);
+
+export function createCodaDataBridge(
+  nativeInvoke: typeof invoke = invoke,
+  createChannel: NativeChannelFactory = createTauriChannel,
+) {
+  return Object.freeze({
+    fetchLibrary(
+      forceFull: boolean,
+      onProgress: (event: NativeLibrarySyncEvent) => void,
+    ): Promise<NativeAlbum[]> {
+      return nativeInvoke<NativeAlbum[]>("fetch_library", {
+        onProgress: createChannel(onProgress),
+        forceFull,
+      });
+    },
+    fetchAlbum(albumId: string, forceRefresh: boolean): Promise<NativeTrack[]> {
+      return nativeInvoke<NativeTrack[]>("fetch_album", {
+        albumId,
+        forceRefresh,
+      });
+    },
+    fetchFavorites(): Promise<NativeFavoriteCollection> {
+      return nativeInvoke<NativeFavoriteCollection>("fetch_favorites");
+    },
+    setFavorite(input: FavoriteInput): Promise<NativeFavoriteMutationResult> {
+      return nativeInvoke<NativeFavoriteMutationResult>("set_favorite", {
+        input,
+      });
+    },
+    reconcileFavoriteTracks(
+      tracks: FavoriteTrackLocator[],
+    ): Promise<NativeFavoriteTrackReconciliation> {
+      return nativeInvoke<NativeFavoriteTrackReconciliation>(
+        "reconcile_favorite_tracks",
+        { tracks },
+      );
+    },
+    updatePlaylist(
+      input: PlaylistUpdateInput,
+    ): Promise<NativePlaylistDetail | null> {
+      return nativeInvoke<NativePlaylistDetail | null>("update_playlist", {
+        input,
+      });
+    },
+    fetchStreamUrl(trackId: string): Promise<string> {
+      return nativeInvoke<string>("get_stream_url", { trackId });
+    },
+    fetchDailyArticles(
+      section: DailyCategory,
+      page: number,
+    ): Promise<DailyArticlesPage> {
+      return nativeInvoke<DailyArticlesPage>("daily_articles", {
+        page,
+        section,
+      });
+    },
+    fetchDailyArticle(
+      articleSection: string,
+      slug: string,
+    ): Promise<DailyArticle> {
+      return nativeInvoke<DailyArticle>("daily_article", {
+        articleSection,
+        slug,
+      });
+    },
+  });
+}
+
+export type CodaDataBridge = ReturnType<typeof createCodaDataBridge>;
+
+const nativeCodaDataBridge = createCodaDataBridge();
+
 type RuntimeCacheEntry<T> = {
   promise: Promise<T>;
   expiresAt: number;
   value?: T;
 };
 
-const streamUrlCache = new Map<string, RuntimeCacheEntry<string>>();
 let playerStateContractVersionRequest: Promise<number> | undefined;
 
 async function nativePlayerStateContractVersion(): Promise<number> {
   if (!playerStateContractVersionRequest) {
-    playerStateContractVersionRequest = invoke<number>("player_state_contract_version")
+    playerStateContractVersionRequest = invoke<number>(
+      "player_state_contract_version",
+    )
       // An older native process will not know this command while Tauri is
       // rebuilding. Keep the durable queue compatible until it restarts.
       .catch(() => 1);
@@ -203,113 +314,133 @@ function rememberPromise<T>(
   return request;
 }
 
-function readRememberedValue<T>(
-  cache: Map<string, RuntimeCacheEntry<T>>,
-  key: string,
-): T | undefined {
-  const entry = cache.get(key);
-  if (!entry) return undefined;
-  if (entry.expiresAt <= Date.now()) {
-    cache.delete(key);
-    return undefined;
-  }
-  return entry.value;
+export function createStreamUrlRepository(
+  bridge: Pick<CodaDataBridge, "fetchStreamUrl">,
+) {
+  const cache = new Map<string, RuntimeCacheEntry<string>>();
+  return Object.freeze({
+    fetch(trackId: string): Promise<string> {
+      return rememberPromise(
+        cache,
+        trackId,
+        () => bridge.fetchStreamUrl(trackId),
+        MAX_MEDIA_URLS,
+        STREAM_URL_CACHE_TTL_MS,
+      );
+    },
+    invalidate(trackId: string): void {
+      cache.delete(trackId);
+    },
+    clear(): void {
+      cache.clear();
+    },
+  });
 }
 
-function isCachedAlbum(value: unknown): value is Album {
-  if (!value || typeof value !== "object") return false;
-  const album = value as Partial<Album>;
+const nativeStreamUrls = createStreamUrlRepository(nativeCodaDataBridge);
+
+function isLibraryCacheRecord(
+  value: LibraryCacheWireValue,
+): value is LibraryCacheWireRecord {
   return (
-    typeof album.id === "string" &&
-    typeof album.title === "string" &&
-    typeof album.artist === "string" &&
-    typeof album.songCount === "number" &&
-    typeof album.duration === "number" &&
-    (album.year === undefined ||
-      (Number.isInteger(album.year) && album.year > 0 && album.year <= 9_999)) &&
-    Array.isArray(album.palette) &&
-    album.palette.length === 2 &&
-    album.palette.every((color) => typeof color === "string")
+    value !== null &&
+    value !== undefined &&
+    Object(value) === value &&
+    !Array.isArray(value)
   );
 }
 
-function stripAlbumForCache(album: Album): Album {
-  const addedAt = typeof album.addedAt === "string" ? album.addedAt : undefined;
-  const starredAt =
-    typeof album.starredAt === "string" ? album.starredAt : undefined;
-  const playedAt = typeof album.playedAt === "string" ? album.playedAt : undefined;
-  const originalReleaseDate = isItemDate(album.originalReleaseDate)
-    ? album.originalReleaseDate
-    : undefined;
-  const releaseDate = isItemDate(album.releaseDate)
-    ? album.releaseDate
-    : undefined;
-  return {
-    id: album.id,
-    title: album.title,
-    artist: album.artist,
-    songCount: album.songCount,
-    duration: album.duration,
-    ...(album.coverArt === undefined ? {} : { coverArt: album.coverArt }),
-    ...(album.year === undefined ? {} : { year: album.year }),
-    ...(album.genre === undefined
-      ? {}
-      : { genre: normalizeGenre(album.genre) }),
-    ...(addedAt === undefined ? {} : { addedAt }),
-    ...(starredAt === undefined ? {} : { starredAt }),
-    ...(playedAt === undefined ? {} : { playedAt }),
-    ...(originalReleaseDate === undefined
-      ? {}
-      : {
-          originalReleaseDate: {
-            year: originalReleaseDate.year,
-            ...(originalReleaseDate.month === undefined
-              ? {}
-              : { month: originalReleaseDate.month }),
-            ...(originalReleaseDate.day === undefined
-              ? {}
-              : { day: originalReleaseDate.day }),
-          },
-        }),
-    ...(releaseDate === undefined
-      ? {}
-      : {
-          releaseDate: {
-            year: releaseDate.year,
-            ...(releaseDate.month === undefined
-              ? {}
-              : { month: releaseDate.month }),
-            ...(releaseDate.day === undefined
-              ? {}
-              : { day: releaseDate.day }),
-          },
-        }),
-    palette: [album.palette[0], album.palette[1]],
+function isLibraryCacheText(value: LibraryCacheWireValue): value is string {
+  return String(value) === value;
+}
+
+function isLibraryCacheNumber(value: LibraryCacheWireValue): value is number {
+  return Number(value) === value && Number.isFinite(value);
+}
+
+function cachedPalette(
+  value: LibraryCacheWireValue,
+): [string, string] | undefined {
+  if (!Array.isArray(value) || value.length !== 2) return undefined;
+  const [first, second] = value;
+  if (!isLibraryCacheText(first) || !isLibraryCacheText(second)) {
+    return undefined;
+  }
+  return [first, second];
+}
+
+function copyItemDate(value: LibraryCacheWireValue): ItemDate | undefined {
+  if (!isItemDate(value)) return undefined;
+  const date: ItemDate = { year: value.year };
+  if (value.month !== undefined) date.month = value.month;
+  if (value.day !== undefined) date.day = value.day;
+  return date;
+}
+
+function parseCachedAlbum(value: LibraryCacheWireValue): Album | undefined {
+  if (!isLibraryCacheRecord(value)) return undefined;
+  const palette = cachedPalette(value.palette);
+  if (
+    !isLibraryCacheText(value.id) ||
+    !isLibraryCacheText(value.title) ||
+    !isLibraryCacheText(value.artist) ||
+    !isLibraryCacheNumber(value.songCount) ||
+    !isLibraryCacheNumber(value.duration) ||
+    (value.year !== undefined &&
+      (!isLibraryCacheNumber(value.year) ||
+        !Number.isInteger(value.year) ||
+        value.year <= 0 ||
+        value.year > 9_999)) ||
+    !palette
+  ) {
+    return undefined;
+  }
+
+  const album: Album = {
+    id: value.id,
+    title: value.title,
+    artist: value.artist,
+    songCount: value.songCount,
+    duration: value.duration,
+    palette,
   };
+  if (isLibraryCacheText(value.coverArt)) album.coverArt = value.coverArt;
+  if (isLibraryCacheNumber(value.year)) album.year = value.year;
+  if (isLibraryCacheText(value.genre)) {
+    album.genre = normalizeGenre(value.genre);
+  }
+  if (isLibraryCacheText(value.addedAt)) album.addedAt = value.addedAt;
+  if (isLibraryCacheText(value.starredAt)) album.starredAt = value.starredAt;
+  if (isLibraryCacheText(value.playedAt)) album.playedAt = value.playedAt;
+  const originalReleaseDate = copyItemDate(value.originalReleaseDate);
+  if (originalReleaseDate !== undefined) {
+    album.originalReleaseDate = originalReleaseDate;
+  }
+  const releaseDate = copyItemDate(value.releaseDate);
+  if (releaseDate !== undefined) album.releaseDate = releaseDate;
+  return album;
 }
 
 export function readLibraryCache(now = Date.now()): Album[] {
   try {
     const raw = window.localStorage.getItem(LIBRARY_CACHE_KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw) as Partial<LibraryCache>;
+    const parsed: LibraryCacheWireValue = JSON.parse(raw);
     if (
-      typeof parsed.savedAt !== "number" ||
+      !isLibraryCacheRecord(parsed) ||
+      !isLibraryCacheNumber(parsed.savedAt) ||
       now - parsed.savedAt > LIBRARY_CACHE_TTL_MS ||
       !Array.isArray(parsed.albums)
     ) {
       window.localStorage.removeItem(LIBRARY_CACHE_KEY);
       return [];
     }
-    return parsed.albums
-      .filter(isCachedAlbum)
-      .slice(0, MAX_CACHED_ALBUMS)
-      .map((album) =>
-        stripAlbumForCache({
-          ...album,
-          genre: normalizeGenre(album.genre),
-        }),
-      );
+    const albums: Album[] = [];
+    for (const value of parsed.albums.slice(0, MAX_CACHED_ALBUMS)) {
+      const album = parseCachedAlbum(value);
+      if (album) albums.push(album);
+    }
+    return albums;
   } catch {
     return [];
   }
@@ -317,7 +448,7 @@ export function readLibraryCache(now = Date.now()): Album[] {
 
 export function clearRuntimeCaches(): void {
   clearCoverArtRendererState();
-  streamUrlCache.clear();
+  nativeStreamUrls.clear();
   try {
     window.localStorage.removeItem(LIBRARY_CACHE_KEY);
   } catch {
@@ -326,7 +457,7 @@ export function clearRuntimeCaches(): void {
 }
 
 export function invalidateStreamUrl(trackId: string): void {
-  streamUrlCache.delete(trackId);
+  nativeStreamUrls.invalidate(trackId);
 }
 
 export async function hasConnection(): Promise<boolean> {
@@ -334,7 +465,9 @@ export async function hasConnection(): Promise<boolean> {
   return invoke<boolean>("has_connection");
 }
 
-export async function loadLibraryCache(): Promise<LibraryCacheSnapshot | undefined> {
+export async function loadLibraryCache(): Promise<
+  LibraryCacheSnapshot | undefined
+> {
   if (!isDesktop()) {
     const albums = readLibraryCache();
     const savedAt = Date.now();
@@ -347,15 +480,12 @@ export async function loadLibraryCache(): Promise<LibraryCacheSnapshot | undefin
   } catch {
     // Legacy storage may be unavailable; native hydration is unaffected.
   }
-  const snapshot = await invoke<
-    | {
-        version: number;
-        savedAt: number;
-        lastFullSyncAt: number;
-        albums: Omit<Album, "palette">[];
-      }
-    | null
-  >("load_library_cache");
+  const snapshot = await invoke<{
+    version: number;
+    savedAt: number;
+    lastFullSyncAt: number;
+    albums: Omit<Album, "palette">[];
+  } | null>("load_library_cache");
   if (!snapshot) return undefined;
   return {
     savedAt: snapshot.savedAt,
@@ -381,7 +511,7 @@ export async function connectBandcamp(
     onProgress,
   });
   clearCoverArtRendererState();
-  streamUrlCache.clear();
+  nativeStreamUrls.clear();
   return albums.map(hydrateAlbum);
 }
 
@@ -389,7 +519,9 @@ export async function disconnect(): Promise<string | undefined> {
   return (await invoke<string | null>("disconnect")) ?? undefined;
 }
 
-export async function loadPlayerState(): Promise<PlayerStateSnapshot | undefined> {
+export async function loadPlayerState(): Promise<
+  PlayerStateSnapshot | undefined
+> {
   if (!isDesktop()) return undefined;
   let value: unknown | null;
   try {
@@ -431,7 +563,9 @@ export type PlaybackDiagnosticEvent =
 
 export function recordPlaybackDiagnostic(event: PlaybackDiagnosticEvent): void {
   if (!isDesktop()) return;
-  void invoke("record_player_state_diagnostic", { event }).catch(() => undefined);
+  void invoke("record_player_state_diagnostic", { event }).catch(
+    () => undefined,
+  );
 }
 
 export async function savePlayerState(input: PlayerStateInput): Promise<void> {
@@ -472,7 +606,9 @@ export async function beginLastFmAuthorization(): Promise<LastFmAuthorization> {
   return invoke<LastFmAuthorization>("lastfm_begin_auth");
 }
 
-export async function completeLastFmAuthorization(token: string): Promise<LastFmStatus> {
+export async function completeLastFmAuthorization(
+  token: string,
+): Promise<LastFmStatus> {
   return invoke<LastFmStatus>("lastfm_complete_auth", { token });
 }
 
@@ -480,11 +616,16 @@ export async function disconnectLastFm(): Promise<LastFmStatus> {
   return invoke<LastFmStatus>("lastfm_disconnect");
 }
 
-export async function updateLastFmNowPlaying(track: LastFmTrackInput): Promise<void> {
+export async function updateLastFmNowPlaying(
+  track: LastFmTrackInput,
+): Promise<void> {
   return invoke("lastfm_update_now_playing", { input: track });
 }
 
-export async function scrobbleLastFm(track: LastFmTrackInput, timestamp: number): Promise<void> {
+export async function scrobbleLastFm(
+  track: LastFmTrackInput,
+  timestamp: number,
+): Promise<void> {
   return invoke("lastfm_scrobble", { input: { track, timestamp } });
 }
 
@@ -508,19 +649,19 @@ export async function openLastFmAuthorization(value: string): Promise<void> {
 export async function fetchLibrary(
   onPage?: (progress: LibrarySyncProgress) => void,
   options: { forceFull?: boolean } = {},
+  bridge: CodaDataBridge = nativeCodaDataBridge,
 ): Promise<Album[]> {
-  const onProgress = new Channel<NativeLibrarySyncEvent>((event) => {
-    if (event.kind !== "page") return;
-    onPage?.({
-      pageIndex: event.pageIndex,
-      loaded: event.loaded,
-      albums: event.albums.map(hydrateAlbum),
-    });
-  });
-  const albums = await invoke<Omit<Album, "palette">[]>("fetch_library", {
-    onProgress,
-    forceFull: options.forceFull ?? false,
-  });
+  const albums = await bridge.fetchLibrary(
+    options.forceFull ?? false,
+    (event) => {
+      if (event.kind !== "page") return;
+      onPage?.({
+        pageIndex: event.pageIndex,
+        loaded: event.loaded,
+        albums: event.albums.map(hydrateAlbum),
+      });
+    },
+  );
   const hydrated = albums.map(hydrateAlbum);
   return hydrated;
 }
@@ -528,21 +669,19 @@ export async function fetchLibrary(
 export async function fetchAlbum(
   album: Album,
   options: { forceRefresh?: boolean } = {},
+  bridge: CodaDataBridge = nativeCodaDataBridge,
 ): Promise<Track[]> {
-  const tracks = await invoke<Omit<Track, "palette">[]>("fetch_album", {
-    albumId: album.id,
-    forceRefresh: options.forceRefresh ?? false,
-  });
+  const tracks = await bridge.fetchAlbum(
+    album.id,
+    options.forceRefresh ?? false,
+  );
   return tracks.map((track) => hydrateTrack(track, album.palette));
 }
 
-export async function fetchFavorites(): Promise<FavoriteCollection> {
-  const favorites = await invoke<{
-    albumIds: string[];
-    songIds: string[];
-    albums: Omit<Album, "palette">[];
-    tracks: Omit<Track, "palette">[];
-  }>("fetch_favorites");
+export async function fetchFavorites(
+  bridge: CodaDataBridge = nativeCodaDataBridge,
+): Promise<FavoriteCollection> {
+  const favorites = await bridge.fetchFavorites();
   const albums = favorites.albums.map(hydrateAlbum);
   const albumPalettes = new Map(
     albums.map((album) => [album.id, album.palette] as const),
@@ -551,46 +690,34 @@ export async function fetchFavorites(): Promise<FavoriteCollection> {
     ...favorites,
     albums,
     tracks: favorites.tracks.map((track) =>
-      hydrateTrack(track, albumPalettes.get(track.albumId))),
+      hydrateTrack(track, albumPalettes.get(track.albumId)),
+    ),
   };
 }
 
 export async function setFavorite(
   input: FavoriteInput,
+  bridge: CodaDataBridge = nativeCodaDataBridge,
 ): Promise<FavoriteMutationResult> {
-  const result = await invoke<
-    Omit<FavoriteMutationResult, "track"> & {
-      track?: Omit<Track, "palette">;
-    }
-  >("set_favorite", { input });
+  const result = await bridge.setFavorite(input);
   const { track, ...mutation } = result;
-  return {
-    ...mutation,
-    ...(track === undefined
-      ? {}
-      : { track: hydrateTrack(track) }),
-  };
+  const hydrated: FavoriteMutationResult = { ...mutation };
+  if (track !== undefined) hydrated.track = hydrateTrack(track);
+  return hydrated;
 }
 
 export async function reconcileFavoriteTracks(
   tracks: FavoriteTrackLocator[],
+  bridge: CodaDataBridge = nativeCodaDataBridge,
 ): Promise<FavoriteTrackReconciliation> {
-  const result = await invoke<
-    Omit<FavoriteTrackReconciliation, "tracks"> & {
-      tracks: Omit<Track, "palette">[];
-    }
-  >("reconcile_favorite_tracks", { tracks });
+  const result = await bridge.reconcileFavoriteTracks(tracks);
   return {
     ...result,
     tracks: result.tracks.map((track) => hydrateTrack(track)),
   };
 }
 
-function hydratePlaylist(
-  playlist: Omit<PlaylistDetail, "tracks"> & {
-    tracks: Omit<Track, "palette">[];
-  },
-): PlaylistDetail {
+function hydratePlaylist(playlist: NativePlaylistDetail): PlaylistDetail {
   return {
     ...playlist,
     tracks: playlist.tracks.map((track) => hydrateTrack(track)),
@@ -601,7 +728,9 @@ export async function fetchPlaylists(): Promise<PlaylistSummary[]> {
   return invoke<PlaylistSummary[]>("fetch_playlists");
 }
 
-export async function fetchPlaylist(playlistId: string): Promise<PlaylistDetail> {
+export async function fetchPlaylist(
+  playlistId: string,
+): Promise<PlaylistDetail> {
   const playlist = await invoke<
     Omit<PlaylistDetail, "tracks"> & { tracks: Omit<Track, "palette">[] }
   >("fetch_playlist", { playlistId });
@@ -618,18 +747,21 @@ export async function createPlaylist(
   return hydratePlaylist(playlist);
 }
 
+export function updatePlaylist(
+  input: PlaylistUpdateInput,
+): Promise<PlaylistDetail | undefined>;
+export function updatePlaylist(
+  input: PlaylistUpdateInput,
+  bridge: CodaDataBridge,
+): Promise<PlaylistDetail | undefined>;
 export async function updatePlaylist(
   input: PlaylistUpdateInput,
+  bridge: CodaDataBridge = nativeCodaDataBridge,
 ): Promise<PlaylistDetail | undefined> {
-  const playlist = await invoke<
-    | (Omit<PlaylistDetail, "tracks"> & { tracks: Omit<Track, "palette">[] })
-    | null
-  >("update_playlist", {
-    input: {
-      ...input,
-      songIdsToAdd: input.songIdsToAdd ?? [],
-      songIndexesToRemove: input.songIndexesToRemove ?? [],
-    },
+  const playlist = await bridge.updatePlaylist({
+    ...input,
+    songIdsToAdd: input.songIdsToAdd ?? [],
+    songIndexesToRemove: input.songIndexesToRemove ?? [],
   });
   return playlist ? hydratePlaylist(playlist) : undefined;
 }
@@ -638,14 +770,12 @@ export async function deletePlaylist(playlistId: string): Promise<void> {
   return invoke("delete_playlist", { playlistId });
 }
 
-export async function fetchStreamUrl(trackId: string): Promise<string> {
-  return rememberPromise(
-    streamUrlCache,
-    trackId,
-    () => invoke<string>("get_stream_url", { trackId }),
-    MAX_MEDIA_URLS,
-    STREAM_URL_CACHE_TTL_MS,
-  );
+export async function fetchStreamUrl(
+  trackId: string,
+  bridge?: CodaDataBridge,
+): Promise<string> {
+  if (bridge) return bridge.fetchStreamUrl(trackId);
+  return nativeStreamUrls.fetch(trackId);
 }
 
 export async function coverCacheDiagnostics(): Promise<CoverCacheDiagnostics> {
@@ -671,21 +801,23 @@ export async function fetchDiscover(
 export async function fetchDailyArticles(
   section: DailyCategory,
   page = 1,
+  bridge: CodaDataBridge = nativeCodaDataBridge,
 ): Promise<DailyArticlesPage> {
   if (!isDesktop()) {
     throw new Error("Bandcamp Daily is available in the Coda desktop app.");
   }
-  return invoke<DailyArticlesPage>("daily_articles", { page, section });
+  return bridge.fetchDailyArticles(section, page);
 }
 
 export async function fetchDailyArticle(
   articleSection: string,
   slug: string,
+  bridge: CodaDataBridge = nativeCodaDataBridge,
 ): Promise<DailyArticle> {
   if (!isDesktop()) {
     throw new Error("Bandcamp Daily is available in the Coda desktop app.");
   }
-  return invoke<DailyArticle>("daily_article", { articleSection, slug });
+  return bridge.fetchDailyArticle(articleSection, slug);
 }
 
 export async function fetchRadioShows({
@@ -715,7 +847,9 @@ export async function updateSystemMediaMetadata(
   return invoke("update_system_media_metadata", { input });
 }
 
-export async function updateSystemMediaPlayback(playing: boolean): Promise<void> {
+export async function updateSystemMediaPlayback(
+  playing: boolean,
+): Promise<void> {
   if (!isWindowsDesktop()) return;
   return invoke("update_system_media_playback", { playing });
 }

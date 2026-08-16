@@ -6,7 +6,11 @@ import { AppSidebar } from "./AppSidebar";
 import { useAppUpdater } from "./appUpdaterController";
 import { notifyToast } from "@/components/ui/toastManager";
 import { useCurrentFavoriteController } from "@/features/favorites/useCurrentFavoriteController";
-import { useLocalFavoritesController } from "@/features/favorites/useLocalFavoritesController";
+import {
+  type LocalFavoritesRepository,
+  type MusicFavoritesRepository,
+  useLocalFavoritesController,
+} from "@/features/favorites/useLocalFavoritesController";
 import { LibraryScreenChrome } from "@/features/library/LibraryScreenChrome";
 import { MotionLabPanel } from "@/features/motion-lab/MotionLabPanel";
 import {
@@ -22,7 +26,10 @@ import {
   useRouteDestination,
 } from "@/features/navigation";
 import { useCodaNavigationController } from "@/features/navigation/useCodaNavigationController";
-import { usePlaybackRuntimeController } from "@/features/playback-runtime";
+import {
+  type PlaybackRuntimeAdapters,
+  usePlaybackRuntimeController,
+} from "@/features/playback-runtime";
 import { PersistentPlayerDock } from "@/features/player/PersistentPlayerDock";
 import { PersistentQueueSurface } from "@/features/queue/PersistentQueueSurface";
 import { useQueueFocusController } from "@/features/queue/useQueueFocusController";
@@ -38,10 +45,23 @@ import { useMainWindowController } from "@/features/shell/useMainWindowControlle
 import { countLabel } from "./countLabel";
 import { cachedAlbumTracks, updateLibraryData } from "./libraryQueries";
 import { radioShowQueryOptions } from "@/queries/radioQueries";
-import type { Album, Track } from "./types";
+import type { Album, LastFmStatus, Track } from "./types";
+
+type AppAdapters = Readonly<{
+  favorites?: Readonly<{
+    local?: LocalFavoritesRepository;
+    music?: MusicFavoritesRepository;
+  }>;
+  loadLastFmStatus?: () => Promise<LastFmStatus>;
+  playback?: PlaybackRuntimeAdapters;
+}>;
+
+type AppProps = Readonly<{
+  adapters?: AppAdapters;
+}>;
 
 // Keep non-component exports in focused modules so Fast Refresh preserves App state.
-export default function App() {
+export default function App({ adapters }: AppProps = {}) {
   const [motionLabOpen, setMotionLabOpenState] = useState(readMotionLabOpen);
   const setMotionLabOpen = useCallback((open: boolean) => {
     setMotionLabOpenState(open);
@@ -73,7 +93,9 @@ export default function App() {
   const libraryError = librarySessionState.sync.error;
   const artworkRefreshing = librarySessionState.artwork.refreshing;
   const appUpdater = useAppUpdater();
-  const overlays = usePersistentOverlaysController();
+  const overlays = usePersistentOverlaysController({
+    loadLastFmStatus: adapters?.loadLastFmStatus,
+  });
   const { closeConnection, openAddToPlaylist, openConnection } =
     overlays.commands;
   const mainWindow = useMainWindowController();
@@ -98,6 +120,20 @@ export default function App() {
     () => shuffleEntireLibraryRef.current(),
     [],
   );
+  const loadRadioShow = useCallback(
+    (showId: number) => queryClient.fetchQuery(radioShowQueryOptions(showId)),
+    [queryClient],
+  );
+  const playbackAdapters = useMemo<PlaybackRuntimeAdapters>(() => {
+    const provided = adapters?.playback;
+    return {
+      ...provided,
+      audio: {
+        ...provided?.audio,
+        loadRadioShow: provided?.audio?.loadRadioShow ?? loadRadioShow,
+      },
+    };
+  }, [adapters?.playback, loadRadioShow]);
   const playback = usePlaybackRuntimeController({
     connected,
     lastFmConnected: lastFmStatus.connected,
@@ -111,12 +147,7 @@ export default function App() {
       applyRecoveredAlbums: ignorePlaybackRecoveredAlbums,
     },
     onShuffleEntireLibrary: shuffleEntireLibrary,
-    adapters: {
-      audio: {
-        loadRadioShow: (showId) =>
-          queryClient.fetchQuery(radioShowQueryOptions(showId)),
-      },
-    },
+    adapters: playbackAdapters,
   });
   const { queue, currentTrack, open: queueOpen } = playback.queue;
   const { playing } = playback.transport;
@@ -194,7 +225,6 @@ export default function App() {
       chapterLinks: getRadioChapterLocalLinks,
       openExternal: openRadioItem,
       openSeries: browseRadioSeries,
-      openShow: openRadioShow,
     },
     sidebar: {
       beforeDiscoverNavigate,
@@ -209,8 +239,10 @@ export default function App() {
   const localFavoritesController = useLocalFavoritesController({
     albums,
     connected,
+    musicRepository: adapters?.favorites?.music,
     notify: notifyToast,
     queue,
+    repository: adapters?.favorites?.local,
     selectedAlbum,
   });
   const { favoriteAlbumIds, favoriteRadioShowIds, favoriteTrackIds } =

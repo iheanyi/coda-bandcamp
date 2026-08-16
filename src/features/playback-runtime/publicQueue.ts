@@ -27,14 +27,15 @@ export function publicPlaybackQueueTrack(track: Track): PlaybackQueueTrack {
     discoverRelease,
     ...publicTrack
   } = track;
-  return {
+  const publicQueueTrack: PlaybackQueueTrack = {
     ...publicTrack,
-    palette: [...track.palette],
-    ...(radioChapters
-      ? { radioChapters: radioChapters.map(publicRadioChapter) }
-      : {}),
-    ...(discoverRelease
-      ? { discoverRelease: publicDiscoverRelease(discoverRelease) }
-      : {}),
+    palette: [track.palette[0], track.palette[1]],
   };
+  if (radioChapters) {
+    publicQueueTrack.radioChapters = radioChapters.map(publicRadioChapter);
+  }
+  if (discoverRelease) {
+    publicQueueTrack.discoverRelease = publicDiscoverRelease(discoverRelease);
+  }
+  return publicQueueTrack;
 }

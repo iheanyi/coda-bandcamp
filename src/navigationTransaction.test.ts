@@ -90,17 +90,18 @@ describe("navigation transactions", () => {
   });
 
   it("keeps only bounded scalar coordination data", () => {
-    const transaction = createNavigationTransaction(1, {
+    const inputWithExtraCoordinationData = {
       ...baseInput,
       returnScrollTop: Number.POSITIVE_INFINITY,
       entrance: "shared-element",
       sharedElementOwner: "now-playing-artwork",
       serverPayload: { credentials: "not-navigation-state" },
       collection: ["not", "retained"],
-    } as NavigationTransactionInput & {
-      serverPayload: object;
-      collection: string[];
-    });
+    } as const;
+    const transaction = createNavigationTransaction(
+      1,
+      inputWithExtraCoordinationData,
+    );
 
     expect(transaction.returnScrollTop).toBe(0);
     expect(transaction.entrance).toBe("shared-element");

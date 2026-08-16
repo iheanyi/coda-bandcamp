@@ -18,9 +18,23 @@ const LAYOUT_OR_FILTER_KEYS = new Set([
 const COMPOSITOR_KEYS = new Set(["transform", "opacity", "transformOrigin"]);
 const REWRITABLE_SIZE_KEYS = new Set(["width", "height"]);
 
-function cssPixels(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value !== "string") return undefined;
+function isPrimitiveNumber<Value>(value: Value): value is Value & number {
+  return (
+    Object.prototype.toString.call(value) === "[object Number]" &&
+    value === Number(value)
+  );
+}
+
+function isPrimitiveString<Value>(value: Value): value is Value & string {
+  return (
+    Object.prototype.toString.call(value) === "[object String]" &&
+    value === String(value)
+  );
+}
+
+function cssPixels<Value>(value: Value): number | undefined {
+  if (isPrimitiveNumber(value) && Number.isFinite(value)) return value;
+  if (!isPrimitiveString(value)) return undefined;
   const match = value.trim().match(/^(-?\d+(?:\.\d+)?)px$/);
   return match ? Number(match[1]) : undefined;
 }
@@ -102,9 +116,10 @@ export function flattenLayoutKeyframesToTransform(
       destinationHeight && height !== undefined
         ? height / destinationHeight
         : undefined;
+    const frameTransform = frame.transform;
     const transform =
-      typeof frame.transform === "string" && frame.transform.length > 0
-        ? frame.transform
+      isPrimitiveString(frameTransform) && frameTransform.length > 0
+        ? frameTransform
         : "none";
     if (
       scaleX !== undefined &&
@@ -181,8 +196,64 @@ export type CompositorRewriteResult = Readonly<{
   safe: boolean;
 }>;
 
+type CompositorKeyframeEffect = Readonly<{
+  getKeyframes?: () => Keyframe[];
+  pseudoElement: string | null;
+  setKeyframes?: (frames: Keyframe[]) => void;
+}>;
+
+type MutableCompositorKeyframeEffect = {
+  getKeyframes?: () => Keyframe[];
+  pseudoElement: string | null;
+  setKeyframes?: (frames: Keyframe[]) => void;
+};
+
+export type CompositorAnimation = Readonly<{
+  effect: AnimationEffect | CompositorKeyframeEffect | null;
+}>;
+
+function isKeyframeReader<Value>(
+  value: Value,
+): value is Value & (() => Keyframe[]) {
+  return Object.prototype.toString.call(value) === "[object Function]";
+}
+
+function isKeyframeWriter<Value>(
+  value: Value,
+): value is Value & ((frames: Keyframe[]) => void) {
+  return Object.prototype.toString.call(value) === "[object Function]";
+}
+
+function parseCompositorKeyframeEffect(
+  effect: AnimationEffect | CompositorKeyframeEffect | null,
+): CompositorKeyframeEffect | undefined {
+  if (!effect || !("pseudoElement" in effect)) return undefined;
+  const pseudoElement = effect.pseudoElement;
+  if (pseudoElement !== null && !isPrimitiveString(pseudoElement)) {
+    return undefined;
+  }
+  const parsed: MutableCompositorKeyframeEffect = { pseudoElement };
+  const getKeyframes =
+    "getKeyframes" in effect ? effect.getKeyframes : undefined;
+  if (isKeyframeReader(getKeyframes)) {
+    parsed.getKeyframes = () => getKeyframes.call(effect);
+  }
+  const setKeyframes =
+    "setKeyframes" in effect ? effect.setKeyframes : undefined;
+  if (isKeyframeWriter(setKeyframes)) {
+    parsed.setKeyframes = (frames) => setKeyframes.call(effect, frames);
+  }
+  return parsed;
+}
+
+function isAnimationReader<Value>(
+  value: Value,
+): value is Value & (() => Animation[]) {
+  return Object.prototype.toString.call(value) === "[object Function]";
+}
+
 export function enforceCompositorOnlyViewTransitions(
-  animations: readonly Animation[],
+  animations: readonly CompositorAnimation[],
   transitionNames: readonly string[],
 ): CompositorRewriteResult {
   const allowedNames = new Set(transitionNames);
@@ -192,11 +263,12 @@ export function enforceCompositorOnlyViewTransitions(
   let safe = true;
 
   for (const animation of animations) {
-    const effect = animation.effect as KeyframeEffect | null;
-    const name = viewTransitionName(effect?.pseudoElement);
+    const effect = parseCompositorKeyframeEffect(animation.effect);
+    if (!effect) continue;
+    const name = viewTransitionName(effect.pseudoElement);
     if (!name || !allowedNames.has(name)) continue;
     observedNames.add(name);
-    if (typeof effect?.getKeyframes !== "function") {
+    if (!effect.getKeyframes) {
       safe = false;
       continue;
     }
@@ -227,7 +299,7 @@ export function enforceCompositorOnlyViewTransitions(
     }
     if (
       !keys.some((key) => LAYOUT_OR_FILTER_KEYS.has(key)) ||
-      typeof effect.setKeyframes !== "function"
+      !effect.setKeyframes
     ) {
       safe = false;
       continue;
@@ -257,7 +329,8 @@ export function enforceCompositorOnlyViewTransitions(
 export function enforceDocumentViewTransitionCompositing(
   transitionNames: readonly string[],
 ): CompositorRewriteResult {
-  if (typeof document.getAnimations !== "function") {
+  const getAnimations = document.getAnimations;
+  if (!isAnimationReader(getAnimations)) {
     return {
       inspected: 0,
       rewritten: 0,
@@ -266,7 +339,7 @@ export function enforceDocumentViewTransitionCompositing(
   }
   try {
     return enforceCompositorOnlyViewTransitions(
-      document.getAnimations(),
+      getAnimations.call(document),
       transitionNames,
     );
   } catch {

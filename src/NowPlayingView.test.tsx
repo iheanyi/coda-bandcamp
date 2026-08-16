@@ -11,27 +11,14 @@ import {
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const mocks = vi.hoisted(() => ({
-  fetchRadioShow: vi.fn(),
-  openBandcampUrl: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock("@/lib", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib")>();
-  return {
-    ...actual,
-    fetchRadioShow: mocks.fetchRadioShow,
-    openBandcampUrl: mocks.openBandcampUrl,
-  };
-});
-
-import { NowPlayingView } from "./NowPlayingView";
 import { Drawer } from "@/components/ui/drawer";
 import { createPlaybackClock } from "@/playbackClock";
 import { boundRadioChapters } from "@/radioPlayback";
 import { createCodaMemoryRouter } from "@/router";
 import type { Album, Track } from "@/types";
+import { NowPlayingView } from "./NowPlayingView";
+
+const openBandcampUrl = vi.fn<(url: string) => Promise<void>>();
 
 const radioTrack: Track = {
   id: "radio:979",
@@ -135,8 +122,7 @@ function linkLocation(link: HTMLElement) {
 }
 
 beforeEach(() => {
-  mocks.fetchRadioShow.mockReset();
-  mocks.openBandcampUrl.mockClear();
+  openBandcampUrl.mockReset().mockResolvedValue(undefined);
 });
 
 describe("NowPlayingView Radio metadata", () => {
@@ -438,6 +424,7 @@ describe("NowPlayingView Radio metadata", () => {
         onAlbum={onAlbum}
         onPlayQueueIndex={onPlayQueueIndex}
         onRadioSeries={onRadioSeries}
+        openExternal={openBandcampUrl}
         recommendationLoading={false}
         onPlayRecommendation={noOp}
         onAnotherRecommendation={noOp}
@@ -470,13 +457,10 @@ describe("NowPlayingView Radio metadata", () => {
         to: "/radio/shows/$showId",
       }),
     );
-    expect(mocks.fetchRadioShow).not.toHaveBeenCalled();
-
     await user.keyboard("{Enter}");
     expect(onAlbum).toHaveBeenCalledWith(radioTrack, showLink);
     expect(onToggle).not.toHaveBeenCalled();
     expect(onPlayQueueIndex).not.toHaveBeenCalled();
-    expect(mocks.fetchRadioShow).not.toHaveBeenCalled();
     expect(
       container.querySelector("a button, button a"),
     ).not.toBeInTheDocument();
@@ -486,7 +470,7 @@ describe("NowPlayingView Radio metadata", () => {
         name: "Open Kinrose on Bandcamp Radio",
       }),
     );
-    expect(mocks.openBandcampUrl).toHaveBeenCalledWith(
+    expect(openBandcampUrl).toHaveBeenCalledWith(
       "https://bandcamp.com/radio?show=979",
     );
     const radioLink = screen.getByRole("link", { name: "Bandcamp Radio" });

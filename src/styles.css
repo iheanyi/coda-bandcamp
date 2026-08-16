@@ -562,6 +562,26 @@
     view-transition-name: coda-detail-surface;
   }
 
+  html.coda-transition--album-detail-close
+    [data-coda-album-detail-surface] {
+    view-transition-name: none;
+  }
+
+  /*
+   * The queue drawer stays live outside the route. When it is open, morph only
+   * the safely separated artwork so a native top-layer snapshot cannot cover
+   * the drawer.
+   */
+  html.coda-transition--album-detail-close
+    [data-slot="app-shell-workspace"][data-queue-open="false"]
+    [data-coda-album-detail-close-surface] {
+    contain: paint;
+    min-height: 0;
+    max-height: 100dvh;
+    overflow: clip;
+    view-transition-name: coda-detail-surface;
+  }
+
   html.coda-view-transitioning
     :is(
       [data-coda-album-detail-surface],

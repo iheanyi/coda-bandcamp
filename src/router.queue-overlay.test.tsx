@@ -1,53 +1,56 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
-import { render, screen, waitFor } from "@testing-library/react";
+import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CodaMotionProvider } from "@/MotionProvider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { createCodaMemoryRouter } from "@/router";
-import type { LocalFavoriteCollection, PlayerStateSnapshot } from "@/types";
+import type { PlayerStateSnapshot } from "@/types";
 
-const nativeMocks = vi.hoisted(() => ({
+const nativeMocks = {
   checkpointPlayerState: vi.fn(),
   fetchLibrary: vi.fn(),
   fetchStreamUrl: vi.fn(),
   getLastFmStatus: vi.fn(),
   hasConnection: vi.fn(),
   loadPlayerState: vi.fn(),
-  readLocalFavorites: vi.fn(),
   savePlayerState: vi.fn(),
-  writeLocalFavorites: vi.fn(),
-}));
-
-vi.mock("@/lib", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib")>();
-  return {
-    ...actual,
-    checkpointPlayerState: nativeMocks.checkpointPlayerState,
-    fetchLibrary: nativeMocks.fetchLibrary,
-    fetchStreamUrl: nativeMocks.fetchStreamUrl,
-    getLastFmStatus: nativeMocks.getLastFmStatus,
-    hasConnection: nativeMocks.hasConnection,
-    isDesktop: () => false,
-    loadPlayerState: nativeMocks.loadPlayerState,
-    savePlayerState: nativeMocks.savePlayerState,
-  };
-});
-
-vi.mock("@/localFavoritesStore", () => ({
-  readLocalFavoritesAsync: nativeMocks.readLocalFavorites,
-  writeLocalFavoritesAsync: nativeMocks.writeLocalFavorites,
-}));
-
-const emptyFavorites: LocalFavoriteCollection = {
-  albumIds: [],
-  songIds: [],
-  radioShowIds: [],
-  albums: [],
-  tracks: [],
-  radioShows: [],
 };
+
+function installNativeRuntime() {
+  mockIPC((command, payload) => {
+    switch (command) {
+      case "checkpoint_player_state":
+        return nativeMocks.checkpointPlayerState(payload);
+      case "fetch_library":
+        return nativeMocks.fetchLibrary(payload);
+      case "get_stream_url":
+        return nativeMocks.fetchStreamUrl(payload);
+      case "lastfm_status":
+        return nativeMocks.getLastFmStatus();
+      case "has_connection":
+        return nativeMocks.hasConnection();
+      case "load_player_state":
+        return nativeMocks.loadPlayerState();
+      case "save_player_state":
+        return nativeMocks.savePlayerState(payload);
+      case "load_library_cache":
+        return Promise.resolve(null);
+      case "player_state_contract_version":
+        return Promise.resolve(2);
+      case "record_player_state_diagnostic":
+      case "update_system_media_metadata":
+      case "update_system_media_playback":
+      case "update_system_media_timeline":
+        return Promise.resolve();
+      default:
+        if (command.startsWith("plugin:")) return Promise.resolve();
+        return Promise.reject(new Error(`Unexpected native command: ${command}`));
+    }
+  });
+}
 
 const restoredPlayerState: PlayerStateSnapshot = {
   version: 1,
@@ -72,6 +75,8 @@ const restoredPlayerState: PlayerStateSnapshot = {
 };
 
 beforeEach(() => {
+  clearMocks();
+  installNativeRuntime();
   vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
   window.localStorage.clear();
 
@@ -88,16 +93,12 @@ beforeEach(() => {
   nativeMocks.loadPlayerState
     .mockReset()
     .mockResolvedValue(restoredPlayerState);
-  nativeMocks.readLocalFavorites.mockReset().mockResolvedValue(emptyFavorites);
   nativeMocks.savePlayerState.mockReset().mockResolvedValue(undefined);
-  nativeMocks.writeLocalFavorites
-    .mockReset()
-    .mockImplementation(
-      async (favorites: LocalFavoriteCollection) => favorites,
-    );
 });
 
 afterEach(() => {
+  cleanup();
+  clearMocks();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
 });

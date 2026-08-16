@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { useRef, useState } from "react";
+import { type ComponentProps, useRef, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createPlaybackClock } from "@/playbackClock";
@@ -9,58 +9,64 @@ import {
   RadioRouteNavigationProvider,
   type RadioRouteNavigationAdapter,
 } from "./RadioRouteNavigationContext";
+import type {
+  RadioIndexScreenProps,
+  RadioSeriesScreenProps,
+} from "./RadioArchiveScreen";
 import { useRadioRouteNavigation } from "./RadioRouteNavigationState";
 import type {
   RadioArchiveScreenProps,
   RadioOpenShowRequest,
 } from "./radioScreenTypes";
 import type { RadioShowScreenProps } from "./RadioShowScreen";
+import { RadioViewCompatibility } from "./RadioViewCompatibility";
+
+type RadioTransition = NonNullable<
+  ComponentProps<typeof RadioRouteNavigationProvider>["transition"]
+>;
 
 type PendingTransition = Readonly<{
-  kind: string;
+  kind: Parameters<RadioTransition>[1];
   promise: Promise<void>;
   resolve: () => void;
 }>;
 
-const transitions = vi.hoisted(() => ({
-  pending: [] as PendingTransition[],
-}));
+type PendingTransitions = {
+  pending: PendingTransition[];
+};
 
-vi.mock("@/viewTransitions", () => ({
-  transitionCodaView: vi.fn(
-    (update: () => void | Promise<void>, kind: string) => {
-      let resolveCompletion!: () => void;
-      const completion = new Promise<void>((resolve) => {
-        resolveCompletion = resolve;
-      });
-      const promise = Promise.resolve()
-        .then(update)
-        .then(() => completion);
-      transitions.pending.push({
-        kind,
-        promise,
-        resolve: resolveCompletion,
-      });
-      return promise;
-    },
-  ),
-}));
+const transitions: PendingTransitions = { pending: [] };
 
-vi.mock("./RadioArchiveScreen", async () => {
-  const { useRef: useReactRef } = await import("react");
+const transition = vi.fn<RadioTransition>(
+  (update: () => void | Promise<void>, kind) => {
+    let resolveCompletion!: () => void;
+    const completion = new Promise<void>((resolve) => {
+      resolveCompletion = resolve;
+    });
+    const promise = Promise.resolve()
+      .then(update)
+      .then(() => completion);
+    transitions.pending.push({
+      kind,
+      promise,
+      resolve: resolveCompletion,
+    });
+    return promise;
+  },
+);
 
-  function ArchiveScreen({
-    onOpenShow,
-    returningArtworkId,
-  }: RadioArchiveScreenProps) {
-    const triggerRef = useReactRef<HTMLButtonElement>(null);
-    const artworkRef = useReactRef<HTMLSpanElement>(null);
-    const titleRef = useReactRef<HTMLSpanElement>(null);
-    const secondTriggerRef = useReactRef<HTMLButtonElement>(null);
-    const secondArtworkRef = useReactRef<HTMLSpanElement>(null);
-    const secondTitleRef = useReactRef<HTMLSpanElement>(null);
-    return (
-      <>
+function CompatibilityArchiveScreen({
+  onOpenShow,
+  returningArtworkId,
+}: RadioArchiveScreenProps) {
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const artworkRef = useRef<HTMLSpanElement>(null);
+  const titleRef = useRef<HTMLSpanElement>(null);
+  const secondTriggerRef = useRef<HTMLButtonElement>(null);
+  const secondArtworkRef = useRef<HTMLSpanElement>(null);
+  const secondTitleRef = useRef<HTMLSpanElement>(null);
+  return (
+    <>
         <button
           aria-label="Open compatibility show"
           data-radio-show-navigation-slot="archive:artwork"
@@ -106,25 +112,28 @@ vi.mock("./RadioArchiveScreen", async () => {
         <output data-testid="compat-returning">
           {returningArtworkId ?? "none"}
         </output>
-      </>
-    );
-  }
+    </>
+  );
+}
 
-  return {
-    RadioIndexScreen: ArchiveScreen,
-    RadioSeriesScreen: ArchiveScreen,
-  };
-});
+function CompatibilityIndexScreen(props: RadioIndexScreenProps) {
+  return <CompatibilityArchiveScreen {...props} />;
+}
 
-vi.mock("./RadioShowScreen", () => ({
-  RadioShowScreen: ({ onBack }: RadioShowScreenProps) => (
+function CompatibilitySeriesScreen({
+  seriesId: _seriesId,
+  ...props
+}: RadioSeriesScreenProps) {
+  return <CompatibilityArchiveScreen {...props} />;
+}
+
+function CompatibilityShowScreen({ onBack }: RadioShowScreenProps) {
+  return (
     <button onClick={onBack} type="button">
       Close compatibility show
     </button>
-  ),
-}));
-
-import { RadioViewCompatibility } from "./RadioViewCompatibility";
+  );
+}
 
 const showId = parseRadioShowIdParam(977);
 const secondShowId = parseRadioShowIdParam(978);
@@ -260,11 +269,13 @@ function createAdapter(): RadioRouteNavigationAdapter {
 }
 
 async function settleTransition(index: number) {
-  const transition = transitions.pending[index];
-  expect(transition).toBeDefined();
+  const pendingTransition = transitions.pending[index];
+  if (!pendingTransition) {
+    throw new Error(`Expected pending Radio transition ${index}`);
+  }
   await act(async () => {
-    transition!.resolve();
-    await transition!.promise;
+    pendingTransition.resolve();
+    await pendingTransition.promise;
   });
 }
 
@@ -286,7 +297,10 @@ beforeEach(() => {
 describe("Radio transition race cleanup", () => {
   it("keeps exactly one provider source lease across distinct-show activations", async () => {
     render(
-      <RadioRouteNavigationProvider adapter={createAdapter()}>
+      <RadioRouteNavigationProvider
+        adapter={createAdapter()}
+        transition={transition}
+      >
         <DistinctProviderHarness />
       </RadioRouteNavigationProvider>,
     );
@@ -338,7 +352,10 @@ describe("Radio transition race cleanup", () => {
 
   it("keeps provider source markers leased when the older transition settles first", async () => {
     render(
-      <RadioRouteNavigationProvider adapter={createAdapter()}>
+      <RadioRouteNavigationProvider
+        adapter={createAdapter()}
+        transition={transition}
+      >
         <ProviderHarness />
       </RadioRouteNavigationProvider>,
     );
@@ -375,7 +392,10 @@ describe("Radio transition race cleanup", () => {
 
   it("does not let an older provider close clear a newer same-show return", async () => {
     render(
-      <RadioRouteNavigationProvider adapter={createAdapter()}>
+      <RadioRouteNavigationProvider
+        adapter={createAdapter()}
+        transition={transition}
+      >
         <ProviderHarness />
       </RadioRouteNavigationProvider>,
     );
@@ -448,7 +468,10 @@ describe("Radio transition race cleanup", () => {
         >
           Same-show decoy
         </button>
-        <RadioRouteNavigationProvider adapter={adapter}>
+        <RadioRouteNavigationProvider
+          adapter={adapter}
+          transition={transition}
+        >
           <ProviderHarness returnScrollTop={scrollTop} />
         </RadioRouteNavigationProvider>
       </div>,
@@ -503,8 +526,12 @@ describe("Radio transition race cleanup", () => {
     render(
       <RadioViewCompatibility
         {...compatibilityPlaybackProps}
+        IndexScreen={CompatibilityIndexScreen}
         onRequestedShowChange={vi.fn()}
         onSelectSeries={vi.fn()}
+        SeriesScreen={CompatibilitySeriesScreen}
+        ShowScreen={CompatibilityShowScreen}
+        transition={transition}
       />,
     );
 
@@ -544,8 +571,12 @@ describe("Radio transition race cleanup", () => {
     render(
       <RadioViewCompatibility
         {...compatibilityPlaybackProps}
+        IndexScreen={CompatibilityIndexScreen}
         onRequestedShowChange={vi.fn()}
         onSelectSeries={vi.fn()}
+        SeriesScreen={CompatibilitySeriesScreen}
+        ShowScreen={CompatibilityShowScreen}
+        transition={transition}
       />,
     );
 
@@ -602,9 +633,13 @@ describe("Radio transition race cleanup", () => {
       return (
         <RadioViewCompatibility
           {...compatibilityPlaybackProps}
+          IndexScreen={CompatibilityIndexScreen}
           onRequestedShowChange={setRequestedShowId}
           onSelectSeries={vi.fn()}
           requestedShowId={requestedShowId}
+          SeriesScreen={CompatibilitySeriesScreen}
+          ShowScreen={CompatibilityShowScreen}
+          transition={transition}
         />
       );
     }

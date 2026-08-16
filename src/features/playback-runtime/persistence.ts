@@ -25,7 +25,7 @@ const DEFAULT_STRUCTURAL_SAVE_DEBOUNCE_MS = 450;
 const DEFAULT_CHECKPOINT_INTERVAL_MS = 5_000;
 
 function persistentTrack(track: Track): PlayerStateTrack {
-  return {
+  const persistent: PlayerStateTrack = {
     id: track.id,
     title: track.title,
     artist: track.artist,
@@ -33,20 +33,23 @@ function persistentTrack(track: Track): PlayerStateTrack {
     albumId: track.albumId,
     duration: track.duration,
     track: track.track,
-    ...(track.disc === undefined ? {} : { disc: track.disc }),
-    ...(track.coverArt === undefined ? {} : { coverArt: track.coverArt }),
-    palette: [...track.palette],
+    palette: [track.palette[0], track.palette[1]],
   };
+  if (track.disc !== undefined) persistent.disc = track.disc;
+  if (track.coverArt !== undefined) persistent.coverArt = track.coverArt;
+  return persistent;
 }
+
+type PersistentQueueProjection = {
+  queue: PlayerStateTrack[];
+  currentIndex: number;
+  currentWasOmitted: boolean;
+};
 
 function persistentQueueProjection(
   queue: readonly Track[],
   currentIndex: number,
-): {
-  queue: PlayerStateTrack[];
-  currentIndex: number;
-  currentWasOmitted: boolean;
-} {
+): PersistentQueueProjection {
   const persistentQueue: PlayerStateTrack[] = [];
   let retainedThroughCurrent = 0;
   let currentWasOmitted = false;
@@ -80,7 +83,7 @@ export function preparePersistentPlayerState(
   );
   const keepCurrentProgress =
     Boolean(currentTrack) && !projection.currentWasOmitted;
-  return {
+  const state: PlayerStateInput = {
     queue: projection.queue,
     currentIndex: projection.currentIndex,
     positionSeconds:
@@ -90,14 +93,13 @@ export function preparePersistentPlayerState(
     volume: snapshot.volume,
     repeatMode: snapshot.repeatMode,
     queueOpen: snapshot.queueOpen,
-    ...(keepCurrentProgress
-      ? {
-          lastFmProgress: scrobbling.persistedLastFmProgress(currentTrack),
-          radioScrobbleProgress:
-            scrobbling.persistedRadioProgress(currentTrack),
-        }
-      : {}),
   };
+  if (keepCurrentProgress) {
+    state.lastFmProgress = scrobbling.persistedLastFmProgress(currentTrack);
+    state.radioScrobbleProgress =
+      scrobbling.persistedRadioProgress(currentTrack);
+  }
+  return state;
 }
 
 export function preparePlayerCheckpoint(

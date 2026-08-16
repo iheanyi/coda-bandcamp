@@ -1,4 +1,5 @@
 import {
+  type ComponentType,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -14,19 +15,28 @@ import {
   settleNavigationTransaction,
 } from "@/navigationTransaction";
 import type { RadioSeriesId, RadioShowId } from "@/routing/routeContracts";
+import type { RadioQueryRepository } from "@/queries/radioQueries";
 import { transitionCodaView } from "@/viewTransitions";
 import {
   acquireTemporaryAttribute,
   combineMarkerReleases,
 } from "@/features/navigation/temporaryDomMarkers";
 
-import { RadioIndexScreen, RadioSeriesScreen } from "./RadioArchiveScreen";
+import {
+  RadioIndexScreen as DefaultRadioIndexScreen,
+  type RadioIndexScreenProps,
+  RadioSeriesScreen as DefaultRadioSeriesScreen,
+  type RadioSeriesScreenProps,
+} from "./RadioArchiveScreen";
 import { radioSeriesId, radioShowId } from "./radioRouteIds";
 import type {
   RadioOpenShowRequest,
   RadioPlaybackProps,
 } from "./radioScreenTypes";
-import { RadioShowScreen } from "./RadioShowScreen";
+import {
+  RadioShowScreen as DefaultRadioShowScreen,
+  type RadioShowScreenProps,
+} from "./RadioShowScreen";
 
 export type RadioViewCompatibilityProps = RadioPlaybackProps &
   Readonly<{
@@ -34,6 +44,12 @@ export type RadioViewCompatibilityProps = RadioPlaybackProps &
     onSelectSeries: (seriesId?: number) => void;
     requestedShowId?: number;
     onRequestedShowChange: (showId?: number) => void;
+    IndexScreen?: ComponentType<RadioIndexScreenProps>;
+    openExternal?: (url: string) => Promise<void>;
+    repository?: RadioQueryRepository;
+    SeriesScreen?: ComponentType<RadioSeriesScreenProps>;
+    ShowScreen?: ComponentType<RadioShowScreenProps>;
+    transition?: typeof transitionCodaView;
   }>;
 
 export function RadioViewCompatibility({
@@ -41,6 +57,12 @@ export function RadioViewCompatibility({
   onSelectSeries,
   requestedShowId,
   onRequestedShowChange,
+  IndexScreen = DefaultRadioIndexScreen,
+  openExternal,
+  repository,
+  SeriesScreen = DefaultRadioSeriesScreen,
+  ShowScreen = DefaultRadioShowScreen,
+  transition = transitionCodaView,
   ...playbackProps
 }: RadioViewCompatibilityProps) {
   const seriesId = radioSeriesId(selectedSeriesId);
@@ -132,7 +154,7 @@ export function RadioViewCompatibility({
           : []),
       ]);
       activeSourceReleaseRef.current = releaseSourceMarkers;
-      void transitionCodaView(
+      void transition(
         () => onRequestedShowChange(request.showId),
         request.sourceArtwork ? "radio-detail" : "page-forward",
       ).finally(() => {
@@ -142,7 +164,7 @@ export function RadioViewCompatibility({
         }
       });
     },
-    [onRequestedShowChange],
+    [onRequestedShowChange, transition],
   );
 
   const selectSeries = useCallback(
@@ -189,7 +211,7 @@ export function RadioViewCompatibility({
     radioScrollTopRef.current = transaction
       ? resolveNavigationReturnScrollTop(transaction)
       : 0;
-    void transitionCodaView(
+    void transition(
       () => {
         setReturningArtworkId(reversesSharedArtwork ? showId : undefined);
         onRequestedShowChange(undefined);
@@ -201,16 +223,18 @@ export function RadioViewCompatibility({
         current === showId ? undefined : current,
       );
     });
-  }, [onRequestedShowChange, showId]);
+  }, [onRequestedShowChange, showId, transition]);
 
   if (showId) {
     return (
-      <RadioShowScreen
+      <ShowScreen
         {...playbackProps}
         showId={showId}
         onBack={closeShow}
         onBrowseSeries={browseSeriesFromShow}
+        openExternal={openExternal}
         preferredSummaryScope={seriesId ?? "all"}
+        repository={repository}
       />
     );
   }
@@ -219,12 +243,14 @@ export function RadioViewCompatibility({
     ...playbackProps,
     onSelectSeries: selectSeries,
     onOpenShow: openShow,
+    openExternal,
+    repository,
     returningArtworkId,
   };
 
   return seriesId ? (
-    <RadioSeriesScreen {...archiveProps} seriesId={seriesId} />
+    <SeriesScreen {...archiveProps} seriesId={seriesId} />
   ) : (
-    <RadioIndexScreen {...archiveProps} />
+    <IndexScreen {...archiveProps} />
   );
 }

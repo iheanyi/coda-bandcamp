@@ -24,6 +24,11 @@ type CoverArtProps = {
   size?: "card" | "small" | "large";
 };
 
+type CoverArtStyle = CSSProperties & {
+  "--cover-accent": string;
+  "--cover-base": string;
+};
+
 function viewTransitionOwnsArtwork() {
   return document.documentElement.classList.contains("coda-view-transitioning");
 }
@@ -139,6 +144,10 @@ export function CoverArt({
     url && !viewTransitionOwnsArtwork() && revealingUrl === url,
   );
   const showFallback = !url && !retryPendingRef.current;
+  const coverStyle: CoverArtStyle = {
+    "--cover-accent": album.palette[0],
+    "--cover-base": album.palette[1],
+  };
   const finishReveal = () => {
     setRevealingUrl((current) => (current === url ? undefined : current));
   };
@@ -165,12 +174,7 @@ export function CoverArt({
         sizeClassName,
         className,
       )}
-      style={
-        {
-          "--cover-accent": album.palette[0],
-          "--cover-base": album.palette[1],
-        } as CSSProperties
-      }
+      style={coverStyle}
     >
       {url ? (
         <img

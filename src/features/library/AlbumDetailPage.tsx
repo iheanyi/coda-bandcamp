@@ -1,7 +1,6 @@
 import { ArrowLeft, Clock3, Heart, ListPlus, Music2, Plus } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import { AnimatePresence, usePresence } from "motion/react";
-import * as m from "motion/react-m";
+import { AnimatePresence } from "motion/react";
 import type { ReactNode } from "react";
 import { VirtualizedSavedTrackList } from "@/VirtualizedSavedTrackList";
 import {
@@ -9,10 +8,10 @@ import {
   RowPlaybackAction,
 } from "@/components/ItemInteractions";
 import { Button } from "@/components/ui/button";
+import { MotionExitPresence } from "@/components/ui/MotionExitPresence";
 import { OverflowMarquee } from "@/components/ui/overflow-marquee";
 import { PlaybackIcon } from "@/components/ui/playback-icon";
 import { Spinner } from "@/components/ui/spinner";
-import { useMotionExitWatchdog } from "@/components/ui/useMotionExitWatchdog";
 import { countLabel } from "@/countLabel";
 import { CoverArt } from "@/features/artwork/CoverArt";
 import { ArtistTransitionName } from "@/features/navigation/ArtistTransitionName";
@@ -95,7 +94,10 @@ export function AlbumDetailPage({
         Back
       </Button>
       <div data-coda-album-detail-surface="">
-      <header className="relative grid grid-cols-[10rem_minmax(0,1fr)] items-end gap-6 overflow-hidden rounded-t-xl border border-border bg-[radial-gradient(circle_at_82%_20%,rgba(221,101,73,0.13),transparent_37%),linear-gradient(135deg,#24282a,#191c1e_70%)] p-6 xl:grid-cols-[14rem_minmax(0,1fr)] xl:gap-8 xl:p-8">
+      <header
+        className="relative grid grid-cols-[10rem_minmax(0,1fr)] items-end gap-6 overflow-hidden rounded-t-xl border border-border bg-[radial-gradient(circle_at_82%_20%,rgba(221,101,73,0.13),transparent_37%),linear-gradient(135deg,#24282a,#191c1e_70%)] p-6 xl:grid-cols-[14rem_minmax(0,1fr)] xl:gap-8 xl:p-8"
+        data-coda-album-detail-close-surface=""
+      >
         <div className="album-detail__artwork size-40 drop-shadow-[0_16px_25px_rgba(0,0,0,0.25)] *:data-[slot=cover]:size-full *:data-[slot=cover]:rounded-lg xl:size-56">
           <CoverArt album={album} albumArtworkDetail={album.id} size="large" />
         </div>
@@ -393,27 +395,20 @@ export function AlbumDetailPage({
   );
 }
 
-export type AlbumTracklistPresenceProps = {
+type AlbumTracklistPresenceProps = {
   children: ReactNode;
   className?: string;
 };
 
-export function AlbumTracklistPresence({
+function AlbumTracklistPresence({
   children,
   className,
 }: AlbumTracklistPresenceProps) {
   const codaMotion = useCodaMotion();
-  const [isPresent, safeToRemove] = usePresence();
-  const completeExit = useMotionExitWatchdog({
-    open: isPresent,
-    onExitComplete: () => safeToRemove?.(),
-  });
 
   return (
-    <m.div
+    <MotionExitPresence
       className={className}
-      aria-hidden={!isPresent || undefined}
-      inert={!isPresent || undefined}
       initial={{
         opacity: codaMotion.profile.component.opacityFrom,
         transform: `translateY(${codaMotion.profile.component.translationPx}px) scale(${codaMotion.profile.component.scaleFrom})`,
@@ -428,10 +423,8 @@ export function AlbumTracklistPresence({
         transform: `translateY(${-codaMotion.profile.component.translationPx * 0.6}px) scale(${codaMotion.profile.component.scaleFrom})`,
         transition: codaMotion.componentExit,
       }}
-      onAnimationComplete={completeExit}
-      style={{ pointerEvents: isPresent ? "auto" : "none" }}
     >
       {children}
-    </m.div>
+    </MotionExitPresence>
   );
 }

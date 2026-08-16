@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterContextProvider, RouterProvider } from "@tanstack/react-router";
+import type { InvokeArgs } from "@tauri-apps/api/core";
 import { domAnimation, LazyMotion, MotionConfig } from "motion/react";
 import {
   act,
@@ -23,21 +24,65 @@ import {
   stringifyRadioShowIdParam,
   type RadioSeriesId,
 } from "@/routing/routeContracts";
-import type { RadioShow } from "@/types";
+import {
+  readTauriInvokeArguments,
+  tauriNumber,
+  tauriString,
+} from "@/test/tauriInvoke";
+import type { RadioShow, RadioShowsPage } from "@/types";
 
-const mocks = vi.hoisted(() => ({
-  fetchRadioShow: vi.fn(),
-  fetchRadioShows: vi.fn(),
-}));
+const mocks = {
+  fetchRadioShow: vi.fn<(showId: number) => Promise<RadioShow>>(),
+  fetchRadioShows:
+    vi.fn<
+      (request: {
+        cursor?: string;
+        seriesId?: number;
+      }) => Promise<RadioShowsPage>
+    >(),
+};
 
-vi.mock("@/lib", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib")>();
-  return {
-    ...actual,
-    fetchRadioShow: mocks.fetchRadioShow,
-    fetchRadioShows: mocks.fetchRadioShows,
-  };
-});
+function numberInvokeArgument(
+  args: InvokeArgs | undefined,
+  key: "seriesId" | "showId",
+): number {
+  const number = tauriNumber(readTauriInvokeArguments(args)[key], key);
+  if (number <= 0) {
+    throw new TypeError(`Radio command ${key} is invalid`);
+  }
+  return number;
+}
+
+function radioArchiveRequest(
+  args: InvokeArgs | undefined,
+): Parameters<typeof mocks.fetchRadioShows>[0] {
+  const values = readTauriInvokeArguments(args);
+  const request: Parameters<typeof mocks.fetchRadioShows>[0] = {};
+  if (values.seriesId !== undefined) {
+    request.seriesId = numberInvokeArgument(args, "seriesId");
+  }
+  if (values.cursor !== undefined) {
+    request.cursor = tauriString(values.cursor, "cursor");
+  }
+  return request;
+}
+
+function installRadioBridge(): void {
+  Object.defineProperty(window, "__TAURI_INTERNALS__", {
+    configurable: true,
+    value: {
+      invoke: async (command: string, args?: InvokeArgs) => {
+        if (command === "radio_show") {
+          return mocks.fetchRadioShow(numberInvokeArgument(args, "showId"));
+        }
+        if (command === "radio_shows") {
+          return mocks.fetchRadioShows(radioArchiveRequest(args));
+        }
+        throw new Error(`Unexpected Radio command: ${command}`);
+      },
+    },
+  });
+}
 
 const show: RadioShow = {
   id: 977,
@@ -150,6 +195,7 @@ function createRadioSeriesNavHarness(
 }
 
 beforeEach(() => {
+  installRadioBridge();
   vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
   mocks.fetchRadioShow.mockReset().mockResolvedValue(show);
   mocks.fetchRadioShows.mockReset().mockResolvedValue({
@@ -161,6 +207,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   document.documentElement.classList.remove(
@@ -557,10 +604,10 @@ describe("Radio file routes", () => {
   it("shows an honest error when a summary-free deep link fails", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    let rejectShow: ((reason?: unknown) => void) | undefined;
+    let rejectShow: ((reason?: Error) => void) | undefined;
     mocks.fetchRadioShow.mockReturnValueOnce(
       new Promise<RadioShow>((_, reject) => {
-        rejectShow = reject;
+        rejectShow = (reason) => reject(reason);
       }),
     );
 

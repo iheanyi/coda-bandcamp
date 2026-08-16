@@ -100,6 +100,4 @@ export type DailyCategoryItem = Readonly<{
 }>;
 
 export const DAILY_CATEGORIES: readonly DailyCategoryItem[] =
-  DAILY_CATEGORY_GROUPS.flatMap(
-    ({ items }) => [...items] as DailyCategoryItem[],
-);
+  DAILY_CATEGORY_GROUPS.flatMap<DailyCategoryItem>(({ items }) => items);

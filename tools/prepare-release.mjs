@@ -637,5 +637,10 @@ function runGit(repositoryRoot, arguments_, { allowFailure = false } = {}) {
 }
 
 function displayVersion(version) {
-  return typeof version === "string" ? version : "<missing>";
+  return (
+    Object.prototype.toString.call(version) === "[object String]" &&
+    version === String(version)
+      ? version
+      : "<missing>"
+  );
 }

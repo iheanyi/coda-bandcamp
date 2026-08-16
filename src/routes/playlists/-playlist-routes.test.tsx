@@ -1,45 +1,73 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { RouterProvider } from "@tanstack/react-router";
+import { Outlet, RouterProvider, useRouter } from "@tanstack/react-router";
+import type { InvokeArgs } from "@tauri-apps/api/core";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 import { type SavedLibraryRuntimeValue } from "@/features/saved-library/SavedLibraryRuntimeContext";
 import { SavedLibraryRuntimeProvider } from "@/features/saved-library/SavedLibraryRuntimeProvider";
 import { createLibrarySessionController } from "@/features/library-session";
 import { createCodaMemoryRouter } from "@/router";
+import { Route as RootRoute } from "@/routes/__root";
 import { parsePlaylistIdParam } from "@/routing/routeContracts";
+import {
+  readTauriInvokeArguments,
+  tauriString,
+} from "@/test/tauriInvoke";
 import type { PlaylistDetail, PlaylistSummary, Track } from "@/types";
 
-const mocks = vi.hoisted(() => ({
-  fetchPlaylist: vi.fn(),
-  fetchPlaylists: vi.fn(),
-  fetchStreamUrl: vi.fn(),
-  readLocalFavoritesAsync: vi.fn(),
-}));
+const mocks = {
+  fetchPlaylist: vi.fn<(playlistId: string) => Promise<PlaylistDetail>>(),
+  fetchPlaylists: vi.fn<() => Promise<PlaylistSummary[]>>(),
+  fetchStreamUrl: vi.fn<(trackId: string) => Promise<string>>(),
+};
 
-vi.mock("@/App", async () => {
-  const { Outlet } = await import("@tanstack/react-router");
-  return { default: Outlet };
-});
+function installPlaylistBridge(): void {
+  Object.defineProperty(window, "__TAURI_INTERNALS__", {
+    configurable: true,
+    value: {
+      invoke: async (command: string, args?: InvokeArgs) => {
+        const values = readTauriInvokeArguments(args);
+        switch (command) {
+          case "fetch_playlist":
+            return mocks.fetchPlaylist(
+              tauriString(values.playlistId, "playlistId"),
+            );
+          case "fetch_playlists":
+            return mocks.fetchPlaylists();
+          case "get_stream_url":
+            return mocks.fetchStreamUrl(
+              tauriString(values.trackId, "trackId"),
+            );
+          default:
+            throw new Error(`Unexpected playlist command: ${command}`);
+        }
+      },
+    },
+  });
+}
 
-vi.mock("@/lib", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib")>();
-  return {
-    ...actual,
-    fetchPlaylist: mocks.fetchPlaylist,
-    fetchPlaylists: mocks.fetchPlaylists,
-    fetchStreamUrl: mocks.fetchStreamUrl,
-  };
-});
+function PlaylistTestRoot() {
+  const router = useRouter();
+  const LibrarySessionBoundary = router.options.context.librarySessionBoundary;
+  return (
+    <LibrarySessionBoundary>
+      <Outlet />
+    </LibrarySessionBoundary>
+  );
+}
 
-vi.mock("@/localFavoritesStore", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/localFavoritesStore")>();
-  return {
-    ...actual,
-    readLocalFavoritesAsync: mocks.readLocalFavoritesAsync,
-  };
-});
+const originalRootComponent = RootRoute.options.component;
 
 const track: Track = {
   album: "Mirage",
@@ -129,18 +157,23 @@ const originalStartViewTransition = Object.getOwnPropertyDescriptor(
   "startViewTransition",
 );
 
+beforeAll(() => {
+  RootRoute.update({ component: PlaylistTestRoot });
+});
+
 beforeEach(() => {
+  installPlaylistBridge();
   vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
   mocks.fetchPlaylist.mockReset().mockResolvedValue(detail);
   mocks.fetchPlaylists.mockReset().mockResolvedValue([summary]);
   mocks.fetchStreamUrl.mockReset();
-  mocks.readLocalFavoritesAsync.mockReset();
   Object.values(runtime).forEach((value) => {
     if (vi.isMockFunction(value)) value.mockClear();
   });
 });
 
 afterEach(() => {
+  Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   document.documentElement.classList.remove(
@@ -156,6 +189,10 @@ afterEach(() => {
   } else {
     Reflect.deleteProperty(document, "startViewTransition");
   }
+});
+
+afterAll(() => {
+  RootRoute.update({ component: originalRootComponent });
 });
 
 describe("Playlist file routes", () => {
@@ -195,7 +232,6 @@ describe("Playlist file routes", () => {
 
       expect(mocks.fetchPlaylists).not.toHaveBeenCalled();
       expect(mocks.fetchPlaylist).not.toHaveBeenCalled();
-      expect(mocks.readLocalFavoritesAsync).not.toHaveBeenCalled();
       expect(mocks.fetchStreamUrl).not.toHaveBeenCalled();
       deactivate?.();
     },
@@ -262,7 +298,6 @@ describe("Playlist file routes", () => {
 
     expect(mocks.fetchPlaylists).toHaveBeenCalledOnce();
     expect(mocks.fetchPlaylist).toHaveBeenCalledOnce();
-    expect(mocks.readLocalFavoritesAsync).not.toHaveBeenCalled();
     expect(mocks.fetchStreamUrl).not.toHaveBeenCalled();
   });
 

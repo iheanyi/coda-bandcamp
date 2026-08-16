@@ -3,6 +3,8 @@ import {
   BUILTIN_MOTION_PRESETS,
   cloneMotionProfile,
   CURRENT_MOTION_PROFILE,
+  isPlainMotionObject,
+  parseMotionWireString,
   resolveMotionProfile,
   type MotionPreset,
   type MotionProfile,
@@ -28,7 +30,7 @@ function boundedName(name: string, fallback = "Untitled") {
 }
 
 function safeStorage() {
-  return typeof window === "undefined" ? undefined : window.localStorage;
+  return globalThis.window?.localStorage;
 }
 
 function readInitialState(): MotionProfileState {
@@ -41,32 +43,42 @@ function readInitialState(): MotionProfileState {
         customPresets: [],
       };
     }
-    const input = JSON.parse(serialized) as Record<string, unknown>;
-    const customPresets = Array.isArray(input.customPresets)
-      ? input.customPresets
+    const parsed: unknown = JSON.parse(serialized);
+    const input = isPlainMotionObject(parsed) ? parsed : undefined;
+    const customPresetCandidates =
+      input && "customPresets" in input ? input.customPresets : undefined;
+    const customPresets = Array.isArray(customPresetCandidates)
+      ? customPresetCandidates
           .slice(0, MAX_CUSTOM_PRESETS)
           .flatMap((value, index): MotionPreset[] => {
-            if (!value || typeof value !== "object") return [];
-            const preset = value as Record<string, unknown>;
+            if (!isPlainMotionObject(value)) return [];
+            const id = parseMotionWireString(
+              "id" in value ? value.id : undefined,
+            );
+            const name = parseMotionWireString(
+              "name" in value ? value.name : undefined,
+            );
+            const profile =
+              "profile" in value
+                ? validateMotionProfile(value.profile)
+                : cloneMotionProfile(CURRENT_MOTION_PROFILE);
             return [
               {
-                id:
-                  typeof preset.id === "string" && preset.id
-                    ? preset.id.slice(0, 80)
-                    : `imported-${index}`,
-                name: boundedName(
-                  typeof preset.name === "string" ? preset.name : "",
-                ),
+                id: id ? id.slice(0, 80) : `imported-${index}`,
+                name: boundedName(name ?? ""),
                 builtin: false,
-                profile: validateMotionProfile(preset.profile),
+                profile,
               },
             ];
           })
       : [];
+    const parsedActivePresetId = parseMotionWireString(
+      input && "activePresetId" in input ? input.activePresetId : undefined,
+    );
     const activePresetId =
-      typeof input.activePresetId === "string"
-        ? input.activePresetId.slice(0, 80)
-        : null;
+      parsedActivePresetId === undefined
+        ? null
+        : parsedActivePresetId.slice(0, 80);
     const activeBuiltin = BUILTIN_MOTION_PRESETS.find(
       (preset) => preset.id === activePresetId,
     );
@@ -78,7 +90,9 @@ function readInitialState(): MotionProfileState {
       profile: cloneMotionProfile(
         activeBuiltin?.profile ??
           activeCustom?.profile ??
-          validateMotionProfile(input.profile),
+          validateMotionProfile(
+            input && "profile" in input ? input.profile : undefined,
+          ),
       ),
       customPresets,
     };
@@ -250,16 +264,15 @@ export function exportMotionProfile() {
 }
 
 export function importMotionProfile(serialized: string) {
-  const parsed = JSON.parse(serialized) as unknown;
+  const parsed: unknown = JSON.parse(serialized);
   const input =
-    parsed && typeof parsed === "object" && "profile" in parsed
-      ? (parsed as { profile: unknown }).profile
+    isPlainMotionObject(parsed) && "profile" in parsed
+      ? parsed.profile
       : parsed;
   if (
-    !input ||
-    typeof input !== "object" ||
-    Array.isArray(input) ||
-    (input as { version?: unknown }).version !== 1
+    !isPlainMotionObject(input) ||
+    !("version" in input) ||
+    input.version !== 1
   ) {
     throw new Error("Invalid Coda Motion profile");
   }

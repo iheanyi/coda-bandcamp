@@ -34,9 +34,13 @@ export type TrackArtistDestination =
   | Readonly<{ kind: "radio" }>
   | Readonly<{ kind: "radio-series"; seriesId: RadioSeriesId }>;
 
-function tryParse<Value>(
-  value: unknown,
-  parse: (candidate: unknown) => Value,
+type RouteIdentityParser<Value> = {
+  <Wire>(candidate: Wire): Value;
+};
+
+function tryParse<Wire, Value>(
+  value: Wire,
+  parse: RouteIdentityParser<Value>,
 ): Value | undefined {
   try {
     return parse(value);
@@ -93,9 +97,15 @@ export function trackArtistDestination(
   const parsedArtistKey = tryParse(key, parseArtistKeyParam);
   if (!parsedArtistKey) return undefined;
   const sourceAlbumId = tryParse(track.albumId, parseAlbumIdParam);
+  if (sourceAlbumId) {
+    return {
+      kind: "artist",
+      artistKey: parsedArtistKey,
+      sourceAlbumId,
+    };
+  }
   return {
     kind: "artist",
     artistKey: parsedArtistKey,
-    ...(sourceAlbumId ? { sourceAlbumId } : {}),
   };
 }

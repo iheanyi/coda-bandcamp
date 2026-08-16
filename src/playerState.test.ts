@@ -48,6 +48,15 @@ const input: PlayerStateInput = {
   },
 };
 
+const radioCheckpoint: PlayerStateCheckpoint = {
+  ...radioContract.checkpoint,
+  radioScrobbleProgress: {
+    ...radioContract.checkpoint.radioScrobbleProgress,
+    chapterScrobbleState: "pending",
+    showScrobbleState: "idle",
+  },
+};
+
 describe("player state persistence", () => {
   it("maps the active queue item to its persisted index once ephemeral previews are omitted", () => {
     const laterTrack = { ...track, id: "track-2" };
@@ -73,9 +82,7 @@ describe("player state persistence", () => {
       },
     });
     expect(
-      createPlayerStateCheckpoint(
-        radioContract.checkpoint as unknown as PlayerStateCheckpoint,
-      ),
+      createPlayerStateCheckpoint(radioCheckpoint),
     ).toMatchObject({
       currentTrackId: "radio:979",
       radioScrobbleProgress: { showTrackId: "radio:979" },
@@ -114,15 +121,14 @@ describe("player state persistence", () => {
   });
 
   it("normalizes nullable optional fields from native Subsonic payloads", () => {
+    const nullableOptionalTrack: Track = { ...track };
+    Object.defineProperties(nullableOptionalTrack, {
+      disc: { configurable: true, enumerable: true, value: null },
+      coverArt: { configurable: true, enumerable: true, value: null },
+    });
     const state = createPlayerState({
       ...input,
-      queue: [
-        {
-          ...track,
-          disc: null,
-          coverArt: null,
-        } as unknown as Track,
-      ],
+      queue: [nullableOptionalTrack],
     });
 
     expect(state.queue[0]).not.toHaveProperty("disc");

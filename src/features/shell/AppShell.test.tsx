@@ -11,6 +11,7 @@ function shell(
   options: Readonly<{
     nowPlayingOpen?: boolean;
     onQueueOpenChange?: (open: boolean) => void;
+    queueOpen?: boolean;
     transitionKey?: string;
   }> = {},
 ) {
@@ -31,7 +32,7 @@ function shell(
       }}
       queue={{
         onOpenChange: options.onQueueOpenChange ?? vi.fn(),
-        open: false,
+        open: options.queueOpen ?? false,
         panel: <aside data-testid="queue-panel">Queue</aside>,
       }}
       route={{
@@ -82,6 +83,19 @@ describe("AppShell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Show queue" }));
     expect(onQueueOpenChange.mock.calls[0]?.[0]).toBe(true);
+  });
+
+  it("publishes queue visibility for detail snapshot isolation", () => {
+    const { container, rerender } = render(
+      shell(<section>Album detail</section>, { queueOpen: false }),
+    );
+    const workspace = container.querySelector(
+      '[data-slot="app-shell-workspace"]',
+    );
+    expect(workspace).toHaveAttribute("data-queue-open", "false");
+
+    rerender(shell(<section>Album detail</section>, { queueOpen: true }));
+    expect(workspace).toHaveAttribute("data-queue-open", "true");
   });
 
   it("uses the immersive one-row layout without padding the route pane", () => {

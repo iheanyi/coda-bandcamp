@@ -1,46 +1,70 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { RouterProvider } from "@tanstack/react-router";
+import {
+  Outlet,
+  RouterProvider,
+  useRouter,
+} from "@tanstack/react-router";
+import type { InvokeArgs } from "@tauri-apps/api/core";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { DiscoverFilters, DiscoverRelease } from "@/types";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+import type {
+  DiscoverFilters,
+  DiscoverPage,
+} from "@/types";
+import type { DiscoverReleaseScreenProps } from "@/DiscoverReleaseDetail";
+import type { DiscoverScreenProps } from "@/DiscoverView";
+import type {
+  PlaylistDetailScreenProps,
+  PlaylistsScreenProps,
+} from "@/SavedLibraryView";
+import { type DiscoverRuntimeValue } from "@/features/discover/DiscoverRuntimeContext";
+import { DiscoverRuntimeProvider } from "@/features/discover/DiscoverRuntimeProvider";
+import {
+  SavedLibraryRuntimeProvider,
+  type SavedLibraryRuntimeValue,
+} from "@/features/saved-library";
+import { createCodaMemoryRouter } from "@/router";
+import { Route as RootRoute } from "@/routes/__root";
+import { DiscoverRouteLayout } from "@/routes/discover/-discover-route-layout";
+import { Route as DiscoverLayoutRoute } from "@/routes/discover/route";
+import { DiscoverReleaseRoute } from "@/routes/discover/releases/-discover-release-route";
+import { Route as DiscoverReleaseFileRoute } from "@/routes/discover/releases/$releaseId";
+import { PlaylistDetailRoute } from "@/routes/playlists/-playlist-detail-route";
+import { PlaylistsIndexRoute } from "@/routes/playlists/-playlists-index-route";
+import { Route as PlaylistDetailFileRoute } from "@/routes/playlists/$playlistId";
+import { Route as PlaylistsIndexFileRoute } from "@/routes/playlists/index";
+import {
+  parseDiscoverReleaseIdParam,
+  parsePlaylistIdParam,
+  validateDiscoverSearch,
+} from "@/routing/routeContracts";
+import {
+  readDiscoverInvokeInput,
+  tauriString,
+} from "@/test/tauriInvoke";
 
-type DiscoverScreenStubProps = Readonly<{
-  filters: DiscoverFilters;
-  onFiltersChange: (filters: DiscoverFilters) => void;
-  onOpenRelease: (release: DiscoverRelease) => void;
-}>;
+const mocks = {
+  fetchDiscover:
+    vi.fn<
+      (filters: DiscoverFilters, cursor: string) => Promise<DiscoverPage>
+    >(),
+};
 
-type DiscoverReleaseScreenStubProps = Readonly<{
-  onBack: () => void;
-  release: DiscoverRelease;
-}>;
-
-type PlaylistsScreenStubProps = Readonly<{
-  onOpenPlaylist: (playlistId: string) => void;
-}>;
-
-type PlaylistDetailScreenStubProps = Readonly<{
-  onBack: () => void;
-  playlistId: string;
-}>;
-
-const mocks = vi.hoisted(() => ({
-  fetchDiscover: vi.fn(),
-  openBandcampUrl: vi.fn(),
-}));
-
-vi.mock("@/App", async () => {
-  const { Outlet } = await import("@tanstack/react-router");
-  return { default: Outlet };
-});
-
-vi.mock("@/DiscoverView", () => ({
-  DiscoverScreen: ({
-    filters,
-    onFiltersChange,
-    onOpenRelease,
-  }: DiscoverScreenStubProps) => (
+function DiscoverScreenStub({
+  filters,
+  onFiltersChange,
+  onOpenRelease,
+}: DiscoverScreenProps) {
+  return (
     <main data-testid="discover-screen-instance">
       <h1>
         Discover {filters.tag || "all"}:{filters.sort}
@@ -52,80 +76,116 @@ vi.mock("@/DiscoverView", () => ({
         Apply Jazz
       </button>
       <button
-        onClick={() =>
+        onClick={(event) =>
           onOpenRelease({
             artist: "Signal Garden",
             id: "discover:release-1",
             itemUrl: "https://signal-garden.bandcamp.com/album/blue-hours",
             title: "Blue Hours",
-          })
+          }, event.currentTarget)
         }
         type="button"
       >
         Open Blue Hours
       </button>
     </main>
-  ),
-}));
+  );
+}
 
-vi.mock("@/DiscoverReleaseDetail", () => ({
-  DiscoverReleaseScreen: ({
-    onBack,
-    release,
-  }: DiscoverReleaseScreenStubProps) => (
+function DiscoverReleaseScreenStub({
+  onBack,
+  release,
+}: DiscoverReleaseScreenProps) {
+  return (
     <main>
       <h1>Release {release.title}</h1>
       <button onClick={onBack} type="button">
         Back
       </button>
     </main>
-  ),
-}));
+  );
+}
 
-vi.mock("@/SavedLibraryView", () => ({
-  FavoritesScreen: () => (
-    <main>
-      <h1>Favorites route</h1>
-    </main>
-  ),
-  PlaylistDetailScreen: ({
-    onBack,
-    playlistId,
-  }: PlaylistDetailScreenStubProps) => (
+function PlaylistDetailScreenStub({
+  onBack,
+  playlistId,
+}: PlaylistDetailScreenProps) {
+  return (
     <main>
       <h1>Playlist {playlistId}</h1>
       <button onClick={onBack} type="button">
         Back
       </button>
     </main>
-  ),
-  PlaylistsScreen: ({ onOpenPlaylist }: PlaylistsScreenStubProps) => (
+  );
+}
+
+function PlaylistsScreenStub({ onOpenPlaylist }: PlaylistsScreenProps) {
+  return (
     <main>
       <h1>Playlists route</h1>
-      <button onClick={() => onOpenPlaylist("playlist-1")} type="button">
+      <button
+        onClick={() => onOpenPlaylist(parsePlaylistIdParam("playlist-1"))}
+        type="button"
+      >
         Open Night Drive
       </button>
     </main>
-  ),
-}));
+  );
+}
 
-vi.mock("@/lib", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib")>();
-  return {
-    ...actual,
-    fetchDiscover: mocks.fetchDiscover,
-    openBandcampUrl: mocks.openBandcampUrl,
-  };
-});
+function installDiscoverBridge(): void {
+  Object.defineProperty(window, "__TAURI_INTERNALS__", {
+    configurable: true,
+    value: {
+      invoke: async (command: string, args?: InvokeArgs) => {
+        if (command !== "discover") {
+          throw new Error(`Unexpected Discover command: ${command}`);
+        }
+        const input = readDiscoverInvokeInput(args);
+        return mocks.fetchDiscover(
+          validateDiscoverSearch({ sort: input.sort, tag: input.tag }),
+          tauriString(input.cursor, "cursor"),
+        );
+      },
+    },
+  });
+}
 
-import { type DiscoverRuntimeValue } from "@/features/discover/DiscoverRuntimeContext";
-import { DiscoverRuntimeProvider } from "@/features/discover/DiscoverRuntimeProvider";
-import {
-  SavedLibraryRuntimeProvider,
-  type SavedLibraryRuntimeValue,
-} from "@/features/saved-library";
-import { createCodaMemoryRouter } from "@/router";
-import { parseDiscoverReleaseIdParam } from "@/routing/routeContracts";
+function FeatureTestRoot() {
+  const router = useRouter();
+  const LibrarySessionBoundary = router.options.context.librarySessionBoundary;
+  return (
+    <LibrarySessionBoundary>
+      <Outlet />
+    </LibrarySessionBoundary>
+  );
+}
+
+const originalRootComponent = RootRoute.options.component;
+const originalDiscoverLayoutComponent = DiscoverLayoutRoute.options.component;
+const originalDiscoverReleaseComponent =
+  DiscoverReleaseFileRoute.options.component;
+const originalPlaylistsIndexComponent =
+  PlaylistsIndexFileRoute.options.component;
+const originalPlaylistDetailComponent =
+  PlaylistDetailFileRoute.options.component;
+
+function DiscoverLayoutTestRoute() {
+  return <DiscoverRouteLayout Screen={DiscoverScreenStub} />;
+}
+
+function DiscoverReleaseTestRoute() {
+  return <DiscoverReleaseRoute Screen={DiscoverReleaseScreenStub} />;
+}
+
+function PlaylistsIndexTestRoute() {
+  return <PlaylistsIndexRoute Screen={PlaylistsScreenStub} />;
+}
+
+function PlaylistDetailTestRoute() {
+  return <PlaylistDetailRoute Screen={PlaylistDetailScreenStub} />;
+}
 
 const discoverPage = {
   hasMore: false,
@@ -205,10 +265,33 @@ function renderFeatureRoute(initialEntries: readonly string[]) {
   return { ...view, queryClient, router };
 }
 
+beforeAll(() => {
+  RootRoute.update({ component: FeatureTestRoot });
+  DiscoverLayoutRoute.update({ component: DiscoverLayoutTestRoute });
+  DiscoverReleaseFileRoute.update({ component: DiscoverReleaseTestRoute });
+  PlaylistsIndexFileRoute.update({ component: PlaylistsIndexTestRoute });
+  PlaylistDetailFileRoute.update({ component: PlaylistDetailTestRoute });
+});
+
 beforeEach(() => {
+  installDiscoverBridge();
   mocks.fetchDiscover.mockReset().mockResolvedValue(discoverPage);
-  mocks.openBandcampUrl.mockReset();
   vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
+});
+
+afterAll(() => {
+  RootRoute.update({ component: originalRootComponent });
+  DiscoverLayoutRoute.update({ component: originalDiscoverLayoutComponent });
+  DiscoverReleaseFileRoute.update({
+    component: originalDiscoverReleaseComponent,
+  });
+  PlaylistsIndexFileRoute.update({
+    component: originalPlaylistsIndexComponent,
+  });
+  PlaylistDetailFileRoute.update({
+    component: originalPlaylistDetailComponent,
+  });
+  Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
 });
 
 describe("feature file routes", () => {
@@ -351,7 +434,7 @@ describe("feature file routes", () => {
     renderFeatureRoute(["/favorites"]);
 
     expect(
-      await screen.findByRole("heading", { name: "Favorites route" }),
+      await screen.findByRole("heading", { name: "Favorites" }),
     ).toBeInTheDocument();
   });
 });

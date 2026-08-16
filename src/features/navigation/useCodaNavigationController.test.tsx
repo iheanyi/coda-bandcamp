@@ -19,18 +19,11 @@ import type {
 } from "./useDetailNavigationController";
 import {
   type CodaNavigationControllerOptions,
-  useCodaNavigationController,
+  useCodaNavigationControllerWithRuntime,
 } from "./useCodaNavigationController";
 import type { CodaRouteDestination } from "./useRouteDestination";
 
-const navigate = vi.hoisted(() => vi.fn());
-
-vi.mock("@tanstack/react-router", async () => {
-  const actual = await vi.importActual<typeof import("@tanstack/react-router")>(
-    "@tanstack/react-router",
-  );
-  return { ...actual, useNavigate: () => navigate };
-});
+const navigate = vi.fn();
 
 const track: Track = {
   id: "track-1",
@@ -144,7 +137,7 @@ function renderController(
   };
   const rendered = renderHook(
     ({ options }: { options: CodaNavigationControllerOptions }) =>
-      useCodaNavigationController(options),
+      useCodaNavigationControllerWithRuntime(options, { navigate }),
     {
       initialProps: { options: initialOptions },
       wrapper: wrapper(queryClient),

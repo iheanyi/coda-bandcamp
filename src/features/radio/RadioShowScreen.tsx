@@ -11,6 +11,7 @@ import {
   radioShowSummaryObserverOptions,
   radioShowQueryOptions,
   selectRadioShowSummary,
+  type RadioQueryRepository,
 } from "@/queries/radioQueries";
 import type { RadioSeriesId, RadioShowId } from "@/routing/routeContracts";
 
@@ -22,7 +23,9 @@ export type RadioShowScreenProps = RadioPlaybackProps &
     showId: RadioShowId;
     onBack: () => void;
     onBrowseSeries: (seriesId?: RadioSeriesId) => void;
+    openExternal?: (url: string) => Promise<void>;
     preferredSummaryScope?: RadioArchiveScope;
+    repository?: RadioQueryRepository;
   }>;
 
 export function RadioShowScreen({
@@ -38,7 +41,9 @@ export function RadioShowScreen({
   onTogglePlayback,
   favoriteShowIds,
   onToggleFavorite,
+  openExternal = openBandcampUrl,
   preferredSummaryScope,
+  repository,
 }: RadioShowScreenProps) {
   const queryClient = useQueryClient();
   const summaryScopes = useMemo(
@@ -63,7 +68,7 @@ export function RadioShowScreen({
     }),
     preferredSummaryScope,
   );
-  const showQuery = useQuery(radioShowQueryOptions(showId));
+  const showQuery = useQuery(radioShowQueryOptions(showId, repository));
   const details = useMemo(() => {
     if (!showQuery.data || showQuery.data.series || !cachedSummary?.series) {
       return showQuery.data;
@@ -82,10 +87,10 @@ export function RadioShowScreen({
 
   const openItem = useCallback((url: string) => {
     setActionError("");
-    void openBandcampUrl(url).catch((cause) => {
+    void openExternal(url).catch((cause) => {
       setActionError(String(cause).replace(/^Error:\s*/, ""));
     });
-  }, []);
+  }, [openExternal]);
 
   if (!summary && showQuery.isPending) {
     return (

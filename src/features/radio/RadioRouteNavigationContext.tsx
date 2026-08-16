@@ -104,9 +104,11 @@ function markRadioReturnDestination(
 export function RadioRouteNavigationProvider({
   adapter,
   children,
+  transition = transitionCodaView,
 }: Readonly<{
   adapter: RadioRouteNavigationAdapter;
   children: ReactNode;
+  transition?: typeof transitionCodaView;
 }>) {
   const navigationRef = useRef(createNavigationTransactionState());
   const activeSourceReleaseRef = useRef<(() => void) | undefined>(undefined);
@@ -158,7 +160,7 @@ export function RadioRouteNavigationProvider({
           : []),
       ]);
       activeSourceReleaseRef.current = releaseSourceMarkers;
-      return transitionCodaView(
+      return transition(
         () => adapter.goToShow(request.showId),
         request.sourceArtwork ? "radio-detail" : "page-forward",
       ).finally(() => {
@@ -168,7 +170,7 @@ export function RadioRouteNavigationProvider({
         }
       });
     },
-    [adapter],
+    [adapter, transition],
   );
 
   const selectSeries = useCallback(
@@ -232,7 +234,7 @@ export function RadioRouteNavigationProvider({
       let releaseReturnDestination = () => {};
 
       try {
-        await transitionCodaView(
+        await transition(
           async () => {
             setReturningArtworkId(reversesSharedArtwork ? showId : undefined);
             if (transaction) {
@@ -296,7 +298,7 @@ export function RadioRouteNavigationProvider({
         }
       }
     },
-    [adapter],
+    [adapter, transition],
   );
 
   const restoreArchiveContext = useCallback((seriesId?: RadioSeriesId) => {

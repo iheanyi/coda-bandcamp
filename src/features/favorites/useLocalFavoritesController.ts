@@ -130,13 +130,13 @@ function withLibraryAlbumMetadata(
     albums: music.albums.map((favorite) => {
       const libraryAlbum = libraryAlbums.get(favorite.id);
       if (!libraryAlbum) return favorite;
-      return {
+      const album = {
         ...favorite,
         ...libraryAlbum,
-        ...(favorite.starredAt === undefined && libraryAlbum.starredAt === undefined
-          ? {}
-          : { starredAt: favorite.starredAt ?? libraryAlbum.starredAt }),
       };
+      const starredAt = favorite.starredAt ?? libraryAlbum.starredAt;
+      if (starredAt !== undefined) album.starredAt = starredAt;
+      return album;
     }),
   };
 }
@@ -444,10 +444,10 @@ export function useLocalFavoritesController({
         id,
         kind,
         favorite: favorite ?? !active,
-        ...(kind === "song" && candidate && "albumId" in candidate
-          ? { albumId: candidate.albumId }
-          : {}),
       };
+      if (kind === "song" && candidate && "albumId" in candidate) {
+        input.albumId = candidate.albumId;
+      }
 
       try {
         const previous = musicFavorites;
@@ -588,10 +588,9 @@ export function useLocalFavoritesController({
     ],
   );
 
-  return {
+  const controller = {
     collection,
     ready,
-    ...(loadError === undefined ? {} : { loadError }),
     favoriteAlbumIds,
     favoriteRadioShowIds,
     favoriteTrackIds,
@@ -600,4 +599,6 @@ export function useLocalFavoritesController({
     toggleFavorite,
     toggleRadioFavorite,
   };
+  if (loadError === undefined) return controller;
+  return { ...controller, loadError };
 }

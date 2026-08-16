@@ -2,14 +2,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   emptyLocalFavorites,
   LOCAL_FAVORITES_VERSION,
+  parseLocalFavoritesSerialized,
+  type LocalFavoritesWireValue,
 } from "./localFavorites";
 import {
   LocalFavoritesPreparationClient,
   localFavoritesInputMatchesPrepared,
   parseLocalFavoritesPreparationRequest,
   parseLocalFavoritesPreparationResponse,
-  parseLocalFavoritesSerialized,
   serializeLocalFavorites,
+  serializeValidatedLocalFavorites,
   type LocalFavoritesPreparationRequest,
   type LocalFavoritesWorkerErrorEvent,
   type LocalFavoritesWorkerMessageEvent,
@@ -56,7 +58,7 @@ class FakeLocalFavoritesWorker implements LocalFavoritesWorkerPort {
     this.requests.push(request);
   }
 
-  respond(response: unknown): void {
+  respond(response: LocalFavoritesWireValue): void {
     this.onmessage?.(new MessageEvent("message", { data: response }));
   }
 }
@@ -102,11 +104,9 @@ describe("local Favorites preparation", () => {
 
   it("keeps signed runtime URLs out of the prepared durable snapshot", () => {
     const prepared = serializeLocalFavorites(favorites);
-    const stored = JSON.parse(prepared.serialized) as Record<string, unknown>;
-    const storedTrack = (stored.tracks as Array<Record<string, unknown>>)[0];
 
-    expect(storedTrack.artworkUrl).toBeUndefined();
-    expect(storedTrack.streamUrl).toBeUndefined();
+    expect(prepared.serialized).not.toContain("signed-artwork");
+    expect(prepared.serialized).not.toContain("signed-stream");
     expect(prepared.favorites.tracks[0].artworkUrl).toBeUndefined();
     expect(prepared.favorites.tracks[0].streamUrl).toBeUndefined();
     expect(localFavoritesInputMatchesPrepared(favorites, prepared)).toBe(false);
@@ -139,6 +139,30 @@ describe("local Favorites preparation", () => {
       requestId: 1,
       errorName: "Error",
       errorMessage: "",
+    })).toBeUndefined();
+  });
+
+  it("serializes a boundary-validated worker request without a second parse", () => {
+    const request = parseLocalFavoritesPreparationRequest({
+      kind: "serialize-local-favorites",
+      requestId: 1,
+      favorites,
+    });
+    if (!request || request.kind !== "serialize-local-favorites") {
+      throw new Error("Expected a validated serialization request.");
+    }
+
+    const prepared = serializeValidatedLocalFavorites(request.favorites);
+
+    expect(prepared.favorites.songIds).toEqual(["track-1"]);
+    expect(prepared.serialized).not.toContain("signed-artwork");
+    expect(parseLocalFavoritesPreparationRequest({
+      kind: "serialize-local-favorites",
+      requestId: 2,
+      favorites: {
+        ...favorites,
+        tracks: [{ ...track, albumArtist: "invalid\u009f" }],
+      },
     })).toBeUndefined();
   });
 

@@ -19,7 +19,7 @@ function genreRail({
     scrollWidth: { configurable: true, value: scrollWidth },
   });
   const scrollTo = vi.fn((options: ScrollToOptions) => {
-    if (typeof options.left === "number") rail.scrollLeft = options.left;
+    if (options.left !== undefined) rail.scrollLeft = options.left;
   });
   Object.defineProperty(rail, "scrollTo", {
     configurable: true,

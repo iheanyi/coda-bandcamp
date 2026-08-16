@@ -1,21 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const motionMocks = vi.hoisted(() => ({
-  animate: vi.fn(),
-  spring: vi.fn(),
-}));
-
-vi.mock("motion", () => ({
-  animate: motionMocks.animate,
-  spring: motionMocks.spring,
-}));
-
 import {
   consumePendingPageEntrance,
+  installViewTransitionMotionDriver,
   transitionCodaView,
   type CodaViewTransitionKind,
 } from "./viewTransitions";
 import { getMotionDiagnostic, recordMotionInput } from "./motionDiagnostics";
+
+const motionMocks = {
+  animate: vi.fn(),
+};
+let releaseMotionDriver = () => {};
 
 const originalStartViewTransition = Object.getOwnPropertyDescriptor(
   document,
@@ -29,12 +25,10 @@ const originalMatchMedia = window.matchMedia;
 
 function deferred() {
   let resolve!: () => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<void>((next, fail) => {
+  const promise = new Promise<void>((next) => {
     resolve = next;
-    reject = fail;
   });
-  return { promise, reject, resolve };
+  return { promise, resolve };
 }
 
 function installNativeTransition({
@@ -93,6 +87,7 @@ const DETAIL_CASES = [
 ] as const satisfies ReadonlyArray<readonly [CodaViewTransitionKind, string]>;
 
 beforeEach(() => {
+  releaseMotionDriver = installViewTransitionMotionDriver(motionMocks);
   motionMocks.animate.mockReset();
   motionMocks.animate.mockImplementation(() => ({
     finished: Promise.resolve(),
@@ -110,6 +105,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  releaseMotionDriver();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   if (originalStartViewTransition) {

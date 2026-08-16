@@ -9,14 +9,18 @@ import {
 describe("AirPlay capability detection", () => {
   it("uses the native WebKit playback target picker when available", () => {
     const picker = vi.fn();
-    const media = { webkitShowPlaybackTargetPicker: picker } as unknown as HTMLAudioElement;
+    const media = document.createElement("audio");
+    Object.defineProperty(media, "webkitShowPlaybackTargetPicker", {
+      configurable: true,
+      value: picker,
+    });
     expect(supportsAirPlayPicker(media)).toBe(true);
     expect(showAirPlayPicker(media)).toBe(true);
     expect(picker).toHaveBeenCalledOnce();
   });
 
   it("stays hidden on platforms without a native picker", () => {
-    const media = {} as HTMLAudioElement;
+    const media = document.createElement("audio");
     expect(supportsAirPlayPicker(media)).toBe(false);
     expect(showAirPlayPicker(media)).toBe(false);
   });
@@ -83,13 +87,20 @@ describe("system media controls", () => {
   });
 
   it("publishes the active Coda track and playback state", () => {
-    const setPositionState = vi.fn();
-    const mediaSession = {
-      metadata: null as MediaMetadata | null,
-      playbackState: "none" as MediaSessionPlaybackState,
-      setActionHandler: vi.fn(),
-      setPositionState,
-    };
+    class MemoryMediaSession {
+      metadata: MediaMetadata | null = null;
+      playbackState: MediaSessionPlaybackState = "none";
+      setActionHandler = vi.fn<MediaSession["setActionHandler"]>();
+      setPositionState = vi.fn<MediaSession["setPositionState"]>();
+    }
+    class MockMediaMetadata {
+      static instances: MockMediaMetadata[] = [];
+
+      constructor(readonly init: MediaMetadataInit) {
+        MockMediaMetadata.instances.push(this);
+      }
+    }
+    const mediaSession = new MemoryMediaSession();
     const navigatorDescriptor = Object.getOwnPropertyDescriptor(
       navigator,
       "mediaSession",
@@ -98,9 +109,6 @@ describe("system media controls", () => {
       globalThis,
       "MediaMetadata",
     );
-    class MockMediaMetadata {
-      constructor(readonly init: MediaMetadataInit) {}
-    }
     Object.defineProperty(navigator, "mediaSession", {
       configurable: true,
       value: mediaSession,
@@ -122,15 +130,13 @@ describe("system media controls", () => {
       });
 
       expect(mediaSession.playbackState).toBe("playing");
-      expect(
-        (mediaSession.metadata as unknown as MockMediaMetadata).init,
-      ).toEqual({
+      expect(MockMediaMetadata.instances[0]?.init).toEqual({
         title: "First Light",
         artist: "Night Archive",
         album: "Soft Focus",
         artwork: [{ src: "https://t4.bcbits.com/img/cover.jpg" }],
       });
-      expect(setPositionState).toHaveBeenCalledExactlyOnceWith({
+      expect(mediaSession.setPositionState).toHaveBeenCalledExactlyOnceWith({
         duration: 180,
         playbackRate: 1,
         position: 42,
@@ -152,8 +158,7 @@ describe("system media controls", () => {
           metadataDescriptor,
         );
       } else {
-        delete (globalThis as { MediaMetadata?: typeof MediaMetadata })
-          .MediaMetadata;
+        Reflect.deleteProperty(globalThis, "MediaMetadata");
       }
     }
   });

@@ -54,6 +54,83 @@ export const defaultPlaybackScrobbleAdapters: PlaybackScrobbleAdapters = {
 
 type DesktopListenerDisposer = () => void | Promise<void>;
 
+type SystemMediaControlWireValue =
+  | boolean
+  | number
+  | string
+  | null
+  | undefined
+  | SystemMediaControlWireValue[]
+  | SystemMediaControlWireRecord;
+
+type SystemMediaControlWireRecord = {
+  [key: string]: SystemMediaControlWireValue;
+};
+
+type SystemMediaNonSeekAction = Exclude<
+  SystemMediaControlEvent["action"],
+  "seek"
+>;
+
+export type ParsedSystemMediaControlEvent =
+  | { action: SystemMediaNonSeekAction }
+  | { action: "seek"; positionSeconds: number };
+
+function isSystemMediaControlRecord<Value>(
+  value: Value,
+): value is Value & SystemMediaControlWireRecord {
+  return Object.prototype.toString.call(value) === "[object Object]";
+}
+
+function isPrimitiveString<Value>(value: Value): value is Value & string {
+  return (
+    Object.prototype.toString.call(value) === "[object String]" &&
+    Object(value) !== value
+  );
+}
+
+function isFinitePrimitiveNumber<Value>(
+  value: Value,
+): value is Value & number {
+  return (
+    Object.prototype.toString.call(value) === "[object Number]" &&
+    Object(value) !== value &&
+    Number.isFinite(value)
+  );
+}
+
+export function parseSystemMediaControlEvent<Value>(
+  value: Value,
+): ParsedSystemMediaControlEvent | undefined {
+  if (!isSystemMediaControlRecord(value) || !isPrimitiveString(value.action)) {
+    return undefined;
+  }
+  if (value.action === "play") return { action: "play" };
+  if (value.action === "pause") return { action: "pause" };
+  if (value.action === "previous") return { action: "previous" };
+  if (value.action === "next") return { action: "next" };
+  if (
+    value.action === "seek" &&
+    isFinitePrimitiveNumber(value.positionSeconds)
+  ) {
+    return { action: "seek", positionSeconds: value.positionSeconds };
+  }
+  return undefined;
+}
+
+export function dispatchSystemMediaControlEvent<Value>(
+  handlers: DesktopPlaybackControlHandlers,
+  value: Value,
+): void {
+  const event = parseSystemMediaControlEvent(value);
+  if (!event) return;
+  if (event.action === "play") handlers.onPlay();
+  if (event.action === "pause") handlers.onPause();
+  if (event.action === "previous") handlers.onPrevious();
+  if (event.action === "next") handlers.onNext();
+  if (event.action === "seek") handlers.onSeek(event.positionSeconds);
+}
+
 function disposeDesktopListeners(
   disposers: readonly DesktopListenerDisposer[],
 ): void {
@@ -101,19 +178,10 @@ async function installDesktopControls(
       if (payload === "next") handlers.onNext();
       if (payload === "shuffle-library") void handlers.onShuffleLibrary();
     }),
-    listen<SystemMediaControlEvent>(
+    listen<SystemMediaControlWireValue>(
       "coda://system-media-control",
       ({ payload }) => {
-        if (payload.action === "play") handlers.onPlay();
-        if (payload.action === "pause") handlers.onPause();
-        if (payload.action === "previous") handlers.onPrevious();
-        if (payload.action === "next") handlers.onNext();
-        if (
-          payload.action === "seek" &&
-          typeof payload.positionSeconds === "number"
-        ) {
-          handlers.onSeek(payload.positionSeconds);
-        }
+        dispatchSystemMediaControlEvent(handlers, payload);
       },
     ),
   ]);

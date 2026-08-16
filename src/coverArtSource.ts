@@ -1,6 +1,6 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import { clearPaintedCoverSources } from "./paintedCoverSources";
 
 const COVER_ART_UPDATED_EVENT = "coda://cover-art-updated";
@@ -18,9 +18,49 @@ type CoverArtUpdatedPayload = {
   revision: string;
 };
 
+type CoverArtSubscription = Readonly<{
+  bridge: CoverArtBridge;
+  notify: () => void;
+}>;
+
+type CoverArtWireRecord = {
+  [field: string]: CoverArtWireValue;
+};
+
+export type CoverArtWireValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | CoverArtWireValue[]
+  | CoverArtWireRecord;
+
+export type CoverArtBridge = Readonly<{
+  convertFileSource: (path: string, protocol: string) => string;
+  invalidate: (coverArtId: string) => Promise<void>;
+  listenForUpdates: (
+    handler: (payload: CoverArtWireValue) => void,
+  ) => Promise<() => void | Promise<void>>;
+}>;
+
+const nativeCoverArtBridge = Object.freeze({
+  convertFileSource: convertFileSrc,
+  invalidate: (coverArtId) => invoke("invalidate_cover_art", { coverArtId }),
+  listenForUpdates: (handler) =>
+    listen<CoverArtWireValue>(COVER_ART_UPDATED_EVENT, ({ payload }) => {
+      handler(payload);
+    }),
+} satisfies CoverArtBridge);
+
 const revisions = loadPersistedRevisions();
-const subscribers = new Set<() => void>();
+const subscribers = new Set<CoverArtSubscription>();
+let listenerBridge: CoverArtBridge | undefined;
 let listenerRequest: Promise<void> | undefined;
+let listenerDisposer: (() => void | Promise<void>) | undefined;
+let listenerGeneration = 0;
+let listenerShutdown: Promise<void> | undefined;
+let listenerTeardownGeneration = 0;
 let retryRevision = 0;
 let revisionPersistenceTimer: ReturnType<typeof setTimeout> | undefined;
 let sessionScope = loadOrCreateSessionScope();
@@ -70,14 +110,14 @@ function loadPersistedRevisions(): Map<string, string> {
   try {
     const stored = globalThis.sessionStorage?.getItem(REVISION_STORAGE_KEY);
     if (!stored) return restored;
-    const parsed: unknown = JSON.parse(stored);
+    const parsed: CoverArtWireValue = JSON.parse(stored);
     if (!Array.isArray(parsed)) return restored;
     for (const entry of parsed.slice(-MAX_PERSISTED_REVISIONS)) {
       if (!Array.isArray(entry) || entry.length !== 2) continue;
       const [coverArtId, revision] = entry;
       if (
-        typeof coverArtId !== "string" ||
-        typeof revision !== "string" ||
+        String(coverArtId) !== coverArtId ||
+        String(revision) !== revision ||
         !validCoverArtId(coverArtId) ||
         !validRevision(revision)
       ) {
@@ -155,41 +195,152 @@ function validRevision(value: string): boolean {
   );
 }
 
-function emitChange(): void {
-  for (const subscriber of subscribers) subscriber();
+function isCoverArtWireRecord(
+  value: CoverArtWireValue,
+): value is CoverArtWireRecord {
+  return (
+    value !== null &&
+    value !== undefined &&
+    Object(value) === value &&
+    !Array.isArray(value)
+  );
 }
 
-function applyRevision(payload: unknown): void {
-  if (!payload || typeof payload !== "object") return;
-  const { coverArtId, revision } = payload as Partial<CoverArtUpdatedPayload>;
+function emitChange(): void {
+  for (const subscriber of subscribers) subscriber.notify();
+}
+
+function parseCoverArtUpdatedPayload(
+  payload: CoverArtWireValue,
+): CoverArtUpdatedPayload | undefined {
+  if (!isCoverArtWireRecord(payload)) return undefined;
+  const { coverArtId, revision } = payload;
   if (
-    typeof coverArtId !== "string" ||
-    typeof revision !== "string" ||
+    String(coverArtId) !== coverArtId ||
+    String(revision) !== revision ||
     !validCoverArtId(coverArtId) ||
-    !validRevision(revision) ||
-    revisions.get(coverArtId) === revision
+    !validRevision(revision)
   ) {
-    return;
+    return undefined;
   }
+  return { coverArtId, revision };
+}
+
+function applyRevision(payload: CoverArtWireValue): void {
+  const update = parseCoverArtUpdatedPayload(payload);
+  if (!update || revisions.get(update.coverArtId) === update.revision) return;
+  const { coverArtId, revision } = update;
   rememberRevision(coverArtId, revision);
   emitChange();
 }
 
+function disposeRevisionListener(
+  dispose: () => void | Promise<void>,
+): Promise<void> {
+  try {
+    return Promise.resolve(dispose()).catch(() => undefined);
+  } catch {
+    // A failed platform cleanup must not retain listener ownership.
+    return Promise.resolve();
+  }
+}
+
+function preferredRevisionBridge(): CoverArtBridge | undefined {
+  let injectedBridge: CoverArtBridge | undefined;
+  for (const subscriber of subscribers) {
+    if (subscriber.bridge === nativeCoverArtBridge) return nativeCoverArtBridge;
+    injectedBridge ??= subscriber.bridge;
+  }
+  return injectedBridge;
+}
+
 function ensureRevisionListener(): void {
-  if (!isDesktop() || listenerRequest) return;
-  listenerRequest = listen<unknown>(COVER_ART_UPDATED_EVENT, ({ payload }) => {
-    applyRevision(payload);
-  })
-    .then(() => undefined)
+  const bridge = preferredRevisionBridge();
+  if (!isDesktop() || !bridge || listenerRequest || listenerShutdown) return;
+  const generation = listenerGeneration;
+  listenerBridge = bridge;
+  listenerRequest = bridge
+    .listenForUpdates(applyRevision)
+    .then(async (dispose) => {
+      if (generation !== listenerGeneration || listenerBridge !== bridge) {
+        await disposeRevisionListener(dispose);
+        return;
+      }
+      listenerDisposer = dispose;
+    })
     .catch(() => {
-      listenerRequest = undefined;
+      if (generation === listenerGeneration) {
+        listenerRequest = undefined;
+        listenerDisposer = undefined;
+        listenerBridge = undefined;
+      }
     });
 }
 
-function subscribe(subscriber: () => void): () => void {
-  subscribers.add(subscriber);
+function resetRevisionListener(): Promise<void> | undefined {
+  listenerGeneration += 1;
+  const request = listenerRequest;
+  const dispose = listenerDisposer;
+  listenerBridge = undefined;
+  listenerDisposer = undefined;
+  listenerRequest = undefined;
+  if (dispose) return disposeRevisionListener(dispose);
+  return request;
+}
+
+function restartRevisionListener(): void {
+  listenerTeardownGeneration += 1;
+  if (listenerShutdown) return;
+  const shutdown = resetRevisionListener();
+  if (!shutdown) {
+    ensureRevisionListener();
+    return;
+  }
+  listenerShutdown = shutdown;
+  void shutdown.then(() => {
+    if (listenerShutdown !== shutdown) return;
+    listenerShutdown = undefined;
+    reconcileRevisionListener();
+  });
+}
+
+function reconcileRevisionListener(): void {
+  if (listenerShutdown) return;
+  const preferredBridge = preferredRevisionBridge();
+  if (!preferredBridge) {
+    if (listenerRequest) restartRevisionListener();
+    return;
+  }
+  if (listenerBridge && listenerBridge !== preferredBridge) {
+    restartRevisionListener();
+    return;
+  }
   ensureRevisionListener();
-  return () => subscribers.delete(subscriber);
+}
+
+function scheduleRevisionListenerTeardown(): void {
+  const generation = ++listenerTeardownGeneration;
+  queueMicrotask(() => {
+    if (generation !== listenerTeardownGeneration || subscribers.size > 0) {
+      return;
+    }
+    restartRevisionListener();
+  });
+}
+
+function subscribe(subscriber: () => void, bridge: CoverArtBridge): () => void {
+  const subscription = Object.freeze({ bridge, notify: subscriber });
+  listenerTeardownGeneration += 1;
+  subscribers.add(subscription);
+  reconcileRevisionListener();
+  return () => {
+    subscribers.delete(subscription);
+    if (subscribers.size === 0) {
+      scheduleRevisionListenerTeardown();
+      return;
+    }
+    reconcileRevisionListener();
+  };
 }
 
 function revisionFor(coverArtId: string | undefined): string | undefined {
@@ -206,6 +357,7 @@ function coverArtSourceForScope(
   coverArtId: string,
   revision: string | undefined,
   scope: string,
+  bridge: CoverArtBridge,
 ): string | undefined {
   if (!isDesktop() || !validCoverArtId(coverArtId) || !revision) {
     return undefined;
@@ -213,7 +365,7 @@ function coverArtSourceForScope(
   if (!validRevision(revision)) return undefined;
   const route = `/v1/600/${encodeURIComponent(coverArtId)}?v=${revision}&s=${scope}`;
   try {
-    const convertedOrigin = convertFileSrc("", COVER_ART_PROTOCOL);
+    const convertedOrigin = bridge.convertFileSource("", COVER_ART_PROTOCOL);
     const base = convertedOrigin.endsWith("/")
       ? convertedOrigin
       : `${convertedOrigin}/`;
@@ -226,15 +378,21 @@ function coverArtSourceForScope(
 export function coverArtSource(
   coverArtId: string,
   revision = revisionFor(coverArtId),
+  bridge: CoverArtBridge = nativeCoverArtBridge,
 ): string | undefined {
-  return coverArtSourceForScope(coverArtId, revision, sessionScope);
+  return coverArtSourceForScope(coverArtId, revision, sessionScope, bridge);
 }
 
 export function useCoverArtSource(
   coverArtId: string | undefined,
+  bridge: CoverArtBridge = nativeCoverArtBridge,
 ): string | undefined {
+  const subscribeToBridge = useCallback(
+    (subscriber: () => void) => subscribe(subscriber, bridge),
+    [bridge],
+  );
   const sourceSnapshot = useSyncExternalStore(
-    subscribe,
+    subscribeToBridge,
     () => sourceSnapshotFor(coverArtId),
     () => sourceSnapshotFor(coverArtId),
   );
@@ -244,18 +402,23 @@ export function useCoverArtSource(
     coverArtId,
     sourceSnapshot.slice(separator + 1),
     sourceSnapshot.slice(0, separator),
+    bridge,
   );
 }
 
-export async function invalidateCoverArt(coverArtId: string): Promise<void> {
+export async function invalidateCoverArt(
+  coverArtId: string,
+  bridge: CoverArtBridge = nativeCoverArtBridge,
+): Promise<void> {
   if (!isDesktop() || !validCoverArtId(coverArtId)) return;
-  await invoke("invalidate_cover_art", { coverArtId });
+  await bridge.invalidate(coverArtId);
   retryRevision = (retryRevision + 1) % Number.MAX_SAFE_INTEGER;
   rememberRevision(coverArtId, `retry-${retryRevision}`);
   emitChange();
 }
 
 export function clearCoverArtRendererState(): void {
+  restartRevisionListener();
   clearPersistedRevisions();
   clearPaintedCoverSources();
   sessionScope = rotateSessionScope();

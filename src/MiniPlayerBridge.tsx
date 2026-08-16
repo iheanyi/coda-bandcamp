@@ -13,6 +13,7 @@ import {
   MINI_PLAYER_STATE_EVENT,
   parseMiniPlayerCommand,
   type MiniPlayerSnapshot,
+  type MiniPlayerWireValue,
 } from "./miniPlayer";
 import type { PlaybackClock } from "./playbackClock";
 import {
@@ -25,7 +26,9 @@ import type { RadioChapter, Track } from "./types";
 export type MiniPlayerEventBridge = {
   emitSnapshot: (snapshot: MiniPlayerSnapshot) => Promise<void>;
   listenForRequest: (handler: () => void) => Promise<() => void>;
-  listenForCommand: (handler: (payload: unknown) => void) => Promise<() => void>;
+  listenForCommand: (
+    handler: (payload: MiniPlayerWireValue) => void,
+  ) => Promise<() => void>;
 };
 
 type MiniPlayerBridgeProps = {
@@ -58,8 +61,8 @@ function nativeEventBridge(): Promise<MiniPlayerEventBridge> {
           emitTo("mini-player", MINI_PLAYER_STATE_EVENT, snapshot),
         listenForRequest: (handler: () => void) =>
           listen(MINI_PLAYER_REQUEST_STATE_EVENT, handler),
-        listenForCommand: (handler: (payload: unknown) => void) =>
-          listen<unknown>(
+        listenForCommand: (handler: (payload: MiniPlayerWireValue) => void) =>
+          listen<MiniPlayerWireValue>(
             MINI_PLAYER_COMMAND_EVENT,
             ({ payload }) => handler(payload),
           ),

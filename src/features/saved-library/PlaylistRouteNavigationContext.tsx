@@ -80,9 +80,11 @@ function markPlaylistReturnDestination(
 export function PlaylistRouteNavigationProvider({
   adapter,
   children,
+  transition = transitionCodaView,
 }: Readonly<{
   adapter: PlaylistRouteNavigationAdapter;
   children: ReactNode;
+  transition?: typeof transitionCodaView;
 }>) {
   const navigationRef = useRef(createNavigationTransactionState());
   const activePlaylistIdRef = useRef<PlaylistId | undefined>(undefined);
@@ -162,7 +164,7 @@ export function PlaylistRouteNavigationProvider({
       let releaseReturnDestination = () => {};
 
       try {
-        await transitionCodaView(
+        await transition(
           async () => {
             if (transaction) {
               await adapter.goBack();
@@ -228,7 +230,7 @@ export function PlaylistRouteNavigationProvider({
         }
       }
     },
-    [adapter],
+    [adapter, transition],
   );
 
   const value = useMemo<PlaylistRouteNavigationValue>(

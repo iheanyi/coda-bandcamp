@@ -59,16 +59,76 @@ type MiniPlayerSnapshotInput = Omit<
   volume: number;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+export type MiniPlayerWireValue =
+  | boolean
+  | number
+  | string
+  | null
+  | undefined
+  | MiniPlayerWireValue[]
+  | MiniPlayerWireRecord;
+
+type MiniPlayerWireRecord = {
+  [key: string]: MiniPlayerWireValue;
+};
+
+function isRecord<Value>(value: Value): value is Value & MiniPlayerWireRecord {
+  return Object.prototype.toString.call(value) === "[object Object]";
 }
 
-function isBoundedText(value: unknown, allowEmpty = false): value is string {
+function isWireArray<Value>(
+  value: Value,
+): value is Value & MiniPlayerWireValue[] {
+  return Array.isArray(value);
+}
+
+function isStringValue<Value>(value: Value): value is Value & string {
   return (
-    typeof value === "string" &&
+    Object.prototype.toString.call(value) === "[object String]" &&
+    Object(value) !== value
+  );
+}
+
+function isNumberValue<Value>(value: Value): value is Value & number {
+  return (
+    Object.prototype.toString.call(value) === "[object Number]" &&
+    Object(value) !== value
+  );
+}
+
+function isBooleanValue<Value>(value: Value): value is Value & boolean {
+  return (
+    Object.prototype.toString.call(value) === "[object Boolean]" &&
+    Object(value) !== value
+  );
+}
+
+function hasMiniPlayerControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
+function replaceMiniPlayerControlCharacters(value: string): string {
+  let sanitized = "";
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    sanitized += code <= 0x1f || code === 0x7f ? " " : character;
+  }
+  return sanitized;
+}
+
+function isBoundedText<Value>(
+  value: Value,
+  allowEmpty = false,
+): value is Value & string {
+  return (
+    isStringValue(value) &&
     value.length <= MAX_MINI_PLAYER_TEXT_LENGTH &&
     (allowEmpty || value.trim().length > 0) &&
-    !/[\u0000-\u001f\u007f]/.test(value)
+    !hasMiniPlayerControlCharacter(value)
   );
 }
 
@@ -80,13 +140,14 @@ function boundedText(
   const normalized = value?.trim();
   const source = normalized || fallback.trim();
   if (!source && allowEmpty) return "";
-  return (source || "Unknown")
-    .replace(/[\u0000-\u001f\u007f]/g, " ")
-    .slice(0, MAX_MINI_PLAYER_TEXT_LENGTH);
+  return replaceMiniPlayerControlCharacters(source || "Unknown").slice(
+    0,
+    MAX_MINI_PLAYER_TEXT_LENGTH,
+  );
 }
 
-function isArtworkUrl(value: unknown): value is string {
-  if (typeof value !== "string" || value.length > MAX_ARTWORK_URL_LENGTH) {
+function isArtworkUrl<Value>(value: Value): value is Value & string {
+  if (!isStringValue(value) || value.length > MAX_ARTWORK_URL_LENGTH) {
     return false;
   }
   try {
@@ -157,7 +218,7 @@ export function createMiniPlayerSnapshot(
     durationSeconds,
     boundedNumber(input.positionSeconds, MAX_PLAYBACK_POSITION_SECONDS),
   );
-  const track = input.track
+  const track: MiniPlayerTrack | undefined = input.track
     ? {
         id: boundedText(input.track.id, "unknown-track"),
         title: boundedText(input.display?.title, input.track.title),
@@ -168,7 +229,7 @@ export function createMiniPlayerSnapshot(
         artworkUrl: artworkUrl(
           input.display?.artworkUrl ?? input.track.artworkUrl,
         ),
-        palette: [...input.track.palette] as [string, string],
+        palette: [input.track.palette[0], input.track.palette[1]],
       }
     : undefined;
 
@@ -183,17 +244,25 @@ export function createMiniPlayerSnapshot(
   };
 }
 
-function parseMiniPlayerTrack(value: unknown): MiniPlayerTrack | undefined {
+function parseMiniPlayerTrack<Value>(
+  value: Value,
+): MiniPlayerTrack | undefined {
   if (!isRecord(value)) return undefined;
+  const palette = isWireArray(value.palette) && value.palette.length === 2
+    ? value.palette
+    : undefined;
+  const firstColor = palette?.[0];
+  const secondColor = palette?.[1];
   if (
     !isBoundedText(value.id) ||
     !isBoundedText(value.title) ||
     !isBoundedText(value.artist) ||
     !isBoundedText(value.album, true) ||
     (value.artworkUrl !== undefined && !isArtworkUrl(value.artworkUrl)) ||
-    !Array.isArray(value.palette) ||
-    value.palette.length !== 2 ||
-    !value.palette.every((color) => typeof color === "string" && HEX_COLOR.test(color))
+    !isStringValue(firstColor) ||
+    !HEX_COLOR.test(firstColor) ||
+    !isStringValue(secondColor) ||
+    !HEX_COLOR.test(secondColor)
   ) {
     return undefined;
   }
@@ -203,12 +272,12 @@ function parseMiniPlayerTrack(value: unknown): MiniPlayerTrack | undefined {
     artist: value.artist,
     album: normalizedReleaseTitle(value.album),
     artworkUrl: value.artworkUrl,
-    palette: [value.palette[0] as string, value.palette[1] as string],
+    palette: [firstColor, secondColor],
   };
 }
 
-export function parseMiniPlayerSnapshot(
-  value: unknown,
+export function parseMiniPlayerSnapshot<Value>(
+  value: Value,
 ): MiniPlayerSnapshot | undefined {
   if (!isRecord(value)) return undefined;
   const track = value.track === undefined
@@ -216,21 +285,21 @@ export function parseMiniPlayerSnapshot(
     : parseMiniPlayerTrack(value.track);
   if (
     (value.track !== undefined && !track) ||
-    typeof value.playing !== "boolean" ||
-    typeof value.positionSeconds !== "number" ||
+    !isBooleanValue(value.playing) ||
+    !isNumberValue(value.positionSeconds) ||
     !Number.isFinite(value.positionSeconds) ||
     value.positionSeconds < 0 ||
-    typeof value.durationSeconds !== "number" ||
+    !isNumberValue(value.durationSeconds) ||
     !Number.isFinite(value.durationSeconds) ||
     value.durationSeconds < 0 ||
     value.durationSeconds > MAX_PLAYBACK_POSITION_SECONDS ||
     value.positionSeconds > value.durationSeconds ||
-    typeof value.volume !== "number" ||
+    !isNumberValue(value.volume) ||
     !Number.isFinite(value.volume) ||
     value.volume < 0 ||
     value.volume > 1 ||
-    typeof value.canPrevious !== "boolean" ||
-    typeof value.canNext !== "boolean" ||
+    !isBooleanValue(value.canPrevious) ||
+    !isBooleanValue(value.canNext) ||
     (!track && (
       value.playing ||
       value.positionSeconds !== 0 ||
@@ -251,21 +320,21 @@ export function parseMiniPlayerSnapshot(
   };
 }
 
-export function parseMiniPlayerCommand(
-  value: unknown,
+export function parseMiniPlayerCommand<Value>(
+  value: Value,
 ): MiniPlayerCommand | undefined {
-  if (!isRecord(value) || typeof value.type !== "string") return undefined;
+  if (!isRecord(value) || !isStringValue(value.type)) return undefined;
   if (
-    value.type === "play-pause" ||
-    value.type === "previous" ||
-    value.type === "next" ||
-    value.type === "show-main"
+    value.type === "play-pause"
   ) {
-    return { type: value.type };
+    return { type: "play-pause" };
   }
+  if (value.type === "previous") return { type: "previous" };
+  if (value.type === "next") return { type: "next" };
+  if (value.type === "show-main") return { type: "show-main" };
   if (
     value.type === "seek" &&
-    typeof value.positionSeconds === "number" &&
+    isNumberValue(value.positionSeconds) &&
     Number.isFinite(value.positionSeconds) &&
     value.positionSeconds >= 0 &&
     value.positionSeconds <= MAX_PLAYBACK_POSITION_SECONDS
@@ -274,7 +343,7 @@ export function parseMiniPlayerCommand(
   }
   if (
     value.type === "volume" &&
-    typeof value.volume === "number" &&
+    isNumberValue(value.volume) &&
     Number.isFinite(value.volume) &&
     value.volume >= 0 &&
     value.volume <= 1

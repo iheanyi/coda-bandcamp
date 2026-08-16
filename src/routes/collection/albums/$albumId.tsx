@@ -22,10 +22,12 @@ type AlbumRouteIdentityLoaderInput = Readonly<{
   params: Readonly<{ albumId: AlbumId }>;
 }>;
 
+type AlbumRouteIdentity = Readonly<{ albumId: AlbumId }>;
+
 export function loadAlbumRouteIdentity({
   librarySession,
   params,
-}: AlbumRouteIdentityLoaderInput): Readonly<{ albumId: AlbumId }> {
+}: AlbumRouteIdentityLoaderInput): AlbumRouteIdentity {
   librarySession?.preloadAlbum(params.albumId);
   return { albumId: params.albumId };
 }

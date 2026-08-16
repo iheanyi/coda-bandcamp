@@ -165,6 +165,7 @@ type SavedLibraryViewProps = {
   onOpenRadioSeries: (seriesId?: number) => void;
   onAddToPlaylist: (tracks: Track[]) => void;
   onNotify: ToastNotifier;
+  transition?: typeof transitionCodaView;
 };
 
 export type FavoritesScreenProps = Omit<
@@ -265,7 +266,7 @@ const playlistSummaryKey = (playlist: PlaylistSummary) => playlist.id;
 const parentScrollElement = (root: HTMLElement) => root.parentElement;
 const ignoreAction = () => undefined;
 
-function albumRouteId(value: unknown): AlbumId | undefined {
+function albumRouteId(value: string): AlbumId | undefined {
   try {
     return parseAlbumIdParam(value);
   } catch {
@@ -1618,6 +1619,7 @@ function SavedLibraryController({
   focusDetailOnLoad = false,
   selectedPlaylistId,
   onSelectedPlaylistIdChange,
+  transition = transitionCodaView,
 }: SavedLibraryControllerProps) {
   const queryClient = useQueryClient();
   const [openingPlaylistId, setOpeningPlaylistId] = useState<string>();
@@ -1668,7 +1670,7 @@ function SavedLibraryController({
     playlistScrollTopRef.current = transaction
       ? resolveNavigationReturnScrollTop(transaction)
       : 0;
-    void transitionCodaView(
+    void transition(
       () => {
         setReturningPlaylistId(
           reversesSharedIdentity ? closingPlaylistId : undefined,
@@ -1799,7 +1801,7 @@ function SavedLibraryController({
           ? document.activeElement
           : undefined,
       );
-      void transitionCodaView(
+      void transition(
         () => onSelectedPlaylistIdChange(createdPlaylistId),
         "page-forward",
       );
@@ -1811,7 +1813,7 @@ function SavedLibraryController({
     },
   });
   const updateMutation = useMutation({
-    mutationFn: updatePlaylist,
+    mutationFn: (input: PlaylistUpdateInput) => updatePlaylist(input),
     onMutate: async (
       input: PlaylistUpdateInput,
     ): Promise<PlaylistDetailMutationContext> => {
@@ -2121,7 +2123,7 @@ function SavedLibraryController({
                 generation: sourceMarkerGeneration,
                 release: releaseSourceMarkers,
               };
-              const playlistTransition = transitionCodaView(
+              const playlistTransition = transition(
                 () => {
                   const navigation = onSelectedPlaylistIdChange(playlistId);
                   setOpeningPlaylistId(undefined);

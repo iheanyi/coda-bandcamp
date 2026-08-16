@@ -43,15 +43,38 @@ export type NavigationReturnFocus =
       target: undefined;
     }>;
 
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
 const URL_SCHEME = /^[a-z][a-z\d+.-]*:\/\//iu;
+
+type MutableNavigationTransaction = {
+  identity: number;
+  routeKey: string;
+  intent: NavigationIntent;
+  entrance: NavigationEntrance;
+  sourceTrigger?: HTMLElement;
+  returnScrollTop: number;
+  destinationHeadingId: string;
+  sharedElementOwner?: string;
+};
+
+function containsControlCharacter(value: string): boolean {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (
+      codePoint !== undefined &&
+      (codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
 
 function boundedIdentifier(value: string, label: string): string {
   if (
     value.length === 0 ||
     value.length > MAX_NAVIGATION_IDENTIFIER_LENGTH ||
     value.trim() !== value ||
-    CONTROL_CHARACTERS.test(value) ||
+    containsControlCharacter(value) ||
     URL_SCHEME.test(value)
   ) {
     throw new TypeError(`${label} must be a bounded non-URL identifier`);
@@ -79,26 +102,25 @@ export function createNavigationTransaction(
     throw new TypeError("navigation transaction identity must be a positive safe integer");
   }
 
-  return Object.freeze({
+  const transaction: MutableNavigationTransaction = {
     identity,
     routeKey: boundedIdentifier(input.routeKey, "routeKey"),
     intent: input.intent,
     entrance: input.entrance,
-    ...(input.sourceTrigger ? { sourceTrigger: input.sourceTrigger } : {}),
     returnScrollTop: boundedScrollTop(input.returnScrollTop),
     destinationHeadingId: boundedIdentifier(
       input.destinationHeadingId,
       "destinationHeadingId",
     ),
-    ...(input.sharedElementOwner
-      ? {
-          sharedElementOwner: boundedIdentifier(
-            input.sharedElementOwner,
-            "sharedElementOwner",
-          ),
-        }
-      : {}),
-  });
+  };
+  if (input.sourceTrigger) transaction.sourceTrigger = input.sourceTrigger;
+  if (input.sharedElementOwner) {
+    transaction.sharedElementOwner = boundedIdentifier(
+      input.sharedElementOwner,
+      "sharedElementOwner",
+    );
+  }
+  return Object.freeze(transaction);
 }
 
 export function replaceNavigationTransaction(

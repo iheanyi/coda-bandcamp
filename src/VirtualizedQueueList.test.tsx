@@ -35,13 +35,13 @@ class ResizeObserverMock implements ResizeObserver {
       blockSize: bounds.height,
       inlineSize: bounds.width,
     };
-    const entry = {
+    const entry: ResizeObserverEntry = {
       borderBoxSize: [size],
       contentBoxSize: [size],
       contentRect: bounds,
       devicePixelContentBoxSize: [size],
       target,
-    } as unknown as ResizeObserverEntry;
+    };
     ResizeObserverMock.callbacks.at(-1)?.([entry], this);
   }
   unobserve() {}

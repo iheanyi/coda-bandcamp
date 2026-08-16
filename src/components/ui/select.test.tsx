@@ -1,7 +1,8 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { forwardRef, type HTMLAttributes, type ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { forwardRef, type ComponentProps } from "react";
+import * as m from "motion/react-m";
+import { describe, expect, it } from "vitest";
 
 import { codaMotion } from "@/motion";
 
@@ -11,49 +12,56 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  type SelectMotionElements,
 } from "./select";
 
-type MotionProps = HTMLAttributes<HTMLElement> & {
-  animate?: unknown;
-  initial?: unknown;
-  transition?: unknown;
-  children?: ReactNode;
-};
+const CapturingMotionDiv = forwardRef<
+  HTMLDivElement,
+  ComponentProps<typeof m.div>
+>(function CapturingMotionDiv({ animate, initial, transition, ...props }, ref) {
+  return (
+    <m.div
+      {...props}
+      ref={ref}
+      animate={animate}
+      data-motion-animate={JSON.stringify(animate)}
+      data-motion-initial={JSON.stringify(initial)}
+      data-motion-transition={JSON.stringify(transition)}
+      initial={initial}
+      transition={transition}
+    />
+  );
+});
 
-vi.mock("motion/react-m", () => ({
-  div: forwardRef<HTMLDivElement, MotionProps>(function MotionDiv(
-    { animate, initial, transition, ...props },
-    ref,
-  ) {
-    return (
-      <div
-        ref={ref}
-        data-motion-animate={JSON.stringify(animate)}
-        data-motion-initial={JSON.stringify(initial)}
-        data-motion-transition={JSON.stringify(transition)}
-        {...props}
-      />
-    );
-  }),
-  span: forwardRef<HTMLSpanElement, MotionProps>(function MotionSpan(
-    { animate, initial, transition, ...props },
-    ref,
-  ) {
-    return (
-      <span
-        ref={ref}
-        data-motion-animate={JSON.stringify(animate)}
-        data-motion-initial={JSON.stringify(initial)}
-        data-motion-transition={JSON.stringify(transition)}
-        {...props}
-      />
-    );
-  }),
-}));
+const CapturingMotionSpan = forwardRef<
+  HTMLSpanElement,
+  ComponentProps<typeof m.span>
+>(function CapturingMotionSpan({ animate, initial, transition, ...props }, ref) {
+  return (
+    <m.span
+      {...props}
+      ref={ref}
+      animate={animate}
+      data-motion-animate={JSON.stringify(animate)}
+      data-motion-initial={JSON.stringify(initial)}
+      data-motion-transition={JSON.stringify(transition)}
+      initial={initial}
+      transition={transition}
+    />
+  );
+});
+
+const CAPTURING_MOTION_ELEMENTS = {
+  div: CapturingMotionDiv,
+  span: CapturingMotionSpan,
+} satisfies SelectMotionElements;
 
 function SortSelect() {
   return (
-    <Select defaultValue="recent">
+    <Select
+      defaultValue="recent"
+      motionElements={CAPTURING_MOTION_ELEMENTS}
+    >
       <SelectTrigger aria-label="Sort collection">
         <SelectValue />
       </SelectTrigger>

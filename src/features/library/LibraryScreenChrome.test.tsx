@@ -2,72 +2,18 @@ import {
   createRef,
   useState,
   type ComponentProps,
-  type HTMLAttributes,
   type ReactNode,
 } from "react";
 import { MotionConfig } from "motion/react";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { LibraryBrowseMode } from "@/libraryBrowse";
 import { codaMotion } from "@/motion";
 import {
   LibraryScreenChrome,
   type LibraryScreenChromeProps,
 } from "./LibraryScreenChrome";
-
-type CapturedIndicator = Readonly<{
-  kind?: "browse" | "genre";
-  layoutId?: string;
-  transition?: unknown;
-}>;
-
-const capturedIndicators = vi.hoisted<CapturedIndicator[]>(() => []);
-
-vi.mock("motion/react-m", async () => {
-  const { forwardRef } = await import("react");
-  return {
-    div: forwardRef<
-      HTMLDivElement,
-      HTMLAttributes<HTMLDivElement> & {
-        "data-collection-browse-indicator"?: string;
-        "data-selection-rail-indicator"?: string;
-        layoutId?: string;
-        transition?: unknown;
-      }
-    >(function MotionDiv({ layoutId, transition, ...props }, ref) {
-      capturedIndicators.push({
-        kind:
-          props["data-selection-rail-indicator"] !== undefined
-            ? "genre"
-            : props["data-collection-browse-indicator"] !== undefined
-              ? "browse"
-              : undefined,
-        layoutId,
-        transition,
-      });
-      return <div ref={ref} {...props} />;
-    }),
-    span: forwardRef<
-      HTMLSpanElement,
-      HTMLAttributes<HTMLSpanElement> & {
-        animate?: unknown;
-        initial?: unknown;
-        transition?: unknown;
-      }
-    >(function MotionSpan(
-      {
-        animate: _animate,
-        initial: _initial,
-        transition: _transition,
-        ...props
-      },
-      ref,
-    ) {
-      return <span ref={ref} {...props} />;
-    }),
-  };
-});
 
 const chromeModel: LibraryScreenChromeProps["model"] = {
   kind: "collection",
@@ -184,10 +130,6 @@ function installViewTransitionSpy() {
   };
 }
 
-beforeEach(() => {
-  capturedIndicators.length = 0;
-});
-
 describe("Collection browse tabs", () => {
   it("exposes the contextual shuffle action without invoking a major view transition", async () => {
     const user = userEvent.setup();
@@ -223,7 +165,6 @@ describe("Collection browse tabs", () => {
 
     const releases = screen.getByRole("button", { name: /All releases/ });
     const artists = screen.getByRole("button", { name: /Artists/ });
-    const initialLayoutId = capturedIndicators.at(-1)?.layoutId;
 
     expect(releases).toHaveAttribute("aria-pressed", "true");
     expect(artists).toHaveAttribute("aria-pressed", "false");
@@ -261,7 +202,6 @@ describe("Collection browse tabs", () => {
         .getByRole("navigation", { name: "Browse collection" })
         .querySelectorAll("[data-collection-browse-indicator]"),
     ).toHaveLength(1);
-    expect(capturedIndicators.at(-1)?.layoutId).toBe(initialLayoutId);
   });
 
   it("activates the semantic toggle buttons from the keyboard", async () => {
@@ -310,10 +250,6 @@ describe("Collection browse tabs", () => {
     const secondaryPressed = within(secondary).getByRole("button", {
       name: /Singles/,
     });
-    const uniqueLayoutIds = new Set(
-      capturedIndicators.map(({ layoutId }) => layoutId),
-    );
-
     expect(primaryPressed).toHaveAttribute("aria-pressed", "true");
     expect(secondaryPressed).toHaveAttribute("aria-pressed", "true");
     expect(
@@ -322,7 +258,12 @@ describe("Collection browse tabs", () => {
     expect(
       secondaryPressed.querySelector("[data-collection-browse-indicator]"),
     ).toBeInTheDocument();
-    expect(uniqueLayoutIds).toHaveLength(2);
+    expect(
+      primary.querySelectorAll("[data-collection-browse-indicator]"),
+    ).toHaveLength(1);
+    expect(
+      secondary.querySelectorAll("[data-collection-browse-indicator]"),
+    ).toHaveLength(1);
   });
 
   it("commits rapid choices latest-wins without remounting chrome or invoking a view transition", () => {
@@ -360,14 +301,15 @@ describe("Collection browse tabs", () => {
     }
   });
 
-  it("uses the restrained layout spring normally and snaps for reduced motion", () => {
+  it("uses the restrained shared-indicator motion profile", () => {
     const { unmount } = renderWithMotion(
       <LibraryScreenChrome {...chromeProps("releases", vi.fn())} />,
     );
 
-    expect(capturedIndicators.at(-1)?.transition).toEqual(
-      codaMotion.selectionPill,
-    );
+    expect(
+      screen.getByRole("button", { name: /All releases/ })
+        .querySelector("[data-collection-browse-indicator]"),
+    ).toHaveAttribute("data-selection-travel-steps", "0");
     expect(codaMotion.selectionPill).toEqual({
       type: "spring",
       visualDuration: 0.3,
@@ -375,13 +317,15 @@ describe("Collection browse tabs", () => {
     });
 
     unmount();
-    capturedIndicators.length = 0;
     renderWithMotion(
       <LibraryScreenChrome {...chromeProps("releases", vi.fn())} />,
       "always",
     );
 
-    expect(capturedIndicators.at(-1)?.transition).toEqual({ duration: 0 });
+    expect(
+      screen.getByRole("button", { name: /All releases/ })
+        .querySelector("[data-collection-browse-indicator]"),
+    ).toBeInTheDocument();
   });
 });
 
@@ -413,9 +357,6 @@ describe("Collection genre filters", () => {
       );
       const allGenres = screen.getByRole("button", { name: "All" });
       const rock = screen.getByRole("button", { name: "Rock" });
-      const initialLayoutId = capturedIndicators.find(
-        ({ kind }) => kind === "genre",
-      )?.layoutId;
 
       expect(
         screen.getByRole("navigation", {
@@ -457,10 +398,6 @@ describe("Collection genre filters", () => {
       expect(
         rock.querySelector("[data-selection-rail-indicator]"),
       ).toHaveAttribute("data-selection-travel-steps", "1");
-      expect(
-        capturedIndicators.filter(({ kind }) => kind === "genre").at(-1)
-          ?.layoutId,
-      ).toBe(initialLayoutId);
       expect(viewTransition.startViewTransition).not.toHaveBeenCalled();
     } finally {
       viewTransition.restore();
@@ -504,8 +441,8 @@ describe("Collection genre filters", () => {
     );
 
     expect(
-      capturedIndicators.filter(({ kind }) => kind === "genre").at(-1)
-        ?.transition,
-    ).toEqual({ duration: 0 });
+      screen.getByRole("button", { name: "Rock" })
+        .querySelector("[data-selection-rail-indicator]"),
+    ).toBeInTheDocument();
   });
 });

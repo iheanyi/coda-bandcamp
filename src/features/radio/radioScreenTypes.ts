@@ -1,4 +1,5 @@
 import type { PlaybackClock } from "@/playbackClock";
+import type { RadioQueryRepository } from "@/queries/radioQueries";
 import type { RadioSeriesId, RadioShowId } from "@/routing/routeContracts";
 import type { RadioShowSummary, Track } from "@/types";
 
@@ -38,6 +39,8 @@ export type RadioArchiveScreenProps = RadioArchivePlaybackProps &
     seriesId?: RadioSeriesId;
     onSelectSeries: (seriesId?: RadioSeriesId) => void | Promise<void>;
     onOpenShow: (request: RadioOpenShowRequest) => void | Promise<void>;
+    openExternal?: (url: string) => Promise<void>;
+    repository?: RadioQueryRepository;
     returningArtworkId?: RadioShowId;
     seriesTravelSteps?: number;
   }>;

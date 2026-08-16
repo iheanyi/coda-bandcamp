@@ -35,6 +35,52 @@ import {
 
 type MotionFamily = "page" | "component" | "feedback";
 
+function motionTypeFromControl(
+  value: string,
+  fallback: MotionTiming["type"],
+): MotionTiming["type"] {
+  switch (value) {
+    case "spring":
+      return "spring";
+    case "tween":
+      return "tween";
+    default:
+      return fallback;
+  }
+}
+
+function motionEaseFromControl(
+  value: string,
+  fallback: MotionEase,
+): MotionEase {
+  switch (value) {
+    case "accelerate":
+      return "accelerate";
+    case "emphasized":
+      return "emphasized";
+    case "linear":
+      return "linear";
+    case "standard":
+      return "standard";
+    default:
+      return fallback;
+  }
+}
+
+function pageModeFromControl(
+  value: string,
+  fallback: MotionProfile["page"]["mode"],
+): MotionProfile["page"]["mode"] {
+  switch (value) {
+    case "crossfade":
+      return "crossfade";
+    case "slide":
+      return "slide";
+    default:
+      return fallback;
+  }
+}
+
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="grid gap-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
@@ -105,7 +151,10 @@ function TimingEditor({
             onChange={(event) =>
               onChange({
                 ...value,
-                type: event.currentTarget.value as MotionTiming["type"],
+                type: motionTypeFromControl(
+                  event.currentTarget.value,
+                  value.type,
+                ),
               })
             }
             value={value.type}
@@ -122,7 +171,10 @@ function TimingEditor({
             onChange={(event) =>
               onChange({
                 ...value,
-                ease: event.currentTarget.value as MotionEase,
+                ease: motionEaseFromControl(
+                  event.currentTarget.value,
+                  value.ease,
+                ),
               })
             }
             value={value.ease}
@@ -175,7 +227,9 @@ function PageControls({ profile }: { profile: MotionProfile }) {
           aria-label="Page choreography"
           className="h-8 rounded-md border border-input bg-coda-field px-2 text-xs text-foreground"
           onChange={(event) =>
-            set({ mode: event.currentTarget.value as typeof family.mode })
+            set({
+              mode: pageModeFromControl(event.currentTarget.value, family.mode),
+            })
           }
           value={family.mode}
         >

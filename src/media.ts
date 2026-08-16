@@ -47,11 +47,14 @@ export function installMediaSessionTrackHandlers({
   onPreviousTrack,
   onNextTrack,
 }: MediaSessionTrackHandlers): () => void {
-  if (typeof navigator === "undefined" || !("mediaSession" in navigator)) {
+  if (
+    !("navigator" in globalThis) ||
+    !("mediaSession" in globalThis.navigator)
+  ) {
     return () => undefined;
   }
 
-  const mediaSession = navigator.mediaSession;
+  const mediaSession = globalThis.navigator.mediaSession;
   trySetMediaSessionAction(mediaSession, "seekbackward", null);
   trySetMediaSessionAction(mediaSession, "seekforward", null);
   trySetMediaSessionAction(mediaSession, "play", () => onPlay());
@@ -77,11 +80,14 @@ export function syncMediaSessionPlayback({
   positionSeconds,
   durationSeconds,
 }: MediaSessionPlayback) {
-  if (typeof navigator === "undefined" || !("mediaSession" in navigator)) {
+  if (
+    !("navigator" in globalThis) ||
+    !("mediaSession" in globalThis.navigator)
+  ) {
     return;
   }
 
-  const mediaSession = navigator.mediaSession;
+  const mediaSession = globalThis.navigator.mediaSession;
   try {
     mediaSession.playbackState = title
       ? playing
@@ -96,30 +102,30 @@ export function syncMediaSessionPlayback({
     mediaSession.metadata = null;
     return;
   }
-  if (typeof MediaMetadata !== "function") return;
+  const MediaMetadataConstructor = globalThis.MediaMetadata;
+  if (!(MediaMetadataConstructor instanceof Function)) return;
 
   try {
-    mediaSession.metadata = new MediaMetadata({
+    const metadata: MediaMetadataInit = {
       title,
       artist,
       album,
-      ...(artworkUrl
-        ? {
-            artwork: [{
-              src: artworkUrl,
-              ...(artworkUrl.startsWith("data:image/png;base64,")
-                ? { sizes: "600x600", type: "image/png" }
-                : {}),
-            }],
-          }
-        : {}),
-    });
+    };
+    if (artworkUrl) {
+      const artwork: MediaImage = { src: artworkUrl };
+      if (artworkUrl.startsWith("data:image/png;base64,")) {
+        artwork.sizes = "600x600";
+        artwork.type = "image/png";
+      }
+      metadata.artwork = [artwork];
+    }
+    mediaSession.metadata = new MediaMetadataConstructor(metadata);
   } catch {
     // System media metadata is optional; in-app playback remains authoritative.
   }
 
   if (
-    typeof mediaSession.setPositionState !== "function" ||
+    !mediaSession.setPositionState ||
     !Number.isFinite(durationSeconds) ||
     !Number.isFinite(positionSeconds) ||
     !durationSeconds ||
@@ -146,8 +152,8 @@ export function supportsAirPlayPicker(
 ): media is AirPlayAudioElement {
   return Boolean(
     media &&
-      typeof (media as AirPlayAudioElement).webkitShowPlaybackTargetPicker ===
-        "function",
+      "webkitShowPlaybackTargetPicker" in media &&
+      media.webkitShowPlaybackTargetPicker instanceof Function,
   );
 }
 

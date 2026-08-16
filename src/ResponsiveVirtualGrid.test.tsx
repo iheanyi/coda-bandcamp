@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ResponsiveVirtualGrid,
@@ -60,15 +61,14 @@ class ResizeObserverMock implements ResizeObserver {
       blockSize: bounds.height,
       inlineSize: bounds.width,
     };
-    this.callback([
-      {
-        borderBoxSize: [size],
-        contentBoxSize: [size],
-        contentRect: bounds,
-        devicePixelContentBoxSize: [size],
-        target,
-      } as unknown as ResizeObserverEntry,
-    ], this);
+    const entry: ResizeObserverEntry = {
+      borderBoxSize: [size],
+      contentBoxSize: [size],
+      contentRect: bounds,
+      devicePixelContentBoxSize: [size],
+      target,
+    };
+    this.callback([entry], this);
   }
 
   static resizeAll() {
@@ -92,7 +92,7 @@ function Grid({
   gridLayouts?: ResponsiveGridLayout[];
   threshold?: number;
 }) {
-  const scrollRef = { current: null } as React.RefObject<HTMLDivElement | null>;
+  const scrollRef = useRef<HTMLDivElement>(null);
   return (
     <div
       data-testid="grid-scroll"

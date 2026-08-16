@@ -32,6 +32,7 @@ import {
   type MiniPlayerCommand,
   type MiniPlayerSnapshot,
   type MiniPlayerTrack,
+  type MiniPlayerWireValue,
 } from "./miniPlayer";
 
 const EMPTY_SNAPSHOT: MiniPlayerSnapshot = {
@@ -65,6 +66,11 @@ type MiniIconButtonProps = Omit<
   children: ReactNode;
   label: string;
   tooltip?: string;
+};
+
+type MiniArtworkStyle = CSSProperties & {
+  "--mini-cover-accent": string;
+  "--mini-cover-base": string;
 };
 
 function MiniIconButton({
@@ -102,15 +108,14 @@ function MiniArtwork({ track }: { track: MiniPlayerTrack }) {
   const artworkAvailable = Boolean(
     track.artworkUrl && failedUrl !== track.artworkUrl,
   );
+  const artworkStyle: MiniArtworkStyle = {
+    "--mini-cover-accent": track.palette[0],
+    "--mini-cover-base": track.palette[1],
+  };
   return (
     <div
       className="relative grid size-16 shrink-0 place-items-center overflow-hidden rounded-lg shadow-[0_7px_18px_rgba(0,0,0,0.28)] [background:linear-gradient(145deg,var(--mini-cover-accent),var(--mini-cover-base))]"
-      style={
-        {
-          "--mini-cover-accent": track.palette[0],
-          "--mini-cover-base": track.palette[1],
-        } as CSSProperties
-      }
+      style={artworkStyle}
     >
       {artworkAvailable ? (
         <img
@@ -327,7 +332,7 @@ export default function MiniPlayerWindow() {
     let disposed = false;
     void import("@tauri-apps/api/event")
       .then(async ({ emitTo, listen }) => {
-        const dispose = await listen<unknown>(
+        const dispose = await listen<MiniPlayerWireValue>(
           MINI_PLAYER_STATE_EVENT,
           ({ payload }) => {
             const nextSnapshot = parseMiniPlayerSnapshot(payload);

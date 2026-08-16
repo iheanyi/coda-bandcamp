@@ -8,18 +8,17 @@ import {
 export type LibraryArtistRouteSearch = CollectionRouteSearch &
   Readonly<{ albumId?: AlbumId }>;
 
-export function libraryArtistRouteSearch(
-  value: unknown,
+export function libraryArtistRouteSearch<Search>(
+  value: Search,
   sourceAlbumId?: string,
 ): LibraryArtistRouteSearch {
-  const search = validateCollectionSearch(value);
-  return {
-    ...search,
+  const search: LibraryArtistRouteSearch = {
+    ...validateCollectionSearch(value),
     genre: "All",
     mode: "artists",
     q: "",
-    ...(sourceAlbumId
-      ? { albumId: parseAlbumIdParam(sourceAlbumId) }
-      : undefined),
   };
+  return sourceAlbumId
+    ? { ...search, albumId: parseAlbumIdParam(sourceAlbumId) }
+    : search;
 }

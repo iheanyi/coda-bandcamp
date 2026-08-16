@@ -12,12 +12,17 @@ type LibraryScreen = "collection" | "recent" | "album" | "artist";
 
 type NonLibraryScreen = Exclude<CodaScreen, LibraryScreen>;
 
-export type LibraryRouteInputSource = Readonly<{
+export type LibraryRouteInputSource<
+  Search,
+  AlbumValue = undefined,
+  ArtistValue = undefined,
+  SourceAlbumValue = undefined,
+> = Readonly<{
   screen: CodaScreen | undefined;
-  search: unknown;
-  albumId?: unknown;
-  artistKey?: unknown;
-  sourceAlbumId?: unknown;
+  search: Search;
+  albumId?: AlbumValue;
+  artistKey?: ArtistValue;
+  sourceAlbumId?: SourceAlbumValue;
 }>;
 
 type NonLibraryRouteInput = Readonly<{
@@ -97,9 +102,13 @@ type ParsedIdentity<Value> =
   | Readonly<{ status: "invalid" }>
   | Readonly<{ status: "ready"; value: Value }>;
 
-function parseRequiredIdentity<Value>(
-  value: unknown,
-  parse: (candidate: unknown) => Value,
+type RouteIdentityParser<Value> = {
+  <Wire>(candidate: Wire): Value;
+};
+
+function parseRequiredIdentity<Wire, Value>(
+  value: Wire,
+  parse: RouteIdentityParser<Value>,
 ): ParsedIdentity<Value> {
   if (value === undefined || value === null) return { status: "missing" };
 
@@ -110,7 +119,7 @@ function parseRequiredIdentity<Value>(
   }
 }
 
-function parseOptionalAlbumId(value: unknown): AlbumId | undefined {
+function parseOptionalAlbumId<Wire>(value: Wire): AlbumId | undefined {
   if (value === undefined || value === null) return undefined;
 
   try {
@@ -120,13 +129,23 @@ function parseOptionalAlbumId(value: unknown): AlbumId | undefined {
   }
 }
 
-export function deriveLibraryRouteInput({
+export function deriveLibraryRouteInput<
+  Search,
+  AlbumValue,
+  ArtistValue,
+  SourceAlbumValue,
+>({
   albumId,
   artistKey,
   screen,
   search,
   sourceAlbumId,
-}: LibraryRouteInputSource): LibraryRouteInput {
+}: LibraryRouteInputSource<
+  Search,
+  AlbumValue,
+  ArtistValue,
+  SourceAlbumValue
+>): LibraryRouteInput {
   switch (screen) {
     case "collection":
       return {
@@ -176,14 +195,20 @@ export function deriveLibraryRouteInput({
         };
       }
       const parsedSourceAlbumId = parseOptionalAlbumId(sourceAlbumId);
+      if (parsedSourceAlbumId !== undefined) {
+        return {
+          kind: "artist",
+          screen,
+          collectionSearch,
+          artistKey: identity.value,
+          sourceAlbumId: parsedSourceAlbumId,
+        };
+      }
       return {
         kind: "artist",
         screen,
         collectionSearch,
         artistKey: identity.value,
-        ...(parsedSourceAlbumId === undefined
-          ? {}
-          : { sourceAlbumId: parsedSourceAlbumId }),
       };
     }
     default:

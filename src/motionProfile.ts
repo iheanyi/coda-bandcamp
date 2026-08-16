@@ -95,13 +95,15 @@ export type ResolvedMotionProfile = Readonly<{
   configuredDurationMs: number;
 }>;
 
-const EASINGS: Record<MotionEase, [number, number, number, number] | "linear"> =
-  {
-    emphasized: [0.22, 1, 0.36, 1],
-    standard: [0.4, 0, 0.2, 1],
-    accelerate: [0.4, 0, 1, 1],
-    linear: "linear",
-  };
+const EASINGS = {
+  emphasized: [0.22, 1, 0.36, 1],
+  standard: [0.4, 0, 0.2, 1],
+  accelerate: [0.4, 0, 1, 1],
+  linear: "linear",
+} satisfies Record<
+  MotionEase,
+  [number, number, number, number] | "linear"
+>;
 
 function timing(
   durationMs: number,
@@ -263,184 +265,284 @@ export const BUILTIN_MOTION_PRESETS: readonly MotionPreset[] = [
   },
 ];
 
-function finiteNumber(
-  value: unknown,
+function isPrimitiveNumber<Value>(value: Value): value is Value & number {
+  return (
+    Object.prototype.toString.call(value) === "[object Number]" &&
+    value === Number(value)
+  );
+}
+
+function isPrimitiveString<Value>(value: Value): value is Value & string {
+  return (
+    Object.prototype.toString.call(value) === "[object String]" &&
+    value === String(value)
+  );
+}
+
+function hasPlainObjectTag<Value>(value: Value): value is Value & object {
+  try {
+    return Object.prototype.toString.call(value) === "[object Object]";
+  } catch {
+    return false;
+  }
+}
+
+export function isPlainMotionObject<Value>(
+  value: Value,
+): value is Value & object {
+  if (!hasPlainObjectTag(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+export function parseMotionWireString<Value>(
+  value: Value,
+): string | undefined {
+  return isPrimitiveString(value) ? value : undefined;
+}
+
+function finiteNumber<Value>(
+  value: Value,
   fallback: number,
   minimum: number,
   maximum: number,
 ) {
-  return typeof value === "number" && Number.isFinite(value)
+  return isPrimitiveNumber(value) && Number.isFinite(value)
     ? Math.min(maximum, Math.max(minimum, value))
     : fallback;
 }
 
-function stringChoice<const T extends string>(
-  value: unknown,
-  choices: readonly T[],
-  fallback: T,
-): T {
-  return typeof value === "string" && choices.includes(value as T)
-    ? (value as T)
-    : fallback;
+function stringChoice<const Choice extends string, Value>(
+  value: Value,
+  choices: readonly Choice[],
+  fallback: Choice,
+): Choice {
+  if (!isPrimitiveString(value)) return fallback;
+  const parsed: string = value;
+  for (const choice of choices) {
+    if (parsed === choice) return choice;
+  }
+  return fallback;
 }
 
-function objectValue(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function validateTiming(value: unknown, fallback: MotionTiming): MotionTiming {
-  const input = objectValue(value);
+function validateTiming<Value>(
+  value: Value,
+  fallback: MotionTiming,
+): MotionTiming {
+  const input = isPlainMotionObject(value) ? value : undefined;
+  const type = input && "type" in input ? input.type : undefined;
+  const durationMs =
+    input && "durationMs" in input ? input.durationMs : undefined;
+  const bounce = input && "bounce" in input ? input.bounce : undefined;
+  const ease = input && "ease" in input ? input.ease : undefined;
   return {
-    type: stringChoice(input.type, ["tween", "spring"], fallback.type),
-    durationMs: finiteNumber(input.durationMs, fallback.durationMs, 40, 4_000),
-    bounce: finiteNumber(input.bounce, fallback.bounce, 0, 1),
+    type: stringChoice(type, ["tween", "spring"], fallback.type),
+    durationMs: finiteNumber(durationMs, fallback.durationMs, 40, 4_000),
+    bounce: finiteNumber(bounce, fallback.bounce, 0, 1),
     ease: stringChoice(
-      input.ease,
+      ease,
       ["emphasized", "standard", "accelerate", "linear"],
       fallback.ease,
     ),
   };
 }
 
-export function validateMotionProfile(value: unknown): MotionProfile {
-  const input = objectValue(value);
-  const feedback = objectValue(input.feedback);
-  const component = objectValue(input.component);
-  const page = objectValue(input.page);
-  const shared = objectValue(input.shared);
-  const detail = objectValue(input.detail);
+function validateFeedbackSection<Value>(
+  value: Value,
+): MotionProfile["feedback"] {
+  const input = isPlainMotionObject(value) ? value : undefined;
+  const candidate =
+    input && "feedback" in input ? input.feedback : undefined;
+  const feedback = isPlainMotionObject(candidate) ? candidate : undefined;
+  const timing = feedback && "timing" in feedback ? feedback.timing : undefined;
+  return {
+    timing: validateTiming(timing, CURRENT_MOTION_PROFILE.feedback.timing),
+  };
+}
+
+function validateComponentSection<Value>(
+  value: Value,
+): MotionProfile["component"] {
+  const input = isPlainMotionObject(value) ? value : undefined;
+  const candidate =
+    input && "component" in input ? input.component : undefined;
+  const component = isPlainMotionObject(candidate) ? candidate : undefined;
+  const enter = component && "enter" in component ? component.enter : undefined;
+  const exit = component && "exit" in component ? component.exit : undefined;
+  const translationPx =
+    component && "translationPx" in component
+      ? component.translationPx
+      : undefined;
+  const scaleFrom =
+    component && "scaleFrom" in component ? component.scaleFrom : undefined;
+  const opacityFrom =
+    component && "opacityFrom" in component ? component.opacityFrom : undefined;
+  return {
+    enter: validateTiming(enter, CURRENT_MOTION_PROFILE.component.enter),
+    exit: validateTiming(exit, CURRENT_MOTION_PROFILE.component.exit),
+    translationPx: finiteNumber(
+      translationPx,
+      CURRENT_MOTION_PROFILE.component.translationPx,
+      0,
+      80,
+    ),
+    scaleFrom: finiteNumber(
+      scaleFrom,
+      CURRENT_MOTION_PROFILE.component.scaleFrom,
+      0.5,
+      1.5,
+    ),
+    opacityFrom: finiteNumber(
+      opacityFrom,
+      CURRENT_MOTION_PROFILE.component.opacityFrom,
+      0,
+      1,
+    ),
+  };
+}
+
+function validatePageSection<Value>(value: Value): MotionProfile["page"] {
+  const input = isPlainMotionObject(value) ? value : undefined;
+  const candidate = input && "page" in input ? input.page : undefined;
+  const page = isPlainMotionObject(candidate) ? candidate : undefined;
+  const mode = page && "mode" in page ? page.mode : undefined;
+  const enter = page && "enter" in page ? page.enter : undefined;
+  const exit = page && "exit" in page ? page.exit : undefined;
+  const enterDelayMs =
+    page && "enterDelayMs" in page ? page.enterDelayMs : undefined;
+  const translationPx =
+    page && "translationPx" in page ? page.translationPx : undefined;
+  const scaleFrom = page && "scaleFrom" in page ? page.scaleFrom : undefined;
+  const opacityFrom =
+    page && "opacityFrom" in page ? page.opacityFrom : undefined;
+  return {
+    mode: stringChoice(
+      mode,
+      ["slide", "crossfade"],
+      CURRENT_MOTION_PROFILE.page.mode,
+    ),
+    enter: validateTiming(enter, CURRENT_MOTION_PROFILE.page.enter),
+    exit: validateTiming(exit, CURRENT_MOTION_PROFILE.page.exit),
+    enterDelayMs: finiteNumber(
+      enterDelayMs,
+      CURRENT_MOTION_PROFILE.page.enterDelayMs,
+      0,
+      1_000,
+    ),
+    translationPx: finiteNumber(
+      translationPx,
+      CURRENT_MOTION_PROFILE.page.translationPx,
+      0,
+      120,
+    ),
+    scaleFrom: finiteNumber(
+      scaleFrom,
+      CURRENT_MOTION_PROFILE.page.scaleFrom,
+      0.5,
+      1.5,
+    ),
+    opacityFrom: finiteNumber(
+      opacityFrom,
+      CURRENT_MOTION_PROFILE.page.opacityFrom,
+      0,
+      1,
+    ),
+  };
+}
+
+function validateSharedSection<Value>(value: Value): MotionProfile["shared"] {
+  const input = isPlainMotionObject(value) ? value : undefined;
+  const candidate = input && "shared" in input ? input.shared : undefined;
+  const shared = isPlainMotionObject(candidate) ? candidate : undefined;
+  const choreography =
+    shared && "choreography" in shared ? shared.choreography : undefined;
+  const artwork =
+    shared && "artwork" in shared ? shared.artwork : undefined;
+  const identity =
+    shared && "identity" in shared ? shared.identity : undefined;
+  const title = shared && "title" in shared ? shared.title : undefined;
+  const crossfade =
+    shared && "crossfade" in shared ? shared.crossfade : undefined;
+  const scaleFrom =
+    shared && "scaleFrom" in shared ? shared.scaleFrom : undefined;
+  const opacityFrom =
+    shared && "opacityFrom" in shared ? shared.opacityFrom : undefined;
+  return {
+    choreography: stringChoice(
+      choreography,
+      ["morph", "crossfade"],
+      CURRENT_MOTION_PROFILE.shared.choreography,
+    ),
+    artwork: validateTiming(artwork, CURRENT_MOTION_PROFILE.shared.artwork),
+    identity: validateTiming(identity, CURRENT_MOTION_PROFILE.shared.identity),
+    title: validateTiming(title, CURRENT_MOTION_PROFILE.shared.title),
+    crossfade: validateTiming(
+      crossfade,
+      CURRENT_MOTION_PROFILE.shared.crossfade,
+    ),
+    scaleFrom: finiteNumber(
+      scaleFrom,
+      CURRENT_MOTION_PROFILE.shared.scaleFrom,
+      0.5,
+      1.5,
+    ),
+    opacityFrom: finiteNumber(
+      opacityFrom,
+      CURRENT_MOTION_PROFILE.shared.opacityFrom,
+      0,
+      1,
+    ),
+  };
+}
+
+function validateDetailSection<Value>(value: Value): MotionProfile["detail"] {
+  const input = isPlainMotionObject(value) ? value : undefined;
+  const candidate = input && "detail" in input ? input.detail : undefined;
+  const detail = isPlainMotionObject(candidate) ? candidate : undefined;
+  const surface = detail && "surface" in detail ? detail.surface : undefined;
+  const translationPx =
+    detail && "translationPx" in detail ? detail.translationPx : undefined;
+  const scaleFrom =
+    detail && "scaleFrom" in detail ? detail.scaleFrom : undefined;
+  const opacityFrom =
+    detail && "opacityFrom" in detail ? detail.opacityFrom : undefined;
+  return {
+    surface: validateTiming(surface, CURRENT_MOTION_PROFILE.detail.surface),
+    translationPx: finiteNumber(
+      translationPx,
+      CURRENT_MOTION_PROFILE.detail.translationPx,
+      0,
+      120,
+    ),
+    scaleFrom: finiteNumber(
+      scaleFrom,
+      CURRENT_MOTION_PROFILE.detail.scaleFrom,
+      0.5,
+      1.5,
+    ),
+    opacityFrom: finiteNumber(
+      opacityFrom,
+      CURRENT_MOTION_PROFILE.detail.opacityFrom,
+      0,
+      1,
+    ),
+  };
+}
+
+export function validateMotionProfile<Value>(value: Value): MotionProfile {
+  const input = isPlainMotionObject(value) ? value : undefined;
+  const speed = input && "speed" in input ? input.speed : undefined;
+  const selection =
+    input && "selection" in input ? input.selection : undefined;
   return {
     version: MOTION_PROFILE_VERSION,
-    speed: finiteNumber(input.speed, CURRENT_MOTION_PROFILE.speed, 0.1, 4),
-    feedback: {
-      timing: validateTiming(
-        feedback.timing,
-        CURRENT_MOTION_PROFILE.feedback.timing,
-      ),
-    },
-    component: {
-      enter: validateTiming(
-        component.enter,
-        CURRENT_MOTION_PROFILE.component.enter,
-      ),
-      exit: validateTiming(
-        component.exit,
-        CURRENT_MOTION_PROFILE.component.exit,
-      ),
-      translationPx: finiteNumber(
-        component.translationPx,
-        CURRENT_MOTION_PROFILE.component.translationPx,
-        0,
-        80,
-      ),
-      scaleFrom: finiteNumber(
-        component.scaleFrom,
-        CURRENT_MOTION_PROFILE.component.scaleFrom,
-        0.5,
-        1.5,
-      ),
-      opacityFrom: finiteNumber(
-        component.opacityFrom,
-        CURRENT_MOTION_PROFILE.component.opacityFrom,
-        0,
-        1,
-      ),
-    },
-    page: {
-      mode: stringChoice(
-        page.mode,
-        ["slide", "crossfade"],
-        CURRENT_MOTION_PROFILE.page.mode,
-      ),
-      enter: validateTiming(page.enter, CURRENT_MOTION_PROFILE.page.enter),
-      exit: validateTiming(page.exit, CURRENT_MOTION_PROFILE.page.exit),
-      enterDelayMs: finiteNumber(
-        page.enterDelayMs,
-        CURRENT_MOTION_PROFILE.page.enterDelayMs,
-        0,
-        1_000,
-      ),
-      translationPx: finiteNumber(
-        page.translationPx,
-        CURRENT_MOTION_PROFILE.page.translationPx,
-        0,
-        120,
-      ),
-      scaleFrom: finiteNumber(
-        page.scaleFrom,
-        CURRENT_MOTION_PROFILE.page.scaleFrom,
-        0.5,
-        1.5,
-      ),
-      opacityFrom: finiteNumber(
-        page.opacityFrom,
-        CURRENT_MOTION_PROFILE.page.opacityFrom,
-        0,
-        1,
-      ),
-    },
-    shared: {
-      choreography: stringChoice(
-        shared.choreography,
-        ["morph", "crossfade"],
-        CURRENT_MOTION_PROFILE.shared.choreography,
-      ),
-      artwork: validateTiming(
-        shared.artwork,
-        CURRENT_MOTION_PROFILE.shared.artwork,
-      ),
-      identity: validateTiming(
-        shared.identity,
-        CURRENT_MOTION_PROFILE.shared.identity,
-      ),
-      title: validateTiming(shared.title, CURRENT_MOTION_PROFILE.shared.title),
-      crossfade: validateTiming(
-        shared.crossfade,
-        CURRENT_MOTION_PROFILE.shared.crossfade,
-      ),
-      scaleFrom: finiteNumber(
-        shared.scaleFrom,
-        CURRENT_MOTION_PROFILE.shared.scaleFrom,
-        0.5,
-        1.5,
-      ),
-      opacityFrom: finiteNumber(
-        shared.opacityFrom,
-        CURRENT_MOTION_PROFILE.shared.opacityFrom,
-        0,
-        1,
-      ),
-    },
-    detail: {
-      surface: validateTiming(
-        detail.surface,
-        CURRENT_MOTION_PROFILE.detail.surface,
-      ),
-      translationPx: finiteNumber(
-        detail.translationPx,
-        CURRENT_MOTION_PROFILE.detail.translationPx,
-        0,
-        120,
-      ),
-      scaleFrom: finiteNumber(
-        detail.scaleFrom,
-        CURRENT_MOTION_PROFILE.detail.scaleFrom,
-        0.5,
-        1.5,
-      ),
-      opacityFrom: finiteNumber(
-        detail.opacityFrom,
-        CURRENT_MOTION_PROFILE.detail.opacityFrom,
-        0,
-        1,
-      ),
-    },
-    selection: validateTiming(
-      input.selection,
-      CURRENT_MOTION_PROFILE.selection,
-    ),
+    speed: finiteNumber(speed, CURRENT_MOTION_PROFILE.speed, 0.1, 4),
+    feedback: validateFeedbackSection(value),
+    component: validateComponentSection(value),
+    page: validatePageSection(value),
+    shared: validateSharedSection(value),
+    detail: validateDetailSection(value),
+    selection: validateTiming(selection, CURRENT_MOTION_PROFILE.selection),
   };
 }
 

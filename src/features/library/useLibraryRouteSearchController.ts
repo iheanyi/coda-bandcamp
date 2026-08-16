@@ -10,6 +10,8 @@ import {
 
 import type { LibraryRouteInput } from "@/routing/libraryRouteInput";
 import {
+  type AlbumId,
+  type ArtistKey,
   DEFAULT_COLLECTION_ROUTE_SEARCH,
   type CollectionRouteSearch,
   validateCollectionSearch,
@@ -47,6 +49,35 @@ export type LibraryRouteSearchControllerOptions = Readonly<{
   search: CollectionRouteSearch;
 }>;
 
+type LibraryNavigationBase = Readonly<{
+  replace: true;
+  resetScroll: false;
+  viewTransition: false;
+}>;
+
+export type LibraryRouteNavigateRequest =
+  | (LibraryNavigationBase &
+      Readonly<{
+        search: CollectionRouteSearch;
+        to: "/collection" | "/recent";
+      }>)
+  | (LibraryNavigationBase &
+      Readonly<{
+        params: Readonly<{ albumId: AlbumId }>;
+        search: CollectionRouteSearch;
+        to: "/collection/albums/$albumId";
+      }>)
+  | (LibraryNavigationBase &
+      Readonly<{
+        params: Readonly<{ artistKey: ArtistKey }>;
+        search: CollectionRouteSearch & Readonly<{ albumId?: AlbumId }>;
+        to: "/collection/artists/$artistKey";
+      }>);
+
+export type LibraryRouteNavigate = (
+  request: LibraryRouteNavigateRequest,
+) => void | Promise<void>;
+
 function normalizedDeferredQuery(query: string): string {
   return query.trim().toLowerCase();
 }
@@ -59,7 +90,33 @@ export function useLibraryRouteSearchController({
   routeInput,
   search,
 }: LibraryRouteSearchControllerOptions): LibraryRouteSearchController {
-  const navigate = useNavigate();
+  const routerNavigate = useNavigate();
+  const navigate = useCallback<LibraryRouteNavigate>(
+    (request) => {
+      switch (request.to) {
+        case "/collection":
+        case "/recent":
+        case "/collection/albums/$albumId":
+        case "/collection/artists/$artistKey":
+          return routerNavigate(request);
+        default: {
+          const unhandledRequest: never = request;
+          return unhandledRequest;
+        }
+      }
+    },
+    [routerNavigate],
+  );
+  return useLibraryRouteSearchControllerWithNavigation(
+    { routeInput, search },
+    navigate,
+  );
+}
+
+export function useLibraryRouteSearchControllerWithNavigation(
+  { routeInput, search }: LibraryRouteSearchControllerOptions,
+  navigate: LibraryRouteNavigate,
+): LibraryRouteSearchController {
   const searchRef = useRef<HTMLInputElement>(null);
   const artistDeferredResetPendingRef = useRef(false);
   const validatedSearch = useMemo(
@@ -102,19 +159,18 @@ export function useLibraryRouteSearchController({
             to: "/collection/albums/$albumId",
           });
           return;
-        case "artist":
+        case "artist": {
+          const artistSearch = routeInput.sourceAlbumId
+            ? { ...nextSearch, albumId: routeInput.sourceAlbumId }
+            : nextSearch;
           void navigate({
             ...navigationOptions,
             params: { artistKey: routeInput.artistKey },
-            search: {
-              ...nextSearch,
-              ...(routeInput.sourceAlbumId
-                ? { albumId: routeInput.sourceAlbumId }
-                : {}),
-            },
+            search: artistSearch,
             to: "/collection/artists/$artistKey",
           });
           return;
+        }
         case "collection":
         case "inactive":
           void navigate({

@@ -4,23 +4,8 @@ import { createPlaybackClock } from "@/playbackClock";
 import { WindowTitleController } from "./WindowTitleController";
 import { applyCurrentNativeWindowTitle } from "./windowTitle";
 
-const mocks = vi.hoisted(() => ({
-  desktop: false,
-  setTitle: vi.fn(),
-}));
-
-vi.mock("@/lib", () => ({
-  isDesktop: () => mocks.desktop,
-}));
-
-vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({ setTitle: mocks.setTitle }),
-}));
-
 describe("WindowTitleController", () => {
   beforeEach(() => {
-    mocks.desktop = false;
-    mocks.setTitle.mockReset().mockResolvedValue(undefined);
     document.title = "";
   });
 
@@ -36,14 +21,14 @@ describe("WindowTitleController", () => {
     );
 
     expect(document.title).toBe("Night Archive — Coda");
-    expect(mocks.setTitle).not.toHaveBeenCalled();
   });
 
   it("ignores a stale native title load after a newer route renders", async () => {
+    const setTitle = vi.fn().mockResolvedValue(undefined);
     let resolveOldWindow!: (window: {
-      setTitle: typeof mocks.setTitle;
+      setTitle: typeof setTitle;
     }) => void;
-    const oldWindow = new Promise<{ setTitle: typeof mocks.setTitle }>(
+    const oldWindow = new Promise<{ setTitle: typeof setTitle }>(
       (resolve) => {
         resolveOldWindow = resolve;
       },
@@ -61,12 +46,12 @@ describe("WindowTitleController", () => {
       "New release — Coda",
       2,
       () => currentGeneration,
-      async () => ({ setTitle: mocks.setTitle }),
+      async () => ({ setTitle }),
     );
-    resolveOldWindow({ setTitle: mocks.setTitle });
+    resolveOldWindow({ setTitle });
     await applyOldTitle;
 
-    expect(mocks.setTitle).toHaveBeenCalledOnce();
-    expect(mocks.setTitle).toHaveBeenCalledWith("New release — Coda");
+    expect(setTitle).toHaveBeenCalledOnce();
+    expect(setTitle).toHaveBeenCalledWith("New release — Coda");
   });
 });

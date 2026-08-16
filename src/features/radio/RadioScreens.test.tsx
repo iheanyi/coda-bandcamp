@@ -4,7 +4,10 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, expect, it, vi } from "vitest";
 
 import { createPlaybackClock } from "@/playbackClock";
-import { radioShowsInfiniteQueryOptions } from "@/queries/radioQueries";
+import {
+  radioShowsInfiniteQueryOptions,
+  type RadioQueryRepository,
+} from "@/queries/radioQueries";
 import { createCodaMemoryRouter } from "@/router";
 import { parseRadioShowIdParam } from "@/routing/routeContracts";
 import type { RadioShow, RadioShowSummary } from "@/types";
@@ -12,19 +15,10 @@ import type { RadioShow, RadioShowSummary } from "@/types";
 import { RadioArtwork } from "./RadioPresentation";
 import { RadioShowScreen } from "./RadioScreens";
 
-const mocks = vi.hoisted(() => ({
-  fetchRadioShow: vi.fn(),
-  fetchRadioShows: vi.fn(),
-}));
-
-vi.mock("@/lib", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib")>();
-  return {
-    ...actual,
-    fetchRadioShow: mocks.fetchRadioShow,
-    fetchRadioShows: mocks.fetchRadioShows,
-  };
-});
+const repository: RadioQueryRepository = {
+  fetchShow: vi.fn(),
+  fetchShows: vi.fn(),
+};
 
 const show: RadioShow = {
   id: 977,
@@ -38,18 +32,18 @@ const show: RadioShow = {
 };
 
 beforeEach(() => {
-  mocks.fetchRadioShow.mockReset();
-  mocks.fetchRadioShows.mockReset();
+  vi.mocked(repository.fetchShow).mockReset();
+  vi.mocked(repository.fetchShows).mockReset();
 });
 
 it("loads a direct show screen by ID without requesting the archive", async () => {
   let resolveShow!: (value: RadioShow) => void;
-  mocks.fetchRadioShow.mockReturnValue(
+  vi.mocked(repository.fetchShow).mockReturnValue(
     new Promise((resolve) => {
       resolveShow = resolve;
     }),
   );
-  mocks.fetchRadioShows.mockReturnValue(new Promise(() => {}));
+  vi.mocked(repository.fetchShows).mockReturnValue(new Promise(() => {}));
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -70,6 +64,7 @@ it("loads a direct show screen by ID without requesting the archive", async () =
           onTogglePlayback={vi.fn()}
           favoriteShowIds={new Set()}
           onToggleFavorite={vi.fn()}
+          repository={repository}
         />
       </RouterContextProvider>
     </QueryClientProvider>,
@@ -80,8 +75,8 @@ it("loads a direct show screen by ID without requesting the archive", async () =
       name: "Loading Radio show details",
     }),
   ).toBeInTheDocument();
-  expect(mocks.fetchRadioShow).toHaveBeenCalledWith(show.id);
-  expect(mocks.fetchRadioShows).not.toHaveBeenCalled();
+  expect(repository.fetchShow).toHaveBeenCalledWith(show.id);
+  expect(repository.fetchShows).not.toHaveBeenCalled();
 
   resolveShow(show);
 
@@ -106,10 +101,10 @@ it("loads a direct show screen by ID without requesting the archive", async () =
 });
 
 it("reacts to the newest matching archive summary while details fail", async () => {
-  let rejectShow!: (reason?: unknown) => void;
-  mocks.fetchRadioShow.mockReturnValue(
+  let rejectShow!: (reason?: Error) => void;
+  vi.mocked(repository.fetchShow).mockReturnValue(
     new Promise((_, reject) => {
-      rejectShow = reject;
+      rejectShow = (reason) => reject(reason);
     }),
   );
   const staleAll: RadioShowSummary = {
@@ -167,6 +162,7 @@ it("reacts to the newest matching archive summary while details fail", async () 
           onTogglePlayback={vi.fn()}
           favoriteShowIds={new Set()}
           onToggleFavorite={vi.fn()}
+          repository={repository}
         />
       </RouterContextProvider>
     </QueryClientProvider>,

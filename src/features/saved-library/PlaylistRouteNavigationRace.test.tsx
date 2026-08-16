@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import type { ComponentProps } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { parsePlaylistIdParam } from "@/routing/routeContracts";
@@ -14,12 +15,17 @@ type PendingTransition = Readonly<{
   resolve: () => void;
 }>;
 
-const transitions = vi.hoisted(() => ({
-  pending: [] as PendingTransition[],
-}));
+type PlaylistTransition = NonNullable<
+  ComponentProps<typeof PlaylistRouteNavigationProvider>["transition"]
+>;
 
-vi.mock("@/viewTransitions", () => ({
-  transitionCodaView: vi.fn((update: () => void | Promise<void>) => {
+type PendingTransitions = {
+  pending: PendingTransition[];
+};
+
+const transitions: PendingTransitions = { pending: [] };
+const transition = vi.fn<PlaylistTransition>(
+  (update: () => void | Promise<void>) => {
     let resolveCompletion!: () => void;
     const completion = new Promise<void>((resolve) => {
       resolveCompletion = resolve;
@@ -29,8 +35,8 @@ vi.mock("@/viewTransitions", () => ({
       .then(() => completion);
     transitions.pending.push({ promise, resolve: resolveCompletion });
     return promise;
-  }),
-}));
+  },
+);
 
 const playlistId = parsePlaylistIdParam("playlist-1");
 
@@ -76,11 +82,13 @@ function createAdapter(): PlaylistRouteNavigationAdapter {
 }
 
 async function settleTransition(index: number) {
-  const transition = transitions.pending[index];
-  expect(transition).toBeDefined();
+  const pendingTransition = transitions.pending[index];
+  if (!pendingTransition) {
+    throw new Error(`Expected pending playlist transition ${index}`);
+  }
   await act(async () => {
-    transition!.resolve();
-    await transition!.promise;
+    pendingTransition.resolve();
+    await pendingTransition.promise;
   });
 }
 
@@ -123,7 +131,10 @@ describe("Playlist route transition race cleanup", () => {
 
     render(
       <div data-coda-library-scroll>
-        <PlaylistRouteNavigationProvider adapter={adapter}>
+        <PlaylistRouteNavigationProvider
+          adapter={adapter}
+          transition={transition}
+        >
           <PlaylistHarness />
         </PlaylistRouteNavigationProvider>
       </div>,
@@ -172,7 +183,10 @@ describe("Playlist route transition race cleanup", () => {
   it("does not let an older close clear newer same-playlist return markers", async () => {
     render(
       <div data-coda-library-scroll>
-        <PlaylistRouteNavigationProvider adapter={createAdapter()}>
+        <PlaylistRouteNavigationProvider
+          adapter={createAdapter()}
+          transition={transition}
+        >
           <PlaylistHarness />
         </PlaylistRouteNavigationProvider>
       </div>,

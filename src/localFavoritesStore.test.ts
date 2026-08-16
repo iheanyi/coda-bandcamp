@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   emptyLocalFavorites,
   LOCAL_FAVORITES_KEY,
+  parseLocalFavoritesSerialized,
   writeLocalFavorites,
 } from "./localFavorites";
 import {
@@ -11,7 +12,7 @@ import {
   type LocalFavoritesStorage,
 } from "./localFavoritesStore";
 import { serializeLocalFavorites } from "./localFavoritesPreparation";
-import type { Album, Track } from "./types";
+import type { Album, LocalFavoriteCollection, Track } from "./types";
 
 function indexedTrack(id: string): Track {
   return {
@@ -36,9 +37,15 @@ function trackIndex(id: string) {
   };
 }
 
-function memoryStorage(initial?: unknown) {
+function parseStoredFavorites(serialized: string): LocalFavoriteCollection {
+  const favorites = parseLocalFavoritesSerialized(serialized);
+  if (!favorites) throw new Error("Expected a valid local Favorites snapshot.");
+  return favorites;
+}
+
+function memoryStorage(initial?: string | null) {
   let value = initial;
-  const writes: unknown[] = [];
+  const writes: LocalFavoriteCollection[] = [];
   let clears = 0;
   const storage: LocalFavoritesStorage = {
     async read() {
@@ -46,7 +53,7 @@ function memoryStorage(initial?: unknown) {
     },
     async write(serialized) {
       value = serialized;
-      writes.push(JSON.parse(serialized) as unknown);
+      writes.push(parseStoredFavorites(serialized));
     },
     async clear() {
       value = undefined;
@@ -182,9 +189,10 @@ describe("asynchronous local Favorites storage", () => {
     }, memory.storage);
 
     await Promise.all([first, second]);
-    expect(memory.writes.map((snapshot) => (
-      snapshot as { songIds: string[] }
-    ).songIds)).toEqual([["track-first"], ["track-second"]]);
+    expect(memory.writes.map((snapshot) => snapshot.songIds)).toEqual([
+      ["track-first"],
+      ["track-second"],
+    ]);
   });
 
   it("clears an invalid async snapshot before migrating safe empty state", async () => {
@@ -204,7 +212,7 @@ describe("asynchronous local Favorites storage", () => {
     const after = {
       ...trackIndex("track-after"),
     };
-    let stored: unknown = serializeLocalFavorites(before).serialized;
+    let stored: string | undefined = serializeLocalFavorites(before).serialized;
     let reads = 0;
     const writeStarted = deferred<void>();
     const allowWrite = deferred<void>();
@@ -236,7 +244,7 @@ describe("asynchronous local Favorites storage", () => {
   });
 
   it("orders a clear behind an in-flight write so deleted state stays deleted", async () => {
-    let stored: unknown;
+    let stored: string | undefined;
     const events: string[] = [];
     const writeStarted = deferred<void>();
     const allowWrite = deferred<void>();

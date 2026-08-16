@@ -35,7 +35,10 @@ import type {
 import { transitionCodaView } from "@/viewTransitions";
 import type { AppSidebarDestination } from "@/AppSidebar";
 
-import type { DetailNavigationController } from "./useDetailNavigationController";
+import type {
+  DetailNavigationController,
+  DiscoverDetailNavigationRequest,
+} from "./useDetailNavigationController";
 import type { CodaRouteDestination } from "./useRouteDestination";
 
 export type DiscoverDetailNavigation = Readonly<{
@@ -77,7 +80,7 @@ type PrimaryNavigationRequest = Readonly<{
   navigate: (viewTransition?: boolean) => Promise<void>;
 }>;
 
-const PRIMARY_VIEW_ORDER: Readonly<Record<CodaPrimaryView, number>> = {
+const PRIMARY_VIEW_ORDER = {
   library: 0,
   favorites: 1,
   playlists: 2,
@@ -85,11 +88,9 @@ const PRIMARY_VIEW_ORDER: Readonly<Record<CodaPrimaryView, number>> = {
   discover: 4,
   daily: 5,
   radio: 6,
-};
+} satisfies Record<CodaPrimaryView, number>;
 
-const PRIMARY_DESTINATION_VIEW: Readonly<
-  Record<AppSidebarDestination, CodaPrimaryView>
-> = {
+const PRIMARY_DESTINATION_VIEW = {
   "/collection": "library",
   "/favorites": "favorites",
   "/playlists": "playlists",
@@ -97,7 +98,7 @@ const PRIMARY_DESTINATION_VIEW: Readonly<
   "/discover": "discover",
   "/daily": "daily",
   "/radio": "radio",
-};
+} satisfies Record<AppSidebarDestination, CodaPrimaryView>;
 
 export type CodaNavigationControllerOptions = Readonly<{
   albums: readonly Album[];
@@ -159,6 +160,10 @@ export type CodaNavigationController = Readonly<{
   state: CodaNavigationState;
 }>;
 
+export type CodaNavigationRuntime = Readonly<{
+  navigate: ReturnType<typeof useNavigate>;
+}>;
+
 function currentNavigationTrigger(): HTMLElement | undefined {
   return document.activeElement instanceof HTMLElement
     ? document.activeElement
@@ -174,7 +179,15 @@ function errorMessage(cause: unknown): string {
  * generated route remains authoritative; state here records only source-side
  * fallback data that cannot be reconstructed from the URL alone.
  */
-export function useCodaNavigationController({
+export function useCodaNavigationController(
+  options: CodaNavigationControllerOptions,
+): CodaNavigationController {
+  const navigate = useNavigate();
+  return useCodaNavigationControllerWithRuntime(options, { navigate });
+}
+
+export function useCodaNavigationControllerWithRuntime(
+  {
   albums,
   clearSelectedAlbum,
   currentTrack,
@@ -184,8 +197,9 @@ export function useCodaNavigationController({
   openAlbum,
   prepareArtistSearch,
   queue,
-}: CodaNavigationControllerOptions): CodaNavigationController {
-  const navigate = useNavigate();
+  }: CodaNavigationControllerOptions,
+  { navigate }: CodaNavigationRuntime,
+): CodaNavigationController {
   const queryClient = useQueryClient();
   const [selectedArtistFallbackSnapshot, setSelectedArtistFallbackSnapshot] =
     useState<LibraryArtistFallback>();
@@ -220,18 +234,21 @@ export function useCodaNavigationController({
       sourceAlbum.tracks ??
       queue.filter((track) => track.albumId === sourceAlbum.id)
     ).find((track) => artistKey(track.artist) === libraryRouteInput.artistKey);
+    if (sourceTrack) {
+      return {
+        albumId: sourceAlbum.id,
+        key: libraryRouteInput.artistKey,
+        name: sourceTrack.artist,
+        knownTrack: {
+          duration: sourceTrack.duration,
+          id: sourceTrack.id,
+        },
+      };
+    }
     return {
       albumId: sourceAlbum.id,
       key: libraryRouteInput.artistKey,
-      name: sourceTrack?.artist ?? libraryRouteInput.artistKey,
-      ...(sourceTrack
-        ? {
-            knownTrack: {
-              duration: sourceTrack.duration,
-              id: sourceTrack.id,
-            },
-          }
-        : {}),
+      name: libraryRouteInput.artistKey,
     };
   }, [
     albums,
@@ -259,24 +276,27 @@ export function useCodaNavigationController({
         return;
       }
       const releaseId = release.id;
+      let detailRequest: DiscoverDetailNavigationRequest = {
+        kind: "discover-release",
+        releaseId,
+        releaseTitle: release.title,
+        sourceTrigger,
+        beforeCommit: () => {
+          setDiscoverDetailSnapshot({
+            releaseId,
+            releaseTitle: release.title,
+            previousView: destination.primaryView,
+            returnToNowPlaying,
+            returnScrollTop:
+              detailNavigation.scrollRootRef.current?.scrollTop ?? 0,
+          });
+        },
+      };
+      if (sourceTrackId) {
+        detailRequest = { ...detailRequest, sourceTrackId };
+      }
       void detailNavigation
-        .open({
-          kind: "discover-release",
-          releaseId,
-          releaseTitle: release.title,
-          ...(sourceTrackId ? { sourceTrackId } : {}),
-          sourceTrigger,
-          beforeCommit: () => {
-            setDiscoverDetailSnapshot({
-              releaseId,
-              releaseTitle: release.title,
-              previousView: destination.primaryView,
-              returnToNowPlaying,
-              returnScrollTop:
-                detailNavigation.scrollRootRef.current?.scrollTop ?? 0,
-            });
-          },
-        })
+        .open(detailRequest)
         .catch((cause) => notify(errorMessage(cause), "bad"));
     },
     [destination.primaryView, detailNavigation, notify],
@@ -383,23 +403,26 @@ export function useCodaNavigationController({
           collectionSearch: preparedArtistSearch.search,
           beforeCommit: () => {
             preparedArtistSearch.commitDeferredReset();
-            setSelectedArtistFallbackSnapshot(
-              fallbackAlbum
+            if (fallbackAlbum) {
+              const fallbackSnapshot: LibraryArtistFallback = sourceTrack
                 ? {
                     albumId: fallbackAlbum.id,
                     key,
                     name: artist,
-                    ...(sourceTrack
-                      ? {
-                          knownTrack: {
-                            duration: sourceTrack.duration,
-                            id: sourceTrack.id,
-                          },
-                        }
-                      : {}),
+                    knownTrack: {
+                      duration: sourceTrack.duration,
+                      id: sourceTrack.id,
+                    },
                   }
-                : undefined,
-            );
+                : {
+                    albumId: fallbackAlbum.id,
+                    key,
+                    name: artist,
+                  };
+              setSelectedArtistFallbackSnapshot(fallbackSnapshot);
+            } else {
+              setSelectedArtistFallbackSnapshot(undefined);
+            }
             clearSelectedAlbum();
           },
         })
@@ -560,26 +583,33 @@ export function useCodaNavigationController({
             },
           }
         : undefined;
+      let artistTarget: RadioChapterLocalLinks["artist"];
+      if (targetArtist) {
+        const onNavigate = (trigger: HTMLAnchorElement) => {
+          openArtist({
+            kind: "name",
+            artist: targetArtist,
+            albumId: targetAlbum?.id,
+            sourceTrigger: trigger,
+          });
+        };
+        const targetArtistKey = parseArtistKeyParam(artistKey(targetArtist));
+        artistTarget = targetAlbum
+          ? {
+              artistKey: targetArtistKey,
+              sourceAlbumId: parseAlbumIdParam(targetAlbum.id),
+              onNavigate,
+            }
+          : {
+              artistKey: targetArtistKey,
+              onNavigate,
+            };
+      }
 
       return {
         track: albumTarget,
         album: albumTarget,
-        artist: targetArtist
-          ? {
-              artistKey: parseArtistKeyParam(artistKey(targetArtist)),
-              ...(targetAlbum
-                ? { sourceAlbumId: parseAlbumIdParam(targetAlbum.id) }
-                : {}),
-              onNavigate: (trigger: HTMLAnchorElement) => {
-                openArtist({
-                  kind: "name",
-                  artist: targetArtist,
-                  albumId: targetAlbum?.id,
-                  sourceTrigger: trigger,
-                });
-              },
-            }
-          : undefined,
+        artist: artistTarget,
       };
     },
     [albums, openAlbum, openArtist],
@@ -626,18 +656,16 @@ export function useCodaNavigationController({
           openArtist({
             kind: "name",
             artist,
-            ...(albumId ? { albumId } : {}),
-            ...(sourceTrack ? { sourceTrack } : {}),
-            ...(sourceTrigger ? { sourceTrigger } : {}),
+            albumId,
+            sourceTrack,
+            sourceTrigger,
           }),
       },
       discover: {
         back: (options) =>
           back({
             kind: "discover",
-            ...(options?.restoreFocus === undefined
-              ? {}
-              : { restoreFocus: options.restoreFocus }),
+            restoreFocus: options?.restoreFocus,
           }),
         openArtist: openDiscoverArtist,
         openRelease: openDiscoverRelease,
@@ -680,14 +708,21 @@ export function useCodaNavigationController({
   );
 
   return useMemo(
-    () => ({
-      commands,
-      scrollRootRef: detailNavigation.scrollRootRef,
-      state: {
-        ...(discoverDetail ? { discoverDetail } : {}),
-        ...(selectedArtistFallback ? { selectedArtistFallback } : {}),
-      },
-    }),
+    () => {
+      const navigationState: CodaNavigationState =
+        discoverDetail && selectedArtistFallback
+          ? { discoverDetail, selectedArtistFallback }
+          : discoverDetail
+            ? { discoverDetail }
+            : selectedArtistFallback
+              ? { selectedArtistFallback }
+              : {};
+      return {
+        commands,
+        scrollRootRef: detailNavigation.scrollRootRef,
+        state: navigationState,
+      };
+    },
     [
       commands,
       detailNavigation.scrollRootRef,

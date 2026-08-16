@@ -95,7 +95,7 @@ if (!HTMLElement.prototype.releasePointerCapture) {
 }
 
 if (!window.ResizeObserver) {
-  class ResizeObserverShim {
+  class ResizeObserverShim implements ResizeObserver {
     private readonly callback: ResizeObserverCallback;
 
     constructor(callback: ResizeObserverCallback) {
@@ -104,20 +104,16 @@ if (!window.ResizeObserver) {
 
     observe(target: Element) {
       const contentRect = target.getBoundingClientRect();
-      this.callback(
-        [
-          {
-            target,
-            contentRect,
-            borderBoxSize: [],
-            contentBoxSize: [],
-            devicePixelContentBoxSize: [],
-          } as ResizeObserverEntry,
-        ],
-        this as unknown as ResizeObserver,
-      );
+      const entry: ResizeObserverEntry = {
+        target,
+        contentRect,
+        borderBoxSize: [],
+        contentBoxSize: [],
+        devicePixelContentBoxSize: [],
+      };
+      this.callback([entry], this);
     }
-    unobserve() {}
+    unobserve(_target: Element) {}
     disconnect() {}
   }
 
