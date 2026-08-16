@@ -23,6 +23,7 @@ use std::{
 
 mod command_boundaries;
 mod cover_cache;
+mod cover_ordering;
 mod daily;
 mod desktop;
 mod discover;

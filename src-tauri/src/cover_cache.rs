@@ -1,6 +1,10 @@
 use crate::bandcamp_http::{
     send_bandcamp_request_with_priority, BandcampRequestPriority, BandcampRetryPolicy,
 };
+pub(super) use crate::cover_ordering::{
+    cover_cache_publication_guard, next_cover_ordering_sequence, publication_is_current,
+    CoverArtInvalidationReceipt, CoverArtUpdatedPayload,
+};
 use crate::library::CONNECTION_CHANGE_IN_PROGRESS;
 use crate::models::{
     Album, ConnectionInput, PlayerStateTrack, PlaylistDetail, PlaylistSummary, Track,
@@ -20,7 +24,7 @@ use std::fs;
 use std::future::Future;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::{atomic::Ordering, Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{atomic::Ordering, Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tauri::http::{header, Method, Request, Response, StatusCode};
 use tauri::{AppHandle, Emitter, Manager};
@@ -45,7 +49,6 @@ const COVER_UPDATED_EVENT: &str = "coda://cover-art-updated";
 
 static COVER_CACHE_STATE: OnceLock<Arc<CoverCacheInner>> = OnceLock::new();
 static COVER_HTTP_CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
-static COVER_CACHE_PUBLICATION_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -92,13 +95,6 @@ pub(super) struct CoverCacheDiagnostics {
     miss_count: u64,
     stale_count: u64,
     cleanup_pending: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CoverArtUpdatedPayload {
-    cover_art_id: String,
-    revision: String,
 }
 
 #[derive(Debug, Clone)]
@@ -148,8 +144,15 @@ struct ValidatedCover<'a> {
     height: u32,
 }
 
+struct CoverPublication {
+    entry: CoverCacheEntry,
+    persisted: bool,
+    event_sequence: Option<u64>,
+}
+
 pub(super) struct CoverCacheRuntime {
     pub(super) generation: u64,
+    pub(super) ordering_sequence: u64,
     pub(super) authorized_ids: HashSet<String>,
     pub(super) index: CoverCacheIndex,
     pub(super) leases: HashMap<String, usize>,
@@ -197,6 +200,7 @@ impl CoverCacheState {
             invalidation_path,
             runtime: Mutex::new(CoverCacheRuntime {
                 generation: current_connection_generation(),
+                ordering_sequence: 0,
                 authorized_ids: HashSet::new(),
                 index,
                 leases: HashMap::new(),
@@ -290,12 +294,6 @@ pub(super) fn cover_cache_key(cover_art_id: &str) -> Result<String, String> {
     digest.update(b"v1/getCoverArt/600/");
     digest.update(cover_art_id.as_bytes());
     Ok(format!("{:x}", digest.finalize()))
-}
-
-pub(super) fn cover_cache_publication_guard() -> Result<MutexGuard<'static, ()>, String> {
-    COVER_CACHE_PUBLICATION_LOCK
-        .lock()
-        .map_err(|_| "The cover artwork publication state is unavailable.".to_string())
 }
 
 pub(super) fn content_revision(bytes: &[u8]) -> String {
@@ -717,21 +715,6 @@ pub(super) fn runtime_authorizes(
         && runtime.generation == expected_generation
         && expected_generation == current_generation
         && runtime.authorized_ids.contains(cover_art_id)
-}
-
-pub(super) fn publication_is_current(
-    runtime: &CoverCacheRuntime,
-    cover_art_id: &str,
-    current_generation: u64,
-    expected_credentials: &crate::models::ConnectionInput,
-    current_credentials: Option<&crate::models::ConnectionInput>,
-) -> bool {
-    runtime_authorizes(
-        runtime,
-        cover_art_id,
-        runtime.generation,
-        current_generation,
-    ) && current_credentials == Some(expected_credentials)
 }
 
 fn cached_entry(
@@ -1202,7 +1185,7 @@ fn publish_cover(
     generation: u64,
     expected_credentials: &crate::models::ConnectionInput,
     cover: ValidatedCover<'_>,
-) -> Result<(CoverCacheEntry, bool, bool), String> {
+) -> Result<CoverPublication, String> {
     let _publication_guard = cover_cache_publication_guard()?;
     let key = cover_cache_key(cover_art_id)?;
     let revision = content_revision(cover.bytes);
@@ -1214,9 +1197,12 @@ fn publish_cover(
         .map_err(|_| "The cover artwork cache lock is unavailable.".to_string())?;
     if runtime.generation != generation
         || !publication_is_current(
-            &runtime,
-            cover_art_id,
-            current_connection_generation(),
+            runtime_authorizes(
+                &runtime,
+                cover_art_id,
+                runtime.generation,
+                current_connection_generation(),
+            ),
             expected_credentials,
             current_credentials.as_ref(),
         )
@@ -1229,9 +1215,14 @@ fn publish_cover(
             existing.last_access_at = now;
             let existing = existing.clone();
             write_index(&state.index_path, &runtime.index)?;
-            return Ok((existing, false, true));
+            return Ok(CoverPublication {
+                entry: existing,
+                persisted: true,
+                event_sequence: None,
+            });
         }
     }
+    let ordering_sequence = next_cover_ordering_sequence(&mut runtime.ordering_sequence)?;
 
     let Some(evictions) = select_evictions(&runtime, &key, cover.bytes.len() as u64) else {
         let entry = CoverCacheEntry {
@@ -1245,7 +1236,11 @@ fn publish_cover(
             validated_at: now,
             last_access_at: now,
         };
-        return Ok((entry, true, false));
+        return Ok(CoverPublication {
+            entry,
+            persisted: false,
+            event_sequence: Some(ordering_sequence),
+        });
     };
     let entry = CoverCacheEntry {
         key: key.clone(),
@@ -1286,7 +1281,11 @@ fn publish_cover(
     for evicted in evicted_entries {
         let _ = remove_file_if_exists(&entry_path(&state.cache_directory, &evicted));
     }
-    Ok((entry, true, true))
+    Ok(CoverPublication {
+        entry,
+        persisted: true,
+        event_sequence: Some(ordering_sequence),
+    })
 }
 
 async fn fetch_and_publish(
@@ -1318,7 +1317,7 @@ async fn fetch_and_publish(
     let publish_id = cover_art_id.to_string();
     let publish_credentials = credentials.clone();
     let publish_bytes = bytes.clone();
-    let (entry, changed, persisted) = tauri::async_runtime::spawn_blocking(move || {
+    let publication = tauri::async_runtime::spawn_blocking(move || {
         publish_cover(
             &publish_state,
             &publish_id,
@@ -1337,22 +1336,25 @@ async fn fetch_and_publish(
     if current_connection_generation() != generation {
         return Err("The Bandcamp connection changed while artwork was being cached.".into());
     }
-    if changed {
+    if let Some(sequence) = publication.event_sequence {
+        // Emission can invoke platform code, so all publication/cache locks are
+        // released first. The sequence makes delayed delivery harmless.
         let _ = app.emit(
             COVER_UPDATED_EVENT,
-            CoverArtUpdatedPayload {
-                cover_art_id: cover_art_id.to_string(),
-                revision: entry.revision.clone(),
-            },
+            CoverArtUpdatedPayload::from_sequence(
+                cover_art_id.to_string(),
+                publication.entry.revision.clone(),
+                sequence,
+            ),
         );
     }
-    if persisted {
-        record_access(state.clone(), &entry.key).await;
+    if publication.persisted {
+        record_access(state.clone(), &publication.entry.key).await;
     }
     Ok(ResolvedCoverArt {
         bytes,
-        media_type: entry.media_type,
-        revision: entry.revision,
+        media_type: publication.entry.media_type,
+        revision: publication.entry.revision,
     })
 }
 
@@ -1400,7 +1402,7 @@ fn read_authorized_cached_cover(
             entry.key,
         ))),
         Err(_) => {
-            let _ = invalidate_entry(&state, cover_art_id);
+            let _ = invalidate_entry_ordered(&state, cover_art_id, generation);
             Ok(None)
         }
     }
@@ -1488,6 +1490,7 @@ pub(super) fn cover_cache_state_for_test(
         invalidation_path,
         runtime: Mutex::new(CoverCacheRuntime {
             generation,
+            ordering_sequence: 0,
             authorized_ids,
             index,
             leases: HashMap::new(),
@@ -1503,17 +1506,27 @@ pub(super) fn cover_cache_state_for_test(
     })
 }
 
-fn invalidate_entry(state: &CoverCacheInner, cover_art_id: &str) -> Result<(), String> {
-    let key = cover_cache_key(cover_art_id)?;
+#[cfg(test)]
+pub(super) fn next_cover_ordering_sequence_for_test(
+    state: &CoverCacheInner,
+) -> Result<u64, String> {
     let mut runtime = state
         .runtime
         .lock()
         .map_err(|_| "The cover artwork cache lock is unavailable.".to_string())?;
-    let Some(entry) = runtime.index.entries.remove(&key) else {
+    next_cover_ordering_sequence(&mut runtime.ordering_sequence)
+}
+
+fn remove_indexed_entry(
+    state: &CoverCacheInner,
+    runtime: &mut CoverCacheRuntime,
+    key: &str,
+) -> Result<(), String> {
+    let Some(entry) = runtime.index.entries.remove(key) else {
         return Ok(());
     };
     if let Err(error) = write_index(&state.index_path, &runtime.index) {
-        runtime.index.entries.insert(key, entry);
+        runtime.index.entries.insert(key.to_string(), entry);
         return Err(error);
     }
     if let Err(error) = remove_file_if_exists(&entry_path(&state.cache_directory, &entry)) {
@@ -1522,16 +1535,51 @@ fn invalidate_entry(state: &CoverCacheInner, cover_art_id: &str) -> Result<(), S
     Ok(())
 }
 
+pub(super) fn invalidate_entry_ordered(
+    state: &CoverCacheInner,
+    cover_art_id: &str,
+    generation: u64,
+) -> Result<CoverArtInvalidationReceipt, String> {
+    let _publication_guard = cover_cache_publication_guard()?;
+    let key = cover_cache_key(cover_art_id)?;
+    let mut runtime = state
+        .runtime
+        .lock()
+        .map_err(|_| "The cover artwork cache lock is unavailable.".to_string())?;
+    if !runtime_authorizes(
+        &runtime,
+        cover_art_id,
+        generation,
+        current_connection_generation(),
+    ) {
+        return Err("The requested cover artwork is not authorized for this connection.".into());
+    }
+    let sequence = next_cover_ordering_sequence(&mut runtime.ordering_sequence)?;
+    remove_indexed_entry(state, &mut runtime, &key)?;
+    Ok(CoverArtInvalidationReceipt::from_sequence(sequence))
+}
+
 #[tauri::command]
 pub(super) async fn invalidate_cover_art(
     app: AppHandle,
     cover_art_id: String,
-) -> Result<(), String> {
+) -> Result<CoverArtInvalidationReceipt, String> {
     let state = state_from_app(&app)?;
-    ensure_authorized(&state, &cover_art_id, current_connection_generation())?;
-    tauri::async_runtime::spawn_blocking(move || invalidate_entry(&state, &cover_art_id))
-        .await
-        .map_err(|error| format!("Could not finish invalidating cover artwork: {error}"))?
+    let generation = current_connection_generation();
+    ensure_authorized(&state, &cover_art_id, generation)?;
+    let key = cover_cache_key(&cover_art_id)?;
+    let lock = key_lock(&state, &key)?;
+    let guard = lock.lock().await;
+    let invalidation_state = state.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        invalidate_entry_ordered(&invalidation_state, &cover_art_id, generation)
+    })
+    .await
+    .map_err(|error| format!("Could not finish invalidating cover artwork: {error}"))
+    .and_then(|result| result);
+    drop(guard);
+    let _ = release_key_lock(&state.key_locks, &key, &lock);
+    result
 }
 
 #[tauri::command]
