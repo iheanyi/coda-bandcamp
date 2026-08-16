@@ -936,10 +936,7 @@ function PlaylistDetailView({
   };
 
   return (
-    <article
-      aria-busy={actionPending}
-      data-coda-playlist-detail-surface={playlist.id}
-    >
+    <article aria-busy={actionPending}>
       <Button
         className="mb-3 -ml-1 h-auto gap-1.5 p-1 text-xs font-bold"
         onClick={onBack}
@@ -947,7 +944,8 @@ function PlaylistDetailView({
       >
         <ArrowLeft size={15} /> Back
       </Button>
-      <header className="grid min-h-48 grid-cols-[8rem_minmax(0,1fr)] items-center gap-6 rounded-t-xl border border-border bg-[radial-gradient(circle_at_84%_10%,rgba(221,101,73,0.12),transparent_40%),linear-gradient(135deg,#24282a,#191c1e_72%)] p-7">
+      <div data-coda-playlist-detail-surface={playlist.id}>
+        <header className="grid min-h-48 grid-cols-[8rem_minmax(0,1fr)] items-center gap-6 rounded-t-xl border border-border bg-[radial-gradient(circle_at_84%_10%,rgba(221,101,73,0.12),transparent_40%),linear-gradient(135deg,#24282a,#191c1e_72%)] p-7">
         <div
           className="size-32"
           data-coda-playlist-identity-detail={playlist.id}
@@ -1318,6 +1316,7 @@ function PlaylistDetailView({
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+        </div>
       </div>
     </article>
   );
@@ -2085,9 +2084,7 @@ function SavedLibraryController({
                 sourceIdentity?.dataset.playlistIdentity === playlistId;
               const entrance: NavigationEntrance = hasSharedIdentity
                 ? "shared-element"
-                : hasCachedDetail
-                  ? "page-forward"
-                  : "none";
+                : "page-forward";
               beginPlaylistNavigation(
                 playlistId,
                 trigger,
@@ -2131,7 +2128,6 @@ function SavedLibraryController({
                   return navigation;
                 },
                 hasSharedIdentity ? "playlist-detail" : "page-forward",
-                { skipSnapshot: !hasCachedDetail },
               );
               void playlistTransition.finally(() => {
                 releaseSourceMarkers();

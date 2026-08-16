@@ -11,6 +11,7 @@ function shell(
   options: Readonly<{
     nowPlayingOpen?: boolean;
     onQueueOpenChange?: (open: boolean) => void;
+    transitionKey?: string;
   }> = {},
 ) {
   return (
@@ -37,6 +38,7 @@ function shell(
         chrome: <header data-testid="route-chrome">Chrome</header>,
         outlet,
         sidebar: <aside data-testid="sidebar">Sidebar</aside>,
+        transitionKey: options.transitionKey ?? "test-route",
       }}
     />
   );

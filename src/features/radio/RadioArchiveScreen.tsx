@@ -103,7 +103,7 @@ function RadioArchiveScreen({
   const showsQuery = useInfiniteQuery(radioShowsInfiniteQueryOptions(seriesId));
   const [busy, setBusy] = useState<{
     id: number;
-    action: "play" | "queue" | "detail";
+    action: "play" | "queue";
   }>();
   const [actionError, setActionError] = useState("");
   const selectedSeries = BANDCAMP_RADIO_SERIES.find(
@@ -162,7 +162,6 @@ function RadioArchiveScreen({
 
   const viewShow = useCallback(
     async (show: RadioShowSummary, sourceTrigger?: HTMLElement) => {
-      if (busy) return;
       const parsedShowId = radioShowId(show.id);
       if (!parsedShowId) {
         setActionError("Bandcamp returned an invalid Radio show ID");
@@ -187,10 +186,8 @@ function RadioArchiveScreen({
         ) ??
         sourceTitleRoot ??
         undefined;
-      setBusy({ id: show.id, action: "detail" });
       setActionError("");
       try {
-        await loadShow(show);
         await onOpenShow({
           showId: parsedShowId,
           sourceTrigger,
@@ -200,11 +197,9 @@ function RadioArchiveScreen({
         });
       } catch (cause) {
         setActionError(String(cause).replace(/^Error:\s*/, ""));
-      } finally {
-        setBusy(undefined);
       }
     },
-    [busy, loadShow, onOpenShow],
+    [onOpenShow],
   );
 
   const openItem = useCallback((url: string) => {
@@ -523,17 +518,8 @@ function RadioArchiveScreen({
                 params={{ showId: featuredShowIdParam }}
                 to="/radio/shows/$showId"
               >
-                {actionFor(featured) === "detail" ? (
-                  <Spinner
-                    aria-hidden="true"
-                    className="size-4 text-current motion-reduce:animate-none"
-                  />
-                ) : (
-                  <ListMusic size={17} />
-                )}
-                {actionFor(featured) === "detail"
-                  ? "Loading tracklist…"
-                  : "View tracklist"}
+                <ListMusic size={17} />
+                View tracklist
               </Link>
             ) : null}
             <Tooltip>

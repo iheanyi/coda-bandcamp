@@ -7,6 +7,7 @@ import {
   ListMusic,
   ListPlus,
   Radio,
+  RefreshCw,
 } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import {
@@ -33,6 +34,11 @@ import {
 import { countLabel } from "@/countLabel";
 import { cn } from "@/lib/utils";
 import { formatTime, initials } from "@/lib";
+import {
+  forgetPaintedCoverSource,
+  hasPaintedCoverSource,
+  rememberPaintedCoverSource,
+} from "@/paintedCoverSources";
 import type { PlaybackClock } from "@/playbackClock";
 import { RadioChapterArtwork, RadioChapterCopy } from "@/RadioChapterMetadata";
 import {
@@ -113,7 +119,9 @@ export const RadioArtwork = memo(function RadioArtwork({
     artworkUrl && failedArtworkUrl !== artworkUrl,
   );
   const artworkLoaded = Boolean(
-    artworkEligible && loadedArtworkUrl === artworkUrl,
+    artworkEligible &&
+      artworkUrl &&
+      (loadedArtworkUrl === artworkUrl || hasPaintedCoverSource(artworkUrl)),
   );
 
   return (
@@ -139,8 +147,12 @@ export const RadioArtwork = memo(function RadioArtwork({
           loading={eager ? "eager" : "lazy"}
           decoding="async"
           draggable={false}
-          onError={() => setFailedArtworkUrl(artworkUrl)}
+          onError={() => {
+            forgetPaintedCoverSource(artworkUrl);
+            setFailedArtworkUrl(artworkUrl);
+          }}
           onLoad={() => {
+            rememberPaintedCoverSource(artworkUrl);
             setLoadedArtworkUrl(artworkUrl);
             setFailedArtworkUrl((current) =>
               current === artworkUrl ? undefined : current,
@@ -320,7 +332,7 @@ export const RadioCard = memo(function RadioCard({
   returningArtwork,
 }: {
   show: RadioShowSummary;
-  busyAction?: "play" | "queue" | "detail";
+  busyAction?: "play" | "queue";
   active: boolean;
   playing: boolean;
   onPlay: (show: RadioShowSummary) => void;
@@ -443,17 +455,10 @@ export const RadioCard = memo(function RadioCard({
               />
             }
           >
-            {busyAction === "detail" ? (
-              <Spinner
-                aria-hidden="true"
-                className="size-4 text-current motion-reduce:animate-none"
-              />
-            ) : (
-              <ListMusic
-                className="transition-transform duration-300 ease-out group-hover/action:-translate-y-0.5 group-focus-visible/action:-translate-y-0.5 group-active/action:translate-y-0 motion-reduce:transform-none motion-reduce:transition-none"
-                size={15}
-              />
-            )}
+            <ListMusic
+              className="transition-transform duration-300 ease-out group-hover/action:-translate-y-0.5 group-focus-visible/action:-translate-y-0.5 group-active/action:translate-y-0 motion-reduce:transform-none motion-reduce:transition-none"
+              size={15}
+            />
           </TooltipTrigger>
           <TooltipContent>View tracklist</TooltipContent>
         </Tooltip>
@@ -677,8 +682,13 @@ export const RadioCard = memo(function RadioCard({
 
 export const RadioDetail = memo(function RadioDetail({
   show,
+  details,
+  loading,
+  loadError,
+  retrying,
   actionError,
   onBack,
+  onRetry,
   onPlay,
   onQueue,
   onPlayAt,
@@ -691,9 +701,14 @@ export const RadioDetail = memo(function RadioDetail({
   onToggleFavorite,
   onBrowseSeries,
 }: {
-  show: RadioShow;
+  show: RadioShowSummary;
+  details?: RadioShow;
+  loading: boolean;
+  loadError?: string;
+  retrying: boolean;
   actionError: string;
   onBack: () => void;
+  onRetry: () => void;
   onPlay: (track: Track) => void;
   onQueue: (track: Track) => void;
   onPlayAt?: (track: Track, position: number) => void;
@@ -706,9 +721,12 @@ export const RadioDetail = memo(function RadioDetail({
   onToggleFavorite: (show: RadioShowSummary) => void;
   onBrowseSeries: (seriesId?: RadioSeriesId) => void;
 }) {
-  const track = useMemo(() => radioTrackFromShow(show), [show]);
-  const chapters = track.radioChapters ?? [];
-  const activeShow = currentTrackId === track.id;
+  const track = useMemo(
+    () => (details ? radioTrackFromShow(details) : undefined),
+    [details],
+  );
+  const chapters = useMemo(() => track?.radioChapters ?? [], [track]);
+  const activeShow = currentTrackId === `radio:${show.id}`;
   const getCurrentChapterIndex = useCallback(
     () =>
       activeShow
@@ -724,13 +742,12 @@ export const RadioDetail = memo(function RadioDetail({
   );
   const currentChapter =
     currentChapterIndex >= 0 ? chapters[currentChapterIndex] : undefined;
-  const seriesId = radioSeriesId(radioSeriesForShow(show)?.id);
+  const seriesId = radioSeriesId(radioSeriesForShow(details ?? show)?.id);
 
   return (
     <section
       className="mx-auto w-full max-w-5xl pt-2 pb-12"
       aria-labelledby="radio-detail-title"
-      data-coda-radio-detail-surface
     >
       <Button
         variant="text"
@@ -741,6 +758,7 @@ export const RadioDetail = memo(function RadioDetail({
         <ArrowLeft size={16} />
         Back
       </Button>
+      <div data-coda-radio-detail-surface>
       <header className="grid min-h-76 grid-cols-[16rem_minmax(0,1fr)] items-center gap-12 overflow-hidden rounded-xl border border-(--line) bg-[radial-gradient(circle_at_78%_5%,rgba(221,101,73,0.15),transparent_40%),linear-gradient(140deg,#25292b,#181b1d_72%)] p-8 max-xl:min-h-64 max-xl:grid-cols-[12rem_minmax(0,1fr)] max-xl:gap-6 max-xl:p-6 max-lg:min-h-48 max-lg:grid-cols-[8rem_minmax(0,1fr)] max-lg:gap-4 max-lg:p-5">
         <div className="aspect-square w-64 drop-shadow-[0_22px_30px_rgba(0,0,0,0.32)] max-xl:w-48 max-lg:w-32 [&>div]:size-full">
           <RadioArtwork show={show} eager detail />
@@ -769,12 +787,17 @@ export const RadioDetail = memo(function RadioDetail({
             <span className="inline-flex items-center gap-1">
               <CalendarDays size={13} /> {showDate(show.publishedAt)}
             </span>
-            <span className="inline-flex items-center gap-1">
-              <Clock3 size={13} /> {formatTime(show.duration)}
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <ListMusic size={13} /> {countLabel(chapters.length, "chapter")}
-            </span>
+            {details ? (
+              <>
+                <span className="inline-flex items-center gap-1">
+                  <Clock3 size={13} /> {formatTime(details.duration)}
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <ListMusic size={13} />{" "}
+                  {countLabel(chapters.length, "chapter")}
+                </span>
+              </>
+            ) : null}
           </div>
           <p className="mt-4 mb-0 line-clamp-4 max-w-2xl text-sm/relaxed text-[#999c97] max-lg:line-clamp-3">
             {show.description}
@@ -783,25 +806,50 @@ export const RadioDetail = memo(function RadioDetail({
             <Button
               variant="primary"
               className={cn(activeShow && "bg-coda-primary-hover")}
-              onClick={activeShow ? onTogglePlayback : () => onPlay(track)}
+              onClick={
+                activeShow
+                  ? onTogglePlayback
+                  : track
+                    ? () => onPlay(track)
+                    : undefined
+              }
+              disabled={!activeShow && !track}
               aria-label={
                 activeShow
                   ? `${playing ? "Pause" : "Resume"} show`
-                  : "Play show"
+                  : track
+                    ? "Play show"
+                    : loading
+                      ? "Loading show audio"
+                      : "Show audio unavailable"
               }
               aria-pressed={activeShow && playing}
             >
-              <PlaybackIcon
-                className="size-4"
-                playing={activeShow && playing}
-              />
+              {!activeShow && loading ? (
+                <Spinner
+                  aria-hidden="true"
+                  className="size-4 text-current motion-reduce:animate-none"
+                />
+              ) : (
+                <PlaybackIcon
+                  className="size-4"
+                  playing={activeShow && playing}
+                />
+              )}
               {activeShow
                 ? playing
                   ? "Pause show"
                   : "Resume show"
-                : "Play show"}
+                : track
+                  ? "Play show"
+                  : loading
+                    ? "Loading show…"
+                    : "Show unavailable"}
             </Button>
-            <Button onClick={() => onQueue(track)}>
+            <Button
+              onClick={track ? () => onQueue(track) : undefined}
+              disabled={!track}
+            >
               <ListPlus size={17} />
               Add to queue
             </Button>
@@ -880,10 +928,14 @@ export const RadioDetail = memo(function RadioDetail({
           </h2>
         </div>
         <span className="text-xs text-coda-subtle-foreground">
-          {countLabel(chapters.length, "chapter")}
+          {track
+            ? countLabel(chapters.length, "chapter")
+            : loading
+              ? "Loading…"
+              : "Unavailable"}
         </span>
       </div>
-      {chapters.length ? (
+      {track && chapters.length ? (
         <ol className="relative m-0 grid list-none gap-1 overflow-hidden rounded-lg bg-[rgba(19,21,23,0.5)] py-1.5">
           {chapters.map((chapter, index) => {
             const activeChapter = currentChapter === chapter;
@@ -948,16 +1000,72 @@ export const RadioDetail = memo(function RadioDetail({
             );
           })}
         </ol>
-      ) : (
+      ) : track ? (
         <p className="m-0 grid min-h-44 place-items-center rounded-lg border border-dashed border-(--line) text-sm text-[#7f837e]">
           Bandcamp did not provide a tracklist for this show.
         </p>
+      ) : loadError ? (
+        <div
+          className="grid min-h-44 place-items-center rounded-lg border border-dashed border-(--line) px-6 text-center text-[#7f837e]"
+          role="alert"
+          aria-busy={retrying}
+        >
+          <div>
+            <Radio className="mx-auto" size={26} />
+            <strong className="mt-3 block text-sm text-[#cac9c3]">
+              Tracklist unavailable
+            </strong>
+            <span className="mt-1.5 block max-w-md text-xs/normal text-coda-subtle-foreground">
+              {loadError}
+            </span>
+            <Button
+              variant="secondary"
+              size="compact"
+              className="mt-4 text-xs text-[#dd8973]"
+              onClick={onRetry}
+              disabled={retrying}
+            >
+              {retrying ? (
+                <Spinner
+                  aria-hidden="true"
+                  className="size-3.5 text-current motion-reduce:animate-none"
+                />
+              ) : (
+                <RefreshCw size={14} />
+              )}
+              {retrying ? "Loading again…" : "Try again"}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div
+          className="grid min-h-44 gap-2 overflow-hidden rounded-lg bg-[rgba(19,21,23,0.5)] p-3"
+          aria-busy="true"
+          aria-label="Loading Radio show tracklist"
+          role="status"
+        >
+          <span className="sr-only">
+            Fetching this episode’s tracklist from Bandcamp.
+          </span>
+          {[0, 1, 2].map((row) => (
+            <div
+              className="grid min-h-12 grid-cols-[2.5rem_minmax(0,1fr)_4rem] items-center gap-3 rounded-md bg-white/2 px-3"
+              aria-hidden="true"
+              key={row}
+            >
+              <span className="size-8 animate-pulse rounded bg-white/6 motion-reduce:animate-none" />
+              <span className="h-3 animate-pulse rounded bg-white/6 motion-reduce:animate-none" />
+              <span className="h-3 animate-pulse rounded bg-white/6 motion-reduce:animate-none" />
+            </div>
+          ))}
+        </div>
       )}
       {actionError ? (
         <p className="mt-2.5 text-xs text-[#d28070]" role="status">
           {actionError}
         </p>
       ) : null}
+      </div>
     </section>
   );
 });

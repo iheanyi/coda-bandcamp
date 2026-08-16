@@ -1,19 +1,21 @@
 import { flushSync } from "react-dom";
-import { animate, type AnimationPlaybackControls } from "motion";
-import { acquireTemporaryStyleProperty } from "@/features/navigation/temporaryDomMarkers";
 import {
-  motionViewTransitionsEnabled,
-  supersedeMotionViewTransition,
-  transitionCodaViewWithMotion,
-} from "./motionViewTransitions";
+  animate,
+  type AnimationPlaybackControls,
+  type Transition,
+} from "motion";
+import { acquireTemporaryStyleProperty } from "@/features/navigation/temporaryDomMarkers";
+import { enforceDocumentViewTransitionCompositing } from "./compositorViewTransition";
 import {
   beginMotionDiagnostic,
+  endpointIssues,
   finishMotionDiagnostic,
+  getMotionDiagnostic,
   inspectMotionPseudoLayers,
   rectSnapshot,
   updateMotionDiagnostic,
 } from "./motionDiagnostics";
-import type { MotionEase, ResolvedMotionProfile } from "./motionProfile";
+import type { ResolvedMotionProfile } from "./motionProfile";
 import { snapshotMotionProfile } from "./motionProfileStore";
 
 export type CodaViewTransitionKind =
@@ -40,11 +42,6 @@ type CodaViewTransition = {
   ready?: Promise<void>;
   skipTransition?: () => void;
   updateCallbackDone?: Promise<void>;
-};
-
-type CodaViewTransitionOptions = {
-  routerOwnedPage?: boolean;
-  skipSnapshot?: boolean;
 };
 
 type ViewTransitionDocument = Document & {
@@ -77,28 +74,38 @@ const TRANSITION_CLASSES: Record<CodaViewTransitionKind, string> = {
   "page-crossfade": "coda-transition--page-crossfade",
 };
 const TRANSITION_CLASS_NAMES = Object.values(TRANSITION_CLASSES);
-const PAGE_MOTION_STYLE_PROPERTIES = [
-  "--coda-motion-page-enter-duration",
-  "--coda-motion-page-exit-duration",
-  "--coda-motion-page-total-duration",
-  "--coda-motion-page-enter-delay",
-  "--coda-motion-page-enter-ease",
-  "--coda-motion-page-exit-ease",
-  "--coda-motion-page-old-x",
-  "--coda-motion-page-new-x",
-  "--coda-motion-page-scale-from",
-  "--coda-motion-page-opacity-from",
-] as const;
+const NATIVE_DETAIL_DURATION_MS = 460;
+const NATIVE_NOW_PLAYING_DURATION_MS = 440;
 let latestTransitionId = 0;
 let activeTransition:
   { id: number; transition: CodaViewTransition } | undefined;
 let releaseActiveSourceSuppression: (() => void) | undefined;
 let activePageAnimations: AnimationPlaybackControls[] = [];
+let recordActivePageExit: (() => void) | undefined;
+let cancelActivePageAnimationWait: (() => void) | undefined;
 let releaseActivePageStyles: (() => void) | undefined;
+let pendingPageEntrance:
+  | {
+      coordinatorStartedAt: number;
+      diagnosticId: number;
+      id: number;
+      opacity?: number;
+      resolve: () => void;
+      sourceKey?: string;
+      transform: string;
+      transition: Transition;
+    }
+  | undefined;
 
 function stopActivePageAnimations() {
+  recordActivePageExit?.();
+  recordActivePageExit = undefined;
   for (const controls of activePageAnimations) controls.stop();
   activePageAnimations = [];
+  cancelActivePageAnimationWait?.();
+  cancelActivePageAnimationWait = undefined;
+  pendingPageEntrance?.resolve();
+  pendingPageEntrance = undefined;
   releaseActivePageStyles?.();
   releaseActivePageStyles = undefined;
 }
@@ -106,69 +113,82 @@ function stopActivePageAnimations() {
 const SHARED_SOURCE_SELECTORS: Partial<
   Record<CodaViewTransitionKind, readonly string[]>
 > = {
-  "album-detail": [
-    ".coda-album-artwork-source",
-    "[data-coda-album-title-source]",
-  ],
-  "album-detail-close": [
-    "[data-coda-album-artwork-detail]",
-    "[data-coda-album-title-detail]",
-  ],
+  "album-detail": [".coda-album-artwork-source"],
+  "album-detail-close": ["[data-coda-album-artwork-detail]"],
   "artist-detail": [
     "[data-coda-artist-artwork-source] [data-slot='cover']",
     "[data-coda-artist-artwork-source][data-slot='cover']",
-    "[data-coda-artist-name-source]",
   ],
   "artist-detail-close": [
     "[data-coda-artist-artwork-detail][data-slot='cover']",
     "[data-coda-artist-artwork-detail] [data-slot='cover']",
-    "[data-coda-artist-name-detail]",
   ],
-  "daily-detail": [
-    "[data-coda-daily-artwork-source]",
-    "[data-coda-daily-title-source]",
+  "daily-detail": ["[data-coda-daily-artwork-source]"],
+  "daily-detail-close": ["[data-coda-daily-artwork-detail]"],
+  "discover-detail": ["[data-coda-discover-artwork-source]"],
+  "discover-detail-close": ["[data-coda-discover-artwork-detail]"],
+  "playlist-detail": ["[data-coda-playlist-identity-source]"],
+  "playlist-detail-close": ["[data-coda-playlist-identity-detail]"],
+  "radio-detail": ["[data-coda-radio-artwork-source]"],
+  "radio-detail-close": ["[data-coda-radio-artwork-detail]"],
+  "now-playing-open": [".player__art-link"],
+  "now-playing-close": [".now-playing__artwork"],
+};
+
+const SHARED_DESTINATION_SELECTORS: Partial<
+  Record<CodaViewTransitionKind, readonly string[]>
+> = {
+  "album-detail": ["[data-coda-album-artwork-detail]"],
+  "album-detail-close": ["[data-coda-album-artwork-return]"],
+  "artist-detail": [
+    "[data-coda-artist-artwork-detail][data-slot='cover']",
+    "[data-coda-artist-artwork-detail] [data-slot='cover']",
   ],
-  "daily-detail-close": [
-    "[data-coda-daily-artwork-detail]",
-    "[data-coda-daily-title-detail]",
-  ],
-  "discover-detail": [
-    "[data-coda-discover-artwork-source]",
-    "[data-coda-discover-title-source]",
-  ],
-  "discover-detail-close": [
-    "[data-coda-discover-artwork-detail]",
-    "[data-coda-discover-title-detail]",
-  ],
-  "playlist-detail": [
-    "[data-coda-playlist-identity-source]",
-    "[data-coda-playlist-title-source]",
-  ],
-  "playlist-detail-close": [
-    "[data-coda-playlist-identity-detail]",
-    "[data-coda-playlist-title-detail]",
-  ],
-  "radio-detail": [
-    "[data-coda-radio-artwork-source]",
-    "[data-coda-radio-title-source]",
-  ],
-  "radio-detail-close": [
-    "[data-coda-radio-artwork-detail]",
-    "[data-coda-radio-title-detail]",
-  ],
-  "now-playing-open": [
-    ".player__art-link",
-    "[data-coda-now-playing-title-compact]",
-  ],
-  "now-playing-close": [
-    ".now-playing__artwork",
-    "[data-coda-now-playing-title-detail]",
-  ],
+  "artist-detail-close": ["[data-coda-artist-artwork-return]"],
+  "daily-detail": ["[data-coda-daily-artwork-detail]"],
+  "daily-detail-close": ["[data-coda-daily-artwork-return]"],
+  "discover-detail": ["[data-coda-discover-artwork-detail]"],
+  "discover-detail-close": ["[data-coda-discover-artwork-return]"],
+  "playlist-detail": ["[data-coda-playlist-identity-detail]"],
+  "playlist-detail-close": ["[data-coda-playlist-identity-return]"],
+  "radio-detail": ["[data-coda-radio-artwork-detail]"],
+  "radio-detail-close": ["[data-coda-radio-artwork-return]"],
+  "now-playing-open": [".now-playing__artwork"],
+  "now-playing-close": [".player__art-link"],
+};
+
+const DETAIL_TRANSITION_NAMES: Partial<
+  Record<CodaViewTransitionKind, readonly string[]>
+> = {
+  "album-detail": ["coda-album-artwork", "coda-detail-surface"],
+  "album-detail-close": ["coda-album-artwork", "coda-detail-surface"],
+  "artist-detail": ["coda-artist-artwork", "coda-detail-surface"],
+  "artist-detail-close": ["coda-artist-artwork", "coda-detail-surface"],
+  "daily-detail": ["coda-daily-artwork", "coda-detail-surface"],
+  "daily-detail-close": ["coda-daily-artwork", "coda-detail-surface"],
+  "discover-detail": ["coda-discover-artwork", "coda-detail-surface"],
+  "discover-detail-close": ["coda-discover-artwork", "coda-detail-surface"],
+  "playlist-detail": ["coda-playlist-identity", "coda-detail-surface"],
+  "playlist-detail-close": ["coda-playlist-identity", "coda-detail-surface"],
+  "radio-detail": ["coda-radio-artwork", "coda-detail-surface"],
+  "radio-detail-close": ["coda-radio-artwork", "coda-detail-surface"],
+  "now-playing-open": ["coda-now-playing-artwork", "coda-detail-surface"],
+  "now-playing-close": ["coda-now-playing-artwork", "coda-detail-surface"],
 };
 
 function sharedSourceCandidates(kind: CodaViewTransitionKind) {
   const elements = new Set<HTMLElement>();
   for (const selector of SHARED_SOURCE_SELECTORS[kind] ?? []) {
+    document.querySelectorAll<HTMLElement>(selector).forEach((element) => {
+      elements.add(element);
+    });
+  }
+  return [...elements];
+}
+
+function sharedDestinationCandidates(kind: CodaViewTransitionKind) {
+  const elements = new Set<HTMLElement>();
+  for (const selector of SHARED_DESTINATION_SELECTORS[kind] ?? []) {
     document.querySelectorAll<HTMLElement>(selector).forEach((element) => {
       elements.add(element);
     });
@@ -207,21 +227,11 @@ function clearTransitionClasses() {
     "coda-view-transitioning",
     ...TRANSITION_CLASS_NAMES,
   );
-  for (const property of PAGE_MOTION_STYLE_PROPERTIES) {
-    document.documentElement.style.removeProperty(property);
-  }
 }
 
 function clearTransitionSupport() {
   document.documentElement.classList.remove("coda-view-transitions-supported");
 }
-
-const CSS_EASINGS: Record<MotionEase, string> = {
-  emphasized: "cubic-bezier(0.22, 1, 0.36, 1)",
-  standard: "cubic-bezier(0.4, 0, 0.2, 1)",
-  accelerate: "cubic-bezier(0.4, 0, 1, 1)",
-  linear: "linear",
-};
 
 function isPageTransition(
   kind: CodaViewTransitionKind,
@@ -229,54 +239,197 @@ function isPageTransition(
   return kind.startsWith("page");
 }
 
-function configureNativePageProfile(
-  kind: "page-forward" | "page-back" | "page-crossfade",
+function configuredTransitionDurationMs(
+  kind: CodaViewTransitionKind,
   motion: ResolvedMotionProfile,
 ) {
-  const root = document.documentElement;
-  const { page, speed } = motion.profile;
-  const reverse = kind === "page-back";
-  const translation = page.translationPx;
-  root.style.setProperty(
-    "--coda-motion-page-enter-duration",
-    `${page.enter.durationMs / speed}ms`,
+  if (isPageTransition(kind)) {
+    return (
+      (motion.profile.page.exit.durationMs +
+        motion.profile.page.enter.durationMs +
+        motion.profile.page.enterDelayMs) /
+      motion.profile.speed
+    );
+  }
+  return kind === "now-playing-open" || kind === "now-playing-close"
+    ? NATIVE_NOW_PLAYING_DURATION_MS
+    : NATIVE_DETAIL_DURATION_MS;
+}
+
+function motionDiagnosticsVisible() {
+  return document.querySelector("[data-coda-motion-lab]") !== null;
+}
+
+function beginSharedSourceFeedback(source: HTMLElement | null) {
+  if (!source || typeof requestAnimationFrame !== "function") return undefined;
+  let animation: Animation;
+  try {
+    animation = source.animate(
+      [
+        { opacity: 0.86, transform: "scale(0.975)" },
+        { opacity: 0.94, transform: "scale(0.985)" },
+      ],
+      {
+        duration: 120,
+        easing: "cubic-bezier(0.2, 0.9, 0.2, 1)",
+        fill: "both",
+      },
+    );
+  } catch {
+    return undefined;
+  }
+  let frame = 0;
+  let timeout = 0;
+  let resolvePainted = () => {};
+  const painted = new Promise<void>((resolve) => {
+    resolvePainted = resolve;
+  });
+  const readyToCapture = new Promise<void>((resolve) => {
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeout);
+      resolve();
+    };
+    timeout = window.setTimeout(settle, 32);
+    frame = requestAnimationFrame(() => {
+      resolvePainted();
+      settle();
+    });
+  });
+  return {
+    cancel: () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timeout);
+      animation.cancel();
+    },
+    painted,
+    readyToCapture,
+  };
+}
+
+function preservePageInlineStyles(element: HTMLElement) {
+  const properties = ["opacity", "transform", "will-change"] as const;
+  const previous = properties.map((property) => ({
+    property,
+    priority: element.style.getPropertyPriority(property),
+    value: element.style.getPropertyValue(property),
+  }));
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    for (const { property, priority, value } of previous) {
+      element.style.setProperty(property, value, priority);
+    }
+  };
+}
+
+function armPageEntrance(
+  id: number,
+  transform: string,
+  transition: Transition,
+  diagnosticId: number,
+  coordinatorStartedAt: number,
+  opacity?: number,
+  sourceKey?: string,
+) {
+  return new Promise<void>((resolve) => {
+    pendingPageEntrance = {
+      coordinatorStartedAt,
+      diagnosticId,
+      id,
+      opacity,
+      resolve,
+      sourceKey,
+      transform,
+      transition,
+    };
+  });
+}
+
+/**
+ * AppShell calls this from a layout effect after a route commit. Applying the
+ * first frame there prevents the destination from painting in its settled
+ * position before Motion starts.
+ */
+export function consumePendingPageEntrance(
+  destination: HTMLElement,
+  destinationKey = destination.dataset.codaTransitionKey,
+) {
+  const entrance = pendingPageEntrance;
+  if (!entrance) return false;
+  if (entrance.id !== latestTransitionId) {
+    pendingPageEntrance = undefined;
+    entrance.resolve();
+    return false;
+  }
+  if (
+    entrance.sourceKey !== undefined &&
+    (destinationKey === undefined || destinationKey === entrance.sourceKey)
+  ) {
+    return false;
+  }
+  pendingPageEntrance = undefined;
+
+  recordActivePageExit?.();
+  recordActivePageExit = undefined;
+  for (const controls of activePageAnimations) controls.stop();
+  activePageAnimations = [];
+  const entranceStartedAt = performance.now();
+  updateMotionDiagnostic(entrance.diagnosticId, {
+    phaseTimings: {
+      entranceStartMs: entranceStartedAt - entrance.coordinatorStartedAt,
+    },
+  });
+  releaseActivePageStyles?.();
+  releaseActivePageStyles = preservePageInlineStyles(destination);
+  destination.style.setProperty("transform", entrance.transform);
+  destination.style.setProperty(
+    "will-change",
+    entrance.opacity === undefined ? "transform" : "opacity",
   );
-  root.style.setProperty(
-    "--coda-motion-page-exit-duration",
-    `${page.exit.durationMs / speed}ms`,
-  );
-  root.style.setProperty(
-    "--coda-motion-page-total-duration",
-    `${Math.max(page.exit.durationMs, page.enter.durationMs + page.enterDelayMs) / speed}ms`,
-  );
-  root.style.setProperty(
-    "--coda-motion-page-enter-delay",
-    `${page.enterDelayMs / speed}ms`,
-  );
-  root.style.setProperty(
-    "--coda-motion-page-enter-ease",
-    CSS_EASINGS[page.enter.ease],
-  );
-  root.style.setProperty(
-    "--coda-motion-page-exit-ease",
-    CSS_EASINGS[page.exit.ease],
-  );
-  root.style.setProperty(
-    "--coda-motion-page-old-x",
-    `${(reverse ? 1 : -1) * translation * 0.6}px`,
-  );
-  root.style.setProperty(
-    "--coda-motion-page-new-x",
-    `${(reverse ? -1 : 1) * translation}px`,
-  );
-  root.style.setProperty(
-    "--coda-motion-page-scale-from",
-    String(page.scaleFrom),
-  );
-  root.style.setProperty(
-    "--coda-motion-page-opacity-from",
-    String(page.opacityFrom),
-  );
+  if (entrance.opacity !== undefined) {
+    destination.style.setProperty("opacity", String(entrance.opacity));
+  }
+  const keyframes =
+    entrance.opacity === undefined
+      ? {
+          transform: [entrance.transform, "translateX(0px) scale(1)"] as [
+            string,
+            string,
+          ],
+        }
+      : {
+          opacity: [entrance.opacity, 1] as [number, number],
+          transform: [entrance.transform, "translateX(0px) scale(1)"] as [
+            string,
+            string,
+          ],
+        };
+  let controls: AnimationPlaybackControls;
+  try {
+    controls = animate(destination, keyframes, entrance.transition);
+  } catch {
+    entrance.resolve();
+    return false;
+  }
+  let settled = false;
+  const settleEntrance = () => {
+    if (settled) return;
+    settled = true;
+    updateMotionDiagnostic(entrance.diagnosticId, {
+      phaseTimings: {
+        entranceMs: performance.now() - entranceStartedAt,
+      },
+    });
+    entrance.resolve();
+  };
+  activePageAnimations = [controls];
+  cancelActivePageAnimationWait = settleEntrance;
+  void controls.finished.then(settleEntrance, settleEntrance);
+  return true;
 }
 
 async function transitionRouterOwnedPage(
@@ -285,12 +438,9 @@ async function transitionRouterOwnedPage(
   motion: ResolvedMotionProfile,
   transitionId: number,
 ) {
-  // Primary destinations can contain thousands of virtualized cards. Asking
-  // WebKit to rasterize that whole pane for a native View Transition costs far
-  // more than the animation itself. TanStack preloads the route first; animate
-  // its committed destination live after the snapshot-free render
-  // acknowledgement. The outgoing page stays interactive while loaders run.
-  supersedeMotionViewTransition();
+  // Snapshotting this scroll surface makes WebKit rasterize the virtualized
+  // Collection. Animate the persistent pane on both sides of the atomic React
+  // commit instead, with the entrance armed by AppShell before paint.
   stopActivePageAnimations();
   const transitionClass =
     motion.profile.page.mode === "crossfade"
@@ -301,9 +451,10 @@ async function transitionRouterOwnedPage(
     transitionClass,
   );
   const source = document.querySelector<HTMLElement>(".library-pane");
-  const configuredDurationMs =
-    (motion.profile.page.enter.durationMs + motion.profile.page.enterDelayMs) /
-    motion.profile.speed;
+  const sourceKey = source?.dataset.codaTransitionKey;
+  const diagnosticsVisible = motionDiagnosticsVisible();
+  const configuredDurationMs = configuredTransitionDurationMs(kind, motion);
+  const coordinatorStartedAt = performance.now();
   const diagnosticId = beginMotionDiagnostic({
     kind,
     configuredDurationMs,
@@ -311,9 +462,10 @@ async function transitionRouterOwnedPage(
     transitionClass,
     transitionNames: [],
     transitionClasses: [transitionClass, "coda-live-page"],
-    sourceRect: source
-      ? rectSnapshot(source.getBoundingClientRect())
-      : undefined,
+    sourceRect:
+      diagnosticsVisible && source
+        ? rectSnapshot(source.getBoundingClientRect())
+        : undefined,
     sourceCount: document.querySelectorAll(".library-pane").length,
     destinationCount: 0,
     sharedExpected: false,
@@ -321,70 +473,134 @@ async function transitionRouterOwnedPage(
   const direction = kind === "page-back" ? -1 : 1;
   const slide =
     kind !== "page-crossfade" && motion.profile.page.mode === "slide";
+  const oldTransform = slide
+    ? `translateX(${-direction * motion.profile.page.translationPx * 0.6}px) scale(${motion.profile.page.scaleFrom})`
+    : "translateX(0px) scale(1)";
   const newTransform = slide
     ? `translateX(${direction * motion.profile.page.translationPx}px) scale(${motion.profile.page.scaleFrom})`
-    : `scale(${motion.profile.page.scaleFrom})`;
+    : "translateX(0px) scale(1)";
+  const crossfadeOpacity = slide ? undefined : 0.94;
+  let sourcePaintFrame: number | undefined;
 
   try {
-    await update(false);
+    const exitStartedAt = performance.now();
+    if (source) {
+      releaseActivePageStyles = preservePageInlineStyles(source);
+      source.style.setProperty("will-change", slide ? "transform" : "opacity");
+      try {
+        const exit = animate(
+          source,
+          slide
+            ? {
+                transform: ["translateX(0px) scale(1)", oldTransform] as [
+                  string,
+                  string,
+                ],
+              }
+            : { opacity: [1, crossfadeOpacity] as [number, number] },
+          motion.viewExit,
+        );
+        activePageAnimations = [exit];
+        updateMotionDiagnostic(diagnosticId, {
+          phaseTimings: {
+            sourceFeedbackMs: performance.now() - coordinatorStartedAt,
+          },
+        });
+        if (typeof requestAnimationFrame === "function") {
+          sourcePaintFrame = requestAnimationFrame(() => {
+            updateMotionDiagnostic(diagnosticId, {
+              phaseTimings: {
+                sourceFeedbackPaintMs:
+                  performance.now() - coordinatorStartedAt,
+              },
+            });
+          });
+        }
+        let exitRecorded = false;
+        const recordExit = () => {
+          if (exitRecorded) return;
+          exitRecorded = true;
+          if (recordActivePageExit === recordExit) {
+            recordActivePageExit = undefined;
+          }
+          updateMotionDiagnostic(diagnosticId, {
+            phaseTimings: {
+              exitMs: performance.now() - exitStartedAt,
+            },
+          });
+        };
+        recordActivePageExit = recordExit;
+        void exit.finished.then(recordExit, recordExit);
+      } catch {
+        releaseActivePageStyles?.();
+        releaseActivePageStyles = undefined;
+      }
+      if (transitionId !== latestTransitionId) return;
+    }
+    const updateStartedAt = performance.now();
+    updateMotionDiagnostic(diagnosticId, {
+      phaseTimings: {
+        ...(source ? {} : { exitMs: updateStartedAt - exitStartedAt }),
+        updateStartMs: updateStartedAt - coordinatorStartedAt,
+      },
+    });
+
+    const entranceFinished = source
+      ? armPageEntrance(
+          transitionId,
+          newTransform,
+          motion.viewEnter,
+          diagnosticId,
+          coordinatorStartedAt,
+          crossfadeOpacity,
+          sourceKey,
+        )
+      : Promise.resolve();
+    try {
+      await update(false);
+    } finally {
+      updateMotionDiagnostic(diagnosticId, {
+        phaseTimings: {
+          updateMs: performance.now() - updateStartedAt,
+        },
+      });
+    }
     if (transitionId !== latestTransitionId) return;
     const destination = document.querySelector<HTMLElement>(".library-pane");
-    const animationStartedAt = performance.now();
-    if (destination) {
-      const inlineOpacity = destination.style.getPropertyValue("opacity");
-      const inlineTransform = destination.style.getPropertyValue("transform");
-      const inlineOpacityPriority =
-        destination.style.getPropertyPriority("opacity");
-      const inlineTransformPriority =
-        destination.style.getPropertyPriority("transform");
-      let released = false;
-      releaseActivePageStyles = () => {
-        if (released) return;
-        released = true;
-        destination.style.setProperty(
-          "opacity",
-          inlineOpacity,
-          inlineOpacityPriority,
-        );
-        destination.style.setProperty(
-          "transform",
-          inlineTransform,
-          inlineTransformPriority,
-        );
-      };
-      destination.style.setProperty(
-        "opacity",
-        String(motion.profile.page.opacityFrom),
-      );
-      destination.style.setProperty("transform", newTransform);
-      const enter = animate(
-        destination,
-        {
-          opacity: [motion.profile.page.opacityFrom, 1],
-          transform: [newTransform, "translateX(0px) scale(1)"],
-        },
-        motion.viewEnter,
-      );
-      activePageAnimations = [enter];
-      await enter.finished;
+    if (pendingPageEntrance?.id === transitionId) {
+      pendingPageEntrance.resolve();
+      pendingPageEntrance = undefined;
     }
+    await entranceFinished;
+    recordActivePageExit?.();
+    recordActivePageExit = undefined;
     updateMotionDiagnostic(diagnosticId, {
-      actualDurationMs: performance.now() - animationStartedAt,
+      actualDurationMs: performance.now() - coordinatorStartedAt,
       destinationCount: document.querySelectorAll(".library-pane").length,
-      destinationRect: destination
-        ? rectSnapshot(destination.getBoundingClientRect())
-        : undefined,
+      destinationRect:
+        diagnosticsVisible && destination
+          ? rectSnapshot(destination.getBoundingClientRect())
+          : undefined,
     });
     finishMotionDiagnostic(diagnosticId, "finished");
   } catch (cause) {
+    recordActivePageExit?.();
+    recordActivePageExit = undefined;
     finishMotionDiagnostic(
       diagnosticId,
       "fallback",
       cause instanceof Error ? cause.message.slice(0, 160) : "router-error",
     );
+    throw cause;
   } finally {
+    if (sourcePaintFrame !== undefined) {
+      cancelAnimationFrame(sourcePaintFrame);
+    }
     if (latestTransitionId === transitionId) {
+      pendingPageEntrance?.resolve();
+      pendingPageEntrance = undefined;
       activePageAnimations = [];
+      cancelActivePageAnimationWait = undefined;
       releaseActivePageStyles?.();
       releaseActivePageStyles = undefined;
       clearTransitionClasses();
@@ -395,7 +611,6 @@ async function transitionRouterOwnedPage(
 export function transitionCodaView(
   update: CodaViewTransitionUpdate,
   kind: CodaViewTransitionKind,
-  options: CodaViewTransitionOptions = {},
 ): Promise<void> {
   const transitionId = ++latestTransitionId;
   const motionProfile = snapshotMotionProfile();
@@ -406,45 +621,20 @@ export function transitionCodaView(
   stopActivePageAnimations();
   clearTransitionClasses();
 
-  if (options.skipSnapshot) {
-    if (motionViewTransitionsEnabled()) {
-      supersedeMotionViewTransition();
-    }
-    const diagnosticId = beginMotionDiagnostic({
-      kind,
-      configuredDurationMs: motionProfile.configuredDurationMs,
-      speed: motionProfile.profile.speed,
-      transitionClass: TRANSITION_CLASSES[kind],
-      transitionNames: [],
-      transitionClasses: [],
-      sourceCount: 0,
-      destinationCount: 0,
-      sharedExpected: false,
-    });
-    finishMotionDiagnostic(diagnosticId, "bypassed", "skip-snapshot");
-    return Promise.resolve(update(false)).then(() => undefined);
-  }
-
   const prefersReducedMotion =
     typeof window.matchMedia === "function" &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const nativePageTransition = isPageTransition(kind);
-  if (
-    nativePageTransition &&
-    options.routerOwnedPage &&
-    !prefersReducedMotion
-  ) {
+  const pageTransition = isPageTransition(kind);
+  if (pageTransition && !prefersReducedMotion) {
     return transitionRouterOwnedPage(update, kind, motionProfile, transitionId);
   }
   const transitionDocument = document as ViewTransitionDocument;
   if (!transitionDocument.startViewTransition || prefersReducedMotion) {
-    if (motionViewTransitionsEnabled()) {
-      supersedeMotionViewTransition();
-    }
+    const coordinatorStartedAt = performance.now();
     const diagnosticId = beginMotionDiagnostic({
       kind,
-      configuredDurationMs: motionProfile.configuredDurationMs,
-      speed: motionProfile.profile.speed,
+      configuredDurationMs: configuredTransitionDurationMs(kind, motionProfile),
+      speed: pageTransition ? motionProfile.profile.speed : 1,
       transitionClass: TRANSITION_CLASSES[kind],
       transitionNames: [],
       transitionClasses: [],
@@ -452,71 +642,135 @@ export function transitionCodaView(
       destinationCount: 0,
       sharedExpected: false,
     });
-    finishMotionDiagnostic(
-      diagnosticId,
-      "bypassed",
-      prefersReducedMotion ? "reduced-motion" : "native-unavailable",
-    );
-    return Promise.resolve(update(false)).then(() => undefined);
-  }
-
-  if (motionViewTransitionsEnabled() && !nativePageTransition) {
-    document.documentElement.classList.add(
-      "coda-view-transitions-supported",
-      "coda-view-transitioning",
-    );
-    return transitionCodaViewWithMotion(
-      update,
-      kind,
-      motionProfile,
-      TRANSITION_CLASSES[kind],
-    ).finally(() => {
-      if (latestTransitionId === transitionId) {
-        document.documentElement.classList.remove("coda-view-transitioning");
-      }
+    const updateStartedAt = performance.now();
+    updateMotionDiagnostic(diagnosticId, {
+      phaseTimings: {
+        updateStartMs: updateStartedAt - coordinatorStartedAt,
+      },
     });
+    let updateResult: void | Promise<void>;
+    try {
+      updateResult = update(false);
+    } catch (cause) {
+      updateMotionDiagnostic(diagnosticId, {
+        phaseTimings: {
+          updateMs: performance.now() - updateStartedAt,
+        },
+      });
+      finishMotionDiagnostic(
+        diagnosticId,
+        "fallback",
+        cause instanceof Error ? cause.message.slice(0, 160) : "router-error",
+      );
+      return Promise.reject(cause);
+    }
+    return Promise.resolve(updateResult).then(
+      () => {
+        const updateFinishedAt = performance.now();
+        updateMotionDiagnostic(diagnosticId, {
+          phaseTimings: {
+            readyMs: updateFinishedAt - coordinatorStartedAt,
+            updateMs: updateFinishedAt - updateStartedAt,
+          },
+        });
+        finishMotionDiagnostic(
+          diagnosticId,
+          "bypassed",
+          prefersReducedMotion ? "reduced-motion" : "native-unavailable",
+        );
+      },
+      (cause) => {
+        updateMotionDiagnostic(diagnosticId, {
+          phaseTimings: {
+            updateMs: performance.now() - updateStartedAt,
+          },
+        });
+        finishMotionDiagnostic(
+          diagnosticId,
+          "fallback",
+          cause instanceof Error ? cause.message.slice(0, 160) : "router-error",
+        );
+        throw cause;
+      },
+    );
   }
 
-  const transitionClass =
-    nativePageTransition && motionProfile.profile.page.mode === "crossfade"
-      ? TRANSITION_CLASSES["page-crossfade"]
-      : TRANSITION_CLASSES[kind];
+  const transitionClass = TRANSITION_CLASSES[kind];
+  const coordinatorStartedAt = performance.now();
+  const noUpdateFailure = Symbol("no-update-failure");
   let updated = false;
   let failed = false;
   let lifecycleActive = true;
+  let updateFailure: unknown = noUpdateFailure;
+  let recovery: Promise<void> | undefined;
+  let bypassReason: string | undefined;
   let releaseSourceSuppression: (() => void) | undefined;
+  const sourceCandidates = sharedSourceCandidates(kind);
+  let destinationCount = 0;
   const commitUpdate = (snapshot: boolean): void | Promise<void> => {
-    if (latestTransitionId !== transitionId || updated || failed) {
+    if (latestTransitionId !== transitionId || updated) {
       return;
     }
     updated = true;
-    if (snapshot) {
-      const sourceCandidates = sharedSourceCandidates(kind);
-      const result = flushSync(update);
-      return Promise.resolve(result).then(() => {
+    const updateStartedAt = performance.now();
+    updateMotionDiagnostic(diagnosticId, {
+      phaseTimings: {
+        updateStartMs: updateStartedAt - coordinatorStartedAt,
+      },
+    });
+    let result: void | Promise<void>;
+    try {
+      result = snapshot ? flushSync(update) : update(false);
+    } catch (cause) {
+      updateMotionDiagnostic(diagnosticId, {
+        phaseTimings: {
+          updateMs: performance.now() - updateStartedAt,
+        },
+      });
+      updateFailure = cause;
+      throw cause;
+    }
+    return Promise.resolve(result).then(
+      () => {
+        updateMotionDiagnostic(diagnosticId, {
+          phaseTimings: {
+            updateMs: performance.now() - updateStartedAt,
+          },
+        });
+        if (!snapshot) return;
         if (latestTransitionId !== transitionId || failed || !lifecycleActive) {
           return;
         }
-        if (nativePageTransition) {
-          const destination =
-            document.querySelector<HTMLElement>(".library-pane");
-          updateMotionDiagnostic(diagnosticId, {
-            destinationCount: document.querySelectorAll(".library-pane").length,
-            destinationRect: destination
+        const destinationCandidates = sharedDestinationCandidates(kind);
+        const destination = destinationCandidates[0] ?? null;
+        destinationCount = destinationCandidates.length;
+        updateMotionDiagnostic(diagnosticId, {
+          destinationCount,
+          destinationRect:
+            diagnosticsVisible && destination
               ? rectSnapshot(destination.getBoundingClientRect())
               : undefined,
-          });
-        }
+          ...endpointIssues(sourceCount, destinationCount),
+        });
         releaseSourceSuppression = suppressSourcesThatSurvive(sourceCandidates);
         if (latestTransitionId === transitionId) {
           releaseActiveSourceSuppression = releaseSourceSuppression;
         }
-      });
-    }
-    return update();
+      },
+      (cause) => {
+        updateMotionDiagnostic(diagnosticId, {
+          phaseTimings: {
+            updateMs: performance.now() - updateStartedAt,
+          },
+        });
+        updateFailure = cause;
+        throw cause;
+      },
+    );
   };
-  const handleTransitionFailure = () => {
-    if (latestTransitionId !== transitionId || failed) return;
+  const handleTransitionFailure = (cause?: unknown): Promise<void> => {
+    if (latestTransitionId !== transitionId) return Promise.resolve();
+    if (recovery) return recovery;
     failed = true;
     activeTransition = undefined;
     releaseSourceSuppression?.();
@@ -525,93 +779,143 @@ export function transitionCodaView(
     }
     clearTransitionClasses();
     clearTransitionSupport();
-    finishMotionDiagnostic(diagnosticId, "fallback", "native-transition-error");
+    finishMotionDiagnostic(
+      diagnosticId,
+      "fallback",
+      cause instanceof Error
+        ? cause.message.slice(0, 160)
+        : "native-transition-error",
+    );
     if (!updated) {
-      updated = true;
-      update();
+      try {
+        recovery = Promise.resolve(commitUpdate(false)).then(() => undefined);
+      } catch (fallbackCause) {
+        recovery = Promise.reject(fallbackCause);
+      }
+    } else if (updateFailure !== noUpdateFailure) {
+      recovery = Promise.reject(updateFailure);
+    } else {
+      recovery = Promise.resolve();
     }
+    return recovery;
   };
-  if (nativePageTransition) {
-    configureNativePageProfile(kind, motionProfile);
-  }
-  document.documentElement.classList.add(
-    "coda-view-transitions-supported",
-    "coda-view-transitioning",
-    transitionClass,
-  );
-  const source = nativePageTransition
-    ? document.querySelector<HTMLElement>(".library-pane")
-    : null;
-  const sourceCount = nativePageTransition
-    ? document.querySelectorAll(".library-pane").length
-    : 0;
-  const transitionNames = nativePageTransition ? ["coda-page-content"] : [];
-  const configuredDurationMs = nativePageTransition
-    ? Math.max(
-        motionProfile.profile.page.exit.durationMs,
-        motionProfile.profile.page.enter.durationMs +
-          motionProfile.profile.page.enterDelayMs,
-      ) / motionProfile.profile.speed
-    : motionProfile.configuredDurationMs;
+  const source = sourceCandidates[0] ?? null;
+  const sourceCount = sourceCandidates.length;
+  const transitionNames = [...(DETAIL_TRANSITION_NAMES[kind] ?? [])];
+  const diagnosticsVisible = motionDiagnosticsVisible();
   const diagnosticId = beginMotionDiagnostic({
     kind,
-    configuredDurationMs,
-    speed: motionProfile.profile.speed,
+    configuredDurationMs: configuredTransitionDurationMs(kind, motionProfile),
+    speed: 1,
     transitionClass,
     transitionNames,
-    transitionClasses: [
-      transitionClass,
-      nativePageTransition ? "coda-native-page" : "coda-native-fallback",
-    ],
-    sourceRect: source
-      ? rectSnapshot(source.getBoundingClientRect())
-      : undefined,
+    transitionClasses: [transitionClass, "coda-native-detail"],
+    sourceRect:
+      diagnosticsVisible && source
+        ? rectSnapshot(source.getBoundingClientRect())
+        : undefined,
     sourceCount,
     destinationCount: 0,
-    sharedExpected: false,
+    sharedExpected: sourceCount > 0,
   });
-  try {
-    const transition = transitionDocument.startViewTransition.call(
-      transitionDocument,
-      () => {
-        return commitUpdate(true);
-      },
+  const finalize = () => {
+    if (latestTransitionId !== transitionId) return;
+    lifecycleActive = false;
+    activeTransition = undefined;
+    releaseSourceSuppression?.();
+    if (releaseActiveSourceSuppression === releaseSourceSuppression) {
+      releaseActiveSourceSuppression = undefined;
+    }
+    clearTransitionClasses();
+  };
+  const startNativeTransition = (): Promise<void> => {
+    if (latestTransitionId !== transitionId) return Promise.resolve();
+    document.documentElement.classList.add(
+      "coda-view-transitions-supported",
+      "coda-view-transitioning",
+      transitionClass,
     );
-    if (latestTransitionId === transitionId) {
-      activeTransition = { id: transitionId, transition };
-    } else {
-      transition.skipTransition?.();
+    try {
+      const transition = transitionDocument.startViewTransition.call(
+        transitionDocument,
+        () => {
+          return commitUpdate(true);
+        },
+      );
+      if (latestTransitionId === transitionId) {
+        activeTransition = { id: transitionId, transition };
+      } else {
+        transition.skipTransition?.();
+      }
+      const lifecycle = [
+        transition.finished.catch(handleTransitionFailure),
+        transition.ready?.then(() => {
+          if (failed) return;
+          const readyAt = performance.now();
+          const compositing =
+            enforceDocumentViewTransitionCompositing(transitionNames);
+          if (!compositing.safe) {
+            bypassReason = "unsafe-compositor";
+            transition.skipTransition?.();
+          }
+          updateMotionDiagnostic(diagnosticId, {
+            phaseTimings: {
+              compositorMs: performance.now() - readyAt,
+              readyMs: readyAt - coordinatorStartedAt,
+            },
+            sharedPaired:
+              sourceCount === 1 && destinationCount === 1 && compositing.safe,
+          });
+          try {
+            const pseudo = inspectMotionPseudoLayers(transitionNames);
+            updateMotionDiagnostic(diagnosticId, {
+              actualDurationMs: pseudo.actualDurationMs,
+              pseudoLayers: pseudo.layers,
+            });
+          } catch {
+            // Development diagnostics must never reject committed navigation.
+          }
+        }, handleTransitionFailure),
+        transition.updateCallbackDone?.catch(handleTransitionFailure),
+      ].filter((promise): promise is Promise<void> => Boolean(promise));
+      return Promise.all(lifecycle)
+        .then(() => {
+          if (!failed) {
+            finishMotionDiagnostic(
+              diagnosticId,
+              bypassReason ? "bypassed" : "finished",
+              bypassReason,
+            );
+          }
+        })
+        .finally(finalize);
+    } catch (cause) {
+      if (latestTransitionId === transitionId) {
+        return handleTransitionFailure(cause).finally(finalize);
+      }
+      finalize();
+      return Promise.resolve();
     }
-    const lifecycle = [
-      transition.finished.then(
-        () => finishMotionDiagnostic(diagnosticId, "finished"),
-        handleTransitionFailure,
-      ),
-      transition.ready?.then(() => {
-        const pseudo = inspectMotionPseudoLayers(transitionNames);
-        updateMotionDiagnostic(diagnosticId, {
-          actualDurationMs: pseudo.actualDurationMs,
-          pseudoLayers: pseudo.layers,
-        });
-      }, handleTransitionFailure),
-      transition.updateCallbackDone?.then(undefined, handleTransitionFailure),
-    ].filter((promise): promise is Promise<void> => Boolean(promise));
-    return Promise.all(lifecycle)
-      .then(() => undefined)
-      .finally(() => {
-        if (latestTransitionId !== transitionId) return;
-        lifecycleActive = false;
-        activeTransition = undefined;
-        releaseSourceSuppression?.();
-        if (releaseActiveSourceSuppression === releaseSourceSuppression) {
-          releaseActiveSourceSuppression = undefined;
-        }
-        clearTransitionClasses();
-      });
-  } catch {
-    if (latestTransitionId === transitionId) {
-      handleTransitionFailure();
-    }
-    return Promise.resolve();
-  }
+  };
+  const activation = getMotionDiagnostic();
+  const sourceFeedback =
+    activation?.id === diagnosticId && activation.inputType
+      ? beginSharedSourceFeedback(source)
+      : undefined;
+  if (!sourceFeedback) return startNativeTransition();
+  updateMotionDiagnostic(diagnosticId, {
+    phaseTimings: {
+      sourceFeedbackMs: performance.now() - coordinatorStartedAt,
+    },
+  });
+  void sourceFeedback.painted.then(() => {
+    updateMotionDiagnostic(diagnosticId, {
+      phaseTimings: {
+        sourceFeedbackPaintMs: performance.now() - coordinatorStartedAt,
+      },
+    });
+  });
+  return sourceFeedback.readyToCapture
+    .then(startNativeTransition)
+    .finally(sourceFeedback.cancel);
 }

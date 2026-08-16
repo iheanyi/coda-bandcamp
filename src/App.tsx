@@ -383,6 +383,7 @@ export default function App() {
           ) : undefined,
           outlet: <Outlet />,
           libraryPaneRef,
+          transitionKey: routeDestination.locationKey,
         }}
         queue={{
           open: queueOpen,

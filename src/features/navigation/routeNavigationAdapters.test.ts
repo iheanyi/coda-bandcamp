@@ -102,6 +102,41 @@ describe("route navigation adapters", () => {
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
 
+  it("does not hold a rendered destination on post-render router work", async () => {
+    let onRendered:
+      | ((
+          event: Readonly<{ toLocation: { state: { __TSR_key: string } } }>,
+        ) => void)
+      | undefined;
+    adapterMocks.router.subscribe.mockImplementation(
+      (_event: string, listener: typeof onRendered) => {
+        onRendered = listener;
+        return vi.fn();
+      },
+    );
+    let finishRouterWork = () => {};
+    const navigate = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishRouterWork = resolve;
+        }),
+    );
+    let settled = false;
+
+    const navigation = awaitRouterNavigationAfterRender(
+      adapterMocks.router as never,
+      navigate,
+    ).then(() => {
+      settled = true;
+    });
+
+    onRendered?.({ toLocation: { state: { __TSR_key: "entry-3" } } });
+    await navigation;
+
+    expect(settled).toBe(true);
+    finishRouterWork();
+  });
+
   it("settles browser Back only after a different history entry renders", async () => {
     let onRendered:
       | ((
@@ -132,6 +167,56 @@ describe("route navigation adapters", () => {
     await back;
     expect(settled).toBe(true);
     expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it("coalesces repeated browser Back requests for the same router", async () => {
+    let onRendered:
+      | ((
+          event: Readonly<{ toLocation: { state: { __TSR_key: string } } }>,
+        ) => void)
+      | undefined;
+    adapterMocks.router.subscribe.mockImplementation(
+      (_event: string, listener: typeof onRendered) => {
+        onRendered = listener;
+        return vi.fn();
+      },
+    );
+
+    const first = awaitRouterBackAfterRender(adapterMocks.router as never);
+    const second = awaitRouterBackAfterRender(adapterMocks.router as never);
+
+    expect(second).toBe(first);
+    expect(adapterMocks.router.history.back).toHaveBeenCalledOnce();
+
+    onRendered?.({ toLocation: { state: { __TSR_key: "entry-1" } } });
+    await Promise.all([first, second]);
+  });
+
+  it("clears a failed browser Back request so navigation can recover", async () => {
+    const failure = new Error("history unavailable");
+    const unsubscribe = vi.fn();
+    adapterMocks.router.subscribe.mockImplementation(
+      (_event: string, listener: typeof adapterMocks.onRendered) => {
+        adapterMocks.onRendered = listener;
+        return unsubscribe;
+      },
+    );
+    adapterMocks.router.history.back.mockImplementationOnce(() => {
+      throw failure;
+    });
+
+    await expect(
+      awaitRouterBackAfterRender(adapterMocks.router as never),
+    ).rejects.toBe(failure);
+    expect(unsubscribe).toHaveBeenCalledOnce();
+
+    const recovered = awaitRouterBackAfterRender(adapterMocks.router as never);
+    adapterMocks.onRendered?.({
+      toLocation: { state: { __TSR_key: "entry-1" } },
+    });
+    await recovered;
+
+    expect(adapterMocks.router.history.back).toHaveBeenCalledTimes(2);
   });
 
   it("provides the existing Playlist context with typed, transition-free commits", async () => {

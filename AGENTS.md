@@ -135,6 +135,16 @@ changes and Rust rebuilds for native changes. Use `npm run web:dev` only for
 renderer work that does not require native commands; browser-only testing is not
 a substitute for checking the desktop app.
 
+Development builds include the unified TanStack Devtools with Router and Query
+inspectors. Open it from the middle-right hover target or with `Control+~`.
+Use the Router inspector to verify route matches, search state, loaders, and
+navigation timing. Use the Query inspector to verify cache keys, freshness,
+deduplication, invalidation, retries, and retained data. Inspect the real Tauri
+app when debugging product behavior. Devtools observations support diagnosis;
+they do not replace regression tests or desktop automation evidence. The Vite
+plugin strips Devtools from production builds, and the mini-player does not
+mount them.
+
 On Windows, PowerShell execution policy may block `npm.ps1`. Invoke `npm.cmd`
 instead, and quote executable or repository paths that contain spaces.
 

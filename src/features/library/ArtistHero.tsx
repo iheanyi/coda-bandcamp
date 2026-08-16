@@ -1,4 +1,4 @@
-import { ArrowLeft, ListPlus, Shuffle } from "lucide-react";
+import { ListPlus, Shuffle } from "lucide-react";
 import { memo } from "react";
 import { Button } from "@/components/ui/button";
 import { PlaybackIcon } from "@/components/ui/playback-icon";
@@ -12,7 +12,6 @@ import type { ArtistGroup } from "@/libraryBrowse";
 export type ArtistHeroProps = {
   group: ArtistGroup;
   loading?: "play" | "shuffle" | "queue";
-  onBack: () => void;
   onPlay: (group: ArtistGroup) => void;
   onShuffle: (group: ArtistGroup) => void;
   onQueue: (group: ArtistGroup) => void;
@@ -25,7 +24,6 @@ export type ArtistHeroProps = {
 export const ArtistHero = memo(function ArtistHero({
   group,
   loading,
-  onBack,
   onPlay,
   onShuffle,
   onQueue,
@@ -40,7 +38,6 @@ export const ArtistHero = memo(function ArtistHero({
         "relative -mt-2 mb-6 grid grid-cols-[7.5rem_minmax(0,1fr)] items-end gap-4 overflow-hidden rounded-lg border border-border bg-[radial-gradient(circle_at_88%_20%,rgba(221,101,73,0.13),transparent_38%),linear-gradient(135deg,#202426,#171a1c_72%)] p-4 select-none *:data-[slot=cover]:size-30 *:data-[slot=cover]:rounded-lg xl:grid-cols-[9.5rem_minmax(0,1fr)] xl:gap-6 xl:p-5 xl:*:data-[slot=cover]:size-38",
         className,
       )}
-      data-coda-artist-detail-surface=""
     >
       <CoverArt
         album={group.representative}
@@ -48,15 +45,6 @@ export const ArtistHero = memo(function ArtistHero({
         artistArtworkDetail={group.key}
       />
       <div className="relative z-1 min-w-0" data-coda-artist-metadata-detail="">
-        <Button
-          className="mb-3 -ml-1 h-auto gap-1 p-1 text-xs text-[#8b8f89] hover:bg-transparent hover:text-[#f0eee8] xl:mb-4"
-          onClick={onBack}
-          size="compact"
-          variant="text"
-        >
-          <ArrowLeft size={14} />
-          Back
-        </Button>
         <span className="mb-2.5 block text-xs font-bold tracking-widest text-coda-subtle-foreground uppercase">
           Artist
         </span>

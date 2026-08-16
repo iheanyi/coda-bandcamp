@@ -113,9 +113,7 @@ describe("Coda sidebar", () => {
       value: vi.fn(),
     });
     const onNavigate = vi.fn((request: AppSidebarNavigationRequest) => {
-      const transition = transitionCodaView(request.navigate, "page-forward", {
-        routerOwnedPage: true,
-      });
+      const transition = transitionCodaView(request.navigate, "page-forward");
       capturedClassName = document.documentElement.className;
       return transition;
     });

@@ -4,11 +4,31 @@ import { useCallback, useMemo } from "react";
 import type { DailyRouteNavigationAdapter } from "@/features/daily/DailyRouteNavigationContext";
 import type { RadioRouteNavigationAdapter } from "@/features/radio/RadioRouteNavigationContext";
 import type { PlaylistRouteNavigationAdapter } from "@/features/saved-library/playlistRouteNavigation";
+import {
+  getMotionDiagnostic,
+  type MotionPhaseTimings,
+  updateMotionDiagnostic,
+} from "@/motionDiagnostics";
 import type { CodaRouter } from "@/router";
 import {
   stringifyRadioSeriesIdParam,
   stringifyRadioShowIdParam,
 } from "@/routing/routeContracts";
+
+const backNavigationInFlight = new WeakMap<CodaRouter, Promise<void>>();
+
+function activeMotionDiagnosticId(): number | undefined {
+  const diagnostic = getMotionDiagnostic();
+  return diagnostic?.status === "active" ? diagnostic.id : undefined;
+}
+
+function recordRouterPhases(
+  diagnosticId: number | undefined,
+  phaseTimings: Partial<MotionPhaseTimings>,
+): void {
+  if (diagnosticId === undefined) return;
+  updateMotionDiagnostic(diagnosticId, { phaseTimings });
+}
 
 function renderedLocationKey(location: {
   href?: string;
@@ -20,24 +40,30 @@ function renderedLocationKey(location: {
 /**
  * TanStack navigation is allowed to load and commit asynchronously. Subscribe
  * before starting it so a View Transition update never resolves until React
- * has acknowledged rendering a different route entry.
+ * has acknowledged rendering a different route entry. The router's broader
+ * settlement promise can include post-render work and must not hold the visual
+ * transition after the destination DOM is available.
  */
 export function awaitRouterNavigationAfterRender(
   router: CodaRouter,
   navigate: () => void | Promise<void>,
 ): Promise<void> {
+  const navigationStartedAt = performance.now();
   const fromLocationKey = renderedLocationKey(router.state.location);
+  const diagnosticId = activeMotionDiagnosticId();
 
   return new Promise<void>((resolve, reject) => {
-    let navigationSettled = false;
     let rendered = false;
     let settled = false;
     let unsubscribe = () => {};
 
     const finish = () => {
-      if (settled || !navigationSettled || !rendered) return;
+      if (settled || !rendered) return;
       settled = true;
       unsubscribe();
+      recordRouterPhases(diagnosticId, {
+        routerReleaseMs: performance.now() - navigationStartedAt,
+      });
       resolve();
     };
     const fail = (cause: unknown) => {
@@ -49,6 +75,10 @@ export function awaitRouterNavigationAfterRender(
 
     unsubscribe = router.subscribe("onRendered", (event) => {
       if (renderedLocationKey(event.toLocation) === fromLocationKey) return;
+      if (rendered) return;
+      recordRouterPhases(diagnosticId, {
+        routerRenderMs: performance.now() - navigationStartedAt,
+      });
       rendered = true;
       finish();
     });
@@ -60,8 +90,9 @@ export function awaitRouterNavigationAfterRender(
       return;
     }
     Promise.resolve(navigation).then(() => {
-      navigationSettled = true;
-      finish();
+      recordRouterPhases(diagnosticId, {
+        routerNavigationMs: performance.now() - navigationStartedAt,
+      });
     }, fail);
   });
 }
@@ -72,24 +103,54 @@ export function awaitRouterNavigationAfterRender(
  * and scroll restoration all observe the destination DOM.
  */
 export function awaitRouterBackAfterRender(router: CodaRouter): Promise<void> {
+  const active = backNavigationInFlight.get(router);
+  if (active) return active;
+  const navigationStartedAt = performance.now();
   const fromLocationKey = renderedLocationKey(router.state.location);
+  const diagnosticId = activeMotionDiagnosticId();
 
-  return new Promise<void>((resolve) => {
+  const navigation = new Promise<void>((resolve, reject) => {
     let settled = false;
     let unsubscribe = () => {};
     const finish = () => {
       if (settled) return;
       settled = true;
       unsubscribe();
+      recordRouterPhases(diagnosticId, {
+        routerReleaseMs: performance.now() - navigationStartedAt,
+      });
       resolve();
+    };
+    const fail = (cause: unknown) => {
+      if (settled) return;
+      settled = true;
+      unsubscribe();
+      reject(cause);
     };
 
     unsubscribe = router.subscribe("onRendered", (event) => {
       const toLocationKey = renderedLocationKey(event.toLocation);
-      if (toLocationKey !== fromLocationKey) finish();
+      if (toLocationKey !== fromLocationKey) {
+        recordRouterPhases(diagnosticId, {
+          routerRenderMs: performance.now() - navigationStartedAt,
+        });
+        finish();
+      }
     });
-    router.history.back();
+    try {
+      router.history.back();
+    } catch (cause) {
+      fail(cause);
+    }
   });
+  backNavigationInFlight.set(router, navigation);
+  const clearInFlight = () => {
+    if (backNavigationInFlight.get(router) === navigation) {
+      backNavigationInFlight.delete(router);
+    }
+  };
+  void navigation.then(clearInFlight, clearInFlight);
+  return navigation;
 }
 
 /**

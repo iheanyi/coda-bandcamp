@@ -20,6 +20,7 @@ import * as m from "motion/react-m";
 import { Link } from "@tanstack/react-router";
 import {
   memo,
+  startTransition,
   type CSSProperties,
   type ReactNode,
   type RefObject,
@@ -167,6 +168,8 @@ function PresencePanel({
 }
 
 const UPCOMING_PREVIEW_LIMIT = 4;
+const RADIO_TIMELINE_INITIAL_LIMIT = 6;
+const RADIO_TIMELINE_BATCH_SIZE = 12;
 
 function useCurrentRadioIndex(
   playbackClock: PlaybackClock,
@@ -429,6 +432,20 @@ const NowPlayingRadioTimeline = memo(function NowPlayingRadioTimeline({
 }) {
   const currentIndex = useCurrentRadioIndex(playbackClock, timeline);
   const nextIndex = currentIndex + 1 < timeline.length ? currentIndex + 1 : -1;
+  const [renderedCount, setRenderedCount] = useState(() =>
+    Math.min(RADIO_TIMELINE_INITIAL_LIMIT, timeline.length),
+  );
+  useEffect(() => {
+    if (renderedCount >= timeline.length) return;
+    const timeout = window.setTimeout(() => {
+      startTransition(() => {
+        setRenderedCount((current) =>
+          Math.min(current + RADIO_TIMELINE_BATCH_SIZE, timeline.length),
+        );
+      });
+    }, 16);
+    return () => window.clearTimeout(timeout);
+  }, [renderedCount, timeline.length]);
 
   if (!timeline.length) return null;
 
@@ -459,8 +476,9 @@ const NowPlayingRadioTimeline = memo(function NowPlayingRadioTimeline({
       <ol
         className="relative m-0 grid max-h-[min(42vh,24rem)] scrollbar-thin [scrollbar-color:#3e4142_transparent] scrollbar-gutter-stable list-none gap-1 overflow-y-auto overscroll-contain rounded-lg bg-[rgba(13,15,17,0.66)] py-1.5 pr-2.5 pl-1.5"
         aria-label="Radio chapter timeline"
+        aria-busy={renderedCount < timeline.length || undefined}
       >
-        {timeline.map((chapter, index) => {
+        {timeline.slice(0, renderedCount).map((chapter, index) => {
           const isCurrent = index === currentIndex;
           const isNext = index === nextIndex;
           return (
@@ -581,6 +599,10 @@ function NowPlayingViewComponent({
 }: NowPlayingViewProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const [radioLinkError, setRadioLinkError] = useState("");
+  const [supplementalReady, setSupplementalReady] = useState(
+    () =>
+      !document.documentElement.classList.contains("coda-view-transitioning"),
+  );
   const safeDuration = Math.max(0, duration);
   const upcoming = queue.slice(
     currentIndex + 1,
@@ -613,6 +635,31 @@ function NowPlayingViewComponent({
   useEffect(() => {
     headingRef.current?.focus({ preventScroll: true });
   }, []);
+  useEffect(() => {
+    if (supplementalReady) return;
+    let frame = 0;
+    const reveal = () => {
+      if (
+        document.documentElement.classList.contains("coda-view-transitioning")
+      ) {
+        return;
+      }
+      observer.disconnect();
+      frame = requestAnimationFrame(() => {
+        startTransition(() => setSupplementalReady(true));
+      });
+    };
+    const observer = new MutationObserver(reveal);
+    observer.observe(document.documentElement, {
+      attributeFilter: ["class"],
+      attributes: true,
+    });
+    reveal();
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [supplementalReady]);
 
   return (
     <article
@@ -659,7 +706,10 @@ function NowPlayingViewComponent({
         </Badge>
       </header>
 
-      <div className="relative mx-auto grid w-full max-w-5xl grid-cols-[minmax(15rem,24rem)_minmax(17rem,1fr)] items-center gap-16 max-xl:max-w-xl max-xl:grid-cols-1 max-xl:gap-6">
+      <div
+        className="relative mx-auto grid w-full max-w-5xl grid-cols-[minmax(15rem,24rem)_minmax(17rem,1fr)] items-center gap-16 max-xl:max-w-xl max-xl:grid-cols-1 max-xl:gap-6"
+        data-coda-now-playing-detail-surface=""
+      >
         <div
           className="now-playing__artwork aspect-square w-full drop-shadow-[0_32px_44px_rgba(0,0,0,0.42)] **:data-[cover-size=large]:size-full **:data-[cover-size=large]:rounded-xl **:data-[cover-size=large]:border **:data-[cover-size=large]:border-white/10 **:data-[cover-size=large]:shadow-none max-xl:mx-auto max-xl:w-64 max-lg:w-52"
           data-coda-track-id={track.id}
@@ -926,220 +976,228 @@ function NowPlayingViewComponent({
         </section>
       </div>
 
-      <NowPlayingRadioTimeline
-        playbackClock={playbackClock}
-        timeline={radioTimeline}
-        playing={playing}
-        radioLinkError={radioLinkError}
-        onSeek={onSeek}
-        onOpen={openRadioChapter}
-        getLocalLinks={getRadioChapterLocalLinks}
-      />
+      {supplementalReady ? (
+        <>
+          <NowPlayingRadioTimeline
+            key={`${track.id}:${radioTimeline.length}`}
+            playbackClock={playbackClock}
+            timeline={radioTimeline}
+            playing={playing}
+            radioLinkError={radioLinkError}
+            onSeek={onSeek}
+            onOpen={openRadioChapter}
+            getLocalLinks={getRadioChapterLocalLinks}
+          />
 
-      <section
-        className="now-playing__up-next relative mx-auto mt-16 w-full max-w-5xl border-t border-white/8 pt-5 max-xl:max-w-xl max-lg:mt-8"
-        aria-labelledby="up-next-heading"
-      >
-        <div className="mb-3 flex items-end justify-between gap-5 max-lg:flex-col max-lg:items-start max-lg:gap-2">
-          <div>
-            <Badge
-              variant="artwork"
-              className="mb-1 h-auto border-0 bg-transparent p-0 text-xs tracking-widest uppercase"
-            >
-              {upcoming.length
-                ? "In this session"
-                : hasDeferredTracks
-                  ? "Shuffle loading"
-                  : "Queue complete"}
-            </Badge>
-            <h2
-              id="up-next-heading"
-              className="m-0 text-base/tight font-semibold tracking-tight text-[#dfddd7]"
-            >
-              {upcoming.length
-                ? "Up next"
-                : hasDeferredTracks
-                  ? "Filling your queue"
-                  : "Keep listening"}
-            </h2>
-          </div>
-        </div>
-        <div className="grid [&>*]:col-start-1 [&>*]:row-start-1">
-          <AnimatePresence initial={false}>
-            {upcoming.length ? (
-              <PresencePanel
-                key="upcoming"
-                className="grid grid-cols-2 gap-x-3 gap-y-0.5 max-xl:grid-cols-1"
-              >
-                {upcoming.map((item, index) => {
-                  const queueIndex = currentIndex + index + 1;
-                  return (
-                    <div
-                      className="grid h-auto min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-2.5 rounded-md px-2.5 py-2 text-left hover:bg-white/4"
-                      key={`${item.id}-${queueIndex}`}
-                    >
-                      <span className="text-xs font-normal text-[#686c67] tabular-nums">
-                        {String(queueIndex + 1).padStart(2, "0")}
-                      </span>
-                      <span className="flex min-w-0 flex-col gap-0.5 overflow-hidden">
-                        <Button
-                          aria-label={`Play ${item.title}`}
-                          className="h-auto min-w-0 justify-start overflow-hidden p-0 text-left hover:bg-transparent"
-                          onClick={() => onPlayQueueIndex(queueIndex)}
-                          size="compact"
-                          variant="text"
-                        >
-                          <OverflowMarquee
-                            className="text-xs/snug text-[#d4d3cd]"
-                            text={item.title}
-                          />
-                        </Button>
-                        <small className="flex min-w-0 items-center gap-1 truncate text-xs font-normal text-[#737772]">
-                          <TrackArtistLink
-                            className="min-w-0 truncate hover:text-primary"
-                            onNavigate={onArtist}
-                            onRadioSeries={onRadioSeries}
-                            track={item}
-                          >
-                            {item.artist}
-                          </TrackArtistLink>
-                          <span aria-hidden="true">·</span>
-                          <TrackAlbumLink
-                            className="min-w-0 truncate hover:text-primary"
-                            onNavigate={onAlbum}
-                            track={item}
-                          >
-                            {item.album}
-                          </TrackAlbumLink>
-                        </small>
-                      </span>
-                      <span className="text-xs font-normal text-[#686c67] tabular-nums">
-                        {formatTime(item.duration)}
-                      </span>
-                    </div>
-                  );
-                })}
-              </PresencePanel>
-            ) : hasDeferredTracks ? (
-              <PresencePanel
-                key="deferred"
-                className="flex min-h-20 items-center gap-3 rounded-lg border border-white/7 bg-white/2.5 p-4 text-xs text-[#747873]"
-              >
-                <Spinner aria-hidden="true" className="size-4" />
-                <span>Coda is loading the next part of this shuffle.</span>
-              </PresencePanel>
-            ) : recommendation ? (
-              <PresencePanel
-                key={`recommendation:${recommendation.album.id}`}
-                className="grid min-h-20 grid-cols-[3.5rem_minmax(0,1fr)_auto] items-center gap-3.5 rounded-lg border border-white/7 bg-[radial-gradient(circle_at_0_0,rgba(221,101,73,0.1),transparent_42%),rgba(255,255,255,0.025)] p-3 max-lg:grid-cols-[3rem_minmax(0,1fr)]"
-              >
-                <LibraryAlbumLink
-                  album={recommendation.album}
-                  ariaLabel={`Open ${recommendation.album.title}`}
-                  className="size-14 overflow-hidden rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring **:data-[slot=cover]:size-full max-lg:size-12"
-                  onNavigate={onRecommendationAlbum}
+          <section
+            className="now-playing__up-next relative mx-auto mt-16 w-full max-w-5xl border-t border-white/8 pt-5 max-xl:max-w-xl max-lg:mt-8"
+            aria-labelledby="up-next-heading"
+          >
+            <div className="mb-3 flex items-end justify-between gap-5 max-lg:flex-col max-lg:items-start max-lg:gap-2">
+              <div>
+                <Badge
+                  variant="artwork"
+                  className="mb-1 h-auto border-0 bg-transparent p-0 text-xs tracking-widest uppercase"
                 >
-                  {recommendationArtwork}
-                </LibraryAlbumLink>
-                <div className="flex min-w-0 flex-col overflow-hidden">
-                  <span className="text-xs font-bold tracking-widest text-[#d37e68] uppercase">
-                    Picked from your collection
-                  </span>
-                  <LibraryAlbumLink
-                    album={recommendation.album}
-                    className="mt-1 min-w-0 overflow-hidden text-sm text-[#e2e0da] hover:text-primary"
-                    onNavigate={onRecommendationAlbum}
+                  {upcoming.length
+                    ? "In this session"
+                    : hasDeferredTracks
+                      ? "Shuffle loading"
+                      : "Queue complete"}
+                </Badge>
+                <h2
+                  id="up-next-heading"
+                  className="m-0 text-base/tight font-semibold tracking-tight text-[#dfddd7]"
+                >
+                  {upcoming.length
+                    ? "Up next"
+                    : hasDeferredTracks
+                      ? "Filling your queue"
+                      : "Keep listening"}
+                </h2>
+              </div>
+            </div>
+            <div className="grid [&>*]:col-start-1 [&>*]:row-start-1">
+              <AnimatePresence initial={false}>
+                {upcoming.length ? (
+                  <PresencePanel
+                    key="upcoming"
+                    className="grid grid-cols-2 gap-x-3 gap-y-0.5 max-xl:grid-cols-1"
                   >
-                    <OverflowMarquee text={recommendation.album.title} />
-                  </LibraryAlbumLink>
-                  <small className="mt-1 truncate text-xs text-coda-subtle-foreground">
-                    <LibraryArtistLink
-                      artist={recommendation.album.artist}
-                      className="font-semibold hover:text-primary"
-                      onNavigate={onArtist}
+                    {upcoming.map((item, index) => {
+                      const queueIndex = currentIndex + index + 1;
+                      return (
+                        <div
+                          className="grid h-auto min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-2.5 rounded-md px-2.5 py-2 text-left hover:bg-white/4"
+                          key={`${item.id}-${queueIndex}`}
+                        >
+                          <span className="text-xs font-normal text-[#686c67] tabular-nums">
+                            {String(queueIndex + 1).padStart(2, "0")}
+                          </span>
+                          <span className="flex min-w-0 flex-col gap-0.5 overflow-hidden">
+                            <Button
+                              aria-label={`Play ${item.title}`}
+                              className="h-auto min-w-0 justify-start overflow-hidden p-0 text-left hover:bg-transparent"
+                              onClick={() => onPlayQueueIndex(queueIndex)}
+                              size="compact"
+                              variant="text"
+                            >
+                              <OverflowMarquee
+                                className="text-xs/snug text-[#d4d3cd]"
+                                text={item.title}
+                              />
+                            </Button>
+                            <small className="flex min-w-0 items-center gap-1 truncate text-xs font-normal text-[#737772]">
+                              <TrackArtistLink
+                                className="min-w-0 truncate hover:text-primary"
+                                onNavigate={onArtist}
+                                onRadioSeries={onRadioSeries}
+                                track={item}
+                              >
+                                {item.artist}
+                              </TrackArtistLink>
+                              <span aria-hidden="true">·</span>
+                              <TrackAlbumLink
+                                className="min-w-0 truncate hover:text-primary"
+                                onNavigate={onAlbum}
+                                track={item}
+                              >
+                                {item.album}
+                              </TrackAlbumLink>
+                            </small>
+                          </span>
+                          <span className="text-xs font-normal text-[#686c67] tabular-nums">
+                            {formatTime(item.duration)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </PresencePanel>
+                ) : hasDeferredTracks ? (
+                  <PresencePanel
+                    key="deferred"
+                    className="flex min-h-20 items-center gap-3 rounded-lg border border-white/7 bg-white/2.5 p-4 text-xs text-[#747873]"
+                  >
+                    <Spinner aria-hidden="true" className="size-4" />
+                    <span>Coda is loading the next part of this shuffle.</span>
+                  </PresencePanel>
+                ) : recommendation ? (
+                  <PresencePanel
+                    key={`recommendation:${recommendation.album.id}`}
+                    className="grid min-h-20 grid-cols-[3.5rem_minmax(0,1fr)_auto] items-center gap-3.5 rounded-lg border border-white/7 bg-[radial-gradient(circle_at_0_0,rgba(221,101,73,0.1),transparent_42%),rgba(255,255,255,0.025)] p-3 max-lg:grid-cols-[3rem_minmax(0,1fr)]"
+                  >
+                    <LibraryAlbumLink
+                      album={recommendation.album}
+                      ariaLabel={`Open ${recommendation.album.title}`}
+                      className="size-14 overflow-hidden rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring **:data-[slot=cover]:size-full max-lg:size-12"
+                      onNavigate={onRecommendationAlbum}
                     >
-                      {recommendation.album.artist}
-                    </LibraryArtistLink>
-                    {" · "}
-                    {recommendation.reason}
-                  </small>
-                </div>
-                <div className="flex items-center gap-2 max-lg:col-span-full">
-                  {onQueueRecommendation ? (
-                    <Button
-                      variant="primary"
-                      size="compact"
-                      className="h-8 px-2.5"
-                      onClick={onQueueRecommendation}
-                      disabled={
-                        recommendationLoading || recommendationQueueLoading
-                      }
-                      aria-label={`Add ${recommendation.album.title} to queue`}
-                    >
-                      {recommendationQueueLoading ? (
-                        <Spinner
-                          aria-hidden="true"
-                          className="size-4 text-current motion-reduce:animate-none"
-                        />
-                      ) : (
-                        <ListPlus size={15} />
-                      )}
-                      {recommendationQueueLoading ? "Adding…" : "Add to queue"}
-                    </Button>
-                  ) : null}
-                  <Button
-                    size="compact"
-                    className="h-8 px-2.5"
-                    onClick={onPlayRecommendation}
-                    disabled={
-                      recommendationLoading || recommendationQueueLoading
-                    }
-                    aria-label={`Play something from ${recommendation.album.title}`}
+                      {recommendationArtwork}
+                    </LibraryAlbumLink>
+                    <div className="flex min-w-0 flex-col overflow-hidden">
+                      <span className="text-xs font-bold tracking-widest text-[#d37e68] uppercase">
+                        Picked from your collection
+                      </span>
+                      <LibraryAlbumLink
+                        album={recommendation.album}
+                        className="mt-1 min-w-0 overflow-hidden text-sm text-[#e2e0da] hover:text-primary"
+                        onNavigate={onRecommendationAlbum}
+                      >
+                        <OverflowMarquee text={recommendation.album.title} />
+                      </LibraryAlbumLink>
+                      <small className="mt-1 truncate text-xs text-coda-subtle-foreground">
+                        <LibraryArtistLink
+                          artist={recommendation.album.artist}
+                          className="font-semibold hover:text-primary"
+                          onNavigate={onArtist}
+                        >
+                          {recommendation.album.artist}
+                        </LibraryArtistLink>
+                        {" · "}
+                        {recommendation.reason}
+                      </small>
+                    </div>
+                    <div className="flex items-center gap-2 max-lg:col-span-full">
+                      {onQueueRecommendation ? (
+                        <Button
+                          variant="primary"
+                          size="compact"
+                          className="h-8 px-2.5"
+                          onClick={onQueueRecommendation}
+                          disabled={
+                            recommendationLoading || recommendationQueueLoading
+                          }
+                          aria-label={`Add ${recommendation.album.title} to queue`}
+                        >
+                          {recommendationQueueLoading ? (
+                            <Spinner
+                              aria-hidden="true"
+                              className="size-4 text-current motion-reduce:animate-none"
+                            />
+                          ) : (
+                            <ListPlus size={15} />
+                          )}
+                          {recommendationQueueLoading
+                            ? "Adding…"
+                            : "Add to queue"}
+                        </Button>
+                      ) : null}
+                      <Button
+                        size="compact"
+                        className="h-8 px-2.5"
+                        onClick={onPlayRecommendation}
+                        disabled={
+                          recommendationLoading || recommendationQueueLoading
+                        }
+                        aria-label={`Play something from ${recommendation.album.title}`}
+                      >
+                        {recommendationLoading ? (
+                          <Spinner
+                            aria-hidden="true"
+                            className="size-4 text-current motion-reduce:animate-none"
+                          />
+                        ) : (
+                          <Play size={15} fill="currentColor" />
+                        )}
+                        {recommendationLoading ? "Picking…" : "Play something"}
+                      </Button>
+                      <Button
+                        size="compact"
+                        className="h-8 px-2.5"
+                        onClick={onAnotherRecommendation}
+                        disabled={
+                          recommendationLoading || recommendationQueueLoading
+                        }
+                      >
+                        <Dices size={15} />
+                        Another pick
+                      </Button>
+                    </div>
+                  </PresencePanel>
+                ) : (
+                  <PresencePanel
+                    key="empty"
+                    className="flex flex-col items-start gap-1 rounded-lg bg-white/2.5 p-4 text-xs text-[#747873]"
                   >
-                    {recommendationLoading ? (
-                      <Spinner
-                        aria-hidden="true"
-                        className="size-4 text-current motion-reduce:animate-none"
-                      />
-                    ) : (
-                      <Play size={15} fill="currentColor" />
-                    )}
-                    {recommendationLoading ? "Picking…" : "Play something"}
-                  </Button>
-                  <Button
-                    size="compact"
-                    className="h-8 px-2.5"
-                    onClick={onAnotherRecommendation}
-                    disabled={
-                      recommendationLoading || recommendationQueueLoading
-                    }
-                  >
-                    <Dices size={15} />
-                    Another pick
-                  </Button>
-                </div>
-              </PresencePanel>
-            ) : (
-              <PresencePanel
-                key="empty"
-                className="flex flex-col items-start gap-1 rounded-lg bg-white/2.5 p-4 text-xs text-[#747873]"
-              >
-                <strong className="text-xs text-[#c9c8c2]">
-                  You reached the end.
-                </strong>
-                <span className="text-xs text-[#717570]">
-                  Open the queue or browse your collection to keep listening.
-                </span>
-              </PresencePanel>
-            )}
-          </AnimatePresence>
-        </div>
-        {moreUpcoming ? (
-          <span className="mt-2 block text-right text-xs text-[#747873]">
-            {moreUpcoming} more in the full queue
-          </span>
-        ) : null}
-      </section>
+                    <strong className="text-xs text-[#c9c8c2]">
+                      You reached the end.
+                    </strong>
+                    <span className="text-xs text-[#717570]">
+                      Open the queue or browse your collection to keep
+                      listening.
+                    </span>
+                  </PresencePanel>
+                )}
+              </AnimatePresence>
+            </div>
+            {moreUpcoming ? (
+              <span className="mt-2 block text-right text-xs text-[#747873]">
+                {moreUpcoming} more in the full queue
+              </span>
+            ) : null}
+          </section>
+        </>
+      ) : null}
     </article>
   );
 }

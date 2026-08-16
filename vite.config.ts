@@ -1,6 +1,7 @@
 import { configDefaults, defineConfig } from "vitest/config";
 import { fileURLToPath, URL } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
+import { devtools } from "@tanstack/devtools-vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 
@@ -26,6 +27,7 @@ export default defineConfig(({ mode }) => {
       "import.meta.env.VITE_CODA_UPDATER_ENABLED": JSON.stringify(updaterEnabled),
     },
     plugins: [
+      devtools(),
       tanstackRouter({
         target: "react",
         autoCodeSplitting: true,

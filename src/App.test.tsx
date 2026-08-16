@@ -1213,7 +1213,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       queryClient.removeQueries({ queryKey: albumQueryKey(longAlbum.id) });
       fireEvent.click(albumControl);
 
-      const pendingControl = within(player).getByRole("link", {
+      const pendingControl = await within(player).findByRole("link", {
         name: `Loading album ${longAlbumTitle}`,
       });
       expect(pendingControl).toHaveAttribute("aria-disabled", "true");
@@ -2612,7 +2612,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     ).not.toBeInTheDocument();
   });
 
-  it("navigates from Now Playing to Bandcamp Radio without sharing mismatched artwork", async () => {
+  it("navigates from Now Playing to Radio without snapshotting mismatched artwork", async () => {
     mocks.hasConnection.mockResolvedValue(false);
     mocks.fetchRadioShow.mockResolvedValue({
       id: 979,
@@ -2668,20 +2668,8 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       document,
       "startViewTransition",
     );
-    const transitionSnapshots: Array<{
-      className: string;
-      radioArtworkSources: number;
-    }> = [];
     const startViewTransition = vi.fn((update: () => void | Promise<void>) => {
-      const radioArtworkSources = document.querySelectorAll(
-        "[data-coda-radio-artwork-source]",
-      ).length;
-      const finished = Promise.resolve(update()).then(() => {
-        transitionSnapshots.push({
-          className: document.documentElement.className,
-          radioArtworkSources,
-        });
-      });
+      const finished = Promise.resolve(update());
       return { finished };
     });
     Object.defineProperty(document, "startViewTransition", {
@@ -2694,17 +2682,13 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
         name: "Bandcamp Radio",
       }));
 
-      expect(startViewTransition).toHaveBeenCalledOnce();
       const radioNavigation = await screen.findByRole("navigation", {
         name: "Bandcamp Radio shows",
       });
       expect(within(radioNavigation).getByRole("link", {
         name: "All shows",
       })).toHaveAttribute("aria-current", "page");
-      await waitFor(() => expect(transitionSnapshots).toEqual([{
-        className: expect.stringContaining("coda-transition--page-forward"),
-        radioArtworkSources: 0,
-      }]));
+      expect(startViewTransition).not.toHaveBeenCalled();
       await waitFor(() =>
         expect(mocks.fetchRadioShows).toHaveBeenCalledWith({
           cursor: undefined,
@@ -3217,7 +3201,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     expect(within(albumPage).getByText("Other Light")).toBeInTheDocument();
   });
 
-  it("morphs cold album artwork while its tracks hydrate in place", async () => {
+  it("opens a cold album shell while its tracks hydrate without a snapshot", async () => {
     const request = deferred<Track[]>();
     let requestSettled = false;
     mocks.hasConnection.mockResolvedValue(true);
@@ -3227,23 +3211,10 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       document,
       "startViewTransition",
     );
-    const snapshots: Array<{ source: number; destination: number }> = [];
-    const startViewTransition = vi.fn(
-      (update: () => void | Promise<void>) => {
-        const source = document.querySelectorAll(
-          ".coda-album-artwork-source",
-        ).length;
-        const updateCallbackDone = Promise.resolve(update()).then(() => {
-          snapshots.push({
-            source,
-            destination: document.querySelectorAll(
-              ".album-detail__artwork [data-slot='cover']",
-            ).length,
-          });
-        });
-        return { finished: updateCallbackDone, updateCallbackDone };
-      },
-    );
+    const startViewTransition = vi.fn((update: () => void | Promise<void>) => {
+      const updateCallbackDone = Promise.resolve(update());
+      return { finished: updateCallbackDone, updateCallbackDone };
+    });
     Object.defineProperty(document, "startViewTransition", {
       configurable: true,
       value: startViewTransition,
@@ -3254,6 +3225,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
 
       await screen.findByText("Soft Focus");
       fireEvent.click(screen.getByRole("link", { name: "Open Soft Focus" }));
+      expect(document.documentElement).toHaveClass(
+        "coda-transition--page-forward",
+      );
 
       const albumPage = await screen.findByRole("article", {
         name: "Soft Focus release details",
@@ -3261,8 +3235,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       const trackList = within(albumPage).getByRole("region", {
         name: "Track list",
       });
-      expect(startViewTransition).toHaveBeenCalledOnce();
-      expect(snapshots).toEqual([{ source: 1, destination: 1 }]);
+      expect(startViewTransition).not.toHaveBeenCalled();
       expect(screen.getAllByRole("status")).toHaveLength(1);
       expect(within(albumPage).getByRole("status", {
         name: "Loading album tracks",
@@ -3354,6 +3327,11 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
     const albumPage = await screen.findByRole("article", {
       name: "Soft Focus release details",
     });
+    expect(
+      albumPage.querySelector("[data-coda-album-detail-surface]"),
+    ).not.toContainElement(
+      within(albumPage).getByRole("button", { name: "Back" }),
+    );
     expect(libraryPane.scrollTop).toBe(0);
 
     const originalDescriptor = Object.getOwnPropertyDescriptor(
@@ -3726,6 +3704,9 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       const artistHeading = await screen.findByRole("heading", {
         name: "Night Archive",
       });
+      expect(
+        artistHeading.closest("[data-coda-artist-detail-surface]"),
+      ).not.toContainElement(screen.getByRole("button", { name: "Back" }));
       expect(startViewTransition).toHaveBeenCalledOnce();
       expect(snapshots).toEqual([{
         className: expect.stringContaining(
@@ -5160,11 +5141,8 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       document,
       "startViewTransition",
     );
-    const transitionClasses: string[] = [];
     const startViewTransition = vi.fn((update: () => void | Promise<void>) => {
-      const finished = Promise.resolve(update()).then(() => {
-        transitionClasses.push(document.documentElement.className);
-      });
+      const finished = Promise.resolve(update());
       return { finished };
     });
     Object.defineProperty(document, "startViewTransition", {
@@ -5181,7 +5159,6 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       "Music favorites sync through Bandcamp’s Subsonic service, separate from the Bandcamp website. Track listings can lag, so Coda confirms them as albums load and on Refresh. Radio shows stay on this device.",
       );
       startViewTransition.mockClear();
-      transitionClasses.length = 0;
 
       fireEvent.click(screen.getByRole("link", {
         name: "Open The Coda Broadcast details",
@@ -5190,10 +5167,7 @@ describe("Coda application flows", { timeout: 10_000 }, () => {
       expect(await screen.findByRole("heading", {
         name: "Songs in this show",
       })).toBeInTheDocument();
-      expect(startViewTransition).toHaveBeenCalledOnce();
-      await waitFor(() => expect(transitionClasses).toEqual([
-        expect.stringContaining("coda-transition--page-forward"),
-      ]));
+      expect(startViewTransition).not.toHaveBeenCalled();
     } finally {
       if (originalDescriptor) {
         Object.defineProperty(

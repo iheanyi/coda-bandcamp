@@ -61,6 +61,7 @@ beforeEach(() => {
     configurable: true,
     value: {},
   });
+  document.documentElement.classList.remove("coda-view-transitioning");
   clearCoverArtRendererState();
   mocks.convertFileSrc.mockClear();
   mocks.invoke.mockClear().mockResolvedValue(undefined);
@@ -115,10 +116,7 @@ describe("CoverArt", () => {
     first.unmount();
 
     render(
-      <CoverArt
-        album={album({ coverArt: "animated-cover" })}
-        animateChanges
-      />,
+      <CoverArt album={album({ coverArt: "animated-cover" })} animateChanges />,
     );
 
     expect(coverImage()).toHaveAttribute("decoding", "sync");
@@ -129,6 +127,38 @@ describe("CoverArt", () => {
 
     expect(coverImage()).not.toHaveAttribute("data-cover-art-pending");
     expect(coverImage()).toHaveAttribute("data-cover-art-reveal");
+  });
+
+  it("keeps shared-transition artwork paintable without a local reveal", () => {
+    document.documentElement.classList.add("coda-view-transitioning");
+
+    render(
+      <CoverArt
+        album={album({ coverArt: "transition-cover" })}
+        albumArtworkDetail="album-1"
+      />,
+    );
+
+    expect(coverImage()).not.toHaveAttribute("data-cover-art-pending");
+    fireEvent.load(coverImage());
+    expect(coverImage()).not.toHaveAttribute("data-cover-art-reveal");
+  });
+
+  it("settles a local reveal when a native transition cancels its animation", () => {
+    render(
+      <CoverArt
+        album={album({ coverArt: "cancelled-reveal-cover" })}
+        animateChanges
+      />,
+    );
+    fireEvent.load(coverImage());
+    expect(coverImage()).toHaveAttribute("data-cover-art-reveal");
+
+    document.documentElement.classList.add("coda-view-transitioning");
+    fireEvent(coverImage(), new Event("animationcancel", { bubbles: true }));
+    document.documentElement.classList.remove("coda-view-transitioning");
+
+    expect(coverImage()).not.toHaveAttribute("data-cover-art-reveal");
   });
 
   it("updates the source revision after native content changes", async () => {

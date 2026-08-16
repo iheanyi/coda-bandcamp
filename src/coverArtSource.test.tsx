@@ -55,6 +55,24 @@ describe("coverArtSource", () => {
       /^coda-cover:\/v1\/600\/ca%3Acover%2F1\?v=0&s=[a-f0-9]{32}$/,
     );
     expect(mocks.convertFileSrc).toHaveBeenCalledWith("", "coda-cover");
+    expect(first).toContain(
+      `s=${sessionStorage.getItem("coda.cover-art.scope.v1")}`,
+    );
+  });
+
+  it("persists only safe local paint fingerprints across renderer reloads", async () => {
+    const localSource = coverArtSource("warm-cover");
+    if (!localSource) throw new Error("Expected a local cover source.");
+
+    rememberPaintedCoverSource(localSource);
+    rememberPaintedCoverSource(
+      "https://t4.bcbits.com/stream/signed-sensitive-cover.jpg",
+    );
+    await Promise.resolve();
+
+    const stored = sessionStorage.getItem("coda.cover-art.painted.v1");
+    expect(stored).toMatch(/^\["[a-f0-9]{8}"\]$/);
+    expect(stored).not.toContain("signed-sensitive-cover");
   });
 
   it("uses the Windows localhost origin without encoding the logical route", () => {
@@ -102,6 +120,12 @@ describe("coverArtSource", () => {
     expect(coverTwo.result.current).toMatch(
       /^coda-cover:\/v1\/600\/cover-2\?v=0&s=[a-f0-9]{32}$/,
     );
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    expect(
+      JSON.parse(
+        sessionStorage.getItem("coda.cover-art.revisions.v1") ?? "null",
+      ),
+    ).toEqual([["cover-1", "updated_1"]]);
   });
 
   it("invalidates one native entry and advances its cache-busting source", async () => {
@@ -138,5 +162,30 @@ describe("coverArtSource", () => {
     );
     expect(source.result.current).not.toBe(initial);
     expect(hasPaintedCoverSource(initial)).toBe(false);
+    expect(source.result.current).toContain(
+      `s=${sessionStorage.getItem("coda.cover-art.scope.v1")}`,
+    );
+    expect(
+      sessionStorage.getItem("coda.cover-art.revisions.v1"),
+    ).toBeNull();
+  });
+
+  it("restores the latest native revision after a renderer module reload", async () => {
+    renderHook(() => useCoverArtSource("cover-1"));
+    act(() => {
+      for (const handler of mocks.eventHandlers) {
+        handler({ payload: { coverArtId: "cover-1", revision: "latest_2" } });
+      }
+    });
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    const scope = sessionStorage.getItem("coda.cover-art.scope.v1");
+
+    vi.resetModules();
+    const reloaded = await import("./coverArtSource");
+
+    expect(reloaded.coverArtSource("cover-1")).toBe(
+      `coda-cover:/v1/600/cover-1?v=latest_2&s=${scope}`,
+    );
+    reloaded.clearCoverArtRendererState();
   });
 });

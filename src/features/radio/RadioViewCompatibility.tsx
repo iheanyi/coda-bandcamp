@@ -210,6 +210,7 @@ export function RadioViewCompatibility({
         showId={showId}
         onBack={closeShow}
         onBrowseSeries={browseSeriesFromShow}
+        preferredSummaryScope={seriesId ?? "all"}
       />
     );
   }

@@ -1,6 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { RadioShow, RadioShowsPage } from "@/types";
+import type { RadioShow, RadioShowSummary, RadioShowsPage } from "@/types";
 
 const mocks = vi.hoisted(() => ({
   fetchRadioShow: vi.fn(),
@@ -17,6 +17,7 @@ vi.mock("@/lib", async (importOriginal) => {
 });
 
 import {
+  findRadioShowSummaryInCache,
   radioShowQueryOptions,
   radioShowsInfiniteQueryOptions,
 } from "./radioQueries";
@@ -36,6 +37,13 @@ const show: RadioShow = {
   streamUrl: "https://bandcamp.com/signed-stream",
   chapters: [],
 };
+
+function archiveData(summary: RadioShowSummary) {
+  return {
+    pages: [{ ...page, results: [summary] }],
+    pageParams: [null],
+  };
+}
 
 beforeEach(() => {
   mocks.fetchRadioShows.mockReset().mockResolvedValue(page);
@@ -95,5 +103,95 @@ describe("Radio query options", () => {
     expect(options.gcTime).toBeUndefined();
     expect(await queryClient.fetchQuery(options)).toEqual(show);
     expect(mocks.fetchRadioShow).toHaveBeenCalledWith(979);
+  });
+
+  it("resolves a stripped archive summary without creating another cache", () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    queryClient.setQueryData(["bandcamp-radio", "all"], {
+      pages: [
+        {
+          ...page,
+          results: [
+            {
+              ...show,
+              artworkUrl: "https://f4.bcbits.com/img/radio-summary.jpg",
+            },
+          ],
+        },
+      ],
+      pageParams: [null],
+    });
+
+    const queryCount = queryClient.getQueryCache().getAll().length;
+    const summary = findRadioShowSummaryInCache(queryClient, show.id);
+
+    expect(summary).toEqual({
+      id: show.id,
+      subtitle: show.subtitle,
+      description: show.description,
+      publishedAt: show.publishedAt,
+      artworkUrl: "https://f4.bcbits.com/img/radio-summary.jpg",
+    });
+    expect(summary).not.toHaveProperty("streamUrl");
+    expect(summary).not.toHaveProperty("chapters");
+    expect(queryClient.getQueryCache().getAll()).toHaveLength(queryCount);
+    expect(
+      queryClient.getQueryData(["bandcamp-radio-summary", show.id]),
+    ).toBeUndefined();
+  });
+
+  it("prefers the requested scope, then the newest cache timestamp", () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const staleAll: RadioShowSummary = {
+      id: show.id,
+      subtitle: "Stale all-shows title",
+      description: "Older all-shows metadata",
+      publishedAt: "2026-08-10",
+    };
+    const currentSeries: RadioShowSummary = {
+      id: show.id,
+      subtitle: "Current series title",
+      description: "Newer series metadata",
+      publishedAt: "2026-08-12",
+      series: {
+        id: 5,
+        title: "The Hip Hop Show",
+        slug: "the-hip-hop-show",
+      },
+    };
+    queryClient.setQueryData(
+      radioShowsInfiniteQueryOptions().queryKey,
+      archiveData(staleAll),
+      { updatedAt: 1_000 },
+    );
+    queryClient.setQueryData(
+      radioShowsInfiniteQueryOptions(5).queryKey,
+      archiveData(currentSeries),
+      { updatedAt: 2_000 },
+    );
+
+    expect(findRadioShowSummaryInCache(queryClient, show.id)).toEqual(
+      currentSeries,
+    );
+    expect(findRadioShowSummaryInCache(queryClient, show.id, "all")).toEqual(
+      staleAll,
+    );
+
+    const refreshedAll = {
+      ...staleAll,
+      subtitle: "Refreshed all-shows title",
+    };
+    queryClient.setQueryData(
+      radioShowsInfiniteQueryOptions().queryKey,
+      archiveData(refreshedAll),
+      { updatedAt: 3_000 },
+    );
+    expect(findRadioShowSummaryInCache(queryClient, show.id)).toEqual(
+      refreshedAll,
+    );
   });
 });

@@ -84,7 +84,6 @@ export function AlbumDetailPage({
     <article
       className={cn("mx-auto -mt-2 mb-8 w-full max-w-4xl", className)}
       aria-label={`${album.title} release details`}
-      data-coda-album-detail-surface=""
     >
       <Button
         className="mb-3.5 -ml-1 h-auto gap-1.5 p-1 text-xs text-[#8d918b] hover:bg-transparent hover:text-[#eceae4]"
@@ -95,6 +94,7 @@ export function AlbumDetailPage({
         <ArrowLeft size={15} />
         Back
       </Button>
+      <div data-coda-album-detail-surface="">
       <header className="relative grid grid-cols-[10rem_minmax(0,1fr)] items-end gap-6 overflow-hidden rounded-t-xl border border-border bg-[radial-gradient(circle_at_82%_20%,rgba(221,101,73,0.13),transparent_37%),linear-gradient(135deg,#24282a,#191c1e_70%)] p-6 xl:grid-cols-[14rem_minmax(0,1fr)] xl:gap-8 xl:p-8">
         <div className="album-detail__artwork size-40 drop-shadow-[0_16px_25px_rgba(0,0,0,0.25)] *:data-[slot=cover]:size-full *:data-[slot=cover]:rounded-lg xl:size-56">
           <CoverArt album={album} albumArtworkDetail={album.id} size="large" />
@@ -388,6 +388,7 @@ export function AlbumDetailPage({
           </div>
         </div>
       </section>
+      </div>
     </article>
   );
 }

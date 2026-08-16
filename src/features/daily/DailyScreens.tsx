@@ -514,9 +514,9 @@ export function DailyArticleScreen({
       >
         <ArrowLeft size={15} /> Back to {dailyCategoryLabel(section)}
       </Link>
+      <div data-coda-daily-detail-surface>
       <header
         className="mt-3 grid gap-6 rounded-xl border border-border bg-[radial-gradient(circle_at_85%_15%,rgba(221,101,73,0.14),transparent_35%),linear-gradient(135deg,#24282a,#191c1e_70%)] p-6 sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)] lg:p-8"
-        data-coda-daily-detail-surface
       >
         {article.artworkUrl ? (
           <div
@@ -604,6 +604,7 @@ export function DailyArticleScreen({
           </div>
         </div>
       )}
+      </div>
     </section>
   );
 }

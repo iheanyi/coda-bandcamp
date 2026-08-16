@@ -190,6 +190,11 @@ describe("Bandcamp Daily article music", () => {
     expect(
       document.querySelector("[data-coda-daily-artwork-detail]"),
     ).toHaveAttribute("data-coda-daily-artwork-detail", article.slug);
+    expect(
+      screen
+        .getByRole("heading", { name: article.title })
+        .closest("[data-coda-daily-detail-surface]"),
+    ).toHaveAttribute("data-coda-daily-detail-surface");
     expect(screen.getByRole("heading", { name: article.title })).toHaveFocus();
     expect(screen.getByText("2 playable tracks")).toHaveClass("text-left");
     expect(

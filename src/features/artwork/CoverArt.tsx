@@ -24,6 +24,10 @@ type CoverArtProps = {
   size?: "card" | "small" | "large";
 };
 
+function viewTransitionOwnsArtwork() {
+  return document.documentElement.classList.contains("coda-view-transitioning");
+}
+
 export function CoverArt({
   album,
   albumArtworkDetail,
@@ -37,6 +41,7 @@ export function CoverArt({
   const [, setFailureVersion] = useState(0);
   const [loadedUrl, setLoadedUrl] = useState<string>();
   const [revealingUrl, setRevealingUrl] = useState<string>();
+  const imageRef = useRef<HTMLImageElement>(null);
   const mountedRef = useRef(false);
   const retryCountRef = useRef(0);
   const retryPendingRef = useRef(false);
@@ -125,10 +130,29 @@ export function CoverArt({
         : "size-52 rounded-md shadow-[0_20px_42px_rgba(0,0,0,0.35)]";
   const warm = Boolean(url && hasPaintedCoverSource(url));
   const revealPending = Boolean(
-    url && (animateChanges || !warm) && loadedUrl !== url,
+    url &&
+    !viewTransitionOwnsArtwork() &&
+    (animateChanges || !warm) &&
+    loadedUrl !== url,
   );
-  const revealing = Boolean(url && revealingUrl === url);
+  const revealing = Boolean(
+    url && !viewTransitionOwnsArtwork() && revealingUrl === url,
+  );
   const showFallback = !url && !retryPendingRef.current;
+  const finishReveal = () => {
+    setRevealingUrl((current) => (current === url ? undefined : current));
+  };
+  useEffect(() => {
+    const image = imageRef.current;
+    if (!image) return;
+    const handleAnimationCancel = () => {
+      setRevealingUrl((current) => (current === url ? undefined : current));
+    };
+    image.addEventListener("animationcancel", handleAnimationCancel);
+    return () => {
+      image.removeEventListener("animationcancel", handleAnimationCancel);
+    };
+  }, [url]);
 
   return (
     <div
@@ -151,6 +175,7 @@ export function CoverArt({
       {url ? (
         <img
           key={url}
+          ref={imageRef}
           src={url}
           alt={`${album.title} cover`}
           loading="eager"
@@ -158,16 +183,14 @@ export function CoverArt({
           draggable={false}
           onError={retryImage}
           onLoad={() => {
-            const shouldReveal = animateChanges || !hasPaintedCoverSource(url);
+            const shouldReveal =
+              !viewTransitionOwnsArtwork() &&
+              (animateChanges || !hasPaintedCoverSource(url));
             rememberPaintedCoverSource(url);
             setLoadedUrl(url);
             setRevealingUrl(shouldReveal ? url : undefined);
           }}
-          onAnimationEnd={() => {
-            setRevealingUrl((current) =>
-              current === url ? undefined : current,
-            );
-          }}
+          onAnimationEnd={finishReveal}
           data-cover-art-pending={revealPending ? "" : undefined}
           data-cover-art-reveal={revealing ? "" : undefined}
           className="relative z-10 block size-full object-cover"

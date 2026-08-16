@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterContextProvider } from "@tanstack/react-router";
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -461,6 +462,90 @@ describe("Bandcamp Radio", () => {
     expect(mocks.fetchRadioShow).not.toHaveBeenCalled();
   });
 
+  it("commits the safe summary shell before signed show media resolves", async () => {
+    let resolveShow!: (value: RadioShow) => void;
+    mocks.fetchRadioShow.mockReturnValue(
+      new Promise((resolve) => {
+        resolveShow = resolve;
+      }),
+    );
+    renderRadio();
+
+    await screen.findByRole("heading", { name: "Kinrose" });
+    const archiveArtwork = document.querySelector<HTMLElement>(
+      '[data-radio-show-artwork="979"]',
+    );
+    const archiveImage = archiveArtwork?.querySelector("img");
+    if (!archiveImage) throw new Error("Expected archive Radio artwork.");
+    fireEvent.load(archiveImage);
+
+    fireEvent.click(screen.getByRole("link", { name: "View tracklist" }));
+
+    expect(await screen.findByRole("button", { name: "Back" })).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Kinrose", level: 1 }),
+    ).toBeVisible();
+    const detailArtwork = document.querySelector<HTMLElement>(
+      '[data-coda-radio-artwork-detail="979"]',
+    );
+    expect(detailArtwork?.querySelector("img")).not.toHaveClass("invisible");
+    expect(
+      detailArtwork?.querySelector("[data-radio-show-artwork-fallback]"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("status", {
+        name: "Loading Radio show tracklist",
+      }),
+    ).toHaveAttribute("aria-busy", "true");
+    expect(
+      screen.getByRole("button", { name: "Loading show audio" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Add to queue" }),
+    ).toBeDisabled();
+    expect(mocks.fetchRadioShow).toHaveBeenCalledTimes(1);
+
+    await act(async () => resolveShow(show));
+
+    expect(
+      await screen.findByRole("button", {
+        name: "Play Mirage from 2:00",
+      }),
+    ).toBeEnabled();
+    expect(mocks.fetchRadioShow).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains the safe summary shell when signed show loading fails", async () => {
+    let rejectShow!: (reason?: unknown) => void;
+    mocks.fetchRadioShow.mockReturnValue(
+      new Promise((_, reject) => {
+        rejectShow = reject;
+      }),
+    );
+    renderRadio();
+
+    await screen.findByRole("heading", { name: "Kinrose" });
+    fireEvent.click(screen.getByRole("link", { name: "View tracklist" }));
+    await screen.findByRole("button", { name: "Back" });
+
+    await act(async () => {
+      rejectShow(new Error("The signed Radio stream expired"));
+    });
+
+    expect(
+      screen.getByRole("heading", { name: "Kinrose", level: 1 }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Back" })).toBeVisible();
+    expect(
+      await screen.findByText("Tracklist unavailable"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("The signed Radio stream expired")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Show audio unavailable" }),
+    ).toBeDisabled();
+  });
+
   it("opens show details lazily and plays a chapter from its timecode", async () => {
     const { onPlayAt } = renderRadio();
 
@@ -468,8 +553,8 @@ describe("Bandcamp Radio", () => {
     expect(mocks.fetchRadioShow).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("link", { name: "View tracklist" }));
 
-    await screen.findByRole("heading", {
-      name: "Songs in this show",
+    await screen.findByRole("button", {
+      name: "Play Mirage from 2:00",
     });
     expect(mocks.fetchRadioShow).toHaveBeenCalledWith(979);
 
@@ -773,38 +858,11 @@ describe("Bandcamp Radio", () => {
   });
 
   it("falls back to page motion when the source Radio artwork is unavailable", async () => {
-    const snapshots: Array<{
-      className: string;
-      sourceBefore: boolean;
-      sourceTitleBefore: boolean;
-      returningAfter: boolean;
-      returningTitleAfter: boolean;
-    }> = [];
     const originalDescriptor = Object.getOwnPropertyDescriptor(
       document,
       "startViewTransition",
     );
-    const startViewTransition = vi.fn((update: () => void) => {
-      const sourceBefore = Boolean(
-        document.querySelector("[data-coda-radio-artwork-source]"),
-      );
-      const sourceTitleBefore = Boolean(
-        document.querySelector("[data-coda-radio-title-source]"),
-      );
-      update();
-      snapshots.push({
-        className: document.documentElement.className,
-        sourceBefore,
-        sourceTitleBefore,
-        returningAfter: Boolean(
-          document.querySelector("[data-coda-radio-artwork-return]"),
-        ),
-        returningTitleAfter: Boolean(
-          document.querySelector("[data-coda-radio-title-return]"),
-        ),
-      });
-      return { finished: Promise.resolve() };
-    });
+    const startViewTransition = vi.fn();
     Object.defineProperty(document, "startViewTransition", {
       configurable: true,
       value: startViewTransition,
@@ -827,24 +885,8 @@ describe("Bandcamp Radio", () => {
       fireEvent.click(screen.getByRole("button", { name: "Back" }));
       await screen.findByRole("heading", { name: "Kinrose" });
 
-      expect(startViewTransition).toHaveBeenCalledTimes(2);
+      expect(startViewTransition).not.toHaveBeenCalled();
       expect(mocks.transitionKinds).toEqual(["page-forward", "page-back"]);
-      expect(snapshots).toEqual([
-        expect.objectContaining({
-          className: expect.stringContaining("coda-transition--page-forward"),
-          sourceBefore: false,
-          sourceTitleBefore: false,
-          returningAfter: false,
-          returningTitleAfter: false,
-        }),
-        expect.objectContaining({
-          className: expect.stringContaining("coda-transition--page-back"),
-          sourceBefore: false,
-          sourceTitleBefore: false,
-          returningAfter: false,
-          returningTitleAfter: false,
-        }),
-      ]);
       expect(
         document.querySelector(
           "[data-coda-radio-artwork-return], [data-coda-radio-title-return]",

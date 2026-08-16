@@ -452,6 +452,9 @@ describe("saved Bandcamp library views", () => {
       });
       fireEvent.click(playlistButton);
 
+      expect(document.documentElement).toHaveClass(
+        "coda-transition--page-forward",
+      );
       expect(startViewTransition).not.toHaveBeenCalled();
       const loadingHeading = screen.getByText("Loading playlist");
       const loadingSurface = loadingHeading.parentElement;
@@ -483,13 +486,7 @@ describe("saved Bandcamp library views", () => {
       document,
       "startViewTransition",
     );
-    const transitionClasses: string[] = [];
-    const startViewTransition = vi.fn((update: () => void | Promise<void>) => {
-      const finished = Promise.resolve(update()).then(() => {
-        transitionClasses.push(document.documentElement.className);
-      });
-      return { finished };
-    });
+    const startViewTransition = vi.fn();
     Object.defineProperty(document, "startViewTransition", {
       configurable: true,
       value: startViewTransition,
@@ -509,15 +506,18 @@ describe("saved Bandcamp library views", () => {
       expect(startViewTransition).not.toHaveBeenCalled();
 
       fireEvent.click(screen.getByRole("button", { name: "Back" }));
+      expect(document.documentElement).toHaveClass(
+        "coda-transition--page-back",
+      );
 
       expect(
         await screen.findByRole("link", { name: /Night drive/ }),
       ).toBeInTheDocument();
-      expect(startViewTransition).toHaveBeenCalledOnce();
+      expect(startViewTransition).not.toHaveBeenCalled();
       await waitFor(() =>
-        expect(transitionClasses).toEqual([
-          expect.stringContaining("coda-transition--page-back"),
-        ]),
+        expect(document.documentElement).not.toHaveClass(
+          "coda-transition--page-back",
+        ),
       );
       expect(
         document.querySelector("[data-coda-playlist-identity-return]"),
@@ -658,6 +658,9 @@ describe("saved Bandcamp library views", () => {
       expect(
         screen.getByRole("heading", { name: "Night drive" }),
       ).toBeInTheDocument();
+      expect(
+        document.querySelector("[data-coda-playlist-detail-surface]"),
+      ).not.toContainElement(screen.getByRole("button", { name: "Back" }));
 
       fireEvent.click(screen.getByRole("button", { name: "Back" }));
 

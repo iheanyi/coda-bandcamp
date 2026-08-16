@@ -88,6 +88,46 @@ function renderNowPlaying(ui: ReactNode) {
   return { ...rendered, router };
 }
 
+function radioTimelineView(
+  track: Track,
+  timeline = boundRadioChapters(track.radioChapters ?? []),
+) {
+  const noOp = () => undefined;
+  return (
+    <NowPlayingView
+      track={track}
+      radioTimeline={timeline}
+      queue={[track]}
+      currentIndex={0}
+      playing
+      playbackClock={createPlaybackClock(0)}
+      duration={track.duration}
+      volume={0.7}
+      repeat="off"
+      artwork={<span>Artwork</span>}
+      airPlayAvailable={false}
+      queueOpen={false}
+      onBack={noOp}
+      onToggle={noOp}
+      onPrevious={noOp}
+      onNext={noOp}
+      canPrevious={false}
+      canNext={false}
+      onSeek={noOp}
+      onVolume={noOp}
+      onRepeat={noOp}
+      onAirPlay={noOp}
+      onArtist={noOp}
+      onAlbum={noOp}
+      onPlayQueueIndex={noOp}
+      onRadioSeries={noOp}
+      recommendationLoading={false}
+      onPlayRecommendation={noOp}
+      onAnotherRecommendation={noOp}
+    />
+  );
+}
+
 function linkLocation(link: HTMLElement) {
   const href = link.getAttribute("href");
   if (!href) throw new Error("Expected a semantic link href.");
@@ -312,6 +352,15 @@ describe("NowPlayingView Radio metadata", () => {
 
     const radioHeading = screen.getByRole("heading", { name: "Kinrose" });
     expect(radioHeading).toHaveFocus();
+    const detailSurface = radioHeading.closest(
+      "[data-coda-now-playing-detail-surface]",
+    );
+    expect(detailSurface).toHaveAttribute(
+      "data-coda-now-playing-detail-surface",
+    );
+    expect(detailSurface).not.toContainElement(
+      screen.getByRole("button", { name: "Back" }),
+    );
     expect(radioHeading).not.toHaveAttribute(
       "data-coda-now-playing-title-detail",
     );
@@ -464,6 +513,36 @@ describe("NowPlayingView Radio metadata", () => {
       }),
     );
     expect(onSeek).toHaveBeenCalledWith(30);
+  });
+
+  it("bounds initial chapter work and resets the batch for a different show", () => {
+    const longTrack: Track = {
+      ...radioTrack,
+      id: "radio:980",
+      radioChapters: Array.from({ length: 20 }, (_, index) => ({
+        artist: `Artist ${index + 1}`,
+        timecode: index * 60,
+        title: `Chapter ${index + 1}`,
+      })),
+    };
+    const shortTrack: Track = {
+      ...radioTrack,
+      id: "radio:981",
+    };
+    const { rerender } = renderNowPlaying(radioTimelineView(longTrack));
+    const longList = screen.getByRole("list", {
+      name: "Radio chapter timeline",
+    });
+
+    expect(longList).toHaveAttribute("aria-busy", "true");
+    expect(within(longList).getAllByRole("listitem")).toHaveLength(6);
+
+    rerender(radioTimelineView(shortTrack));
+    const shortList = screen.getByRole("list", {
+      name: "Radio chapter timeline",
+    });
+    expect(shortList).not.toHaveAttribute("aria-busy");
+    expect(within(shortList).getAllByRole("listitem")).toHaveLength(2);
   });
 
   it("updates progress each second without rerendering Radio metadata inside a chapter", () => {

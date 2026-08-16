@@ -607,9 +607,7 @@ export function useCodaNavigationController({
         PRIMARY_VIEW_ORDER[destination.primaryView]
           ? "page-back"
           : "page-forward";
-      await transitionCodaView(commitNavigation, kind, {
-        routerOwnedPage: true,
-      });
+      await transitionCodaView(commitNavigation, kind);
     },
     [destination.primaryView],
   );

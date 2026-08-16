@@ -4,14 +4,20 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import { notifyToast } from "@/components/ui/toastManager";
 import { createLibrarySessionController } from "@/features/library-session";
+import { CodaDevtools } from "./CodaDevtools";
 import { CodaMotionProvider } from "./MotionProvider";
 import MiniPlayerWindow from "./MiniPlayerWindow";
 import { TooltipProvider } from "./components/ui/tooltip";
+import { installMotionInputDiagnostics } from "./motionDiagnostics";
 import { createCodaRouter } from "./router";
 import "./styles.css";
 
 const root = createRoot(document.getElementById("root")!);
 const windowView = new URLSearchParams(window.location.search).get("view");
+
+if (windowView !== "mini-player") {
+  installMotionInputDiagnostics();
+}
 
 if (windowView === "mini-player") {
   document.documentElement.dataset.codaWindow = "mini-player";
@@ -47,6 +53,7 @@ if (windowView === "mini-player") {
         <TooltipProvider>
           <QueryClientProvider client={queryClient}>
             <RouterProvider router={router} />
+            <CodaDevtools queryClient={queryClient} router={router} />
           </QueryClientProvider>
         </TooltipProvider>
       </CodaMotionProvider>

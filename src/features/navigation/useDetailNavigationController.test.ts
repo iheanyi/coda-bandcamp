@@ -13,15 +13,7 @@ import type { CodaScreen } from "@/routing/routeMeta";
 
 const controllerMocks = vi.hoisted(() => ({
   afterUpdate: undefined as (() => void) | undefined,
-  capture: undefined as
-    | ((
-        kind: string,
-        options: Readonly<{
-          routerOwnedPage?: boolean;
-          skipSnapshot?: boolean;
-        }>,
-      ) => void)
-    | undefined,
+  capture: undefined as ((kind: string) => void) | undefined,
   navigate: vi.fn(),
   nextRenderKey: 2,
   onRendered: undefined as
@@ -190,20 +182,15 @@ beforeEach(() => {
         };
       },
     );
-  controllerMocks.transition.mockReset().mockImplementation(
-    async (
-      update: () => void | Promise<void>,
-      kind: string,
-      options: Readonly<{
-        routerOwnedPage?: boolean;
-        skipSnapshot?: boolean;
-      }> = {},
-    ) => {
-      controllerMocks.capture?.(kind, options);
-      await update();
-      controllerMocks.afterUpdate?.();
-    },
-  );
+  controllerMocks.transition
+    .mockReset()
+    .mockImplementation(
+      async (update: () => void | Promise<void>, kind: string) => {
+        controllerMocks.capture?.(kind);
+        await update();
+        controllerMocks.afterUpdate?.();
+      },
+    );
 });
 
 afterEach(() => {
@@ -280,27 +267,67 @@ describe("useDetailNavigationController", () => {
     expect(captures).toEqual([{ artwork: false, kind: "page-forward" }]);
   });
 
-  it("keeps validated shared identity while a cold album hydrates", async () => {
+  it("uses page motion when only a disabled title identity is available", async () => {
     const albumId = parseAlbumIdParam("album-1");
     const source = albumCard(albumId);
-    const captures: Array<{
-      artwork: boolean;
-      kind: string;
-      skipSnapshot: boolean | undefined;
-      titleIdentity: string | null;
-    }> = [];
-    controllerMocks.capture = (kind, options) => {
+    source.cover.remove();
+    source.artworkLink.remove();
+    const captures: Array<{ kind: string; titleIdentity: string | null }> = [];
+    controllerMocks.capture = (kind) => {
       captures.push({
-        artwork: source.cover.classList.contains("coda-album-artwork-source"),
         kind,
-        skipSnapshot: options.skipSnapshot,
         titleIdentity: source.title.getAttribute(
           "data-coda-album-title-source",
         ),
       });
     };
-    const { result } = renderHook(() =>
-      useDetailNavigationController(destination(undefined, "entry-1")),
+    const { result, rerender } = renderHook(
+      ({ route }) => useDetailNavigationController(route),
+      {
+        initialProps: { route: destination(undefined, "entry-1") },
+      },
+    );
+
+    await act(() =>
+      result.current.open({
+        albumId,
+        kind: "album",
+        sourceTrigger: source.titleLink,
+      }),
+    );
+    rerender({
+      route: destination({ kind: "album", albumId }, "entry-2"),
+    });
+    await act(() => result.current.back({ restoreFocus: false }));
+
+    expect(captures).toEqual([
+      { kind: "page-forward", titleIdentity: null },
+      { kind: "page-back", titleIdentity: null },
+    ]);
+  });
+
+  it("uses live page motion for a cold album shell", async () => {
+    const albumId = parseAlbumIdParam("album-1");
+    const source = albumCard(albumId);
+    const captures: Array<{
+      artwork: boolean;
+      kind: string;
+      titleIdentity: string | null;
+    }> = [];
+    controllerMocks.capture = (kind) => {
+      captures.push({
+        artwork: source.cover.classList.contains("coda-album-artwork-source"),
+        kind,
+        titleIdentity: source.title.getAttribute(
+          "data-coda-album-title-source",
+        ),
+      });
+    };
+    const { result, rerender } = renderHook(
+      ({ route }) => useDetailNavigationController(route),
+      {
+        initialProps: { route: destination(undefined, "entry-1") },
+      },
     );
 
     await act(() =>
@@ -311,13 +338,21 @@ describe("useDetailNavigationController", () => {
         sourceTrigger: source.artworkLink,
       }),
     );
+    rerender({
+      route: destination({ kind: "album", albumId }, "entry-2"),
+    });
+    await act(() => result.current.back({ restoreFocus: false }));
 
     expect(captures).toEqual([
       {
-        artwork: true,
-        kind: "album-detail",
-        skipSnapshot: undefined,
-        titleIdentity: albumId,
+        artwork: false,
+        kind: "page-forward",
+        titleIdentity: null,
+      },
+      {
+        artwork: false,
+        kind: "album-detail-close",
+        titleIdentity: null,
       },
     ]);
   });
@@ -527,7 +562,7 @@ describe("useDetailNavigationController", () => {
     }> = [];
     controllerMocks.capture = (kind) => {
       kinds.push(kind);
-      if (kind === "artist-detail") {
+      if (kinds.length === 1) {
         artistNameSources.push({
           inner: artistName.dataset.codaArtistNameSource,
           link: artistLink.dataset.codaArtistNameSource,
@@ -558,12 +593,57 @@ describe("useDetailNavigationController", () => {
     );
 
     expect(kinds).toEqual([
-      "artist-detail",
+      "page-forward",
       "discover-detail",
       "now-playing-open",
     ]);
-    expect(artistNameSources).toEqual([{ inner: artistKey, link: undefined }]);
+    expect(artistNameSources).toEqual([
+      { inner: undefined, link: undefined },
+    ]);
     expect(kinds).not.toContain("page-crossfade");
+  });
+
+  it("pairs Now Playing artwork open and close transitions", async () => {
+    const playerArtwork = document.createElement("a");
+    playerArtwork.href = "#/now-playing";
+    playerArtwork.className = "player__art-link";
+    playerArtwork.dataset.codaTrackId = "track-1";
+    document.body.append(playerArtwork);
+    const kinds: string[] = [];
+    controllerMocks.capture = (kind) => kinds.push(kind);
+    const { result, rerender } = renderHook(
+      ({ route }) => useDetailNavigationController(route),
+      { initialProps: { route: destination(undefined, "entry-1") } },
+    );
+
+    await act(() =>
+      result.current.open({ kind: "now-playing", trackId: "track-1" }),
+    );
+    rerender({
+      route: destination({ kind: "now-playing" }, "entry-2"),
+    });
+    await act(() => result.current.back({ restoreFocus: false }));
+
+    expect(kinds).toEqual(["now-playing-open", "now-playing-close"]);
+  });
+
+  it("pairs Now Playing without artwork with page transitions", async () => {
+    const kinds: string[] = [];
+    controllerMocks.capture = (kind) => kinds.push(kind);
+    const { result, rerender } = renderHook(
+      ({ route }) => useDetailNavigationController(route),
+      { initialProps: { route: destination(undefined, "entry-1") } },
+    );
+
+    await act(() =>
+      result.current.open({ kind: "now-playing", trackId: "track-1" }),
+    );
+    rerender({
+      route: destination({ kind: "now-playing" }, "entry-2"),
+    });
+    await act(() => result.current.back({ restoreFocus: false }));
+
+    expect(kinds).toEqual(["page-forward", "page-back"]);
   });
 
   it("refocuses an already-active destination without adding history", async () => {
@@ -573,11 +653,11 @@ describe("useDetailNavigationController", () => {
     heading.tabIndex = -1;
     document.body.append(heading);
     const beforeCommit = vi.fn();
+    const route = destination({ kind: "album", albumId }, "entry-2");
     const { result } = renderHook(() =>
-      useDetailNavigationController(
-        destination({ kind: "album", albumId }, "entry-2"),
-      ),
+      useDetailNavigationController(route),
     );
+    const controller = result.current;
 
     let outcome: string | undefined;
     await act(async () => {
@@ -591,8 +671,407 @@ describe("useDetailNavigationController", () => {
     await waitFor(() => expect(heading).toHaveFocus());
     expect(outcome).toBe("refocused");
     expect(beforeCommit).toHaveBeenCalledOnce();
+    expect(result.current).toBe(controller);
     expect(controllerMocks.navigate).not.toHaveBeenCalled();
     expect(controllerMocks.transition).not.toHaveBeenCalled();
+  });
+
+  it("drops a manual refocus request after an unrelated route commit", async () => {
+    const albumId = parseAlbumIdParam("album-1");
+    const sentinel = document.createElement("button");
+    document.body.append(sentinel);
+    sentinel.focus();
+    const { result, rerender } = renderHook(
+      ({ route }) => useDetailNavigationController(route),
+      {
+        initialProps: {
+          route: destination({ kind: "album", albumId }, "entry-1"),
+        },
+      },
+    );
+
+    await act(() =>
+      result.current.open({
+        albumId,
+        kind: "album",
+      }),
+    );
+    rerender({
+      route: destination({ kind: "now-playing" }, "entry-2"),
+    });
+    const heading = document.createElement("h1");
+    heading.id = "album-detail-heading";
+    heading.tabIndex = -1;
+    document.body.append(heading);
+    rerender({
+      route: destination({ kind: "album", albumId }, "entry-3"),
+    });
+
+    expect(sentinel).toHaveFocus();
+  });
+
+  it("opens a fresh destination without rerendering the source route", async () => {
+    const albumId = parseAlbumIdParam("album-1");
+    const source = albumCard(albumId);
+    let renderCount = 0;
+    const { result } = renderHook(() => {
+      renderCount += 1;
+      return useDetailNavigationController(destination(undefined, "entry-1"));
+    });
+    const renderCountBeforeOpen = renderCount;
+
+    await act(() =>
+      result.current.open({
+        albumId,
+        kind: "album",
+        sourceTrigger: source.artworkLink,
+      }),
+    );
+
+    expect(renderCount).toBe(renderCountBeforeOpen);
+  });
+
+  it("clears pending scroll when a forward open fails before commit", async () => {
+    const albumId = parseAlbumIdParam("album-1");
+    const source = albumCard(albumId);
+    const scrollRoot = document.createElement("main");
+    scrollRoot.scrollTop = 184;
+    document.body.append(scrollRoot);
+    const failure = new Error("open failed");
+    controllerMocks.transition.mockRejectedValueOnce(failure);
+    const { result, rerender } = renderHook(
+      ({ route }) => useDetailNavigationController(route),
+      { initialProps: { route: destination(undefined, "entry-1") } },
+    );
+    result.current.scrollRootRef.current = scrollRoot;
+
+    await act(async () => {
+      await expect(
+        result.current.open({
+          albumId,
+          kind: "album",
+          sourceTrigger: source.artworkLink,
+        }),
+      ).rejects.toBe(failure);
+    });
+    scrollRoot.scrollTop = 93;
+    rerender({
+      route: destination({ kind: "now-playing" }, "entry-2"),
+    });
+
+    expect(scrollRoot.scrollTop).toBe(93);
+  });
+
+  it("drops forward scroll restoration when no scroll root applies", async () => {
+    const albumId = parseAlbumIdParam("album-1");
+    const source = albumCard(albumId);
+    const { result, rerender } = renderHook(
+      ({ route }) => useDetailNavigationController(route),
+      { initialProps: { route: destination(undefined, "entry-1") } },
+    );
+
+    await act(() =>
+      result.current.open({
+        albumId,
+        kind: "album",
+        sourceTrigger: source.artworkLink,
+      }),
+    );
+    rerender({
+      route: destination({ kind: "album", albumId }, "entry-2"),
+    });
+    const lateScrollRoot = document.createElement("main");
+    lateScrollRoot.scrollTop = 73;
+    document.body.append(lateScrollRoot);
+    result.current.scrollRootRef.current = lateScrollRoot;
+    rerender({
+      route: destination({ kind: "now-playing" }, "entry-3"),
+    });
+
+    expect(lateScrollRoot.scrollTop).toBe(73);
+  });
+
+  it("clears superseded forward scroll before a refocus request", async () => {
+    const albumId = parseAlbumIdParam("album-1");
+    const artistKey = parseArtistKeyParam("night archive");
+    const artistSource = artistCard(artistKey);
+    const heading = document.createElement("h1");
+    heading.id = "album-detail-heading";
+    heading.tabIndex = -1;
+    const scrollRoot = document.createElement("main");
+    scrollRoot.scrollTop = 88;
+    document.body.append(heading, scrollRoot);
+    const firstTransitionFinished = deferred();
+    controllerMocks.transition.mockImplementationOnce(async (update) => {
+      await update();
+      await firstTransitionFinished.promise;
+    });
+    const { result, rerender } = renderHook(
+      ({ route }) => useDetailNavigationController(route),
+      {
+        initialProps: {
+          route: destination({ kind: "album", albumId }, "entry-1"),
+        },
+      },
+    );
+    result.current.scrollRootRef.current = scrollRoot;
+
+    let firstOpen!: Promise<unknown>;
+    act(() => {
+      firstOpen = result.current.open({
+        artistKey,
+        kind: "artist",
+        sourceTrigger: artistSource.link,
+      });
+    });
+    await waitFor(() => expect(controllerMocks.navigate).toHaveBeenCalledOnce());
+    await act(() =>
+      result.current.open({
+        albumId,
+        kind: "album",
+      }),
+    );
+    scrollRoot.scrollTop = 88;
+    rerender({
+      route: destination({ kind: "now-playing" }, "entry-2"),
+    });
+
+    expect(scrollRoot.scrollTop).toBe(88);
+
+    firstTransitionFinished.resolve();
+    await act(() => firstOpen);
+  });
+
+  it("starts Back without rerendering the outgoing detail route", async () => {
+    const navigation = deferred();
+    controllerMocks.navigate.mockReturnValueOnce(navigation.promise);
+    let renderCount = 0;
+    const { result } = renderHook(() => {
+      renderCount += 1;
+      return useDetailNavigationController(
+        destination({ kind: "now-playing" }, "entry-2"),
+      );
+    });
+    const renderCountBeforeBack = renderCount;
+    let back!: Promise<void>;
+
+    act(() => {
+      back = result.current.back();
+    });
+    await waitFor(() => expect(controllerMocks.navigate).toHaveBeenCalledOnce());
+
+    expect(renderCount).toBe(renderCountBeforeBack);
+
+    navigation.resolve();
+    await act(() => back);
+  });
+
+  it("coalesces Back using the first caller's focus preference", async () => {
+    const albumId = parseAlbumIdParam("album-1");
+    const source = albumCard(albumId);
+    const sentinel = document.createElement("button");
+    document.body.append(sentinel);
+    const { result, rerender } = renderHook(
+      ({ route }) => useDetailNavigationController(route),
+      { initialProps: { route: destination(undefined, "entry-1") } },
+    );
+    await act(() =>
+      result.current.open({
+        albumId,
+        kind: "album",
+        sourceTrigger: source.artworkLink,
+      }),
+    );
+    rerender({
+      route: destination({ kind: "album", albumId }, "entry-2"),
+    });
+    sentinel.focus();
+    controllerMocks.navigate.mockClear();
+    controllerMocks.transition.mockClear();
+    const closeStarted = deferred();
+    const closeFinished = deferred();
+    controllerMocks.transition.mockImplementationOnce(async (update) => {
+      await update();
+      closeStarted.resolve();
+      await closeFinished.promise;
+    });
+
+    let first!: Promise<void>;
+    let second!: Promise<void>;
+    act(() => {
+      first = result.current.back({ restoreFocus: false });
+      second = result.current.back();
+    });
+    await closeStarted.promise;
+
+    expect(controllerMocks.transition).toHaveBeenCalledOnce();
+    expect(controllerMocks.navigate).toHaveBeenCalledOnce();
+
+    rerender({ route: destination(undefined, "entry-3") });
+    closeFinished.resolve();
+    await act(() => Promise.all([first, second]));
+
+    expect(sentinel).toHaveFocus();
+  });
+
+  it("clears failed Back restoration without discarding its transaction", async () => {
+    const albumId = parseAlbumIdParam("album-1");
+    const source = albumCard(albumId);
+    const scrollRoot = document.createElement("main");
+    scrollRoot.scrollTop = 312;
+    const sentinel = document.createElement("button");
+    document.body.append(scrollRoot, sentinel);
+    const failure = new Error("transition failed");
+    const kinds: string[] = [];
+    controllerMocks.capture = (kind) => kinds.push(kind);
+    const { result, rerender } = renderHook(
+      ({ route }) => useDetailNavigationController(route),
+      { initialProps: { route: destination(undefined, "entry-1") } },
+    );
+    result.current.scrollRootRef.current = scrollRoot;
+    await act(() =>
+      result.current.open({
+        albumId,
+        kind: "album",
+        sourceTrigger: source.artworkLink,
+      }),
+    );
+    rerender({
+      route: destination({ kind: "album", albumId }, "entry-2"),
+    });
+    scrollRoot.scrollTop = 77;
+    controllerMocks.transition.mockImplementationOnce(
+      async (_update, kind: string) => {
+        kinds.push(kind);
+        throw failure;
+      },
+    );
+
+    await act(async () => {
+      await expect(result.current.back()).rejects.toBe(failure);
+    });
+    sentinel.focus();
+    scrollRoot.scrollTop = 91;
+    rerender({
+      route: destination({ kind: "now-playing" }, "entry-3"),
+    });
+
+    expect(sentinel).toHaveFocus();
+    expect(scrollRoot.scrollTop).toBe(91);
+
+    rerender({
+      route: destination({ kind: "album", albumId }, "entry-4"),
+    });
+    await act(() => result.current.back({ restoreFocus: false }));
+
+    expect(kinds).toEqual([
+      "album-detail",
+      "album-detail-close",
+      "album-detail-close",
+    ]);
+  });
+
+  it("allows Back from a newly committed location while the prior transition settles", async () => {
+    const albumId = parseAlbumIdParam("album-1");
+    const firstTransition = deferred();
+    let transitionCount = 0;
+    controllerMocks.transition.mockImplementation(
+      async (update: () => void | Promise<void>) => {
+        transitionCount += 1;
+        await update();
+        if (transitionCount === 1) await firstTransition.promise;
+      },
+    );
+    const { result, rerender } = renderHook(
+      ({ route }) => useDetailNavigationController(route),
+      {
+        initialProps: {
+          route: destination({ kind: "album", albumId }, "entry-2"),
+        },
+      },
+    );
+
+    let first!: Promise<void>;
+    act(() => {
+      first = result.current.back();
+    });
+    await waitFor(() =>
+      expect(controllerMocks.navigate).toHaveBeenCalledOnce(),
+    );
+
+    rerender({
+      route: destination({ kind: "now-playing" }, "entry-3"),
+    });
+    let second!: Promise<void>;
+    act(() => {
+      second = result.current.back();
+    });
+
+    expect(second).not.toBe(first);
+    await waitFor(() =>
+      expect(controllerMocks.transition).toHaveBeenCalledTimes(2),
+    );
+    expect(controllerMocks.navigate).toHaveBeenCalledTimes(2);
+
+    firstTransition.resolve();
+    await act(() => Promise.all([first, second]));
+  });
+
+  it("does not let an older real Back transaction steal focus", async () => {
+    const albumId = parseAlbumIdParam("album-1");
+    const albumSource = albumCard(albumId);
+    const playerArtwork = document.createElement("a");
+    playerArtwork.className = "player__art-link";
+    playerArtwork.dataset.codaTrackId = "track-1";
+    playerArtwork.href = "#/now-playing";
+    document.body.append(playerArtwork);
+    const firstBackReady = deferred();
+    const firstBackFinished = deferred();
+    controllerMocks.transition.mockImplementation(
+      async (update: () => void | Promise<void>, kind: string) => {
+        await update();
+        if (kind === "album-detail-close") {
+          firstBackReady.resolve();
+          await firstBackFinished.promise;
+        }
+      },
+    );
+    const { result, rerender } = renderHook(
+      ({ route }) => useDetailNavigationController(route),
+      { initialProps: { route: destination(undefined, "entry-1") } },
+    );
+
+    await act(() =>
+      result.current.open({
+        albumId,
+        kind: "album",
+        sourceTrigger: albumSource.artworkLink,
+      }),
+    );
+    rerender({
+      route: destination({ kind: "album", albumId }, "entry-2"),
+    });
+    let firstBack!: Promise<void>;
+    act(() => {
+      firstBack = result.current.back();
+    });
+    await firstBackReady.promise;
+
+    rerender({ route: destination(undefined, "entry-3") });
+    await act(() =>
+      result.current.open({ kind: "now-playing", trackId: "track-1" }),
+    );
+    rerender({
+      route: destination({ kind: "now-playing" }, "entry-4"),
+    });
+    await act(() => result.current.back());
+    rerender({ route: destination(undefined, "entry-5") });
+    expect(playerArtwork).toHaveFocus();
+
+    firstBackFinished.resolve();
+    await act(() => firstBack);
+
+    expect(playerArtwork).toHaveFocus();
   });
 
   it("restores virtualized source focus and scroll after fallback Back", async () => {
@@ -643,7 +1122,6 @@ describe("useDetailNavigationController", () => {
       });
     };
     await act(() => result.current.back());
-    expect(replacementCard?.artworkLink).toHaveFocus();
     rerender({ route: destination(undefined, "entry-3") });
 
     await waitFor(() => expect(replacementCard?.artworkLink).toHaveFocus());
@@ -666,6 +1144,32 @@ describe("useDetailNavigationController", () => {
         viewTransition: false,
       }),
     );
+  });
+
+  it("uses page Back when an artist transaction has no artwork owner", async () => {
+    const artistKey = parseArtistKeyParam("night archive");
+    const source = artistCard(artistKey);
+    source.cover.remove();
+    const kinds: string[] = [];
+    controllerMocks.capture = (kind) => kinds.push(kind);
+    const { result, rerender } = renderHook(
+      ({ route }) => useDetailNavigationController(route),
+      { initialProps: { route: destination(undefined, "entry-1") } },
+    );
+
+    await act(() =>
+      result.current.open({
+        artistKey,
+        kind: "artist",
+        sourceTrigger: source.link,
+      }),
+    );
+    rerender({
+      route: destination({ artistKey, kind: "artist" }, "entry-2"),
+    });
+    await act(() => result.current.back({ restoreFocus: false }));
+
+    expect(kinds).toEqual(["page-forward", "page-back"]);
   });
 
   it("reverse-morphs an artist name and artwork into the exact source card", async () => {
@@ -709,6 +1213,33 @@ describe("useDetailNavigationController", () => {
     });
     expect(source.cover).not.toHaveAttribute("data-coda-artist-artwork-return");
     expect(source.name).not.toHaveAttribute("data-coda-artist-name-return");
+  });
+
+  it("uses page Back when a Discover transaction has no artwork owner", async () => {
+    const releaseId = parseDiscoverReleaseIdParam("discover:blue-hours");
+    const source = discoverCard(releaseId);
+    source.artwork.remove();
+    const kinds: string[] = [];
+    controllerMocks.capture = (kind) => kinds.push(kind);
+    const { result, rerender } = renderHook(
+      ({ route }) => useDetailNavigationController(route),
+      { initialProps: { route: destination(undefined, "entry-1") } },
+    );
+
+    await act(() =>
+      result.current.open({
+        kind: "discover-release",
+        releaseId,
+        releaseTitle: "Blue Hours",
+        sourceTrigger: source.titleLink,
+      }),
+    );
+    rerender({
+      route: destination({ kind: "discover-release", releaseId }, "entry-2"),
+    });
+    await act(() => result.current.back({ restoreFocus: false }));
+
+    expect(kinds).toEqual(["page-forward", "page-back"]);
   });
 
   it("reverse-morphs Discover artwork and title into the exact originating slot", async () => {
@@ -796,10 +1327,8 @@ describe("useDetailNavigationController", () => {
     playerAlbumLink.append(playerTitle);
     document.body.append(playerAlbumLink);
     const kinds: string[] = [];
-    const options: Array<Readonly<{ routerOwnedPage?: boolean }>> = [];
-    controllerMocks.capture = (kind, transitionOptions) => {
+    controllerMocks.capture = (kind) => {
       kinds.push(kind);
-      options.push(transitionOptions);
     };
     const { result, rerender } = renderHook(
       ({ route }) => useDetailNavigationController(route),
@@ -821,8 +1350,7 @@ describe("useDetailNavigationController", () => {
 
     await act(() => result.current.back({ restoreFocus: false }));
 
-    expect(kinds).toEqual(["discover-detail", "page-back"]);
-    expect(options.at(-1)).toEqual({ routerOwnedPage: true });
+    expect(kinds).toEqual(["page-forward", "page-back"]);
     expect(playerAlbumLink).not.toHaveAttribute(
       "data-coda-discover-title-return",
     );

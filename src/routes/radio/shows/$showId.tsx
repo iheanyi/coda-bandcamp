@@ -1,10 +1,8 @@
-import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute, notFound } from "@tanstack/react-router";
 
 import { useRadioRouteNavigation } from "@/features/radio/RadioRouteNavigationState";
 import { useRadioRuntime } from "@/features/radio/RadioRuntimeContext";
 import { RadioShowScreen } from "@/features/radio/RadioShowScreen";
-import { radioShowQueryOptions } from "@/queries/radioQueries";
 import {
   parseRadioShowIdParam,
   stringifyRadioShowIdParam,
@@ -20,11 +18,6 @@ function RadioShowRoute() {
   const runtime = useRadioRuntime();
   const navigation = useRadioRouteNavigation();
   const { showId } = Route.useLoaderData();
-
-  // Signed Radio streams are intentionally activation-only. Keeping this
-  // query in the route component lets intent preload validate the destination
-  // and load its code without contacting Bandcamp for signed media.
-  useSuspenseQuery(radioShowQueryOptions(showId));
 
   return (
     <RadioShowScreen

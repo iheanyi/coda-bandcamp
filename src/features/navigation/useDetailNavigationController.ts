@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useReducer,
   useRef,
   type RefObject,
@@ -52,7 +53,7 @@ type CommitPreparation = () => void;
 export type AlbumDetailNavigationRequest = Readonly<{
   albumId: AlbumId;
   beforeCommit?: CommitPreparation;
-  /** Hydration state is deliberately orthogonal to transition ownership. */
+  /** A cold shell uses page-forward while retaining validated return artwork. */
   coldLoad?: boolean;
   kind: "album";
   sourceTrigger?: HTMLElement;
@@ -133,6 +134,36 @@ const ROUTE_KEYS: Record<CoordinatedDetailKind, string> = {
   "now-playing": "now-playing-detail",
 };
 
+const DETAIL_TRANSITIONS = {
+  album: {
+    owner: "coda-album-artwork",
+    open: "album-detail",
+    close: "album-detail-close",
+  },
+  artist: {
+    owner: "coda-artist-artwork",
+    open: "artist-detail",
+    close: "artist-detail-close",
+  },
+  "discover-release": {
+    owner: "coda-discover-artwork",
+    open: "discover-detail",
+    close: "discover-detail-close",
+  },
+  "now-playing": {
+    owner: "coda-now-playing-artwork",
+    open: "now-playing-open",
+    close: "now-playing-close",
+  },
+} as const satisfies Record<
+  CoordinatedDetailKind,
+  Readonly<{
+    owner: string;
+    open: CodaViewTransitionKind;
+    close: CodaViewTransitionKind;
+  }>
+>;
+
 const MAX_DOM_RESTORE_ATTEMPTS = 8;
 
 function createCoordinator(): DetailCoordinator {
@@ -203,18 +234,32 @@ function targetMatchesDestination(
 
 function transitionKindForOpen(
   request: DetailNavigationRequest,
-  source: PreparedDetailSource,
+  nativeSharedElement: boolean,
 ): CodaViewTransitionKind {
-  switch (request.kind) {
-    case "album":
-      return source.sharedElementOwner ? "album-detail" : "page-forward";
-    case "artist":
-      return source.sharedElementOwner ? "artist-detail" : "page-forward";
-    case "discover-release":
-      return source.sharedElementOwner ? "discover-detail" : "page-forward";
-    case "now-playing":
-      return "now-playing-open";
+  if (!nativeSharedElement) return "page-forward";
+  return DETAIL_TRANSITIONS[request.kind].open;
+}
+
+function ownsNativeSharedElement(
+  request: DetailNavigationRequest,
+  source: PreparedDetailSource,
+): boolean {
+  if (request.kind === "album" && request.coldLoad) return false;
+  return source.sharedElementOwner === DETAIL_TRANSITIONS[request.kind].owner;
+}
+
+function transitionKindForBack(
+  detail: CoordinatedDetailDestination,
+  transaction: NavigationTransaction | undefined,
+): CodaViewTransitionKind {
+  const transition = DETAIL_TRANSITIONS[detail.kind];
+  if (
+    transaction?.sharedElementOwner !== transition.owner ||
+    (detail.kind === "discover-release" && !returnsToDiscoverCard(transaction))
+  ) {
+    return "page-back";
   }
+  return transition.close;
 }
 
 function replacementNavigationTrigger(
@@ -288,6 +333,12 @@ function returnsToDiscoverCard(
   return sourceSlot === "discover-artwork" || sourceSlot === "discover-title";
 }
 
+function clearReturnFocusRequests(coordinators: DetailCoordinators): void {
+  for (const coordinator of Object.values(coordinators)) {
+    coordinator.returnFocusRequested = false;
+  }
+}
+
 function destinationHeadingId(
   destination: CodaDetailDestination | undefined,
 ): string | undefined {
@@ -323,10 +374,15 @@ export function useDetailNavigationController(
     createDetailCoordinators(),
   );
   const activeSourceReleaseRef = useRef<(() => void) | undefined>(undefined);
+  const backInFlightRef = useRef<
+    { locationKey: string; request: Promise<void> } | undefined
+  >(undefined);
   const returnGenerationRef = useRef(0);
   const manualFocusRequestRef = useRef<ManualFocusRequest | undefined>(
     undefined,
   );
+  const currentLocationKeyRef = useRef(destination.locationKey);
+  currentLocationKeyRef.current = destination.locationKey;
   const [domRequestVersion, requestDomWork] = useReducer(
     (version: number) => version + 1,
     0,
@@ -388,7 +444,10 @@ export function useDetailNavigationController(
 
   const open = useCallback<DetailNavigationController["open"]>(
     async (request) => {
-      returnGenerationRef.current += 1;
+      const navigationGeneration = ++returnGenerationRef.current;
+      const sourceLocationKey = destination.locationKey;
+      clearReturnFocusRequests(coordinatorsRef.current);
+      pendingScrollTopRef.current = undefined;
       const target = targetFromRequest(request);
       if (targetMatchesDestination(target, destination.detail)) {
         request.beforeCommit?.();
@@ -401,6 +460,7 @@ export function useDetailNavigationController(
       }
 
       const source = prepareDetailSource(request, destination);
+      const nativeSharedElement = ownsNativeSharedElement(request, source);
       const coordinator = coordinatorsRef.current[request.kind];
       const returnScrollTop = scrollRootRef.current?.scrollTop ?? 0;
       coordinator.navigation = replaceNavigationTransaction(
@@ -408,15 +468,14 @@ export function useDetailNavigationController(
         {
           routeKey: ROUTE_KEYS[request.kind],
           intent: "forward",
-          entrance: source.sharedElementOwner
-            ? "shared-element"
-            : "page-forward",
+          entrance: nativeSharedElement ? "shared-element" : "page-forward",
           sourceTrigger: source.sourceTrigger,
           returnScrollTop,
           destinationHeadingId: DESTINATION_HEADING_IDS[request.kind],
           sharedElementOwner: source.sharedElementOwner,
         },
       );
+      const transactionIdentity = coordinator.navigation.active?.identity;
       coordinator.target = target;
       coordinator.restoreFocus = true;
       coordinator.returnFocusRequested = false;
@@ -425,10 +484,11 @@ export function useDetailNavigationController(
         destination.detail?.kind === "discover-release";
       manualFocusRequestRef.current = undefined;
       pendingScrollTopRef.current = 0;
-      requestDomWork();
 
       activeSourceReleaseRef.current?.();
-      const clearMarkers = source.applyMarkers();
+      const clearMarkers = nativeSharedElement
+        ? source.applyMarkers()
+        : () => {};
       activeSourceReleaseRef.current = clearMarkers;
       try {
         await transitionCodaView(
@@ -436,8 +496,26 @@ export function useDetailNavigationController(
             request.beforeCommit?.();
             await commitNavigation(request);
           },
-          transitionKindForOpen(request, source),
+          transitionKindForOpen(request, nativeSharedElement),
         );
+      } catch (cause) {
+        if (currentLocationKeyRef.current === sourceLocationKey) {
+          if (returnGenerationRef.current === navigationGeneration) {
+            pendingScrollTopRef.current = undefined;
+          }
+          if (
+            transactionIdentity !== undefined &&
+            coordinator.navigation.active?.identity === transactionIdentity
+          ) {
+            coordinator.navigation = settleNavigationTransaction(
+              coordinator.navigation,
+              transactionIdentity,
+            );
+            coordinator.target = undefined;
+            coordinator.returnToDestinationHeading = false;
+          }
+        }
+        throw cause;
       } finally {
         clearMarkers();
         if (activeSourceReleaseRef.current === clearMarkers) {
@@ -481,7 +559,7 @@ export function useDetailNavigationController(
     [destination.collectionSearch, destination.discoverSearch, navigate],
   );
 
-  const back = useCallback<DetailNavigationController["back"]>(
+  const performBack = useCallback<DetailNavigationController["back"]>(
     async (options = {}) => {
       const detail = destination.detail;
       if (
@@ -493,119 +571,104 @@ export function useDetailNavigationController(
       ) {
         return;
       }
+      activeSourceReleaseRef.current?.();
+      activeSourceReleaseRef.current = undefined;
       const coordinator = coordinatorsRef.current[detail.kind];
       const transaction = targetMatchesDestination(coordinator.target, detail)
         ? coordinator.navigation.active
         : undefined;
-      const returnToDestinationHeading = coordinator.returnToDestinationHeading;
       const discoverCardReturn =
         detail.kind === "discover-release" &&
         returnsToDiscoverCard(transaction);
       const returnGeneration = ++returnGenerationRef.current;
       const isCurrentReturn = () =>
         returnGenerationRef.current === returnGeneration;
-      coordinator.returnFocusRequested = Boolean(transaction);
+      clearReturnFocusRequests(coordinatorsRef.current);
       coordinator.restoreFocus = options.restoreFocus !== false;
       const returnScrollTop = transaction
         ? resolveNavigationReturnScrollTop(transaction)
         : 0;
       pendingScrollTopRef.current = returnScrollTop;
-      requestDomWork();
 
       let releaseReturnDestination = () => {};
-      let replacementAfterBack: HTMLElement | undefined;
-      const transitionKind =
-        detail.kind === "now-playing"
-          ? "now-playing-close"
-          : detail.kind === "album" && transaction
-            ? "album-detail-close"
-            : detail.kind === "artist" && transaction
-              ? "artist-detail-close"
-              : discoverCardReturn
-                ? "discover-detail-close"
-                : "page-back";
+      const transitionKind = transitionKindForBack(detail, transaction);
       try {
-        await transitionCodaView(
-          async () => {
-            if (router.history.canGoBack()) {
-              await awaitRouterBackAfterRender(router);
-            } else {
-              await commitFallback(detail);
-            }
-            if (detail.kind === "album" && transaction) {
-              replacementAfterBack = await awaitVirtualReturnTrigger({
-                findTrigger: () =>
-                  replacementNavigationTrigger(transaction, detail),
-                isCurrent: isCurrentReturn,
-                scrollRoot: scrollRootRef.current,
-                scrollTop: returnScrollTop,
-              });
-              releaseReturnDestination = markAlbumReturnDestination(
-                replacementAfterBack,
-                detail.albumId,
-              );
-            } else if (detail.kind === "artist" && transaction) {
-              replacementAfterBack = await awaitVirtualReturnTrigger({
-                findTrigger: () =>
-                  replacementNavigationTrigger(transaction, detail),
-                isCurrent: isCurrentReturn,
-                scrollRoot: scrollRootRef.current,
-                scrollTop: returnScrollTop,
-              });
-              releaseReturnDestination = markArtistReturnDestination(
-                replacementAfterBack,
-                detail.artistKey,
-              );
-            } else if (
-              detail.kind === "discover-release" &&
-              discoverCardReturn
-            ) {
-              replacementAfterBack = await awaitVirtualReturnTrigger({
-                findTrigger: () =>
-                  replacementNavigationTrigger(transaction, detail),
-                isCurrent: isCurrentReturn,
-                scrollRoot: scrollRootRef.current,
-                scrollTop: returnScrollTop,
-              });
-              releaseReturnDestination = markDiscoverReturnDestination(
-                replacementAfterBack,
-                detail.releaseId,
-              );
-            }
-          },
-          transitionKind,
-          transitionKind === "page-back"
-            ? { routerOwnedPage: true }
-            : undefined,
-        );
+        await transitionCodaView(async () => {
+          if (router.history.canGoBack()) {
+            await awaitRouterBackAfterRender(router);
+          } else {
+            await commitFallback(detail);
+          }
+          if (detail.kind === "album" && transaction) {
+            const replacement = await awaitVirtualReturnTrigger({
+              findTrigger: () =>
+                replacementNavigationTrigger(transaction, detail),
+              isCurrent: isCurrentReturn,
+              scrollRoot: scrollRootRef.current,
+              scrollTop: returnScrollTop,
+            });
+            releaseReturnDestination = markAlbumReturnDestination(
+              replacement,
+              detail.albumId,
+            );
+          } else if (detail.kind === "artist" && transaction) {
+            const replacement = await awaitVirtualReturnTrigger({
+              findTrigger: () =>
+                replacementNavigationTrigger(transaction, detail),
+              isCurrent: isCurrentReturn,
+              scrollRoot: scrollRootRef.current,
+              scrollTop: returnScrollTop,
+            });
+            releaseReturnDestination = markArtistReturnDestination(
+              replacement,
+              detail.artistKey,
+            );
+          } else if (
+            detail.kind === "discover-release" &&
+            discoverCardReturn
+          ) {
+            const replacement = await awaitVirtualReturnTrigger({
+              findTrigger: () =>
+                replacementNavigationTrigger(transaction, detail),
+              isCurrent: isCurrentReturn,
+              scrollRoot: scrollRootRef.current,
+              scrollTop: returnScrollTop,
+            });
+            releaseReturnDestination = markDiscoverReturnDestination(
+              replacement,
+              detail.releaseId,
+            );
+          } else if (detail.kind === "now-playing") {
+            await awaitVirtualReturnTrigger({
+              findTrigger: () =>
+                transaction
+                  ? replacementNavigationTrigger(transaction, detail)
+                  : (document.querySelector<HTMLElement>(
+                      ".player__art-link[data-coda-track-id]",
+                    ) ?? undefined),
+              isCurrent: isCurrentReturn,
+              scrollRoot: null,
+              scrollTop: 0,
+            });
+          }
+        }, transitionKind);
 
-        // WebKit can move focus while tearing down the View Transition
-        // snapshots. Reassert the exact source only after the animation has
-        // finished so a successful pre-snapshot focus is not lost afterward.
-        if (
-          transaction &&
-          options.restoreFocus !== false &&
-          !returnToDestinationHeading
-        ) {
-          const replacement =
-            replacementAfterBack ??
-            replacementNavigationTrigger(transaction, detail);
-          const focus = resolveNavigationReturnFocus(transaction, replacement);
-          if (focus.target) {
-            focus.target.focus({ preventScroll: true });
-            if (
-              coordinator.navigation.active?.identity === transaction.identity
-            ) {
-              coordinator.navigation = settleNavigationTransaction(
-                coordinator.navigation,
-                transaction.identity,
-              );
-              coordinator.target = undefined;
-              coordinator.returnFocusRequested = false;
-              coordinator.returnToDestinationHeading = false;
-            }
+        if (!isCurrentReturn()) return;
+        if (transaction) {
+          coordinator.returnFocusRequested = true;
+          requestDomWork();
+        }
+      } catch (cause) {
+        if (isCurrentReturn()) {
+          if (currentLocationKeyRef.current === destination.locationKey) {
+            coordinator.returnFocusRequested = false;
+            pendingScrollTopRef.current = undefined;
+          } else if (transaction) {
+            coordinator.returnFocusRequested = true;
+            requestDomWork();
           }
         }
+        throw cause;
       } finally {
         releaseReturnDestination();
       }
@@ -613,18 +676,39 @@ export function useDetailNavigationController(
     [commitFallback, destination.detail, router],
   );
 
+  const back = useCallback<DetailNavigationController["back"]>(
+    (options) => {
+      const active = backInFlightRef.current;
+      if (active?.locationKey === destination.locationKey) {
+        return active.request;
+      }
+      const request = performBack(options).finally(() => {
+        if (backInFlightRef.current?.request === request) {
+          backInFlightRef.current = undefined;
+        }
+      });
+      backInFlightRef.current = {
+        locationKey: destination.locationKey,
+        request,
+      };
+      return request;
+    },
+    [destination.locationKey, performBack],
+  );
+
   const transitionPrimary = useCallback(
     (update: CodaViewTransitionUpdate) =>
-      transitionCodaView(update, "page-forward", { routerOwnedPage: true }),
+      transitionCodaView(update, "page-forward"),
     [],
   );
 
   useLayoutEffect(() => {
     const pendingScrollTop = pendingScrollTopRef.current;
-    const scrollRoot = scrollRootRef.current;
-    if (pendingScrollTop === undefined || !scrollRoot) return;
+    if (pendingScrollTop === undefined) return;
     pendingScrollTopRef.current = undefined;
-    scrollRoot.scrollTop = pendingScrollTop;
+    if (scrollRootRef.current) {
+      scrollRootRef.current.scrollTop = pendingScrollTop;
+    }
   }, [currentDetailKey, destination.locationKey]);
 
   useEffect(
@@ -666,19 +750,39 @@ export function useDetailNavigationController(
       };
       run();
     };
+    const cleanup = () => {
+      active = false;
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+
+    const manualFocus = manualFocusRequestRef.current;
+    if (
+      manualFocus &&
+      !targetMatchesDestination(manualFocus.target, destination.detail)
+    ) {
+      manualFocusRequestRef.current = undefined;
+    }
 
     for (const coordinator of Object.values(coordinatorsRef.current)) {
       const transaction = coordinator.navigation.active;
+      const target = coordinator.target;
       if (
         !transaction ||
-        !coordinator.target ||
+        !target ||
         !coordinator.returnFocusRequested ||
-        targetMatchesDestination(coordinator.target, destination.detail)
+        targetMatchesDestination(target, destination.detail)
       ) {
         continue;
       }
 
       const settle = () => {
+        if (
+          coordinator.navigation.active?.identity !== transaction.identity ||
+          coordinator.target !== target
+        ) {
+          return;
+        }
         coordinator.returnFocusRequested = false;
         coordinator.navigation = settleNavigationTransaction(
           coordinator.navigation,
@@ -692,6 +796,13 @@ export function useDetailNavigationController(
         return;
       }
       schedule(() => {
+        if (
+          coordinator.navigation.active?.identity !== transaction.identity ||
+          coordinator.target !== target ||
+          !coordinator.returnFocusRequested
+        ) {
+          return undefined;
+        }
         if (coordinator.returnToDestinationHeading) {
           const headingId = destinationHeadingId(destination.detail);
           return headingId
@@ -700,66 +811,64 @@ export function useDetailNavigationController(
         }
         const replacement = replacementNavigationTrigger(
           transaction,
-          coordinator.target!,
+          target,
         );
         return resolveNavigationReturnFocus(transaction, replacement).target;
       }, settle);
-      return () => {
-        active = false;
-        if (frame !== undefined) window.cancelAnimationFrame(frame);
-        if (timer !== undefined) window.clearTimeout(timer);
-      };
+      return cleanup;
     }
 
-    const manualFocus = manualFocusRequestRef.current;
+    const currentManualFocus = manualFocusRequestRef.current;
     if (
-      manualFocus &&
-      targetMatchesDestination(manualFocus.target, destination.detail)
+      currentManualFocus &&
+      targetMatchesDestination(currentManualFocus.target, destination.detail)
     ) {
       schedule(
-        () => document.getElementById(manualFocus.headingId) ?? undefined,
+        () =>
+          manualFocusRequestRef.current === currentManualFocus
+            ? (document.getElementById(currentManualFocus.headingId) ??
+              undefined)
+            : undefined,
         () => {
-          if (manualFocusRequestRef.current === manualFocus) {
+          if (manualFocusRequestRef.current === currentManualFocus) {
             manualFocusRequestRef.current = undefined;
           }
         },
       );
-      return () => {
-        active = false;
-        if (frame !== undefined) window.cancelAnimationFrame(frame);
-        if (timer !== undefined) window.clearTimeout(timer);
-      };
+      return cleanup;
     }
 
     for (const coordinator of Object.values(coordinatorsRef.current)) {
       const transaction = coordinator.navigation.active;
+      const target = coordinator.target;
       if (
         !transaction ||
-        !targetMatchesDestination(coordinator.target, destination.detail) ||
+        !targetMatchesDestination(target, destination.detail) ||
         coordinator.focusedIdentity === transaction.identity
       ) {
         continue;
       }
       schedule(
-        () =>
-          document.getElementById(transaction.destinationHeadingId) ??
-          undefined,
+        () => {
+          if (
+            coordinator.navigation.active?.identity !== transaction.identity ||
+            coordinator.target !== target
+          ) {
+            return undefined;
+          }
+          return (
+            document.getElementById(transaction.destinationHeadingId) ??
+            undefined
+          );
+        },
         () => {
           coordinator.focusedIdentity = transaction.identity;
         },
       );
-      return () => {
-        active = false;
-        if (frame !== undefined) window.cancelAnimationFrame(frame);
-        if (timer !== undefined) window.clearTimeout(timer);
-      };
+      return cleanup;
     }
 
-    return () => {
-      active = false;
-      if (frame !== undefined) window.cancelAnimationFrame(frame);
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
+    return cleanup;
   }, [
     currentDetailKey,
     destination.detail,
@@ -767,10 +876,13 @@ export function useDetailNavigationController(
     domRequestVersion,
   ]);
 
-  return {
-    back,
-    open,
-    scrollRootRef,
-    transitionPrimary,
-  };
+  return useMemo(
+    () => ({
+      back,
+      open,
+      scrollRootRef,
+      transitionPrimary,
+    }),
+    [back, open, transitionPrimary],
+  );
 }

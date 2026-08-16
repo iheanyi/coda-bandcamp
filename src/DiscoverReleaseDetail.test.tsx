@@ -65,7 +65,13 @@ describe("DiscoverReleaseDetail", () => {
     let detail = screen.getByRole("article", {
       name: "Blue Hours",
     });
-    expect(detail).toHaveAttribute("data-coda-discover-detail-surface");
+    const detailSurface = detail.querySelector(
+      "[data-coda-discover-detail-surface]",
+    );
+    expect(detailSurface).toHaveAttribute("data-coda-discover-detail-surface");
+    expect(detailSurface).not.toContainElement(
+      within(detail).getByRole("button", { name: "Back" }),
+    );
     expect(
       detail.querySelector("[data-coda-discover-artwork-detail]"),
     ).toHaveAttribute(
