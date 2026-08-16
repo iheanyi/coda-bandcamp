@@ -3,7 +3,6 @@ import {
   emptyLocalFavorites,
   LOCAL_FAVORITES_VERSION,
   parseLocalFavoritesSerialized,
-  type LocalFavoritesWireValue,
 } from "./localFavorites";
 import {
   LocalFavoritesPreparationClient,
@@ -18,6 +17,7 @@ import {
   type LocalFavoritesWorkerMessageErrorEvent,
   type LocalFavoritesWorkerPort,
 } from "./localFavoritesPreparation";
+import type { OwnDataValue } from "./ownData";
 import type { LocalFavoriteCollection, Track } from "./types";
 
 const track: Track = {
@@ -58,8 +58,10 @@ class FakeLocalFavoritesWorker implements LocalFavoritesWorkerPort {
     this.requests.push(request);
   }
 
-  respond(response: LocalFavoritesWireValue): void {
-    this.onmessage?.(new MessageEvent("message", { data: response }));
+  respond(response: OwnDataValue): void {
+    this.onmessage?.(
+      new MessageEvent<OwnDataValue>("message", { data: response }),
+    );
   }
 }
 
@@ -142,6 +144,106 @@ describe("local Favorites preparation", () => {
     })).toBeUndefined();
   });
 
+  it("rejects inherited, accessor, spoofed, null, and oversize messages", () => {
+    const inheritedRequest = Object.create({
+      kind: "parse-local-favorites",
+      requestId: 1,
+      serialized: "{}",
+    });
+    let serializedReads = 0;
+    const accessorRequest = {
+      kind: "parse-local-favorites",
+      requestId: 1,
+      get serialized() {
+        serializedReads += 1;
+        return "{}";
+      },
+    };
+    let coercions = 0;
+    const spoofedKind = {
+      [Symbol.toPrimitive]() {
+        coercions += 1;
+        return "parse-local-favorites";
+      },
+    };
+
+    expect(parseLocalFavoritesPreparationRequest(null)).toBeUndefined();
+    expect(parseLocalFavoritesPreparationRequest(inheritedRequest))
+      .toBeUndefined();
+    expect(parseLocalFavoritesPreparationRequest(accessorRequest))
+      .toBeUndefined();
+    expect(serializedReads).toBe(0);
+    expect(parseLocalFavoritesPreparationRequest({
+      kind: spoofedKind,
+      requestId: 1,
+      serialized: "{}",
+    })).toBeUndefined();
+    expect(coercions).toBe(0);
+    expect(parseLocalFavoritesPreparationRequest({
+      kind: "parse-local-favorites",
+      requestId: 1,
+      serialized: "x".repeat(4 * 1024 * 1024 + 1),
+    })).toBeUndefined();
+  });
+
+  it("deep-validates worker Favorites before exposing them", () => {
+    const inheritedResponse = Object.create({
+      kind: "local-favorites-parsed",
+      requestId: 1,
+      favorites,
+    });
+    let titleReads = 0;
+    const accessorTrack = { ...track };
+    Object.defineProperty(accessorTrack, "title", {
+      get() {
+        titleReads += 1;
+        return track.title;
+      },
+    });
+
+    expect(parseLocalFavoritesPreparationResponse(inheritedResponse))
+      .toBeUndefined();
+    expect(parseLocalFavoritesPreparationResponse({
+      kind: "local-favorites-parsed",
+      requestId: 1,
+      favorites: {
+        ...favorites,
+        tracks: [{ ...track, title: null }],
+      },
+    })).toBeUndefined();
+    expect(parseLocalFavoritesPreparationResponse({
+      kind: "local-favorites-parsed",
+      requestId: 1,
+      favorites: {
+        ...favorites,
+        tracks: [accessorTrack],
+      },
+    })).toBeUndefined();
+    expect(titleReads).toBe(0);
+    expect(parseLocalFavoritesPreparationResponse({
+      kind: "local-favorites-serialized",
+      requestId: 1,
+      prepared: {
+        serialized: "{}",
+        favorites: {
+          ...favorites,
+          tracks: [{ ...track, palette: ["#000000"] }],
+        },
+      },
+    })).toBeUndefined();
+    expect(parseLocalFavoritesPreparationResponse({
+      kind: "local-favorites-parsed",
+      requestId: 1,
+      favorites: {
+        ...emptyLocalFavorites(),
+        songIds: Array.from(
+          { length: 25_001 },
+          (_value, index) => `track-${index}`,
+        ),
+      },
+    })).toBeUndefined();
+  });
+
   it("serializes a boundary-validated worker request without a second parse", () => {
     const request = parseLocalFavoritesPreparationRequest({
       kind: "serialize-local-favorites",
@@ -221,6 +323,7 @@ describe("local Favorites preparation", () => {
       requestId: request.requestId,
       prepared: {
         serialized,
+        favorites: maximumFavorites,
       },
     });
 

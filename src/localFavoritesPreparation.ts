@@ -9,8 +9,20 @@ import {
   parseLocalFavoritesSerialized,
   sanitizeLocalFavorites,
   type LocalFavoritesSnapshot,
-  type LocalFavoritesWireValue,
 } from "./localFavorites";
+import { parseLibraryDate } from "./libraryDates";
+import {
+  INVALID_OWN_DATA_PROPERTY as INVALID_PROPERTY,
+  isDataArray,
+  isNumberValue,
+  isOwnDataRecord,
+  isStringValue,
+  MISSING_OWN_DATA_PROPERTY as MISSING_PROPERTY,
+  ownDataProperty,
+  type OwnDataPropertyResult,
+  type OwnDataRecord,
+  type OwnDataValue,
+} from "./ownData";
 import type { LocalFavoriteCollection } from "./types";
 
 export type PreparedLocalFavorites = {
@@ -36,7 +48,7 @@ export class ValidatedLocalFavorites {
   ) {}
 
   static parse(
-    value: LocalFavoritesWireValue,
+    value: OwnDataValue,
   ): ValidatedLocalFavorites | undefined {
     const collection = sanitizeLocalFavorites(value);
     return collection ? new ValidatedLocalFavorites(collection) : undefined;
@@ -53,7 +65,7 @@ export type ParsedLocalFavoritesPreparationRequest =
       kind: "serialize-local-favorites";
       requestId: number;
       favorites: ValidatedLocalFavorites;
-      sourceFavorites: LocalFavoritesWireValue;
+      sourceFavorites: OwnDataValue;
     };
 
 export type LocalFavoritesPreparationResponse =
@@ -77,13 +89,11 @@ export type LocalFavoritesPreparationResponse =
       errorMessage: string;
     };
 
-export type LocalFavoritesWorkerMessageEvent =
-  MessageEvent<LocalFavoritesWireValue>;
+export type LocalFavoritesWorkerMessageEvent = MessageEvent<OwnDataValue>;
 
 export type LocalFavoritesWorkerErrorEvent = ErrorEvent;
 
-export type LocalFavoritesWorkerMessageErrorEvent =
-  MessageEvent<LocalFavoritesWireValue>;
+export type LocalFavoritesWorkerMessageErrorEvent = MessageEvent<OwnDataValue>;
 
 export type LocalFavoritesWorkerPort = {
   onmessage: ((event: LocalFavoritesWorkerMessageEvent) => void) | null;
@@ -127,26 +137,274 @@ function errorFromCause(cause: unknown, fallback: string): Error {
   return cause instanceof Error ? cause : new Error(fallback);
 }
 
-type LocalFavoritesPreparationWireRecord = {
-  [field: string]: LocalFavoritesWireValue;
-};
+function objectProperty(
+  value: OwnDataPropertyResult,
+  key: string,
+): OwnDataPropertyResult {
+  if (!isOwnDataRecord(value)) return INVALID_PROPERTY;
+  return ownDataProperty(value, key);
+}
 
-function isRecord(
-  value: LocalFavoritesWireValue,
-): value is LocalFavoritesPreparationWireRecord {
+function arrayElement(
+  values: readonly OwnDataValue[],
+  index: number,
+): OwnDataPropertyResult {
+  return ownDataProperty(values, String(index));
+}
+
+function isOmitted(value: OwnDataPropertyResult): boolean {
+  return value === MISSING_PROPERTY || value === undefined;
+}
+
+function hasControlCharacters(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit <= 0x1f || (codeUnit >= 0x7f && codeUnit <= 0x9f)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isPreparedText(
+  value: OwnDataPropertyResult,
+  required = true,
+): value is string {
   return (
-    value !== null &&
-    value !== undefined &&
-    Object(value) === value &&
-    !Array.isArray(value)
+    typeof value === "string" &&
+    value.length <= 1_024 &&
+    (!required || value.length > 0) &&
+    !hasControlCharacters(value)
   );
 }
 
-function requestIdFrom(
-  value: LocalFavoritesPreparationWireRecord,
-): number | undefined {
-  return Number.isSafeInteger(value.requestId) && Number(value.requestId) > 0
-    ? Number(value.requestId)
+function isPreparedCount(
+  value: OwnDataPropertyResult,
+  maximum: number,
+): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 0 &&
+    value <= maximum
+  );
+}
+
+function isPreparedDuration(value: OwnDataPropertyResult): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= 7 * 24 * 60 * 60
+  );
+}
+
+function hasPreparedPalette(value: OwnDataPropertyResult): boolean {
+  if (!isDataArray(value) || value.length !== 2) return false;
+  const first = arrayElement(value, 0);
+  const second = arrayElement(value, 1);
+  return (
+    isPreparedText(first) &&
+    first.length <= 64 &&
+    isPreparedText(second) &&
+    second.length <= 64
+  );
+}
+
+function isCalendarDate(year: number, month: number, day: number): boolean {
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  date.setUTCHours(0, 0, 0, 0);
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
+function isPreparedItemDate(value: OwnDataPropertyResult): boolean {
+  const year = objectProperty(value, "year");
+  const month = objectProperty(value, "month");
+  const day = objectProperty(value, "day");
+  return (
+    isPreparedCount(year, 9_999) &&
+    year > 0 &&
+    (isOmitted(month) ||
+      (isPreparedCount(month, 12) && month > 0)) &&
+    (isOmitted(day) ||
+      (isPreparedCount(day, 31) &&
+        day > 0 &&
+        isNumberValue(month) &&
+        isCalendarDate(year, month, day)))
+  );
+}
+
+function isPreparedOptionalText(
+  value: OwnDataPropertyResult,
+  required = false,
+): boolean {
+  return isOmitted(value) || isPreparedText(value, required);
+}
+
+function isPreparedOptionalDateText(value: OwnDataPropertyResult): boolean {
+  return (
+    isOmitted(value) ||
+    (isPreparedText(value, false) &&
+      parseLibraryDate(value) !== undefined)
+  );
+}
+
+function isPreparedTrack(value: OwnDataPropertyResult): boolean {
+  const disc = objectProperty(value, "disc");
+  const musicBrainzId = objectProperty(value, "musicBrainzId");
+  return (
+    isPreparedText(objectProperty(value, "id")) &&
+    isPreparedText(objectProperty(value, "title")) &&
+    isPreparedText(objectProperty(value, "artist")) &&
+    isPreparedText(objectProperty(value, "album")) &&
+    isPreparedText(objectProperty(value, "albumId")) &&
+    isPreparedDuration(objectProperty(value, "duration")) &&
+    isPreparedCount(objectProperty(value, "track"), 100_000) &&
+    (isOmitted(disc) ||
+      isPreparedCount(disc, 100_000)) &&
+    isPreparedOptionalText(objectProperty(value, "albumArtist")) &&
+    (isOmitted(musicBrainzId) ||
+      (isStringValue(musicBrainzId) &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu
+          .test(musicBrainzId))) &&
+    isPreparedOptionalText(objectProperty(value, "coverArt")) &&
+    isPreparedOptionalDateText(objectProperty(value, "starredAt")) &&
+    hasPreparedPalette(objectProperty(value, "palette")) &&
+    isOmitted(objectProperty(value, "artworkUrl")) &&
+    isOmitted(objectProperty(value, "streamUrl")) &&
+    isOmitted(objectProperty(value, "radioChapters")) &&
+    isOmitted(objectProperty(value, "discoverRelease")) &&
+    isOmitted(objectProperty(value, "dailySource"))
+  );
+}
+
+function isPreparedOptionalItemDate(value: OwnDataPropertyResult): boolean {
+  return isOmitted(value) || isPreparedItemDate(value);
+}
+
+function isPreparedAlbum(value: OwnDataPropertyResult): boolean {
+  const year = objectProperty(value, "year");
+  return (
+    isPreparedText(objectProperty(value, "id")) &&
+    isPreparedText(objectProperty(value, "title")) &&
+    isPreparedText(objectProperty(value, "artist")) &&
+    isPreparedCount(objectProperty(value, "songCount"), MAX_FAVORITE_TRACKS) &&
+    isPreparedDuration(objectProperty(value, "duration")) &&
+    (isOmitted(year) ||
+      (isPreparedCount(year, 9_999) && year > 0)) &&
+    isPreparedOptionalText(objectProperty(value, "coverArt")) &&
+    isPreparedOptionalText(objectProperty(value, "genre")) &&
+    isPreparedOptionalDateText(objectProperty(value, "addedAt")) &&
+    isPreparedOptionalDateText(objectProperty(value, "starredAt")) &&
+    isPreparedOptionalDateText(objectProperty(value, "playedAt")) &&
+    isPreparedOptionalItemDate(objectProperty(value, "originalReleaseDate")) &&
+    isPreparedOptionalItemDate(objectProperty(value, "releaseDate")) &&
+    hasPreparedPalette(objectProperty(value, "palette")) &&
+    isOmitted(objectProperty(value, "artworkUrl")) &&
+    isOmitted(objectProperty(value, "tracks"))
+  );
+}
+
+function isPreparedRadioSeries(value: OwnDataPropertyResult): boolean {
+  const id = objectProperty(value, "id");
+  return (
+    isPreparedCount(id, Number.MAX_SAFE_INTEGER) &&
+    id > 0 &&
+    isPreparedText(objectProperty(value, "title")) &&
+    isPreparedText(objectProperty(value, "slug"))
+  );
+}
+
+function isPreparedRadioShow(value: OwnDataPropertyResult): boolean {
+  const id = objectProperty(value, "id");
+  const series = objectProperty(value, "series");
+  return (
+    isPreparedCount(id, Number.MAX_SAFE_INTEGER) &&
+    id > 0 &&
+    isPreparedText(objectProperty(value, "subtitle")) &&
+    isPreparedText(objectProperty(value, "description"), false) &&
+    isPreparedText(objectProperty(value, "publishedAt"), false) &&
+    (isOmitted(series) || isPreparedRadioSeries(series)) &&
+    isOmitted(objectProperty(value, "artworkUrl"))
+  );
+}
+
+function hasBoundedItems(
+  value: OwnDataPropertyResult,
+  maximum: number,
+  validate: (item: OwnDataPropertyResult) => boolean,
+): boolean {
+  if (!isDataArray(value) || value.length > maximum) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    if (!validate(arrayElement(value, index))) return false;
+  }
+  return true;
+}
+
+function isPreparedRadioId(value: OwnDataPropertyResult): boolean {
+  return (
+    isPreparedCount(value, Number.MAX_SAFE_INTEGER) &&
+    value > 0
+  );
+}
+
+function isPreparedLocalFavorites<Value>(
+  value: Value,
+): value is Value & LocalFavoriteCollection {
+  return (
+    isOwnDataRecord(value) &&
+    hasBoundedItems(
+      objectProperty(value, "albumIds"),
+      MAX_FAVORITE_ALBUMS,
+      isPreparedText,
+    ) &&
+    hasBoundedItems(
+      objectProperty(value, "songIds"),
+      MAX_FAVORITE_TRACKS,
+      isPreparedText,
+    ) &&
+    hasBoundedItems(
+      objectProperty(value, "radioShowIds"),
+      MAX_FAVORITE_RADIO_SHOWS,
+      isPreparedRadioId,
+    ) &&
+    hasBoundedItems(
+      objectProperty(value, "albums"),
+      MAX_FAVORITE_ALBUMS,
+      isPreparedAlbum,
+    ) &&
+    hasBoundedItems(
+      objectProperty(value, "tracks"),
+      MAX_FAVORITE_TRACKS,
+      isPreparedTrack,
+    ) &&
+    hasBoundedItems(
+      objectProperty(value, "radioShows"),
+      MAX_FAVORITE_RADIO_SHOWS,
+      isPreparedRadioShow,
+    )
+  );
+}
+
+function parsePreparedLocalFavorites(
+  value: OwnDataPropertyResult,
+): LocalFavoriteCollection | undefined {
+  return isPreparedLocalFavorites(value) ? value : undefined;
+}
+
+function requestIdFrom(value: OwnDataRecord): number | undefined {
+  const requestId = objectProperty(value, "requestId");
+  return (
+      isNumberValue(requestId) &&
+      Number.isSafeInteger(requestId) &&
+      requestId > 0
+    )
+    ? requestId
     : undefined;
 }
 
@@ -160,115 +418,108 @@ function defaultIdleScheduler(callback: () => void): void {
   setTimeout(callback, 0);
 }
 
-/**
- * Validates only the dedicated worker protocol envelope. The module worker is
- * created by this client, cannot receive window messages, and deep-sanitizes
- * each request before replying. Repeating that O(n) validation here would move
- * the work back onto the renderer task that the worker exists to protect.
- */
-function hasBoundedTrustedWorkerFavoritesEnvelope(
-  value: LocalFavoritesWireValue,
-): value is LocalFavoriteCollection {
-  if (!isRecord(value)) return false;
-  return (
-    Array.isArray(value.albumIds) &&
-    value.albumIds.length <= MAX_FAVORITE_ALBUMS &&
-    Array.isArray(value.songIds) &&
-    value.songIds.length <= MAX_FAVORITE_TRACKS &&
-    Array.isArray(value.radioShowIds) &&
-    value.radioShowIds.length <= MAX_FAVORITE_RADIO_SHOWS &&
-    Array.isArray(value.albums) &&
-    value.albums.length <= MAX_FAVORITE_ALBUMS &&
-    Array.isArray(value.tracks) &&
-    value.tracks.length <= MAX_FAVORITE_TRACKS &&
-    Array.isArray(value.radioShows) &&
-    value.radioShows.length <= MAX_FAVORITE_RADIO_SHOWS
-  );
+function isMissing(value: OwnDataPropertyResult): boolean {
+  return value === MISSING_PROPERTY || value === undefined;
 }
 
-export function parseLocalFavoritesPreparationRequest(
-  value: LocalFavoritesWireValue,
+export function parseLocalFavoritesPreparationRequest<Value>(
+  value: Value,
 ): ParsedLocalFavoritesPreparationRequest | undefined {
-  if (!isRecord(value)) return undefined;
+  if (!isOwnDataRecord(value)) return undefined;
   const requestId = requestIdFrom(value);
   if (requestId === undefined) return undefined;
-  if (value.kind === "parse-local-favorites") {
+  const kind = objectProperty(value, "kind");
+  if (kind === "parse-local-favorites") {
+    const serialized = objectProperty(value, "serialized");
     if (
-      String(value.serialized) !== value.serialized ||
-      value.serialized.length > MAX_LOCAL_FAVORITES_BYTES
+      !isStringValue(serialized) ||
+      serialized.length > MAX_LOCAL_FAVORITES_BYTES
     ) {
       return undefined;
     }
     return {
-      kind: value.kind,
+      kind,
       requestId,
-      serialized: value.serialized,
+      serialized,
     };
   }
-  if (value.kind !== "serialize-local-favorites") return undefined;
-  const favorites = ValidatedLocalFavorites.parse(value.favorites);
+  if (kind !== "serialize-local-favorites") return undefined;
+  const sourceFavorites = objectProperty(value, "favorites");
+  if (
+    sourceFavorites === INVALID_PROPERTY ||
+    sourceFavorites === MISSING_PROPERTY
+  ) {
+    return undefined;
+  }
+  const favorites = ValidatedLocalFavorites.parse(sourceFavorites);
   if (!favorites) return undefined;
   return {
-    kind: value.kind,
+    kind,
     requestId,
     favorites,
-    sourceFavorites: value.favorites,
+    sourceFavorites,
   };
 }
 
 export function parseLocalFavoritesPreparationResponse(
-  value: LocalFavoritesWireValue,
+  value: OwnDataValue,
 ): LocalFavoritesPreparationResponse | undefined {
-  if (!isRecord(value)) return undefined;
+  if (!isOwnDataRecord(value)) return undefined;
   const requestId = requestIdFrom(value);
   if (requestId === undefined) return undefined;
-  if (value.kind === "local-favorites-parsed") {
-    if (value.favorites === undefined) {
-      return { kind: value.kind, requestId };
+  const kind = objectProperty(value, "kind");
+  if (kind === "local-favorites-parsed") {
+    const favoritesValue = objectProperty(value, "favorites");
+    if (isMissing(favoritesValue)) {
+      return { kind, requestId };
     }
-    return hasBoundedTrustedWorkerFavoritesEnvelope(value.favorites)
-      ? { kind: value.kind, requestId, favorites: value.favorites }
-      : undefined;
+    const favorites = parsePreparedLocalFavorites(favoritesValue);
+    return favorites ? { kind, requestId, favorites } : undefined;
   }
-  if (value.kind === "local-favorites-serialized") {
-    if (!isRecord(value.prepared)) return undefined;
+  if (kind === "local-favorites-serialized") {
+    const preparedValue = objectProperty(value, "prepared");
+    if (!isOwnDataRecord(preparedValue)) return undefined;
+    const serialized = objectProperty(preparedValue, "serialized");
+    const favoritesValue = objectProperty(preparedValue, "favorites");
     if (
-      String(value.prepared.serialized) !== value.prepared.serialized ||
-      value.prepared.serialized.length === 0 ||
-      value.prepared.serialized.length > MAX_LOCAL_FAVORITES_BYTES ||
-      (value.prepared.favorites !== undefined &&
-        !hasBoundedTrustedWorkerFavoritesEnvelope(value.prepared.favorites))
+      !isStringValue(serialized) ||
+      serialized.length === 0 ||
+      serialized.length > MAX_LOCAL_FAVORITES_BYTES
     ) {
       return undefined;
     }
+    const favorites = isMissing(favoritesValue)
+      ? undefined
+      : parsePreparedLocalFavorites(favoritesValue);
+    if (!isMissing(favoritesValue) && !favorites) return undefined;
     const prepared: LocalFavoritesPreparationResponse = {
-      kind: value.kind,
+      kind,
       requestId,
       prepared: {
-        serialized: value.prepared.serialized,
+        serialized,
       },
     };
-    if (value.prepared.favorites !== undefined) {
-      prepared.prepared.favorites = value.prepared.favorites;
-    }
+    if (favorites) prepared.prepared.favorites = favorites;
     return prepared;
   }
+  const errorName = objectProperty(value, "errorName");
+  const errorMessage = objectProperty(value, "errorMessage");
   if (
-    value.kind !== "local-favorites-error" ||
-    String(value.errorName) !== value.errorName ||
-    value.errorName.length === 0 ||
-    value.errorName.length > 1_024 ||
-    String(value.errorMessage) !== value.errorMessage ||
-    value.errorMessage.length === 0 ||
-    value.errorMessage.length > 1_024
+    kind !== "local-favorites-error" ||
+    !isStringValue(errorName) ||
+    errorName.length === 0 ||
+    errorName.length > 1_024 ||
+    !isStringValue(errorMessage) ||
+    errorMessage.length === 0 ||
+    errorMessage.length > 1_024
   ) {
     return undefined;
   }
   return {
-    kind: value.kind,
+    kind,
     requestId,
-    errorName: value.errorName,
-    errorMessage: value.errorMessage,
+    errorName,
+    errorMessage,
   };
 }
 
@@ -300,19 +551,33 @@ export function serializeLocalFavorites(
 }
 
 export function localFavoritesInputMatchesPrepared(
-  value: LocalFavoritesWireValue,
+  value: OwnDataValue,
   prepared: PreparedLocalFavorites,
 ): boolean {
-  if (!isRecord(value)) return false;
+  if (!isOwnDataRecord(value)) return false;
+  const albumIds = objectProperty(value, "albumIds");
+  const songIds = objectProperty(value, "songIds");
+  const radioShowIds = objectProperty(value, "radioShowIds");
+  const albums = objectProperty(value, "albums");
+  const tracks = objectProperty(value, "tracks");
+  const radioShows = objectProperty(value, "radioShows");
+  if (
+    [albumIds, songIds, radioShowIds, albums, tracks, radioShows].some(
+      (field) =>
+        field === MISSING_PROPERTY || field === INVALID_PROPERTY,
+    )
+  ) {
+    return false;
+  }
   try {
     return JSON.stringify({
       version: LOCAL_FAVORITES_VERSION,
-      albumIds: value.albumIds,
-      songIds: value.songIds,
-      radioShowIds: value.radioShowIds,
-      albums: value.albums,
-      tracks: value.tracks,
-      radioShows: value.radioShows,
+      albumIds,
+      songIds,
+      radioShowIds,
+      albums,
+      tracks,
+      radioShows,
     }) === prepared.serialized;
   } catch {
     return false;
@@ -472,7 +737,7 @@ export class LocalFavoritesPreparationClient implements LocalFavoritesPreparatio
     return worker;
   }
 
-  private handleMessage(value: LocalFavoritesWireValue): void {
+  private handleMessage(value: OwnDataValue): void {
     const response = parseLocalFavoritesPreparationResponse(value);
     if (!response) {
       this.failWorker(new Error(

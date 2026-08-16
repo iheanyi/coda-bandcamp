@@ -6,7 +6,6 @@ import {
 } from "./localFavoritesPreparation";
 import {
   parseLocalFavoritesSerialized,
-  type LocalFavoritesWireValue,
 } from "./localFavorites";
 
 function respond(response: LocalFavoritesPreparationResponse): void {
@@ -15,7 +14,7 @@ function respond(response: LocalFavoritesPreparationResponse): void {
 
 globalThis.addEventListener(
   "message",
-  ({ data }: MessageEvent<LocalFavoritesWireValue>) => {
+  ({ data }: MessageEvent<unknown>) => {
     const request = parseLocalFavoritesPreparationRequest(data);
     if (!request) return;
     try {
