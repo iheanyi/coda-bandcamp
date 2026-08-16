@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { createRef, type ReactNode, type Ref } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { DrawerTrigger } from "@/components/ui/drawer";
@@ -9,6 +9,7 @@ import { AppShell } from "./AppShell";
 function shell(
   outlet: ReactNode,
   options: Readonly<{
+    libraryPaneRef?: Ref<HTMLElement>;
     nowPlayingOpen?: boolean;
     onQueueOpenChange?: (open: boolean) => void;
     queueOpen?: boolean;
@@ -37,6 +38,7 @@ function shell(
       }}
       route={{
         chrome: <header data-testid="route-chrome">Chrome</header>,
+        libraryPaneRef: options.libraryPaneRef,
         outlet,
         sidebar: <aside data-testid="sidebar">Sidebar</aside>,
         transitionKey: options.transitionKey ?? "test-route",
@@ -111,5 +113,24 @@ describe("AppShell", () => {
     expect(
       screen.getByTestId("route-outlet").closest('[data-slot="app-shell"]'),
     ).toHaveClass("grid-rows-[minmax(0,1fr)]");
+  });
+
+  it("forwards the main element to callback and object refs", () => {
+    const callbackRef = vi.fn();
+    const { rerender } = render(
+      shell(<section>Collection</section>, {
+        libraryPaneRef: callbackRef,
+      }),
+    );
+    const main = screen.getByRole("main");
+    expect(callbackRef).toHaveBeenLastCalledWith(main);
+
+    const objectRef = createRef<HTMLElement>();
+    rerender(
+      shell(<section>Collection</section>, {
+        libraryPaneRef: objectRef,
+      }),
+    );
+    expect(objectRef.current).toBe(main);
   });
 });

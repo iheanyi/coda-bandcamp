@@ -2,6 +2,7 @@ import {
   Profiler,
   type ReactNode,
   type Ref,
+  type RefCallback,
   useCallback,
   useLayoutEffect,
   useRef,
@@ -40,10 +41,10 @@ export type AppShellProps = Readonly<{
   className?: string;
 }>;
 
-function isRefCallback(
+function isLibraryPaneRefCallback(
   ref: Ref<HTMLElement> | undefined,
-): ref is (instance: HTMLElement | null) => void {
-  return Object.prototype.toString.call(ref) === "[object Function]";
+): ref is RefCallback<HTMLElement> {
+  return typeof ref === "function";
 }
 
 function recordRouteRender(
@@ -73,10 +74,11 @@ export function AppShell({
   const setMainRef = useCallback(
     (element: HTMLElement | null) => {
       mainRef.current = element;
-      if (isRefCallback(route.libraryPaneRef)) {
-        route.libraryPaneRef(element);
-      } else if (route.libraryPaneRef) {
-        route.libraryPaneRef.current = element;
+      const libraryPaneRef = route.libraryPaneRef;
+      if (isLibraryPaneRefCallback(libraryPaneRef)) {
+        libraryPaneRef(element);
+      } else if (libraryPaneRef) {
+        libraryPaneRef.current = element;
       }
     },
     [route.libraryPaneRef],

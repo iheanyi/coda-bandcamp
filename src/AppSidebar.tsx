@@ -37,8 +37,12 @@ import {
   isUnmodifiedPrimaryActivation,
 } from "@/routing/linkActivation";
 import {
+  DEFAULT_DAILY_ROUTE_SEARCH,
   validateCollectionSearch,
   validateDiscoverSearch,
+  type CollectionRouteSearch,
+  type DailyRouteSearch,
+  type DiscoverRouteSearch,
 } from "@/routing/routeContracts";
 
 export type AppSidebarDestination =
@@ -50,9 +54,15 @@ export type AppSidebarDestination =
   | "/daily"
   | "/radio";
 
+export type AppSidebarDestinationSearch =
+  | CollectionRouteSearch
+  | DailyRouteSearch
+  | DiscoverRouteSearch;
+
 export type AppSidebarNavigationRequest = Readonly<{
   destination: AppSidebarDestination;
   navigate: (viewTransition?: boolean) => Promise<void>;
+  search?: AppSidebarDestinationSearch;
   trigger: HTMLAnchorElement;
 }>;
 
@@ -105,6 +115,7 @@ function AppSidebar({
   const activateNavigation = (
     event: MouseEvent<HTMLAnchorElement>,
     destination: AppSidebarDestination,
+    committedSearch: AppSidebarDestinationSearch | undefined,
     navigateToDestination: (viewTransition?: boolean) => Promise<void>,
     beforeNavigate?: () => boolean,
   ) => {
@@ -118,6 +129,7 @@ function AppSidebar({
       void onNavigate({
         destination,
         navigate: navigateToDestination,
+        search: committedSearch,
         trigger,
       });
     });
@@ -140,6 +152,7 @@ function AppSidebar({
                       activateNavigation(
                         event,
                         "/collection",
+                        collectionSearch,
                         async (viewTransition = true) => {
                           await navigate({
                             search: collectionSearch,
@@ -162,6 +175,7 @@ function AppSidebar({
                       activateNavigation(
                         event,
                         "/favorites",
+                        undefined,
                         async (viewTransition = true) => {
                           await navigate({
                             to: "/favorites",
@@ -182,6 +196,7 @@ function AppSidebar({
                       activateNavigation(
                         event,
                         "/playlists",
+                        undefined,
                         async (viewTransition = true) => {
                           await navigate({
                             to: "/playlists",
@@ -203,6 +218,7 @@ function AppSidebar({
                       activateNavigation(
                         event,
                         "/recent",
+                        collectionSearch,
                         async (viewTransition = true) => {
                           await navigate({
                             search: collectionSearch,
@@ -228,6 +244,7 @@ function AppSidebar({
                       activateNavigation(
                         event,
                         "/discover",
+                        discoverSearch,
                         async (viewTransition = true) => {
                           await navigate({
                             search: discoverSearch,
@@ -260,16 +277,17 @@ function AppSidebar({
                       activateNavigation(
                         event,
                         "/daily",
+                        DEFAULT_DAILY_ROUTE_SEARCH,
                         async (viewTransition = true) => {
                           await navigate({
-                            search: { category: "album-of-the-day" },
+                            search: DEFAULT_DAILY_ROUTE_SEARCH,
                             to: "/daily",
                             viewTransition,
                           });
                         },
                       )
                     }
-                    search={{ category: "album-of-the-day" }}
+                    search={DEFAULT_DAILY_ROUTE_SEARCH}
                     to="/daily"
                   >
                     <NavigationLinkContent
@@ -285,6 +303,7 @@ function AppSidebar({
                       activateNavigation(
                         event,
                         "/radio",
+                        undefined,
                         async (viewTransition = true) => {
                           await navigate({
                             to: "/radio",
