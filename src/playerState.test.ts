@@ -11,6 +11,7 @@ import {
   yieldPlayerStateValidation,
 } from "./playerState";
 import radioContract from "../test/fixtures/player-state-radio-contract.json";
+import type { OwnDataValue } from "./ownData";
 import type {
   PlayerStateCheckpoint,
   PlayerStateInput,
@@ -242,6 +243,85 @@ describe("player state persistence", () => {
         lastFmProgress: { ...valid.lastFmProgress, trackId: "another-track" },
       }),
     ).toBeUndefined();
+  });
+
+  it("parses saved JSON as unknown and rejects null or spoofed records", async () => {
+    const valid = createPlayerState(input, 1_700_000_000_000);
+    const jsonPayload: OwnDataValue = JSON.parse(JSON.stringify(valid));
+    const spoofedState = Object.assign(new Date(), valid, {
+      [Symbol.toStringTag]: "Object",
+    });
+    const spoofedTrack = Object.assign(new Date(), valid.queue[0], {
+      [Symbol.toStringTag]: "Object",
+    });
+
+    expect(parsePlayerState(jsonPayload)).toEqual(valid);
+    await expect(parsePlayerStateAsync(jsonPayload)).resolves.toEqual(valid);
+    expect(parsePlayerState(null)).toBeUndefined();
+    expect(parsePlayerState([])).toBeUndefined();
+    expect(parsePlayerState(
+      spoofedState,
+    )).toBeUndefined();
+    expect(parsePlayerState({
+      ...valid,
+      queue: [spoofedTrack],
+    })).toBeUndefined();
+    expect(parsePlayerState({ ...valid, queue: null })).toBeUndefined();
+    expect(parsePlayerState({ ...valid, queue: [null] })).toBeUndefined();
+    expect(parsePlayerState(
+      Object("boxed"),
+    )).toBeUndefined();
+  });
+
+  it("ignores inherited snapshot fields and does not invoke accessors", () => {
+    const valid = createPlayerState(
+      { ...input, lastFmProgress: undefined },
+      1_700_000_000_000,
+    );
+    let getterCalls = 0;
+    const accessorSnapshot = { ...valid };
+    Object.defineProperty(accessorSnapshot, "version", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        throw new Error("snapshot getter must not run");
+      },
+    });
+    const accessorTrack = { ...valid.queue[0] };
+    Object.defineProperty(accessorTrack, "id", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        throw new Error("track getter must not run");
+      },
+    });
+    Object.defineProperty(Object.prototype, "version", {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: 1,
+    });
+    Object.defineProperty(Object.prototype, "lastFmProgress", {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: { trackId: "polluted-track" },
+    });
+    try {
+      const withoutVersion = { ...valid };
+      Reflect.deleteProperty(withoutVersion, "version");
+      expect(parsePlayerState(withoutVersion)).toBeUndefined();
+      expect(parsePlayerState(valid)).toEqual(valid);
+      expect(parsePlayerState(accessorSnapshot)).toBeUndefined();
+      expect(parsePlayerState({ ...valid, queue: [accessorTrack] }))
+        .toBeUndefined();
+      expect(getterCalls).toBe(0);
+    } finally {
+      Reflect.deleteProperty(Object.prototype, "version");
+      Reflect.deleteProperty(Object.prototype, "lastFmProgress");
+    }
   });
 
   it("accepts an empty, paused queue only at position zero", () => {

@@ -32,8 +32,8 @@ import {
   type MiniPlayerCommand,
   type MiniPlayerSnapshot,
   type MiniPlayerTrack,
-  type MiniPlayerWireValue,
 } from "./miniPlayer";
+import type { OwnDataValue } from "./ownData";
 
 const EMPTY_SNAPSHOT: MiniPlayerSnapshot = {
   playing: false,
@@ -43,6 +43,25 @@ const EMPTY_SNAPSHOT: MiniPlayerSnapshot = {
   canPrevious: false,
   canNext: false,
 };
+
+type MiniPlayerWindowStateBridge = {
+  listenForSnapshot: (
+    handler: (payload: OwnDataValue) => void,
+  ) => Promise<() => void>;
+  requestSnapshot: () => Promise<void>;
+};
+
+function nativeStateBridge(): Promise<MiniPlayerWindowStateBridge> {
+  return import("@tauri-apps/api/event").then(({ emitTo, listen }) => ({
+    listenForSnapshot: (handler: (payload: OwnDataValue) => void) =>
+      listen<OwnDataValue>(
+        MINI_PLAYER_STATE_EVENT,
+        ({ payload }) => handler(payload),
+      ),
+    requestSnapshot: () =>
+      emitTo("main", MINI_PLAYER_REQUEST_STATE_EVENT),
+  }));
+}
 
 function formatTime(value: number): string {
   if (!Number.isFinite(value) || value < 0) return "0:00";
@@ -140,7 +159,7 @@ function MiniArtwork({ track }: { track: MiniPlayerTrack }) {
   );
 }
 
-export function MiniPlayerView({
+function MiniPlayerView({
   snapshot,
   onCommand,
   onDismiss,
@@ -330,21 +349,18 @@ export default function MiniPlayerWindow() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let disposed = false;
-    void import("@tauri-apps/api/event")
-      .then(async ({ emitTo, listen }) => {
-        const dispose = await listen<MiniPlayerWireValue>(
-          MINI_PLAYER_STATE_EVENT,
-          ({ payload }) => {
-            const nextSnapshot = parseMiniPlayerSnapshot(payload);
-            if (nextSnapshot) setSnapshot(nextSnapshot);
-          },
-        );
+    void nativeStateBridge()
+      .then(async (bridge) => {
+        const dispose = await bridge.listenForSnapshot((payload) => {
+          const nextSnapshot = parseMiniPlayerSnapshot(payload);
+          if (nextSnapshot) setSnapshot(nextSnapshot);
+        });
         if (disposed) {
           dispose();
           return;
         }
         unlisten = dispose;
-        await emitTo("main", MINI_PLAYER_REQUEST_STATE_EVENT);
+        await bridge.requestSnapshot();
       })
       .catch(() => {
         // The native bridge is optional; keep the empty state usable.

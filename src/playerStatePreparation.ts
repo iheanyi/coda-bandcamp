@@ -5,9 +5,21 @@ const PLAYER_STATE_IDLE_TIMEOUT_MS = 250;
 
 export type PlayerStateIdleScheduler = (callback: () => void) => void;
 
+/**
+ * WebViews may lack requestIdleCallback, and a spoofed non-callable global must
+ * not be invoked, so feature detection keeps the callability strictness of a
+ * `typeof` check.
+ */
+function isRequestIdleCallback(
+  value: typeof globalThis.requestIdleCallback,
+): value is typeof globalThis.requestIdleCallback {
+  return typeof value === "function";
+}
+
 function defaultIdleScheduler(callback: () => void): void {
-  if (globalThis.requestIdleCallback) {
-    globalThis.requestIdleCallback(
+  const requestIdle = globalThis.requestIdleCallback;
+  if (isRequestIdleCallback(requestIdle)) {
+    requestIdle(
       () => callback(),
       { timeout: PLAYER_STATE_IDLE_TIMEOUT_MS },
     );

@@ -2,7 +2,6 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Channel, type InvokeArgs } from "@tauri-apps/api/core";
-import type { DownloadEvent } from "@tauri-apps/plugin-updater";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -11,6 +10,7 @@ import {
   AppUpdateSettings,
 } from "./AppUpdater";
 import { useAppUpdater } from "./appUpdaterController";
+import type { NativeValue } from "./data-bridge/native";
 
 type TestUpdateMetadata = Readonly<{
   body?: string;
@@ -21,8 +21,13 @@ type TestUpdateMetadata = Readonly<{
   version: string;
 }>;
 
+type UpdaterChannelEnvelope = Readonly<{
+  index: number;
+  message: NativeValue;
+}>;
+
 type DownloadImplementation = (
-  emit: (event: DownloadEvent) => void,
+  emit: (event: NativeValue) => void,
 ) => Promise<void>;
 
 const updaterBridge = {
@@ -32,9 +37,15 @@ const updaterBridge = {
   restart: vi.fn<() => Promise<void>>(),
 };
 
+const channelCallbacks = new Map<
+  number,
+  (envelope: UpdaterChannelEnvelope) => void
+>();
+const channelIndexes = new WeakMap<Channel<NativeValue>, number>();
+
 function updaterProgressChannel(
   args: InvokeArgs | undefined,
-): Channel<DownloadEvent> | undefined {
+): Channel<NativeValue> | undefined {
   if (
     args === undefined ||
     Array.isArray(args) ||
@@ -47,8 +58,21 @@ function updaterProgressChannel(
   return value instanceof Channel ? value : undefined;
 }
 
+function postUpdaterChannelEvent(
+  channel: Channel<NativeValue>,
+  message: NativeValue,
+): void {
+  const index = channelIndexes.get(channel) ?? 0;
+  channelIndexes.set(channel, index + 1);
+  const callback = channelCallbacks.get(channel.id);
+  queueMicrotask(() => {
+    callback?.({ index, message });
+  });
+}
+
 function installDesktopUpdaterBridge(): void {
   let nextCallbackId = 1;
+  channelCallbacks.clear();
   Object.defineProperty(window, "__TAURI_INTERNALS__", {
     configurable: true,
     value: {
@@ -63,7 +87,7 @@ function installDesktopUpdaterBridge(): void {
               throw new TypeError("Updater progress channel is missing");
             }
             await updaterBridge.downloadAndInstall((event) => {
-              channel.onmessage(event);
+              postUpdaterChannelEvent(channel, event);
             });
             return undefined;
           }
@@ -77,8 +101,19 @@ function installDesktopUpdaterBridge(): void {
             throw new Error(`Unexpected updater command: ${command}`);
         }
       },
-      transformCallback: () => nextCallbackId++,
-      unregisterCallback: () => undefined,
+      transformCallback: (
+        callback?: (envelope: UpdaterChannelEnvelope) => void,
+      ) => {
+        const id = nextCallbackId;
+        nextCallbackId += 1;
+        if (callback) {
+          channelCallbacks.set(id, callback);
+        }
+        return id;
+      },
+      unregisterCallback: (id: number) => {
+        channelCallbacks.delete(id);
+      },
     },
   });
 }
@@ -236,6 +271,43 @@ describe("app updater experience", () => {
     await user.keyboard("{Escape}");
     await user.click(document.body);
     expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    await act(async () => {
+      finishDownload?.();
+    });
+    expect(
+      await screen.findByRole("button", { name: "Restart Coda" }),
+    ).toBeEnabled();
+  });
+
+  it("keeps installing when a download progress event is malformed", async () => {
+    const user = userEvent.setup();
+    let finishDownload: (() => void) | undefined;
+    updaterBridge.downloadAndInstall.mockImplementation(async (emit) => {
+      emit({ event: "Started", data: { contentLength: 100 } });
+      emit({ event: "Progress", data: { chunkLength: 42 } });
+      emit({ event: "Compromised" });
+      emit({ event: "Progress", data: { chunkLength: 58 } });
+      emit({ event: "Finished" });
+      await new Promise<void>((resolve) => {
+        finishDownload = resolve;
+      });
+    });
+    updaterBridge.check.mockResolvedValue(createUpdate());
+
+    renderUpdater();
+    await user.click(
+      await screen.findByRole("button", { name: "Update now" }),
+    );
+
+    expect(
+      await screen.findByText("Downloading update… 42%"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Downloading update… 100%"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Later" })).toBeDisabled();
+    expect(updaterBridge.restart).not.toHaveBeenCalled();
 
     await act(async () => {
       finishDownload?.();

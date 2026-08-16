@@ -14,6 +14,7 @@ import { CoverArt, type CoverArtAlbum } from "./CoverArt";
 type CoverArtRevisionPayload = Readonly<{
   coverArtId: string;
   revision: string;
+  sequence: string;
 }>;
 
 type CoverArtEvent = Readonly<{
@@ -24,13 +25,26 @@ type CoverArtEvent = Readonly<{
 
 type CoverArtEventHandler = (event: CoverArtEvent) => void;
 
+type CoverArtOrderingReceipt = Readonly<{ sequence: string }>;
+
+let nextOrderingSequence = 1n;
+
+function takeOrderingSequence(): string {
+  const sequence = nextOrderingSequence;
+  nextOrderingSequence += 1n;
+  return sequence.toString();
+}
+
 const artworkBridge = {
   callbacks: new Map<number, CoverArtEventHandler>(),
   convertFileSrc: vi.fn(
     (path: string, protocol: string) => `${protocol}:${path}`,
   ),
-  invalidate: vi.fn<(coverArtId: string) => Promise<void>>()
-    .mockResolvedValue(undefined),
+  invalidate: vi
+    .fn<(coverArtId: string) => Promise<CoverArtOrderingReceipt>>()
+    .mockImplementation(() =>
+      Promise.resolve({ sequence: takeOrderingSequence() }),
+    ),
   listen: vi.fn<() => Promise<number>>().mockResolvedValue(1),
   nextCallbackId: 1,
 };
@@ -105,7 +119,11 @@ beforeEach(() => {
   clearCoverArtRendererState();
   artworkBridge.callbacks.clear();
   artworkBridge.convertFileSrc.mockClear();
-  artworkBridge.invalidate.mockReset().mockResolvedValue(undefined);
+  artworkBridge.invalidate
+    .mockReset()
+    .mockImplementation(() =>
+      Promise.resolve({ sequence: takeOrderingSequence() }),
+    );
   artworkBridge.listen.mockClear();
   artworkBridge.nextCallbackId = 1;
 });
@@ -222,6 +240,7 @@ describe("CoverArt", () => {
     emitArtworkRevision({
       coverArtId: "revision-cover",
       revision: "sha256_A1",
+      sequence: takeOrderingSequence(),
     });
 
     await waitFor(() =>
@@ -234,10 +253,11 @@ describe("CoverArt", () => {
   });
 
   it("invalidates one broken local entry, retries once, then falls back", async () => {
-    let finishInvalidation: () => void = () => undefined;
+    let finishInvalidation: (receipt: CoverArtOrderingReceipt) => void = () =>
+      undefined;
     artworkBridge.invalidate.mockImplementationOnce(
       () =>
-        new Promise<void>((resolve) => {
+        new Promise((resolve) => {
           finishInvalidation = resolve;
         }),
     );
@@ -249,12 +269,14 @@ describe("CoverArt", () => {
 
     fireEvent.error(coverImage());
 
-    await waitFor(() => expect(artworkBridge.invalidate).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(artworkBridge.invalidate).toHaveBeenCalledOnce(),
+    );
     expect(artworkBridge.invalidate).toHaveBeenCalledWith("broken-cover");
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
     expect(artwork).not.toHaveTextContent("Test Artist");
 
-    finishInvalidation();
+    finishInvalidation({ sequence: takeOrderingSequence() });
     await waitFor(() =>
       expect(coverImage().getAttribute("src")).not.toBe(firstSource),
     );
@@ -297,7 +319,9 @@ describe("CoverArt", () => {
   it("clears a failed source when artwork refresh is requested", async () => {
     render(<CoverArt album={album({ coverArt: "refresh-cover" })} />);
     fireEvent.error(coverImage());
-    await waitFor(() => expect(artworkBridge.invalidate).toHaveBeenCalledOnce());
+    await waitFor(() =>
+      expect(artworkBridge.invalidate).toHaveBeenCalledOnce(),
+    );
     fireEvent.error(coverImage());
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
 

@@ -1,3 +1,13 @@
+import {
+  copyOwnDataArray,
+  hasControlCharacter,
+  isAbsent,
+  isBooleanValue,
+  isNumberValue,
+  isStringValue,
+  projectOwnDataRecord,
+  type OwnDataValue,
+} from "./ownData";
 import type {
   LastFmPlaybackProgress,
   PlayerStateCheckpoint,
@@ -25,70 +35,10 @@ const MAX_TIMESTAMP_MS = 8_640_000_000_000_000;
 const MAX_RADIO_SCROBBLED_CHAPTERS = 256;
 const MAX_RADIO_CHAPTER_KEY_LENGTH = 128;
 
-type PlayerStateBoundaryValue =
-  | boolean
-  | number
-  | string
-  | null
-  | undefined
-  | PlayerStateBoundaryValue[]
-  | PlayerStateBoundaryRecord;
-
-type PlayerStateBoundaryRecord = {
-  [key: string]: PlayerStateBoundaryValue;
-};
-
-type DecodedPlayerStateRecord = PlayerStateBoundaryRecord & {
-  version: typeof PLAYER_STATE_VERSION;
-  savedAt: number;
-  queue: PlayerStateBoundaryValue[];
-};
-
-function isRecord<Value>(
-  value: Value,
-): value is Value & PlayerStateBoundaryRecord {
-  return Object.prototype.toString.call(value) === "[object Object]";
-}
-
-function isBoundaryArray<Value>(
-  value: Value,
-): value is Value & PlayerStateBoundaryValue[] {
-  return Array.isArray(value);
-}
-
-function isStringValue<Value>(value: Value): value is Value & string {
-  return (
-    Object.prototype.toString.call(value) === "[object String]" &&
-    Object(value) !== value
-  );
-}
-
-function isNumberValue<Value>(value: Value): value is Value & number {
-  return (
-    Object.prototype.toString.call(value) === "[object Number]" &&
-    Object(value) !== value
-  );
-}
-
-function isBooleanValue<Value>(value: Value): value is Value & boolean {
-  return (
-    Object.prototype.toString.call(value) === "[object Boolean]" &&
-    Object(value) !== value
-  );
-}
-
-function hasControlCharacter(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true;
-  }
-  return false;
-}
-
-function isBoundedText<Value>(
-  value: Value,
+function isBoundedText(
+  value: OwnDataValue,
   required = false,
-): value is Value & string {
+): value is string {
   return (
     isStringValue(value) &&
     value.length <= MAX_TEXT_LENGTH &&
@@ -97,19 +47,11 @@ function isBoundedText<Value>(
   );
 }
 
-function isNonNegativeInteger<Value>(value: Value): value is Value & number {
+function isNonNegativeInteger(value: OwnDataValue): value is number {
   return isNumberValue(value) && Number.isSafeInteger(value) && value >= 0;
 }
 
-function isAbsent<Value>(
-  value: Value,
-): value is Value & (null | undefined) {
-  return value === undefined || value === null;
-}
-
-function isRadioChapterKey<Value>(
-  value: Value,
-): value is Value & string {
+function isRadioChapterKey(value: OwnDataValue): value is string {
   return (
     isStringValue(value) &&
     value.length > 0 &&
@@ -118,7 +60,7 @@ function isRadioChapterKey<Value>(
   );
 }
 
-function isBoundedSeconds<Value>(value: Value): value is Value & number {
+function isBoundedSeconds(value: OwnDataValue): value is number {
   return (
     isNumberValue(value) &&
     Number.isFinite(value) &&
@@ -127,7 +69,7 @@ function isBoundedSeconds<Value>(value: Value): value is Value & number {
   );
 }
 
-function isPaletteColor<Value>(value: Value): value is Value & string {
+function isPaletteColor(value: OwnDataValue): value is string {
   return (
     isStringValue(value) &&
     value.length > 0 &&
@@ -136,9 +78,10 @@ function isPaletteColor<Value>(value: Value): value is Value & string {
   );
 }
 
-function parsePalette<Value>(value: Value): [string, string] | undefined {
-  if (!isBoundaryArray(value) || value.length !== 2) return undefined;
-  const [first, second] = value;
+function parsePalette(value: OwnDataValue): [string, string] | undefined {
+  const colors = copyOwnDataArray(value, 2);
+  if (colors === undefined || colors.length !== 2) return undefined;
+  const [first, second] = colors;
   if (
     !isPaletteColor(first) ||
     !isPaletteColor(second)
@@ -148,7 +91,7 @@ function parsePalette<Value>(value: Value): [string, string] | undefined {
   return [first, second];
 }
 
-function parseScrobbleState<Value>(value: Value): ScrobbleState | undefined {
+function parseScrobbleState(value: OwnDataValue): ScrobbleState | undefined {
   if (!isStringValue(value)) return undefined;
   switch (value) {
     case "idle":
@@ -164,7 +107,7 @@ function parseScrobbleState<Value>(value: Value): ScrobbleState | undefined {
   }
 }
 
-function parseRepeatMode<Value>(value: Value): RepeatMode | undefined {
+function parseRepeatMode(value: OwnDataValue): RepeatMode | undefined {
   if (!isStringValue(value)) return undefined;
   if (value === "off") return "off";
   if (value === "all") return "all";
@@ -197,71 +140,74 @@ function isInvalidRadioTrackId(id: string): boolean {
   return id.startsWith("radio:") && !/^radio:[1-9]\d{0,15}$/.test(id);
 }
 
-function parseTrack<Value>(value: Value): PlayerStateTrack | undefined {
-  if (!isRecord(value)) return undefined;
-  const palette = parsePalette(value.palette);
-  const album =
-    isStringValue(value.album)
-      ? normalizedReleaseTitle(value.album)
-      : value.album;
+function parseTrack(value: OwnDataValue): PlayerStateTrack | undefined {
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return undefined;
+  const palette = parsePalette(record.palette);
+  const album = isStringValue(record.album)
+    ? normalizedReleaseTitle(record.album)
+    : record.album;
+  const disc = record.disc;
+  const coverArt = record.coverArt;
   if (
-    !isBoundedText(value.id, true) ||
-    isEphemeralTrackId(value.id) ||
-    isInvalidRadioTrackId(value.id) ||
-    !isBoundedText(value.title, true) ||
-    !isBoundedText(value.artist, true) ||
+    !isBoundedText(record.id, true) ||
+    isEphemeralTrackId(record.id) ||
+    isInvalidRadioTrackId(record.id) ||
+    !isBoundedText(record.title, true) ||
+    !isBoundedText(record.artist, true) ||
     !isBoundedText(album) ||
-    !isBoundedText(value.albumId, true) ||
-    !isNonNegativeInteger(value.duration) ||
-    value.duration > MAX_TRACK_SECONDS ||
-    !isNonNegativeInteger(value.track) ||
-    value.track > MAX_TRACK_NUMBER ||
-    (!isAbsent(value.disc) &&
-      (!isNonNegativeInteger(value.disc) || value.disc > MAX_TRACK_NUMBER)) ||
-    (!isAbsent(value.coverArt) && !isBoundedText(value.coverArt)) ||
+    !isBoundedText(record.albumId, true) ||
+    !isNonNegativeInteger(record.duration) ||
+    record.duration > MAX_TRACK_SECONDS ||
+    !isNonNegativeInteger(record.track) ||
+    record.track > MAX_TRACK_NUMBER ||
+    (!isAbsent(disc) &&
+      (!isNonNegativeInteger(disc) || disc > MAX_TRACK_NUMBER)) ||
+    (!isAbsent(coverArt) && !isBoundedText(coverArt)) ||
     !palette
   ) {
     return undefined;
   }
 
   const track: PlayerStateTrack = {
-    id: value.id,
-    title: value.title,
-    artist: value.artist,
+    id: record.id,
+    title: record.title,
+    artist: record.artist,
     album,
-    albumId: value.albumId,
-    duration: value.duration,
-    track: value.track,
+    albumId: record.albumId,
+    duration: record.duration,
+    track: record.track,
     palette,
   };
-  if (!isAbsent(value.disc)) track.disc = value.disc;
-  if (!isAbsent(value.coverArt)) track.coverArt = value.coverArt;
+  if (!isAbsent(disc)) track.disc = disc;
+  if (!isAbsent(coverArt)) track.coverArt = coverArt;
   return track;
 }
 
-function parseLastFmProgress<Value>(
-  value: Value,
+function parseLastFmProgress(
+  value: OwnDataValue,
 ): LastFmPlaybackProgress | undefined {
-  if (!isRecord(value)) return undefined;
-  const scrobbleState = parseScrobbleState(value.scrobbleState);
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return undefined;
+  const scrobbleState = parseScrobbleState(record.scrobbleState);
   if (
-    !isBoundedText(value.trackId, true) ||
-    !isNonNegativeInteger(value.startedAt) ||
-    value.startedAt > MAX_TIMESTAMP_MS / 1_000 ||
-    !isBoundedSeconds(value.listenedSeconds) ||
-    !isBoundedSeconds(value.lastPosition) ||
-    !isBooleanValue(value.nowPlayingSent) ||
+    !isBoundedText(record.trackId, true) ||
+    !isNonNegativeInteger(record.startedAt) ||
+    record.startedAt > MAX_TIMESTAMP_MS / 1_000 ||
+    !isBoundedSeconds(record.listenedSeconds) ||
+    !isBoundedSeconds(record.lastPosition) ||
+    !isBooleanValue(record.nowPlayingSent) ||
     !scrobbleState
   ) {
     return undefined;
   }
   return {
-    trackId: value.trackId,
+    trackId: record.trackId,
     // A resumed session starts paused. On the next play event Coda establishes
     // a fresh Last.fm start time and sends a fresh Now Playing update.
     startedAt: 0,
-    listenedSeconds: value.listenedSeconds,
-    lastPosition: value.lastPosition,
+    listenedSeconds: record.listenedSeconds,
+    lastPosition: record.lastPosition,
     nowPlayingSent: false,
     // A request that was in flight at shutdown is treated as attempted. Retrying
     // it could create a duplicate scrobble if Last.fm accepted the first request.
@@ -271,64 +217,78 @@ function parseLastFmProgress<Value>(
   };
 }
 
-function parseRadioScrobbleProgress<Value>(
-  value: Value,
+function parseRadioChapterKeys(value: OwnDataValue): string[] | undefined {
+  const entries = copyOwnDataArray(value, MAX_RADIO_SCROBBLED_CHAPTERS);
+  if (entries === undefined) return undefined;
+  const keys: string[] = [];
+  for (const candidate of entries) {
+    if (!isRadioChapterKey(candidate)) return undefined;
+    keys.push(candidate);
+  }
+  return keys;
+}
+
+function parseRadioScrobbleProgress(
+  value: OwnDataValue,
 ): RadioScrobbleProgress | undefined {
-  if (!isRecord(value)) return undefined;
-  const activeChapterKey = isAbsent(value.activeChapterKey)
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return undefined;
+  const activeChapterKeyValue = record.activeChapterKey;
+  const activeChapterKey = isAbsent(activeChapterKeyValue)
     ? undefined
-    : value.activeChapterKey;
+    : activeChapterKeyValue;
   const chapterScrobbleState = parseScrobbleState(
-    value.chapterScrobbleState,
+    record.chapterScrobbleState,
   );
-  const showScrobbleState = parseScrobbleState(value.showScrobbleState);
+  const showScrobbleState = parseScrobbleState(record.showScrobbleState);
+  const scrobbledChapterKeys = parseRadioChapterKeys(
+    record.scrobbledChapterKeys,
+  );
   if (
-    !isBoundedText(value.showTrackId, true) ||
-    !/^radio:[1-9]\d{0,15}$/.test(value.showTrackId) ||
+    !isBoundedText(record.showTrackId, true) ||
+    !/^radio:[1-9]\d{0,15}$/.test(record.showTrackId) ||
     (!isAbsent(activeChapterKey) && !isRadioChapterKey(activeChapterKey)) ||
-    !isNonNegativeInteger(value.chapterStartedAt) ||
-    value.chapterStartedAt > MAX_TIMESTAMP_MS / 1_000 ||
-    !isBoundedSeconds(value.chapterListenedSeconds) ||
-    !isBoundedSeconds(value.lastPosition) ||
-    !isBooleanValue(value.chapterNowPlayingSent) ||
+    !isNonNegativeInteger(record.chapterStartedAt) ||
+    record.chapterStartedAt > MAX_TIMESTAMP_MS / 1_000 ||
+    !isBoundedSeconds(record.chapterListenedSeconds) ||
+    !isBoundedSeconds(record.lastPosition) ||
+    !isBooleanValue(record.chapterNowPlayingSent) ||
     !chapterScrobbleState ||
-    !isNonNegativeInteger(value.showStartedAt) ||
-    value.showStartedAt > MAX_TIMESTAMP_MS / 1_000 ||
-    !isBoundedSeconds(value.showListenedSeconds) ||
+    !isNonNegativeInteger(record.showStartedAt) ||
+    record.showStartedAt > MAX_TIMESTAMP_MS / 1_000 ||
+    !isBoundedSeconds(record.showListenedSeconds) ||
     !showScrobbleState ||
-    !isBoundaryArray(value.scrobbledChapterKeys) ||
-    value.scrobbledChapterKeys.length > MAX_RADIO_SCROBBLED_CHAPTERS ||
-    !value.scrobbledChapterKeys.every(isRadioChapterKey)
+    !scrobbledChapterKeys
   ) {
     return undefined;
   }
 
   const pendingChapterWasAttempted =
-    value.chapterScrobbleState === "pending" && activeChapterKey;
-  const scrobbledChapterKeys = [
+    chapterScrobbleState === "pending" && activeChapterKey;
+  const restoredChapterKeys = [
     ...new Set([
-      ...value.scrobbledChapterKeys,
+      ...scrobbledChapterKeys,
       ...(pendingChapterWasAttempted ? [pendingChapterWasAttempted] : []),
     ]),
   ].slice(-MAX_RADIO_SCROBBLED_CHAPTERS);
 
   const progress: RadioScrobbleProgress = {
-    showTrackId: value.showTrackId,
+    showTrackId: record.showTrackId,
     // Restored sessions start paused. New playback establishes fresh Last.fm
     // timestamps while retaining genuine listening time and dedupe markers.
     chapterStartedAt: 0,
-    chapterListenedSeconds: value.chapterListenedSeconds,
-    lastPosition: value.lastPosition,
+    chapterListenedSeconds: record.chapterListenedSeconds,
+    lastPosition: record.lastPosition,
     chapterNowPlayingSent: false,
     chapterScrobbleState: chapterScrobbleState === "pending"
       ? "sent"
       : chapterScrobbleState,
     showStartedAt: 0,
-    showListenedSeconds: value.showListenedSeconds,
+    showListenedSeconds: record.showListenedSeconds,
     showScrobbleState: showScrobbleState === "pending"
       ? "sent"
       : showScrobbleState,
-    scrobbledChapterKeys,
+    scrobbledChapterKeys: restoredChapterKeys,
   };
   if (activeChapterKey) progress.activeChapterKey = activeChapterKey;
   return progress;
@@ -348,13 +308,25 @@ function queuePositionIsValid(
 export type PlayerStateYield = () => Promise<void>;
 
 /**
+ * WebViews without MessageChannel (and tests that stub it with a non-callable
+ * value) must fall back to the timeout task boundary, so feature detection
+ * keeps the callability strictness of a `typeof` check.
+ */
+function isMessageChannelConstructor(
+  value: typeof globalThis.MessageChannel,
+): value is typeof globalThis.MessageChannel {
+  return typeof value === "function";
+}
+
+/**
  * Yield through the browser task queue so input, playback, and painting can run
  * between bounded player-state validation chunks.
  */
 export function yieldPlayerStateValidation(): Promise<void> {
-  if (globalThis.MessageChannel instanceof Function) {
+  const channelConstructor = globalThis.MessageChannel;
+  if (isMessageChannelConstructor(channelConstructor)) {
     return new Promise((resolve) => {
-      const channel = new globalThis.MessageChannel();
+      const channel = new channelConstructor();
       channel.port1.onmessage = () => {
         channel.port1.close();
         channel.port2.close();
@@ -366,84 +338,105 @@ export function yieldPlayerStateValidation(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function playerStateRecord<Value>(
+type ParsedPlayerStateEnvelope = {
+  savedAt: number;
+  queuePayload: readonly OwnDataValue[];
+  currentIndex: number;
+  positionSeconds: number;
+  volume: number;
+  repeatMode: RepeatMode;
+  queueOpen: boolean;
+  lastFmProgress?: LastFmPlaybackProgress;
+  radioScrobbleProgress?: RadioScrobbleProgress;
+};
+
+function parsePlayerStateEnvelope<Value>(
   value: Value,
-): DecodedPlayerStateRecord | undefined {
-  if (!isRecord(value) || value.version !== PLAYER_STATE_VERSION) return undefined;
+): ParsedPlayerStateEnvelope | undefined {
+  const record = projectOwnDataRecord(value);
+  if (record === undefined || record.version !== PLAYER_STATE_VERSION) {
+    return undefined;
+  }
+  const repeatMode = parseRepeatMode(record.repeatMode);
+  const queue = copyOwnDataArray(record.queue, MAX_PERSISTED_QUEUE_LENGTH);
   if (
-    !isNonNegativeInteger(value.savedAt) ||
-    value.savedAt > MAX_TIMESTAMP_MS ||
-    !isBoundaryArray(value.queue) ||
-    value.queue.length > MAX_PERSISTED_QUEUE_LENGTH
+    !isNonNegativeInteger(record.savedAt) ||
+    record.savedAt > MAX_TIMESTAMP_MS ||
+    queue === undefined ||
+    !isNonNegativeInteger(record.currentIndex) ||
+    !isBoundedSeconds(record.positionSeconds) ||
+    !isNumberValue(record.volume) ||
+    !Number.isFinite(record.volume) ||
+    record.volume < 0 ||
+    record.volume > 1 ||
+    !repeatMode ||
+    !isBooleanValue(record.queueOpen)
   ) {
     return undefined;
   }
-  return {
-    version: PLAYER_STATE_VERSION,
-    savedAt: value.savedAt,
-    queue: value.queue,
-    currentIndex: value.currentIndex,
-    positionSeconds: value.positionSeconds,
-    volume: value.volume,
-    repeatMode: value.repeatMode,
-    queueOpen: value.queueOpen,
-    lastFmProgress: value.lastFmProgress,
-    radioScrobbleProgress: value.radioScrobbleProgress,
+  const lastFmProgressPayload = record.lastFmProgress;
+  const radioScrobbleProgressPayload = record.radioScrobbleProgress;
+  const lastFmProgress = isAbsent(lastFmProgressPayload)
+    ? undefined
+    : parseLastFmProgress(lastFmProgressPayload);
+  const radioScrobbleProgress = isAbsent(radioScrobbleProgressPayload)
+    ? undefined
+    : parseRadioScrobbleProgress(radioScrobbleProgressPayload);
+  if (
+    (!isAbsent(lastFmProgressPayload) && !lastFmProgress) ||
+    (!isAbsent(radioScrobbleProgressPayload) && !radioScrobbleProgress) ||
+    (lastFmProgress && radioScrobbleProgress)
+  ) {
+    return undefined;
+  }
+
+  const parsed: ParsedPlayerStateEnvelope = {
+    savedAt: record.savedAt,
+    currentIndex: record.currentIndex,
+    positionSeconds: record.positionSeconds,
+    volume: record.volume,
+    repeatMode,
+    queueOpen: record.queueOpen,
+    queuePayload: queue,
   };
+  if (lastFmProgress) parsed.lastFmProgress = lastFmProgress;
+  if (radioScrobbleProgress) {
+    parsed.radioScrobbleProgress = radioScrobbleProgress;
+  }
+  return parsed;
 }
 
 function finishPlayerState(
-  value: DecodedPlayerStateRecord,
+  value: ParsedPlayerStateEnvelope,
   tracks: PlayerStateTrack[],
 ): PlayerStateSnapshot | undefined {
-  if (
-    !isNonNegativeInteger(value.currentIndex) ||
-    !isBoundedSeconds(value.positionSeconds) ||
-    !queuePositionIsValid(tracks, value.currentIndex, value.positionSeconds)
-  ) {
-    return undefined;
-  }
-  const repeatMode = parseRepeatMode(value.repeatMode);
-  if (
-    !isNumberValue(value.volume) ||
-    !Number.isFinite(value.volume) ||
-    value.volume < 0 ||
-    value.volume > 1 ||
-    !repeatMode ||
-    !isBooleanValue(value.queueOpen)
-  ) {
+  if (!queuePositionIsValid(tracks, value.currentIndex, value.positionSeconds)) {
     return undefined;
   }
 
-  const lastFmProgressAbsent = isAbsent(value.lastFmProgress);
-  const radioScrobbleProgressAbsent = isAbsent(value.radioScrobbleProgress);
-  const lastFmProgress = lastFmProgressAbsent
-    ? undefined
-    : parseLastFmProgress(value.lastFmProgress);
-  const radioScrobbleProgress = radioScrobbleProgressAbsent
-    ? undefined
-    : parseRadioScrobbleProgress(value.radioScrobbleProgress);
+  const lastFmProgress = Object.hasOwn(value, "lastFmProgress")
+    ? value.lastFmProgress
+    : undefined;
+  const radioScrobbleProgress = Object.hasOwn(value, "radioScrobbleProgress")
+    ? value.radioScrobbleProgress
+    : undefined;
   const currentTrack = tracks[value.currentIndex];
   if (
-    !lastFmProgressAbsent &&
-    (!lastFmProgress ||
-      tracks.length === 0 ||
+    lastFmProgress &&
+    (tracks.length === 0 ||
       currentTrack?.id.startsWith("radio:") ||
       lastFmProgress.trackId !== currentTrack?.id)
   ) {
     return undefined;
   }
   if (
-    !radioScrobbleProgressAbsent &&
-    (!radioScrobbleProgress ||
-      tracks.length === 0 ||
+    radioScrobbleProgress &&
+    (tracks.length === 0 ||
       !currentTrack?.id.startsWith("radio:") ||
       radioScrobbleProgress.showTrackId !== currentTrack.id)
   ) {
     return undefined;
   }
-  if (lastFmProgress && radioScrobbleProgress) return undefined;
-
   const snapshot: PlayerStateSnapshot = {
     version: PLAYER_STATE_VERSION,
     savedAt: value.savedAt,
@@ -451,7 +444,7 @@ function finishPlayerState(
     currentIndex: value.currentIndex,
     positionSeconds: value.positionSeconds,
     volume: value.volume,
-    repeatMode,
+    repeatMode: value.repeatMode,
     queueOpen: value.queueOpen,
   };
   if (lastFmProgress) snapshot.lastFmProgress = lastFmProgress;
@@ -462,7 +455,7 @@ function finishPlayerState(
 }
 
 async function parseQueueAsync(
-  queue: PlayerStateBoundaryValue[],
+  queue: readonly OwnDataValue[],
   yieldControl: PlayerStateYield,
 ): Promise<PlayerStateTrack[] | undefined> {
   const tracks: PlayerStateTrack[] = [];
@@ -506,13 +499,13 @@ function appendPreparedPlayerStateTrack(
   index: number,
   currentIndex: number,
 ): void {
+  const record = projectOwnDataRecord(candidate);
+  const candidateId = record === undefined ? undefined : record.id;
   const ephemeral =
-    isRecord(candidate) &&
-    isStringValue(candidate.id) &&
-    isEphemeralTrackId(candidate.id);
+    isStringValue(candidateId) && isEphemeralTrackId(candidateId);
   const parsedTrack = parseTrack(
-    ephemeral
-      ? { ...candidate, id: `persistable:${candidate.id}` }
+    ephemeral && record !== undefined
+      ? { ...record, id: `persistable:${candidateId}` }
       : candidate,
   );
   if (!parsedTrack) {
@@ -534,7 +527,7 @@ function finishCreatedPlayerState(
     : currentWasOmitted
       ? Math.min(retainedThroughCurrent, queue.length - 1)
       : retainedThroughCurrent - 1;
-  const candidate = playerStateRecord({
+  const candidate = parsePlayerStateEnvelope({
     ...input,
     queue,
     currentIndex,
@@ -593,25 +586,25 @@ export async function createPlayerStateAsync(
 export function parsePlayerState<Value>(
   value: Value,
 ): PlayerStateSnapshot | undefined {
-  const record = playerStateRecord(value);
-  if (!record) return undefined;
+  const parsed = parsePlayerStateEnvelope(value);
+  if (!parsed) return undefined;
   const tracks: PlayerStateTrack[] = [];
-  for (const candidate of record.queue) {
+  for (const candidate of parsed.queuePayload) {
     const track = parseTrack(candidate);
     if (!track) return undefined;
     tracks.push(track);
   }
-  return finishPlayerState(record, tracks);
+  return finishPlayerState(parsed, tracks);
 }
 
 export async function parsePlayerStateAsync<Value>(
   value: Value,
   yieldControl: PlayerStateYield = yieldPlayerStateValidation,
 ): Promise<PlayerStateSnapshot | undefined> {
-  const record = playerStateRecord(value);
-  if (!record) return undefined;
-  const tracks = await parseQueueAsync(record.queue, yieldControl);
-  return tracks ? finishPlayerState(record, tracks) : undefined;
+  const parsed = parsePlayerStateEnvelope(value);
+  if (!parsed) return undefined;
+  const tracks = await parseQueueAsync(parsed.queuePayload, yieldControl);
+  return tracks ? finishPlayerState(parsed, tracks) : undefined;
 }
 
 export function createPlayerStateCheckpoint(

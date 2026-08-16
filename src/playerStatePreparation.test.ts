@@ -88,6 +88,14 @@ describe("player-state idle preparation", () => {
     expect(settled).toBe(true);
   });
 
+  it("ignores a truthy value spoofing the idle callback boundary", async () => {
+    vi.stubGlobal("requestIdleCallback", {
+      [Symbol.toStringTag]: "Function",
+    });
+
+    await expect(waitForPlayerStateIdle()).resolves.toBeUndefined();
+  });
+
   it("preserves validation errors after the idle boundary", async () => {
     const client = new PlayerStatePreparationClient((callback) => callback());
 

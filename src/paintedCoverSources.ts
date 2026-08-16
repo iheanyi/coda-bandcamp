@@ -1,23 +1,40 @@
+import {
+  isDataArray,
+  ownDataProperty,
+  type OwnDataPropertyResult,
+  type OwnDataValue,
+} from "./ownData";
+
 const MAX_PAINTED_COVER_SOURCES = 512;
+const MAX_PAINTED_COVER_STORAGE_BYTES = 8 * 1024;
 const PAINTED_COVER_STORAGE_KEY = "coda.cover-art.painted.v1";
 const paintedCoverSources = new Set<string>();
 const paintedLocalCoverKeys = loadPaintedLocalCoverKeys();
 let persistenceQueued = false;
 
-type PaintedCoverWireRecord = {
-  [field: string]: PaintedCoverWireValue;
-};
+function isPaintedCoverKey(value: OwnDataPropertyResult): value is string {
+  return typeof value === "string" && /^[a-f0-9]{8}$/.test(value);
+}
 
-type PaintedCoverWireValue =
-  | string
-  | number
-  | boolean
-  | null
-  | PaintedCoverWireValue[]
-  | PaintedCoverWireRecord;
-
-function isPaintedCoverKey(value: PaintedCoverWireValue): value is string {
-  return String(value) === value && /^[a-f0-9]{8}$/.test(value);
+export function parsePaintedLocalCoverKeys<Value>(
+  value: Value,
+): string[] | undefined {
+  if (
+    !isDataArray(value) ||
+    value.length > MAX_PAINTED_COVER_SOURCES
+  ) {
+    return undefined;
+  }
+  const keys: string[] = [];
+  const seen = new Set<string>();
+  for (let index = 0; index < value.length; index += 1) {
+    const key = ownDataProperty(value, String(index));
+    if (!isPaintedCoverKey(key)) return undefined;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    keys.push(key);
+  }
+  return keys;
 }
 
 function isLocalCoverSource(source: string): boolean {
@@ -46,14 +63,11 @@ function loadPaintedLocalCoverKeys(): Set<string> {
     const stored = globalThis.sessionStorage?.getItem(
       PAINTED_COVER_STORAGE_KEY,
     );
-    if (!stored) return new Set();
-    const parsed: PaintedCoverWireValue = JSON.parse(stored);
-    if (!Array.isArray(parsed)) return new Set();
-    return new Set(
-      parsed
-        .filter(isPaintedCoverKey)
-        .slice(-MAX_PAINTED_COVER_SOURCES),
-    );
+    if (!stored || stored.length > MAX_PAINTED_COVER_STORAGE_BYTES) {
+      return new Set();
+    }
+    const parsed: OwnDataValue = JSON.parse(stored);
+    return new Set(parsePaintedLocalCoverKeys(parsed) ?? []);
   } catch {
     return new Set();
   }

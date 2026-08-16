@@ -4,7 +4,9 @@ import {
   createMiniPlayerSnapshot,
   parseMiniPlayerCommand,
   parseMiniPlayerSnapshot,
+  type MiniPlayerSnapshot,
 } from "./miniPlayer";
+import type { OwnDataValue } from "./ownData";
 
 const track: Track = {
   id: "track-1",
@@ -118,6 +120,119 @@ describe("mini player event contract", () => {
         track: { ...valid.track, title: "First\nLight" },
       }),
     ).toBeUndefined();
+  });
+
+  it("parses JSON as unknown and rejects null or spoofed event payloads", () => {
+    const valid = createMiniPlayerSnapshot({
+      track,
+      playing: false,
+      positionSeconds: 12,
+      durationSeconds: 180,
+      volume: 0.5,
+      canPrevious: false,
+      canNext: true,
+    });
+    const jsonPayload: OwnDataValue = JSON.parse(JSON.stringify(valid));
+    const spoofedSnapshot: MiniPlayerSnapshot = Object.assign(
+      new Date(),
+      valid,
+      { [Symbol.toStringTag]: "Object" },
+    );
+    const spoofedCommand: { type: string } = Object.assign(new Date(), {
+      [Symbol.toStringTag]: "Object",
+      type: "play-pause",
+    });
+
+    expect(parseMiniPlayerSnapshot(jsonPayload)).toEqual(valid);
+    expect(parseMiniPlayerSnapshot(null)).toBeUndefined();
+    expect(parseMiniPlayerSnapshot([])).toBeUndefined();
+    expect(parseMiniPlayerSnapshot(spoofedSnapshot)).toBeUndefined();
+    expect(parseMiniPlayerCommand(null)).toBeUndefined();
+    expect(parseMiniPlayerCommand(spoofedCommand)).toBeUndefined();
+  });
+
+  it("reads only own data fields without invoking payload getters", () => {
+    const valid = createMiniPlayerSnapshot({
+      track,
+      playing: false,
+      positionSeconds: 12,
+      durationSeconds: 180,
+      volume: 0.5,
+      canPrevious: false,
+      canNext: true,
+    });
+    let getterCalls = 0;
+    const snapshotWithAccessor = { ...valid };
+    Object.defineProperty(snapshotWithAccessor, "playing", {
+      configurable: true,
+      get() {
+        getterCalls += 1;
+        throw new Error("snapshot getter must not run");
+      },
+    });
+    const paletteWithAccessor = ["#dd6549", "#202326"];
+    Object.defineProperty(paletteWithAccessor, "0", {
+      configurable: true,
+      get() {
+        getterCalls += 1;
+        throw new Error("palette getter must not run");
+      },
+    });
+    const commandWithAccessor = {};
+    Object.defineProperty(commandWithAccessor, "type", {
+      configurable: true,
+      get() {
+        getterCalls += 1;
+        throw new Error("command getter must not run");
+      },
+    });
+    const taggedCommand = { type: "play-pause" };
+    Object.defineProperty(taggedCommand, Symbol.toStringTag, {
+      configurable: true,
+      get() {
+        getterCalls += 1;
+        throw new Error("tag getter must not run");
+      },
+    });
+    const proxy = new Proxy(
+      valid,
+      {
+        get() {
+          getterCalls += 1;
+          throw new Error("proxy getter must not run");
+        },
+        getOwnPropertyDescriptor() {
+          throw new Error("descriptor inspection denied");
+        },
+      },
+    );
+
+    expect(
+      parseMiniPlayerSnapshot(Object.create(valid)),
+    ).toBeUndefined();
+    expect(parseMiniPlayerSnapshot(snapshotWithAccessor)).toBeUndefined();
+    expect(
+      parseMiniPlayerSnapshot({
+        ...valid,
+        track: {
+          ...valid.track,
+          palette: paletteWithAccessor,
+        },
+      }),
+    ).toBeUndefined();
+    expect(
+      parseMiniPlayerCommand(Object.create({ type: "play-pause" })),
+    ).toBeUndefined();
+    expect(parseMiniPlayerCommand(commandWithAccessor)).toBeUndefined();
+    expect(parseMiniPlayerCommand(taggedCommand)).toBeUndefined();
+    expect(
+      parseMiniPlayerCommand(Object.assign(Object("boxed"), {
+        [Symbol.toStringTag]: "Object",
+        type: "play-pause",
+      })),
+    ).toBeUndefined();
+    expect(parseMiniPlayerSnapshot(proxy)).toBeUndefined();
+    expect(getterCalls).toBe(0);
   });
 
   it("accepts only exact local cover protocol sources", () => {
