@@ -1,3 +1,5 @@
+import { isNumberValue, isStringValue } from "./ownData";
+
 const KEYFRAME_META = new Set([
   "offset",
   "easing",
@@ -18,23 +20,9 @@ const LAYOUT_OR_FILTER_KEYS = new Set([
 const COMPOSITOR_KEYS = new Set(["transform", "opacity", "transformOrigin"]);
 const REWRITABLE_SIZE_KEYS = new Set(["width", "height"]);
 
-function isPrimitiveNumber<Value>(value: Value): value is Value & number {
-  return (
-    Object.prototype.toString.call(value) === "[object Number]" &&
-    value === Number(value)
-  );
-}
-
-function isPrimitiveString<Value>(value: Value): value is Value & string {
-  return (
-    Object.prototype.toString.call(value) === "[object String]" &&
-    value === String(value)
-  );
-}
-
-function cssPixels<Value>(value: Value): number | undefined {
-  if (isPrimitiveNumber(value) && Number.isFinite(value)) return value;
-  if (!isPrimitiveString(value)) return undefined;
+function cssPixels(value: Keyframe[string]): number | undefined {
+  if (isNumberValue(value) && Number.isFinite(value)) return value;
+  if (!isStringValue(value)) return undefined;
   const match = value.trim().match(/^(-?\d+(?:\.\d+)?)px$/);
   return match ? Number(match[1]) : undefined;
 }
@@ -118,7 +106,7 @@ export function flattenLayoutKeyframesToTransform(
         : undefined;
     const frameTransform = frame.transform;
     const transform =
-      isPrimitiveString(frameTransform) && frameTransform.length > 0
+      isStringValue(frameTransform) && frameTransform.length > 0
         ? frameTransform
         : "none";
     if (
@@ -215,13 +203,13 @@ export type CompositorAnimation = Readonly<{
 function isKeyframeReader<Value>(
   value: Value,
 ): value is Value & (() => Keyframe[]) {
-  return Object.prototype.toString.call(value) === "[object Function]";
+  return typeof value === "function";
 }
 
 function isKeyframeWriter<Value>(
   value: Value,
 ): value is Value & ((frames: Keyframe[]) => void) {
-  return Object.prototype.toString.call(value) === "[object Function]";
+  return typeof value === "function";
 }
 
 function parseCompositorKeyframeEffect(
@@ -229,7 +217,7 @@ function parseCompositorKeyframeEffect(
 ): CompositorKeyframeEffect | undefined {
   if (!effect || !("pseudoElement" in effect)) return undefined;
   const pseudoElement = effect.pseudoElement;
-  if (pseudoElement !== null && !isPrimitiveString(pseudoElement)) {
+  if (pseudoElement !== null && !isStringValue(pseudoElement)) {
     return undefined;
   }
   const parsed: MutableCompositorKeyframeEffect = { pseudoElement };
@@ -244,12 +232,6 @@ function parseCompositorKeyframeEffect(
     parsed.setKeyframes = (frames) => setKeyframes.call(effect, frames);
   }
   return parsed;
-}
-
-function isAnimationReader<Value>(
-  value: Value,
-): value is Value & (() => Animation[]) {
-  return Object.prototype.toString.call(value) === "[object Function]";
 }
 
 export function enforceCompositorOnlyViewTransitions(
@@ -326,11 +308,17 @@ export function enforceCompositorOnlyViewTransitions(
   return { inspected, rewritten, safe };
 }
 
+function isDocumentAnimationsReader<Value>(
+  value: Value,
+): value is Value & (() => Animation[]) {
+  return typeof value === "function";
+}
+
 export function enforceDocumentViewTransitionCompositing(
   transitionNames: readonly string[],
 ): CompositorRewriteResult {
   const getAnimations = document.getAnimations;
-  if (!isAnimationReader(getAnimations)) {
+  if (!isDocumentAnimationsReader(getAnimations)) {
     return {
       inspected: 0,
       rewritten: 0,

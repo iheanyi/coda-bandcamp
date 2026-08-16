@@ -1,17 +1,31 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  DETAIL_TRANSITION_DESCRIPTORS,
+  codaViewTransitionClass,
+} from "./detailTransitionDescriptors";
+import {
   consumePendingPageEntrance,
-  installViewTransitionMotionDriver,
+  isCurrentTransition,
   transitionCodaView,
   type CodaViewTransitionKind,
+  type TransitionToken,
 } from "./viewTransitions";
 import { getMotionDiagnostic, recordMotionInput } from "./motionDiagnostics";
 
-const motionMocks = {
-  animate: vi.fn(),
-};
-let releaseMotionDriver = () => {};
+type ElementAnimationCall = Readonly<{
+  animation: {
+    cancel: () => void;
+    finish: () => void;
+  };
+  element: HTMLElement;
+  keyframes: Keyframe[] | PropertyIndexedKeyframes | null;
+  options?: number | KeyframeAnimationOptions;
+}>;
+
+const elementAnimationCalls: ElementAnimationCall[] = [];
+let autoFinishElementAnimations = true;
+let failNextElementAnimation = false;
 
 const originalStartViewTransition = Object.getOwnPropertyDescriptor(
   document,
@@ -22,6 +36,92 @@ const originalGetAnimations = Object.getOwnPropertyDescriptor(
   "getAnimations",
 );
 const originalMatchMedia = window.matchMedia;
+const originalElementAnimate = Object.getOwnPropertyDescriptor(
+  Element.prototype,
+  "animate",
+);
+
+function expectUpdateCalledWithToken(update: ReturnType<typeof vi.fn>) {
+  expect(update).toHaveBeenCalledWith(
+    expect.objectContaining({
+      id: expect.any(Number),
+      isCurrent: expect.any(Function),
+    }),
+  );
+}
+
+function animateOptionDuration(
+  options?: number | KeyframeAnimationOptions,
+): number {
+  if (options === undefined) return 0;
+  if (options instanceof Object) return Number(options.duration ?? 0);
+  return Number(options);
+}
+
+function installElementAnimationFake() {
+  Object.defineProperty(Element.prototype, "animate", {
+    configurable: true,
+    value: function animateElement(
+      this: HTMLElement,
+      keyframes: Keyframe[] | PropertyIndexedKeyframes | null,
+      options?: number | KeyframeAnimationOptions,
+    ) {
+      if (failNextElementAnimation) {
+        failNextElementAnimation = false;
+        throw new Error("element animation unavailable");
+      }
+      let playState: AnimationPlayState = "running";
+      const duration = animateOptionDuration(options);
+      let finishHandler: ((event: Event) => void) | null = null;
+      const animation = {
+        cancel: vi.fn(() => {
+          playState = "idle";
+        }),
+        commitStyles: vi.fn(),
+        currentTime: 0,
+        effect: {
+          getComputedTiming: () => ({ duration }),
+        },
+        finish: vi.fn(() => {
+          if (playState === "idle" || playState === "finished") return;
+          playState = "finished";
+          finishHandler?.(new Event("finish"));
+        }),
+        get onfinish() {
+          return finishHandler;
+        },
+        set onfinish(handler: ((event: Event) => void) | null) {
+          finishHandler = handler;
+        },
+        pause: vi.fn(() => {
+          playState = "paused";
+        }),
+        play: vi.fn(() => {
+          playState = "running";
+        }),
+        playbackRate: 1,
+        get playState() {
+          return playState;
+        },
+        startTime: 0,
+      };
+      elementAnimationCalls.push({
+        animation,
+        element: this,
+        keyframes,
+        options,
+      });
+      if (autoFinishElementAnimations) {
+        queueMicrotask(() => animation.finish());
+      }
+      return animation;
+    },
+  });
+}
+
+function finishElementAnimations() {
+  for (const { animation } of elementAnimationCalls) animation.finish();
+}
 
 function deferred() {
   let resolve!: () => void;
@@ -69,30 +169,19 @@ function mountLibraryPane() {
   return pane;
 }
 
-const DETAIL_CASES = [
-  ["album-detail", "coda-transition--album-detail"],
-  ["album-detail-close", "coda-transition--album-detail-close"],
-  ["artist-detail", "coda-transition--artist-detail"],
-  ["artist-detail-close", "coda-transition--artist-detail-close"],
-  ["daily-detail", "coda-transition--daily-detail"],
-  ["daily-detail-close", "coda-transition--daily-detail-close"],
-  ["discover-detail", "coda-transition--discover-detail"],
-  ["discover-detail-close", "coda-transition--discover-detail-close"],
-  ["playlist-detail", "coda-transition--playlist-detail"],
-  ["playlist-detail-close", "coda-transition--playlist-detail-close"],
-  ["radio-detail", "coda-transition--radio-detail"],
-  ["radio-detail-close", "coda-transition--radio-detail-close"],
-  ["now-playing-open", "coda-transition--now-playing-open"],
-  ["now-playing-close", "coda-transition--now-playing-close"],
-] as const satisfies ReadonlyArray<readonly [CodaViewTransitionKind, string]>;
+const DETAIL_CASES = Object.values(DETAIL_TRANSITION_DESCRIPTORS).flatMap(
+  (descriptor) =>
+    [
+      [descriptor.openKind, codaViewTransitionClass(descriptor.openKind)],
+      [descriptor.closeKind, codaViewTransitionClass(descriptor.closeKind)],
+    ] as const,
+) satisfies ReadonlyArray<readonly [CodaViewTransitionKind, string]>;
 
 beforeEach(() => {
-  releaseMotionDriver = installViewTransitionMotionDriver(motionMocks);
-  motionMocks.animate.mockReset();
-  motionMocks.animate.mockImplementation(() => ({
-    finished: Promise.resolve(),
-    stop: vi.fn(),
-  }));
+  elementAnimationCalls.length = 0;
+  autoFinishElementAnimations = true;
+  failNextElementAnimation = false;
+  installElementAnimationFake();
   document.body.replaceChildren();
   document.documentElement.className = "";
   document.documentElement.removeAttribute("style");
@@ -105,7 +194,6 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  releaseMotionDriver();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   if (originalStartViewTransition) {
@@ -126,6 +214,11 @@ afterEach(() => {
     configurable: true,
     value: originalMatchMedia,
   });
+  if (originalElementAnimate) {
+    Object.defineProperty(Element.prototype, "animate", originalElementAnimate);
+  } else {
+    Reflect.deleteProperty(Element.prototype, "animate");
+  }
 });
 
 describe("detail view transitions", () => {
@@ -147,7 +240,7 @@ describe("detail view transitions", () => {
     const { startViewTransition } = installNativeTransition();
     recordMotionInput("pointer");
 
-    await transitionCodaView(vi.fn(), "album-detail");
+    await transitionCodaView(vi.fn(), "album-detail", true);
 
     expect(animateSource).toHaveBeenCalledOnce();
     expect(startViewTransition).toHaveBeenCalledOnce();
@@ -161,13 +254,30 @@ describe("detail view transitions", () => {
     });
   });
 
+  it("does not paint shared-source feedback from diagnostics input alone", async () => {
+    const source = document.createElement("div");
+    source.className = "coda-album-artwork-source";
+    const animateSource = vi.fn(() => ({ cancel: vi.fn() }));
+    Object.defineProperty(source, "animate", {
+      configurable: true,
+      value: animateSource,
+    });
+    document.body.append(source);
+    installNativeTransition();
+    recordMotionInput("pointer");
+
+    await transitionCodaView(vi.fn(), "album-detail");
+
+    expect(animateSource).not.toHaveBeenCalled();
+  });
+
   it("commits immediately when the platform API is unavailable", async () => {
     const update = vi.fn();
 
     await transitionCodaView(update, "album-detail");
 
     expect(update).toHaveBeenCalledOnce();
-    expect(update).toHaveBeenCalledWith(false);
+    expectUpdateCalledWithToken(update);
     expect(getMotionDiagnostic()).toMatchObject({
       configuredDurationMs: 460,
       firstVisualMs: expect.any(Number),
@@ -476,29 +586,18 @@ describe("primary page transitions", () => {
     await transitionCodaView(update, "page-forward");
 
     expect(update).toHaveBeenCalledOnce();
-    expect(update).toHaveBeenCalledWith(false);
+    expectUpdateCalledWithToken(update);
     expect(startViewTransition).not.toHaveBeenCalled();
-    expect(motionMocks.animate).not.toHaveBeenCalled();
+    expect(elementAnimationCalls).toHaveLength(0);
   });
 
   it("moves old and new panes without a zero-opacity frame", async () => {
     const pane = mountLibraryPane();
     const paneRect = vi.spyOn(pane, "getBoundingClientRect");
     const { startViewTransition } = installNativeTransition();
-    const exitFinished = deferred();
-    const enterFinished = deferred();
-    motionMocks.animate
-      .mockImplementationOnce(() => ({
-        finished: exitFinished.promise,
-        stop: vi.fn(),
-      }))
-      .mockImplementationOnce(() => ({
-        finished: enterFinished.promise,
-        stop: vi.fn(),
-      }));
+    autoFinishElementAnimations = false;
     const routeCommit = deferred();
-    const update = vi.fn(async (routerViewTransition?: boolean) => {
-      expect(routerViewTransition).toBe(false);
+    const update = vi.fn(async (_token) => {
       await routeCommit.promise;
       pane.textContent = "Discover";
       expect(consumePendingPageEntrance(pane)).toBe(true);
@@ -508,28 +607,17 @@ describe("primary page transitions", () => {
 
     expect(update).toHaveBeenCalledOnce();
     expect(startViewTransition).not.toHaveBeenCalled();
-    expect(motionMocks.animate).toHaveBeenLastCalledWith(
-      pane,
-      {
-        transform: ["translateX(0px) scale(1)", "translateX(-6px) scale(1)"],
-      },
-      expect.objectContaining({ duration: 0.12 }),
-    );
-    exitFinished.resolve();
-    await vi.waitFor(() => expect(update).toHaveBeenCalledOnce());
     routeCommit.resolve();
-    await vi.waitFor(() =>
-      expect(motionMocks.animate).toHaveBeenCalledTimes(2),
-    );
-    expect(motionMocks.animate).toHaveBeenLastCalledWith(
-      pane,
-      {
+    await vi.waitFor(() => expect(elementAnimationCalls).toHaveLength(1));
+    expect(elementAnimationCalls[0]).toMatchObject({
+      element: pane,
+      keyframes: {
         transform: ["translateX(10px) scale(1)", "translateX(0px) scale(1)"],
       },
-      expect.objectContaining({ delay: 0.015, duration: 0.18 }),
-    );
+      options: expect.objectContaining({ delay: 15, duration: 180 }),
+    });
     expect(pane.style.opacity).not.toBe("0");
-    enterFinished.resolve();
+    finishElementAnimations();
     await transition;
     expect(pane.style.opacity).toBe("");
     expect(pane.style.transform).toBe("");
@@ -542,7 +630,6 @@ describe("primary page transitions", () => {
       phaseTimings: {
         entranceMs: expect.any(Number),
         entranceStartMs: expect.any(Number),
-        exitMs: expect.any(Number),
         finishedMs: expect.any(Number),
         updateMs: expect.any(Number),
         updateStartMs: expect.any(Number),
@@ -552,26 +639,63 @@ describe("primary page transitions", () => {
     });
   });
 
+  it("releases retained page styles when the destination is the source pane", async () => {
+    const pane = mountLibraryPane();
+    pane.dataset.codaTransitionKey = "collection";
+    const routeCommit = deferred();
+    const update = vi.fn(async () => {
+      expect(pane.style.willChange).toBe("transform");
+      expect(consumePendingPageEntrance(pane, "collection")).toBe(false);
+      expect(pane.style.transform).toBe("");
+      expect(pane.style.willChange).toBe("");
+      await routeCommit.promise;
+    });
+
+    const transition = transitionCodaView(update, "page-forward");
+    await vi.waitFor(() => expect(update).toHaveBeenCalledOnce());
+    expect(pane.style.transform).toBe("");
+    expect(pane.style.willChange).toBe("");
+    expect(document.documentElement).toHaveClass("coda-view-transitioning");
+    routeCommit.resolve();
+    await transition;
+    expect(pane.style.transform).toBe("");
+    expect(pane.style.willChange).toBe("");
+  });
+
   it("binds a page entrance to a different destination commit", async () => {
     const pane = mountLibraryPane();
     pane.dataset.codaTransitionKey = "collection";
     const update = vi.fn(() => {
       expect(consumePendingPageEntrance(pane, "collection")).toBe(false);
+      expect(pane.style.transform).toBe("");
+      expect(pane.style.willChange).toBe("");
       pane.dataset.codaTransitionKey = "discover";
       expect(consumePendingPageEntrance(pane, "discover")).toBe(true);
     });
 
     await transitionCodaView(update, "page-forward");
 
-    expect(motionMocks.animate).toHaveBeenCalledTimes(2);
+    expect(pane.style.transform).toBe("");
+    expect(pane.style.willChange).toBe("");
+    expect(elementAnimationCalls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          element: pane,
+          keyframes: {
+            transform: [
+              "translateX(10px) scale(1)",
+              "translateX(0px) scale(1)",
+            ],
+          },
+        }),
+      ]),
+    );
   });
 
   it("commits and propagates route failures even when Motion setup fails", async () => {
     const routeFailure = new Error("route failed");
     mountLibraryPane();
-    motionMocks.animate.mockImplementationOnce(() => {
-      throw new Error("motion unavailable");
-    });
+    failNextElementAnimation = true;
     const update = vi.fn(() => Promise.reject(routeFailure));
 
     await expect(transitionCodaView(update, "page-forward")).rejects.toBe(
@@ -588,21 +712,18 @@ describe("primary page transitions", () => {
 
     await transitionCodaView(update, "page-back");
 
-    expect(motionMocks.animate).toHaveBeenNthCalledWith(
-      1,
-      pane,
-      {
-        transform: ["translateX(0px) scale(1)", "translateX(6px) scale(1)"],
-      },
-      expect.any(Object),
-    );
-    expect(motionMocks.animate).toHaveBeenNthCalledWith(
-      2,
-      pane,
-      {
-        transform: ["translateX(-10px) scale(1)", "translateX(0px) scale(1)"],
-      },
-      expect.any(Object),
+    expect(elementAnimationCalls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          element: pane,
+          keyframes: {
+            transform: [
+              "translateX(-10px) scale(1)",
+              "translateX(0px) scale(1)",
+            ],
+          },
+        }),
+      ]),
     );
   });
 
@@ -614,46 +735,36 @@ describe("primary page transitions", () => {
 
     await transitionCodaView(update, "page-crossfade");
 
-    expect(motionMocks.animate).toHaveBeenNthCalledWith(
-      1,
-      pane,
-      { opacity: [1, 0.94] },
-      expect.any(Object),
-    );
-    expect(motionMocks.animate).toHaveBeenNthCalledWith(
-      2,
-      pane,
-      {
-        opacity: [0.94, 1],
-        transform: ["translateX(0px) scale(1)", "translateX(0px) scale(1)"],
-      },
-      expect.any(Object),
+    expect(elementAnimationCalls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          element: pane,
+          keyframes: { opacity: [0.94, 1] },
+        }),
+      ]),
     );
   });
 
   it("cancels stale page motion while newer navigation takes ownership", async () => {
     const pane = mountLibraryPane();
-    const firstFinished = deferred();
-    const stopFirst = vi.fn(firstFinished.resolve);
-    motionMocks.animate
-      .mockImplementationOnce(() => ({
-        finished: firstFinished.promise,
-        stop: stopFirst,
-      }))
-      .mockImplementation(() => ({
-        finished: Promise.resolve(),
-        stop: vi.fn(),
-      }));
-    const firstUpdate = vi.fn();
+    autoFinishElementAnimations = false;
+    const firstCommit = deferred();
+    const firstUpdate = vi.fn(() => firstCommit.promise);
     const secondUpdate = vi.fn(() => {
       consumePendingPageEntrance(pane);
     });
 
     const first = transitionCodaView(firstUpdate, "page-forward");
+    await vi.waitFor(() => expect(elementAnimationCalls).toHaveLength(1));
+    const firstAnimation = elementAnimationCalls[0]?.animation;
     const second = transitionCodaView(secondUpdate, "page-back");
 
-    await Promise.all([first, second]);
-    expect(stopFirst).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(elementAnimationCalls.length).toBeGreaterThan(1));
+    finishElementAnimations();
+    await second;
+    firstCommit.resolve();
+    await first;
+    expect(firstAnimation?.cancel).toHaveBeenCalledOnce();
     expect(firstUpdate).toHaveBeenCalledOnce();
     expect(secondUpdate).toHaveBeenCalledOnce();
     expect(document.documentElement).not.toHaveClass("coda-view-transitioning");
@@ -671,8 +782,90 @@ describe("primary page transitions", () => {
     await transitionCodaView(update, "page-forward");
 
     expect(update).toHaveBeenCalledOnce();
-    expect(update).toHaveBeenCalledWith(false);
+    expectUpdateCalledWithToken(update);
     expect(startViewTransition).not.toHaveBeenCalled();
-    expect(motionMocks.animate).not.toHaveBeenCalled();
+    expect(elementAnimationCalls).toHaveLength(0);
+  });
+});
+
+describe("transition generation tokens", () => {
+  it("does not commit a superseded reduced-motion route update", async () => {
+    let startedSecond = false;
+    const firstUpdate = vi.fn();
+    const secondUpdate = vi.fn();
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn(() => {
+        if (!startedSecond) {
+          startedSecond = true;
+          void transitionCodaView(secondUpdate, "album-detail");
+        }
+        return { matches: true };
+      }),
+    });
+
+    await transitionCodaView(firstUpdate, "album-detail");
+
+    expect(firstUpdate).not.toHaveBeenCalled();
+    expect(secondUpdate).toHaveBeenCalledOnce();
+    expectUpdateCalledWithToken(secondUpdate);
+  });
+
+  it("does not commit a superseded router-owned page update", async () => {
+    let startedSecond = false;
+    const firstUpdate = vi.fn();
+    const secondUpdate = vi.fn();
+    const classList = document.documentElement.classList;
+    const originalAdd = classList.add.bind(classList);
+    classList.add = (...tokens: string[]) => {
+      originalAdd(...tokens);
+      if (!startedSecond && tokens.includes("coda-view-transitioning")) {
+        startedSecond = true;
+        void transitionCodaView(secondUpdate, "page-forward");
+      }
+    };
+
+    try {
+      await transitionCodaView(firstUpdate, "page-forward");
+    } finally {
+      classList.add = originalAdd;
+    }
+
+    expect(firstUpdate).not.toHaveBeenCalled();
+    expect(secondUpdate).toHaveBeenCalledOnce();
+    expectUpdateCalledWithToken(secondUpdate);
+  });
+
+  it("commits a native failure fallback at most once", async () => {
+    const update = vi.fn();
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: vi.fn((routeUpdate: () => void | Promise<void>) => {
+        void routeUpdate();
+        throw new Error("native startup failed");
+      }),
+    });
+
+    await transitionCodaView(update, "album-detail");
+
+    expect(update).toHaveBeenCalledOnce();
+  });
+
+  it("reports a transition token as not current after a newer transition starts", async () => {
+    const seen: TransitionToken[] = [];
+    const captureToken = (token: TransitionToken) => {
+      seen.push(token);
+      expect(token.isCurrent()).toBe(true);
+    };
+
+    await transitionCodaView(captureToken, "album-detail");
+    expect(seen[0]?.isCurrent()).toBe(true);
+    await transitionCodaView(captureToken, "album-detail");
+
+    expect(seen).toHaveLength(2);
+    expect(seen[0]?.isCurrent()).toBe(false);
+    expect(seen[1]?.isCurrent()).toBe(true);
+    expect(isCurrentTransition(seen[0]?.id ?? -1)).toBe(false);
+    expect(isCurrentTransition(seen[1]?.id ?? -1)).toBe(true);
   });
 });

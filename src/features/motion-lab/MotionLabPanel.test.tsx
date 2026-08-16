@@ -1,14 +1,10 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import {
-  getMotionProfileState,
-  resetMotionProfileStoreForTests,
-} from "@/motionProfileStore";
+import { getMotionProfileState } from "@/motionProfileStore";
 import {
   beginMotionDiagnostic,
   finishMotionDiagnostic,
-  resetMotionDiagnosticsForTests,
   updateMotionDiagnostic,
 } from "@/motionDiagnostics";
 import { MotionLabPanel } from "./MotionLabPanel";
@@ -16,8 +12,6 @@ import { MotionLabPanel } from "./MotionLabPanel";
 describe("MotionLabPanel", () => {
   beforeEach(() => {
     window.localStorage.clear();
-    resetMotionDiagnosticsForTests();
-    resetMotionProfileStoreForTests();
   });
 
   it("renders as a fixed non-modal overlay without wrapping app content", () => {

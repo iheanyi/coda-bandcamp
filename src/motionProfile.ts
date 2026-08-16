@@ -1,6 +1,14 @@
 import { spring } from "motion";
 import type { Transition } from "motion/react";
 
+import {
+  isNumberValue,
+  isOwnDataRecord,
+  isStringValue,
+  type OwnDataRecord,
+  type OwnDataValue,
+} from "./ownData";
+
 export const MOTION_PROFILE_VERSION = 1 as const;
 
 export type MotionEase = "emphasized" | "standard" | "accelerate" | "linear";
@@ -265,59 +273,33 @@ export const BUILTIN_MOTION_PRESETS: readonly MotionPreset[] = [
   },
 ];
 
-function isPrimitiveNumber<Value>(value: Value): value is Value & number {
-  return (
-    Object.prototype.toString.call(value) === "[object Number]" &&
-    value === Number(value)
-  );
+export function isPlainMotionObject(value: OwnDataValue): value is OwnDataRecord {
+  return isOwnDataRecord(value);
 }
 
-function isPrimitiveString<Value>(value: Value): value is Value & string {
-  return (
-    Object.prototype.toString.call(value) === "[object String]" &&
-    value === String(value)
-  );
-}
-
-function hasPlainObjectTag<Value>(value: Value): value is Value & object {
-  try {
-    return Object.prototype.toString.call(value) === "[object Object]";
-  } catch {
-    return false;
-  }
-}
-
-export function isPlainMotionObject<Value>(
-  value: Value,
-): value is Value & object {
-  if (!hasPlainObjectTag(value)) return false;
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
-}
-
-export function parseMotionWireString<Value>(
-  value: Value,
+export function parseMotionWireString(
+  value: OwnDataValue,
 ): string | undefined {
-  return isPrimitiveString(value) ? value : undefined;
+  return isStringValue(value) ? value : undefined;
 }
 
-function finiteNumber<Value>(
-  value: Value,
+function finiteNumber(
+  value: OwnDataValue,
   fallback: number,
   minimum: number,
   maximum: number,
 ) {
-  return isPrimitiveNumber(value) && Number.isFinite(value)
+  return isNumberValue(value) && Number.isFinite(value)
     ? Math.min(maximum, Math.max(minimum, value))
     : fallback;
 }
 
-function stringChoice<const Choice extends string, Value>(
-  value: Value,
+function stringChoice<const Choice extends string>(
+  value: OwnDataValue,
   choices: readonly Choice[],
   fallback: Choice,
 ): Choice {
-  if (!isPrimitiveString(value)) return fallback;
+  if (!isStringValue(value)) return fallback;
   const parsed: string = value;
   for (const choice of choices) {
     if (parsed === choice) return choice;
@@ -325,8 +307,8 @@ function stringChoice<const Choice extends string, Value>(
   return fallback;
 }
 
-function validateTiming<Value>(
-  value: Value,
+function validateTiming(
+  value: OwnDataValue,
   fallback: MotionTiming,
 ): MotionTiming {
   const input = isPlainMotionObject(value) ? value : undefined;
@@ -347,8 +329,8 @@ function validateTiming<Value>(
   };
 }
 
-function validateFeedbackSection<Value>(
-  value: Value,
+function validateFeedbackSection(
+  value: OwnDataValue,
 ): MotionProfile["feedback"] {
   const input = isPlainMotionObject(value) ? value : undefined;
   const candidate =
@@ -360,8 +342,8 @@ function validateFeedbackSection<Value>(
   };
 }
 
-function validateComponentSection<Value>(
-  value: Value,
+function validateComponentSection(
+  value: OwnDataValue,
 ): MotionProfile["component"] {
   const input = isPlainMotionObject(value) ? value : undefined;
   const candidate =
@@ -401,7 +383,7 @@ function validateComponentSection<Value>(
   };
 }
 
-function validatePageSection<Value>(value: Value): MotionProfile["page"] {
+function validatePageSection(value: OwnDataValue): MotionProfile["page"] {
   const input = isPlainMotionObject(value) ? value : undefined;
   const candidate = input && "page" in input ? input.page : undefined;
   const page = isPlainMotionObject(candidate) ? candidate : undefined;
@@ -450,7 +432,7 @@ function validatePageSection<Value>(value: Value): MotionProfile["page"] {
   };
 }
 
-function validateSharedSection<Value>(value: Value): MotionProfile["shared"] {
+function validateSharedSection(value: OwnDataValue): MotionProfile["shared"] {
   const input = isPlainMotionObject(value) ? value : undefined;
   const candidate = input && "shared" in input ? input.shared : undefined;
   const shared = isPlainMotionObject(candidate) ? candidate : undefined;
@@ -495,7 +477,7 @@ function validateSharedSection<Value>(value: Value): MotionProfile["shared"] {
   };
 }
 
-function validateDetailSection<Value>(value: Value): MotionProfile["detail"] {
+function validateDetailSection(value: OwnDataValue): MotionProfile["detail"] {
   const input = isPlainMotionObject(value) ? value : undefined;
   const candidate = input && "detail" in input ? input.detail : undefined;
   const detail = isPlainMotionObject(candidate) ? candidate : undefined;
@@ -529,7 +511,7 @@ function validateDetailSection<Value>(value: Value): MotionProfile["detail"] {
   };
 }
 
-export function validateMotionProfile<Value>(value: Value): MotionProfile {
+export function validateMotionProfile(value: OwnDataValue): MotionProfile {
   const input = isPlainMotionObject(value) ? value : undefined;
   const speed = input && "speed" in input ? input.speed : undefined;
   const selection =

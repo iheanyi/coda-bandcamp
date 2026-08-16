@@ -1,16 +1,24 @@
-import { flushSync } from "react-dom";
 import {
   animate,
   type AnimationPlaybackControls,
   type Transition,
 } from "motion";
-import { acquireTemporaryStyleProperty } from "@/features/navigation/temporaryDomMarkers";
+import {
+  applyDomEdits,
+  type DomStyleEdit,
+} from "@/features/navigation/domSnapshot";
 import { enforceDocumentViewTransitionCompositing } from "./compositorViewTransition";
+import {
+  CODA_VIEW_TRANSITION_CLASSES,
+  codaViewTransitionClass,
+  resolveDetailTransition,
+  type CodaViewTransitionKind,
+  type PageViewTransitionKind,
+} from "./detailTransitionDescriptors";
 import {
   beginMotionDiagnostic,
   endpointIssues,
   finishMotionDiagnostic,
-  getMotionDiagnostic,
   inspectMotionPseudoLayers,
   rectSnapshot,
   updateMotionDiagnostic,
@@ -18,24 +26,7 @@ import {
 import type { ResolvedMotionProfile } from "./motionProfile";
 import { snapshotMotionProfile } from "./motionProfileStore";
 
-export type CodaViewTransitionKind =
-  | "album-detail"
-  | "album-detail-close"
-  | "artist-detail"
-  | "artist-detail-close"
-  | "daily-detail"
-  | "daily-detail-close"
-  | "discover-detail"
-  | "discover-detail-close"
-  | "playlist-detail"
-  | "playlist-detail-close"
-  | "radio-detail"
-  | "radio-detail-close"
-  | "now-playing-open"
-  | "now-playing-close"
-  | "page-forward"
-  | "page-back"
-  | "page-crossfade";
+export type { CodaViewTransitionKind } from "./detailTransitionDescriptors";
 
 type CodaViewTransition = {
   finished: Promise<void>;
@@ -44,50 +35,38 @@ type CodaViewTransition = {
   updateCallbackDone?: Promise<void>;
 };
 
-export type CodaViewTransitionUpdate = (
-  routerViewTransition?: boolean,
-) => void | Promise<void>;
-
-export type ViewTransitionMotionDriver = Readonly<{
-  animate: typeof animate;
+export type TransitionToken = Readonly<{
+  id: number;
+  isCurrent: () => boolean;
 }>;
 
-const defaultMotionDriver: ViewTransitionMotionDriver = { animate };
-let motionDriver = defaultMotionDriver;
+export type CodaViewTransitionUpdate = (
+  token: TransitionToken,
+) => void | Promise<void>;
 
-export function installViewTransitionMotionDriver(
-  driver: ViewTransitionMotionDriver,
-): () => void {
-  const previous = motionDriver;
-  motionDriver = driver;
-  return () => {
-    if (motionDriver === driver) motionDriver = previous;
-  };
-}
-
-const TRANSITION_CLASSES = {
-  "album-detail": "coda-transition--album-detail",
-  "album-detail-close": "coda-transition--album-detail-close",
-  "artist-detail": "coda-transition--artist-detail",
-  "artist-detail-close": "coda-transition--artist-detail-close",
-  "daily-detail": "coda-transition--daily-detail",
-  "daily-detail-close": "coda-transition--daily-detail-close",
-  "discover-detail": "coda-transition--discover-detail",
-  "discover-detail-close": "coda-transition--discover-detail-close",
-  "playlist-detail": "coda-transition--playlist-detail",
-  "playlist-detail-close": "coda-transition--playlist-detail-close",
-  "radio-detail": "coda-transition--radio-detail",
-  "radio-detail-close": "coda-transition--radio-detail-close",
-  "now-playing-open": "coda-transition--now-playing-open",
-  "now-playing-close": "coda-transition--now-playing-close",
-  "page-forward": "coda-transition--page-forward",
-  "page-back": "coda-transition--page-back",
-  "page-crossfade": "coda-transition--page-crossfade",
-} satisfies Record<CodaViewTransitionKind, string>;
-const TRANSITION_CLASS_NAMES = Object.values(TRANSITION_CLASSES);
 const NATIVE_DETAIL_DURATION_MS = 460;
 const NATIVE_NOW_PLAYING_DURATION_MS = 440;
 let latestTransitionId = 0;
+
+export function isCurrentTransition(id: number): boolean {
+  return latestTransitionId === id;
+}
+
+export function currentTransitionId(): number {
+  return latestTransitionId;
+}
+
+function createTransitionToken(id: number): TransitionToken {
+  return {
+    id,
+    isCurrent: () => isCurrentTransition(id),
+  };
+}
+
+function transitionFailureReason(cause: unknown, fallback: string): string {
+  return cause instanceof Error ? cause.message.slice(0, 160) : fallback;
+}
+
 let activeTransition:
   { id: number; transition: CodaViewTransition } | undefined;
 let releaseActiveSourceSuppression: (() => void) | undefined;
@@ -121,76 +100,10 @@ function stopActivePageAnimations() {
   releaseActivePageStyles = undefined;
 }
 
-const SHARED_SOURCE_SELECTORS = {
-  "album-detail": [".coda-album-artwork-source"],
-  "album-detail-close": ["[data-coda-album-artwork-detail]"],
-  "artist-detail": [
-    "[data-coda-artist-artwork-source] [data-slot='cover']",
-    "[data-coda-artist-artwork-source][data-slot='cover']",
-  ],
-  "artist-detail-close": [
-    "[data-coda-artist-artwork-detail][data-slot='cover']",
-    "[data-coda-artist-artwork-detail] [data-slot='cover']",
-  ],
-  "daily-detail": ["[data-coda-daily-artwork-source]"],
-  "daily-detail-close": ["[data-coda-daily-artwork-detail]"],
-  "discover-detail": ["[data-coda-discover-artwork-source]"],
-  "discover-detail-close": ["[data-coda-discover-artwork-detail]"],
-  "playlist-detail": ["[data-coda-playlist-identity-source]"],
-  "playlist-detail-close": ["[data-coda-playlist-identity-detail]"],
-  "radio-detail": ["[data-coda-radio-artwork-source]"],
-  "radio-detail-close": ["[data-coda-radio-artwork-detail]"],
-  "now-playing-open": [".player__art-link"],
-  "now-playing-close": [".now-playing__artwork"],
-} satisfies Partial<Record<CodaViewTransitionKind, readonly string[]>>;
-
-const SHARED_DESTINATION_SELECTORS = {
-  "album-detail": ["[data-coda-album-artwork-detail]"],
-  "album-detail-close": ["[data-coda-album-artwork-return]"],
-  "artist-detail": [
-    "[data-coda-artist-artwork-detail][data-slot='cover']",
-    "[data-coda-artist-artwork-detail] [data-slot='cover']",
-  ],
-  "artist-detail-close": ["[data-coda-artist-artwork-return]"],
-  "daily-detail": ["[data-coda-daily-artwork-detail]"],
-  "daily-detail-close": ["[data-coda-daily-artwork-return]"],
-  "discover-detail": ["[data-coda-discover-artwork-detail]"],
-  "discover-detail-close": ["[data-coda-discover-artwork-return]"],
-  "playlist-detail": ["[data-coda-playlist-identity-detail]"],
-  "playlist-detail-close": ["[data-coda-playlist-identity-return]"],
-  "radio-detail": ["[data-coda-radio-artwork-detail]"],
-  "radio-detail-close": ["[data-coda-radio-artwork-return]"],
-  "now-playing-open": [".now-playing__artwork"],
-  "now-playing-close": [".player__art-link"],
-} satisfies Partial<Record<CodaViewTransitionKind, readonly string[]>>;
-
-const DETAIL_TRANSITION_NAMES = {
-  "album-detail": ["coda-album-artwork", "coda-detail-surface"],
-  "album-detail-close": ["coda-album-artwork", "coda-detail-surface"],
-  "artist-detail": ["coda-artist-artwork", "coda-detail-surface"],
-  "artist-detail-close": ["coda-artist-artwork", "coda-detail-surface"],
-  "daily-detail": ["coda-daily-artwork", "coda-detail-surface"],
-  "daily-detail-close": ["coda-daily-artwork", "coda-detail-surface"],
-  "discover-detail": ["coda-discover-artwork", "coda-detail-surface"],
-  "discover-detail-close": ["coda-discover-artwork", "coda-detail-surface"],
-  "playlist-detail": ["coda-playlist-identity", "coda-detail-surface"],
-  "playlist-detail-close": ["coda-playlist-identity", "coda-detail-surface"],
-  "radio-detail": ["coda-radio-artwork", "coda-detail-surface"],
-  "radio-detail-close": ["coda-radio-artwork", "coda-detail-surface"],
-  "now-playing-open": ["coda-now-playing-artwork", "coda-detail-surface"],
-  "now-playing-close": ["coda-now-playing-artwork", "coda-detail-surface"],
-} satisfies Partial<Record<CodaViewTransitionKind, readonly string[]>>;
-
-function mappedTransitionValues<Value>(
-  mapping: Partial<Record<CodaViewTransitionKind, readonly Value[]>>,
-  kind: CodaViewTransitionKind,
-): readonly Value[] {
-  return mapping[kind] ?? [];
-}
-
 function sharedSourceCandidates(kind: CodaViewTransitionKind) {
   const elements = new Set<HTMLElement>();
-  for (const selector of mappedTransitionValues(SHARED_SOURCE_SELECTORS, kind)) {
+  const selectors = resolveDetailTransition(kind)?.sourceSelectors ?? [];
+  for (const selector of selectors) {
     document.querySelectorAll<HTMLElement>(selector).forEach((element) => {
       elements.add(element);
     });
@@ -200,10 +113,8 @@ function sharedSourceCandidates(kind: CodaViewTransitionKind) {
 
 function sharedDestinationCandidates(kind: CodaViewTransitionKind) {
   const elements = new Set<HTMLElement>();
-  for (const selector of mappedTransitionValues(
-    SHARED_DESTINATION_SELECTORS,
-    kind,
-  )) {
+  const selectors = resolveDetailTransition(kind)?.destinationSelectors ?? [];
+  for (const selector of selectors) {
     document.querySelectorAll<HTMLElement>(selector).forEach((element) => {
       elements.add(element);
     });
@@ -214,33 +125,22 @@ function sharedDestinationCandidates(kind: CodaViewTransitionKind) {
 function suppressSourcesThatSurvive(
   candidates: readonly HTMLElement[],
 ): () => void {
-  const releases = candidates
+  const edits: DomStyleEdit[] = candidates
     .filter((element) => element.isConnected)
-    .map((element) =>
-      // A persistent route parent or root-owned player can leave the outgoing
-      // element mounted beside its destination. Exclude that old endpoint from
-      // the incoming snapshot so the shared name remains unique.
-      acquireTemporaryStyleProperty(
-        element,
-        "view-transition-name",
-        "none",
-        "important",
-      ),
-    );
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    for (let index = releases.length - 1; index >= 0; index -= 1) {
-      releases[index]?.();
-    }
-  };
+    .map((element) => ({
+      element,
+      kind: "style" as const,
+      name: "view-transition-name",
+      priority: "important",
+      value: "none",
+    }));
+  return applyDomEdits(edits);
 }
 
 function clearTransitionClasses() {
   document.documentElement.classList.remove(
     "coda-view-transitioning",
-    ...TRANSITION_CLASS_NAMES,
+    ...CODA_VIEW_TRANSITION_CLASSES,
   );
 }
 
@@ -255,7 +155,7 @@ type StartViewTransition = (
 function isStartViewTransition<Value>(
   value: Value,
 ): value is Value & StartViewTransition {
-  return Object.prototype.toString.call(value) === "[object Function]";
+  return value instanceof Function;
 }
 
 function readStartViewTransition(
@@ -270,13 +170,27 @@ function readStartViewTransition(
 function isAnimationFrameRequester<Value>(
   value: Value,
 ): value is Value & ((callback: FrameRequestCallback) => number) {
-  return Object.prototype.toString.call(value) === "[object Function]";
+  return value instanceof Function;
+}
+
+function isAnimationFrameCanceller(
+  value: typeof globalThis.cancelAnimationFrame | undefined,
+): value is (handle: number) => void {
+  return value instanceof Function;
+}
+
+function cancelScheduledFrame(handle: number | undefined): void {
+  if (handle === undefined) return;
+  const cancelFrame = globalThis.cancelAnimationFrame;
+  if (isAnimationFrameCanceller(cancelFrame)) {
+    cancelFrame.call(globalThis, handle);
+  }
 }
 
 function isMediaQueryMatcher<Value>(
   value: Value,
 ): value is Value & ((query: string) => MediaQueryList) {
-  return Object.prototype.toString.call(value) === "[object Function]";
+  return value instanceof Function;
 }
 
 function reducedMotionRequested(): boolean {
@@ -289,7 +203,7 @@ function reducedMotionRequested(): boolean {
 
 function isPageTransition(
   kind: CodaViewTransitionKind,
-): kind is "page-forward" | "page-back" | "page-crossfade" {
+): kind is PageViewTransitionKind {
   return kind.startsWith("page");
 }
 
@@ -355,7 +269,7 @@ function beginSharedSourceFeedback(source: HTMLElement | null) {
   });
   return {
     cancel: () => {
-      cancelAnimationFrame(frame);
+      cancelScheduledFrame(frame);
       window.clearTimeout(timeout);
       animation.cancel();
     },
@@ -415,7 +329,7 @@ export function consumePendingPageEntrance(
 ) {
   const entrance = pendingPageEntrance;
   if (!entrance) return false;
-  if (entrance.id !== latestTransitionId) {
+  if (!isCurrentTransition(entrance.id)) {
     pendingPageEntrance = undefined;
     entrance.resolve();
     return false;
@@ -424,6 +338,12 @@ export function consumePendingPageEntrance(
     entrance.sourceKey !== undefined &&
     (destinationKey === undefined || destinationKey === entrance.sourceKey)
   ) {
+    if (destinationKey === entrance.sourceKey) {
+      for (const controls of activePageAnimations) controls.stop();
+      activePageAnimations = [];
+      releaseActivePageStyles?.();
+      releaseActivePageStyles = undefined;
+    }
     return false;
   }
   pendingPageEntrance = undefined;
@@ -459,7 +379,11 @@ export function consumePendingPageEntrance(
         };
   let controls: AnimationPlaybackControls;
   try {
-    controls = motionDriver.animate(destination, keyframes, entrance.transition);
+    controls = animate(
+      destination,
+      keyframes,
+      entrance.transition,
+    );
   } catch {
     entrance.resolve();
     return false;
@@ -482,10 +406,10 @@ export function consumePendingPageEntrance(
 }
 
 async function transitionRouterOwnedPage(
-  update: CodaViewTransitionUpdate,
-  kind: "page-forward" | "page-back" | "page-crossfade",
+  commitUpdate: () => Promise<void>,
+  kind: PageViewTransitionKind,
   motion: ResolvedMotionProfile,
-  transitionId: number,
+  token: TransitionToken,
 ) {
   // Snapshotting this scroll surface makes WebKit rasterize the virtualized
   // Collection. Animate the persistent pane on both sides of the atomic React
@@ -493,8 +417,8 @@ async function transitionRouterOwnedPage(
   stopActivePageAnimations();
   const transitionClass =
     motion.profile.page.mode === "crossfade"
-      ? TRANSITION_CLASSES["page-crossfade"]
-      : TRANSITION_CLASSES[kind];
+      ? codaViewTransitionClass("page-crossfade")
+      : codaViewTransitionClass(kind);
   document.documentElement.classList.add(
     "coda-view-transitioning",
     transitionClass,
@@ -537,7 +461,7 @@ async function transitionRouterOwnedPage(
       releaseActivePageStyles = preservePageInlineStyles(source);
       source.style.setProperty("will-change", slide ? "transform" : "opacity");
       try {
-        const exit = motionDriver.animate(
+        const exit = animate(
           source,
           slide
             ? {
@@ -557,8 +481,7 @@ async function transitionRouterOwnedPage(
           sourcePaintFrame = requestFrame.call(globalThis, () => {
             updateMotionDiagnostic(diagnosticId, {
               phaseTimings: {
-                sourceFeedbackPaintMs:
-                  performance.now() - coordinatorStartedAt,
+                sourceFeedbackPaintMs: performance.now() - coordinatorStartedAt,
               },
             });
           });
@@ -582,7 +505,7 @@ async function transitionRouterOwnedPage(
         releaseActivePageStyles?.();
         releaseActivePageStyles = undefined;
       }
-      if (transitionId !== latestTransitionId) return;
+      if (!token.isCurrent()) return;
     }
     const updateStartedAt = performance.now();
     updateMotionDiagnostic(diagnosticId, {
@@ -596,7 +519,7 @@ async function transitionRouterOwnedPage(
 
     const entranceFinished = source
       ? armPageEntrance(
-          transitionId,
+          token.id,
           newTransform,
           motion.viewEnter,
           diagnosticId,
@@ -606,7 +529,7 @@ async function transitionRouterOwnedPage(
         )
       : Promise.resolve();
     try {
-      await update(false);
+      await commitUpdate();
     } finally {
       updateMotionDiagnostic(diagnosticId, {
         phaseTimings: {
@@ -614,9 +537,9 @@ async function transitionRouterOwnedPage(
         },
       });
     }
-    if (transitionId !== latestTransitionId) return;
+    if (!token.isCurrent()) return;
     const destination = document.querySelector<HTMLElement>(".library-pane");
-    if (pendingPageEntrance?.id === transitionId) {
+    if (pendingPageEntrance?.id === token.id) {
       pendingPageEntrance.resolve();
       pendingPageEntrance = undefined;
     }
@@ -638,14 +561,14 @@ async function transitionRouterOwnedPage(
     finishMotionDiagnostic(
       diagnosticId,
       "fallback",
-      cause instanceof Error ? cause.message.slice(0, 160) : "router-error",
+      transitionFailureReason(cause, "router-error"),
     );
     throw cause;
   } finally {
     if (sourcePaintFrame !== undefined) {
-      cancelAnimationFrame(sourcePaintFrame);
+      cancelScheduledFrame(sourcePaintFrame);
     }
-    if (latestTransitionId === transitionId) {
+    if (token.isCurrent()) {
       pendingPageEntrance?.resolve();
       pendingPageEntrance = undefined;
       activePageAnimations = [];
@@ -657,11 +580,67 @@ async function transitionRouterOwnedPage(
   }
 }
 
+async function transitionImmediateUpdate(
+  commitUpdate: () => Promise<void>,
+  kind: CodaViewTransitionKind,
+  motion: ResolvedMotionProfile,
+  prefersReducedMotion: boolean,
+  pageTransition: boolean,
+) {
+  const coordinatorStartedAt = performance.now();
+  const diagnosticId = beginMotionDiagnostic({
+    kind,
+    configuredDurationMs: configuredTransitionDurationMs(kind, motion),
+    speed: pageTransition ? motion.profile.speed : 1,
+    transitionClass: codaViewTransitionClass(kind),
+    transitionNames: [],
+    transitionClasses: [],
+    sourceCount: 0,
+    destinationCount: 0,
+    sharedExpected: false,
+  });
+  const updateStartedAt = performance.now();
+  updateMotionDiagnostic(diagnosticId, {
+    phaseTimings: {
+      updateStartMs: updateStartedAt - coordinatorStartedAt,
+    },
+  });
+  try {
+    await commitUpdate();
+  } catch (cause) {
+    updateMotionDiagnostic(diagnosticId, {
+      phaseTimings: {
+        updateMs: performance.now() - updateStartedAt,
+      },
+    });
+    finishMotionDiagnostic(
+      diagnosticId,
+      "fallback",
+      transitionFailureReason(cause, "router-error"),
+    );
+    throw cause;
+  }
+  const updateFinishedAt = performance.now();
+  updateMotionDiagnostic(diagnosticId, {
+    phaseTimings: {
+      readyMs: updateFinishedAt - coordinatorStartedAt,
+      updateMs: updateFinishedAt - updateStartedAt,
+    },
+  });
+  finishMotionDiagnostic(
+    diagnosticId,
+    "bypassed",
+    prefersReducedMotion ? "reduced-motion" : "native-unavailable",
+  );
+}
+
 export function transitionCodaView(
   update: CodaViewTransitionUpdate,
   kind: CodaViewTransitionKind,
+  userInitiated = false,
 ): Promise<void> {
   const transitionId = ++latestTransitionId;
+  const token = createTransitionToken(transitionId);
   const motionProfile = snapshotMotionProfile();
   activeTransition?.transition.skipTransition?.();
   activeTransition = undefined;
@@ -670,111 +649,75 @@ export function transitionCodaView(
   stopActivePageAnimations();
   clearTransitionClasses();
 
+  let committed = false;
+  const commitUpdate = async () => {
+    if (committed || !token.isCurrent()) return;
+    committed = true;
+    await update(token);
+  };
+
   const prefersReducedMotion = reducedMotionRequested();
   const pageTransition = isPageTransition(kind);
   if (pageTransition && !prefersReducedMotion) {
-    return transitionRouterOwnedPage(update, kind, motionProfile, transitionId);
+    return transitionRouterOwnedPage(commitUpdate, kind, motionProfile, token);
   }
   const startViewTransition = readStartViewTransition(document);
   if (!startViewTransition || prefersReducedMotion) {
-    const coordinatorStartedAt = performance.now();
-    const diagnosticId = beginMotionDiagnostic({
+    return transitionImmediateUpdate(
+      commitUpdate,
       kind,
-      configuredDurationMs: configuredTransitionDurationMs(kind, motionProfile),
-      speed: pageTransition ? motionProfile.profile.speed : 1,
-      transitionClass: TRANSITION_CLASSES[kind],
-      transitionNames: [],
-      transitionClasses: [],
-      sourceCount: 0,
-      destinationCount: 0,
-      sharedExpected: false,
-    });
-    const updateStartedAt = performance.now();
-    updateMotionDiagnostic(diagnosticId, {
-      phaseTimings: {
-        updateStartMs: updateStartedAt - coordinatorStartedAt,
-      },
-    });
-    let updateResult: void | Promise<void>;
-    try {
-      updateResult = update(false);
-    } catch (cause) {
-      updateMotionDiagnostic(diagnosticId, {
-        phaseTimings: {
-          updateMs: performance.now() - updateStartedAt,
-        },
-      });
-      finishMotionDiagnostic(
-        diagnosticId,
-        "fallback",
-        cause instanceof Error ? cause.message.slice(0, 160) : "router-error",
-      );
-      return Promise.reject(cause);
-    }
-    return Promise.resolve(updateResult).then(
-      () => {
-        const updateFinishedAt = performance.now();
-        updateMotionDiagnostic(diagnosticId, {
-          phaseTimings: {
-            readyMs: updateFinishedAt - coordinatorStartedAt,
-            updateMs: updateFinishedAt - updateStartedAt,
-          },
-        });
-        finishMotionDiagnostic(
-          diagnosticId,
-          "bypassed",
-          prefersReducedMotion ? "reduced-motion" : "native-unavailable",
-        );
-      },
-      (cause) => {
-        updateMotionDiagnostic(diagnosticId, {
-          phaseTimings: {
-            updateMs: performance.now() - updateStartedAt,
-          },
-        });
-        finishMotionDiagnostic(
-          diagnosticId,
-          "fallback",
-          cause instanceof Error ? cause.message.slice(0, 160) : "router-error",
-        );
-        throw cause;
-      },
+      motionProfile,
+      prefersReducedMotion,
+      pageTransition,
     );
   }
 
-  const transitionClass = TRANSITION_CLASSES[kind];
+  const transitionClass = codaViewTransitionClass(kind);
   const coordinatorStartedAt = performance.now();
-  const noUpdateFailure = Symbol("no-update-failure");
-  let updated = false;
   let failed = false;
   let lifecycleActive = true;
-  let updateFailure: unknown = noUpdateFailure;
+  let updateFailure: Error | undefined;
   let recovery: Promise<void> | undefined;
   let bypassReason: string | undefined;
   let releaseSourceSuppression: (() => void) | undefined;
   const sourceCandidates = sharedSourceCandidates(kind);
   let destinationCount = 0;
-  const commitUpdate = (snapshot: boolean): void | Promise<void> => {
-    if (latestTransitionId !== transitionId || updated) {
-      return;
+  const captureNativeDestinations = () => {
+    if (!token.isCurrent() || failed || !lifecycleActive) return;
+    const destinationCandidates = sharedDestinationCandidates(kind);
+    const destination = destinationCandidates[0] ?? null;
+    destinationCount = destinationCandidates.length;
+    updateMotionDiagnostic(diagnosticId, {
+      destinationCount,
+      destinationRect:
+        diagnosticsVisible && destination
+          ? rectSnapshot(destination.getBoundingClientRect())
+          : undefined,
+      ...endpointIssues(sourceCount, destinationCount),
+    });
+    releaseSourceSuppression = suppressSourcesThatSurvive(sourceCandidates);
+    if (token.isCurrent()) {
+      releaseActiveSourceSuppression = releaseSourceSuppression;
     }
-    updated = true;
+  };
+  const commitNative = (snapshot: boolean): void | Promise<void> => {
+    if (committed || !token.isCurrent()) return;
     const updateStartedAt = performance.now();
     updateMotionDiagnostic(diagnosticId, {
       phaseTimings: {
         updateStartMs: updateStartedAt - coordinatorStartedAt,
       },
     });
-    let result: void | Promise<void>;
+    let result: void | Promise<void> | undefined;
     try {
-      result = snapshot ? flushSync(update) : update(false);
+      result = commitUpdate();
     } catch (cause) {
       updateMotionDiagnostic(diagnosticId, {
         phaseTimings: {
           updateMs: performance.now() - updateStartedAt,
         },
       });
-      updateFailure = cause;
+      if (cause instanceof Error) updateFailure = cause;
       throw cause;
     }
     return Promise.resolve(result).then(
@@ -784,25 +727,7 @@ export function transitionCodaView(
             updateMs: performance.now() - updateStartedAt,
           },
         });
-        if (!snapshot) return;
-        if (latestTransitionId !== transitionId || failed || !lifecycleActive) {
-          return;
-        }
-        const destinationCandidates = sharedDestinationCandidates(kind);
-        const destination = destinationCandidates[0] ?? null;
-        destinationCount = destinationCandidates.length;
-        updateMotionDiagnostic(diagnosticId, {
-          destinationCount,
-          destinationRect:
-            diagnosticsVisible && destination
-              ? rectSnapshot(destination.getBoundingClientRect())
-              : undefined,
-          ...endpointIssues(sourceCount, destinationCount),
-        });
-        releaseSourceSuppression = suppressSourcesThatSurvive(sourceCandidates);
-        if (latestTransitionId === transitionId) {
-          releaseActiveSourceSuppression = releaseSourceSuppression;
-        }
+        if (snapshot) captureNativeDestinations();
       },
       (cause) => {
         updateMotionDiagnostic(diagnosticId, {
@@ -810,13 +735,13 @@ export function transitionCodaView(
             updateMs: performance.now() - updateStartedAt,
           },
         });
-        updateFailure = cause;
+        if (cause instanceof Error) updateFailure = cause;
         throw cause;
       },
     );
   };
   const handleTransitionFailure = (cause?: unknown): Promise<void> => {
-    if (latestTransitionId !== transitionId) return Promise.resolve();
+    if (!token.isCurrent()) return Promise.resolve();
     if (recovery) return recovery;
     failed = true;
     activeTransition = undefined;
@@ -829,17 +754,11 @@ export function transitionCodaView(
     finishMotionDiagnostic(
       diagnosticId,
       "fallback",
-      cause instanceof Error
-        ? cause.message.slice(0, 160)
-        : "native-transition-error",
+      transitionFailureReason(cause, "native-transition-error"),
     );
-    if (!updated) {
-      try {
-        recovery = Promise.resolve(commitUpdate(false)).then(() => undefined);
-      } catch (fallbackCause) {
-        recovery = Promise.reject(fallbackCause);
-      }
-    } else if (updateFailure !== noUpdateFailure) {
+    if (!committed) {
+      recovery = Promise.resolve(commitNative(false)).then(() => undefined);
+    } else if (updateFailure) {
       recovery = Promise.reject(updateFailure);
     } else {
       recovery = Promise.resolve();
@@ -849,7 +768,7 @@ export function transitionCodaView(
   const source = sourceCandidates[0] ?? null;
   const sourceCount = sourceCandidates.length;
   const transitionNames = [
-    ...mappedTransitionValues(DETAIL_TRANSITION_NAMES, kind),
+    ...(resolveDetailTransition(kind)?.transitionNames ?? []),
   ];
   const diagnosticsVisible = motionDiagnosticsVisible();
   const diagnosticId = beginMotionDiagnostic({
@@ -868,7 +787,7 @@ export function transitionCodaView(
     sharedExpected: sourceCount > 0,
   });
   const finalize = () => {
-    if (latestTransitionId !== transitionId) return;
+    if (!token.isCurrent()) return;
     lifecycleActive = false;
     activeTransition = undefined;
     releaseSourceSuppression?.();
@@ -878,15 +797,15 @@ export function transitionCodaView(
     clearTransitionClasses();
   };
   const startNativeTransition = (): Promise<void> => {
-    if (latestTransitionId !== transitionId) return Promise.resolve();
+    if (!token.isCurrent()) return Promise.resolve();
     document.documentElement.classList.add(
       "coda-view-transitions-supported",
       "coda-view-transitioning",
       transitionClass,
     );
     try {
-      const transition = startViewTransition(() => commitUpdate(true));
-      if (latestTransitionId === transitionId) {
+      const transition = startViewTransition(() => commitNative(true));
+      if (token.isCurrent()) {
         activeTransition = { id: transitionId, transition };
       } else {
         transition.skipTransition?.();
@@ -934,18 +853,16 @@ export function transitionCodaView(
         })
         .finally(finalize);
     } catch (cause) {
-      if (latestTransitionId === transitionId) {
+      if (token.isCurrent()) {
         return handleTransitionFailure(cause).finally(finalize);
       }
       finalize();
       return Promise.resolve();
     }
   };
-  const activation = getMotionDiagnostic();
-  const sourceFeedback =
-    activation?.id === diagnosticId && activation.inputType
-      ? beginSharedSourceFeedback(source)
-      : undefined;
+  const sourceFeedback = userInitiated
+    ? beginSharedSourceFeedback(source)
+    : undefined;
   if (!sourceFeedback) return startNativeTransition();
   updateMotionDiagnostic(diagnosticId, {
     phaseTimings: {

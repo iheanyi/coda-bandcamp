@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   BUILTIN_MOTION_PRESETS,
@@ -7,23 +7,36 @@ import {
   validateMotionProfile,
 } from "./motionProfile";
 import {
-  duplicateMotionPreset,
-  exportMotionProfile,
-  getAllMotionPresets,
-  getMotionProfileState,
-  importMotionProfile,
-  renameMotionPreset,
-  resetMotionProfileStoreForTests,
-  saveMotionPreset,
-  selectMotionPreset,
-  snapshotMotionProfile,
-  updateMotionProfile,
-} from "./motionProfileStore";
+  createMotionProfileStore,
+  type MotionProfileStore,
+} from "./motionProfileStoreService";
 
 describe("Motion profiles", () => {
+  let store: MotionProfileStore;
+
   beforeEach(() => {
     window.localStorage.clear();
-    resetMotionProfileStoreForTests();
+    store = createMotionProfileStore({ storage: window.localStorage });
+  });
+
+  it("creates isolated stores with stable external-store methods", () => {
+    const isolated = createMotionProfileStore();
+    const listener = vi.fn();
+    const unsubscribe = store.subscribe(listener);
+    const subscribe = store.subscribe;
+    const getState = store.getState;
+    const initialIsolatedState = isolated.getState();
+
+    store.updateProfile((profile) => ({ ...profile, speed: 0.5 }));
+
+    expect(store.subscribe).toBe(subscribe);
+    expect(store.getState).toBe(getState);
+    expect(listener).toHaveBeenCalledOnce();
+    expect(isolated.getState()).toBe(initialIsolatedState);
+    expect(isolated.getState().profile.speed).toBe(
+      CURRENT_MOTION_PROFILE.speed,
+    );
+    unsubscribe();
   });
 
   it("ships the useful built-in baseline set", () => {
@@ -103,28 +116,28 @@ describe("Motion profiles", () => {
   });
 
   it("persists preset CRUD and safely imports or rejects JSON", () => {
-    updateMotionProfile((profile) => ({ ...profile, speed: 0.5 }));
-    const saved = saveMotionPreset("Inspection");
-    expect(renameMotionPreset(saved.id, "Slow inspection")).toBe(true);
-    const duplicate = duplicateMotionPreset(saved.id);
+    store.updateProfile((profile) => ({ ...profile, speed: 0.5 }));
+    const saved = store.savePreset("Inspection");
+    expect(store.renamePreset(saved.id, "Slow inspection")).toBe(true);
+    const duplicate = store.duplicatePreset(saved.id);
     expect(duplicate?.name).toContain("Copy");
     expect(
-      getAllMotionPresets().filter((preset) => !preset.builtin),
+      store.getAllPresets().filter((preset) => !preset.builtin),
     ).toHaveLength(2);
     expect(window.localStorage.getItem("coda.motion-lab.v1")).toContain(
       "Slow inspection",
     );
 
-    expect(() => importMotionProfile("not json")).toThrow();
-    expect(() => importMotionProfile("{}")).toThrow(
+    expect(() => store.importProfile("not json")).toThrow();
+    expect(() => store.importProfile("{}")).toThrow(
       "Invalid Coda Motion profile",
     );
     expect(() =>
-      importMotionProfile(
+      store.importProfile(
         JSON.stringify({ profile: { version: { value: 1 } } }),
       ),
     ).toThrow("Invalid Coda Motion profile");
-    expect(importMotionProfile(exportMotionProfile()).speed).toBe(0.5);
+    expect(store.importProfile(store.exportProfile()).speed).toBe(0.5);
   });
 
   it("decodes malformed persisted preset fields independently", () => {
@@ -146,9 +159,9 @@ describe("Motion profiles", () => {
       }),
     );
 
-    resetMotionProfileStoreForTests();
+    store = createMotionProfileStore({ storage: window.localStorage });
 
-    const state = getMotionProfileState();
+    const state = store.getState();
     expect(state.activePresetId).toBeNull();
     expect(state.profile.speed).toBe(CURRENT_MOTION_PROFILE.speed);
     expect(state.customPresets).toHaveLength(1);
@@ -162,9 +175,9 @@ describe("Motion profiles", () => {
   });
 
   it("keeps a transition snapshot immutable while the live profile changes", () => {
-    selectMotionPreset("current");
-    const active = snapshotMotionProfile();
-    updateMotionProfile((profile) => ({
+    store.selectPreset("current");
+    const active = store.snapshotProfile();
+    store.updateProfile((profile) => ({
       ...profile,
       speed: 0.25,
       page: { ...profile.page, translationPx: 48 },
@@ -172,11 +185,11 @@ describe("Motion profiles", () => {
 
     expect(active.profile.speed).toBe(1);
     expect(active.profile.page.translationPx).toBe(10);
-    expect(snapshotMotionProfile().profile).toMatchObject({
+    expect(store.snapshotProfile().profile).toMatchObject({
       speed: 0.25,
       page: { translationPx: 48 },
     });
-    expect(getMotionProfileState().activePresetId).toBeNull();
+    expect(store.getState().activePresetId).toBeNull();
   });
 
   it("rehydrates named built-ins from current definitions instead of stale serialized copies", () => {
@@ -190,9 +203,9 @@ describe("Motion profiles", () => {
       }),
     );
 
-    resetMotionProfileStoreForTests();
+    store = createMotionProfileStore({ storage: window.localStorage });
 
-    expect(getMotionProfileState()).toMatchObject({
+    expect(store.getState()).toMatchObject({
       activePresetId: "current",
       profile: { speed: CURRENT_MOTION_PROFILE.speed },
     });
