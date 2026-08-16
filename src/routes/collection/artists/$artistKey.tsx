@@ -5,6 +5,7 @@ import {
   ArtistRoutePending,
 } from "@/features/library/LibraryDetailRouteStatus";
 import { useArtistRouteScreenResource } from "@/features/library/LibraryRouteRuntime";
+import { useActivateDetailDestination } from "@/features/navigation/useActivateDetailDestination";
 import {
   type AlbumId,
   type ArtistKey,
@@ -15,11 +16,12 @@ import {
   validateCollectionSearch,
 } from "@/routing/routeContracts";
 import { codaRouteMeta } from "@/routing/routeMeta";
+import type { OwnDataValue } from "@/ownData";
 
 export type ArtistRouteSearch = CollectionRouteSearch &
   Readonly<{ albumId?: AlbumId }>;
 
-export function validateArtistRouteSearch<Value>(value: Value): ArtistRouteSearch {
+export function validateArtistRouteSearch(value: OwnDataValue): ArtistRouteSearch {
   const collectionSearch = validateCollectionSearch(value);
   const albumId = parseRouteSearchAlbumId(value);
   return albumId ? { ...collectionSearch, albumId } : collectionSearch;
@@ -41,6 +43,11 @@ function ArtistDetailRoute() {
   const { artistKey } = Route.useLoaderData();
   const { albumId: sourceAlbumId } = Route.useSearch();
   const resource = useArtistRouteScreenResource(artistKey, sourceAlbumId);
+  useActivateDetailDestination(
+    "artist",
+    `artist:${artistKey}:${sourceAlbumId ?? ""}`,
+    resource.status === "ready",
+  );
 
   if (resource.status === "pending") return <ArtistRoutePending />;
   if (resource.status === "not-found") throw notFound();

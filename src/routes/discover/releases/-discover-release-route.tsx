@@ -1,11 +1,7 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { getRouteApi, useRouter } from "@tanstack/react-router";
-import type { ComponentType } from "react";
 
-import {
-  DiscoverReleaseScreen as DefaultDiscoverReleaseScreen,
-  type DiscoverReleaseScreenProps,
-} from "@/DiscoverReleaseDetail";
+import { DiscoverReleaseScreen } from "@/DiscoverReleaseDetail";
 import { resolveDiscoverReleaseFromCachePages } from "@/features/discover/discoverCache";
 import { useDiscoverRuntime } from "@/features/discover/DiscoverRuntimeContext";
 import { openBandcampUrl } from "@/lib";
@@ -21,11 +17,7 @@ const discoverReleaseRouteApi = getRouteApi(
   "/discover/releases/$releaseId",
 );
 
-export function DiscoverReleaseRoute({
-  Screen = DefaultDiscoverReleaseScreen,
-}: Readonly<{
-  Screen?: ComponentType<DiscoverReleaseScreenProps>;
-}> = {}) {
+export function DiscoverReleaseRoute() {
   const runtime = useDiscoverRuntime();
   const { releaseId } = discoverReleaseRouteApi.useParams();
   const filters = validateDiscoverSearch(discoverReleaseRouteApi.useSearch());
@@ -65,7 +57,7 @@ export function DiscoverReleaseRoute({
   }
 
   return (
-    <Screen
+    <DiscoverReleaseScreen
       currentTrackId={runtime.currentTrackId}
       onArtist={runtime.onOpenArtist}
       onBack={runtime.onCloseRelease}

@@ -13,8 +13,8 @@ import { DailyArchiveScreen, DailyArticleScreen } from "./DailyScreens";
 import { DailyRouteNavigationContext } from "./DailyRouteNavigationState";
 
 const navigation = {
-  closeArticle: vi.fn(async () => undefined),
-  openArticle: vi.fn(async () => undefined),
+  closeArticle: vi.fn(async () => "rendered" as const),
+  openArticle: vi.fn(async () => "rendered" as const),
 };
 
 function DailyNavigationHarness({ children }: { children: ReactNode }) {
@@ -147,8 +147,8 @@ describe("Bandcamp Daily article music", () => {
       expect.objectContaining({
         articleSection: article.articleSection,
         category: "essential-releases",
+        sharedIdentityAvailable: false,
         slug: article.slug,
-        sourceTitle: card.querySelector("[data-daily-article-title]"),
         sourceTrigger: card,
       }),
     );

@@ -3,22 +3,14 @@ import {
   Outlet,
   useMatch,
 } from "@tanstack/react-router";
-import type { ComponentType } from "react";
 
-import {
-  DiscoverScreen as DefaultDiscoverScreen,
-  type DiscoverScreenProps,
-} from "@/DiscoverView";
+import { DiscoverScreen } from "@/DiscoverView";
 import { useDiscoverRuntime } from "@/features/discover/DiscoverRuntimeContext";
 import { validateDiscoverSearch } from "@/routing/routeContracts";
 
 const discoverRouteApi = getRouteApi("/discover");
 
-export function DiscoverRouteLayout({
-  Screen = DefaultDiscoverScreen,
-}: Readonly<{
-  Screen?: ComponentType<DiscoverScreenProps>;
-}> = {}) {
+export function DiscoverRouteLayout() {
   const runtime = useDiscoverRuntime();
   const filters = validateDiscoverSearch(discoverRouteApi.useSearch());
   const navigate = discoverRouteApi.useNavigate();
@@ -30,7 +22,7 @@ export function DiscoverRouteLayout({
   return (
     <>
       <div hidden={Boolean(releaseMatch)}>
-        <Screen
+        <DiscoverScreen
           {...runtime}
           filters={filters}
           onFiltersChange={(nextFilters) => {

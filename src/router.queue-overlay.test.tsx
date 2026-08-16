@@ -84,7 +84,7 @@ beforeEach(() => {
   nativeMocks.fetchLibrary.mockReset().mockResolvedValue([]);
   nativeMocks.fetchStreamUrl
     .mockReset()
-    .mockResolvedValue("https://example.test/test.mp3");
+    .mockResolvedValue("https://t4.bcbits.com/stream/test/mp3-128");
   nativeMocks.getLastFmStatus.mockReset().mockResolvedValue({
     configured: false,
     connected: false,

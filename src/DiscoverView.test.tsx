@@ -69,6 +69,7 @@ function renderDiscover(
   onQueue = vi.fn(),
   playback: {
     currentTrackId?: string;
+    initialPages?: DiscoverPage[];
     playing?: boolean;
     onPlay?: (track: Track) => void;
     onTogglePlayback?: () => void;
@@ -79,6 +80,17 @@ function renderDiscover(
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  const initialFilters = { tag: "", sort: "top" } satisfies DiscoverFilters;
+  if (playback.initialPages) {
+    const queryKey = ["discover", initialFilters] as const;
+    client.setQueryDefaults(queryKey, { staleTime: Infinity });
+    client.setQueryData(queryKey, {
+      pages: playback.initialPages,
+      pageParams: playback.initialPages.map((_, index) =>
+        index === 0 ? "*" : `cached-page-${index}`,
+      ),
+    });
+  }
   const router = createCodaMemoryRouter(client, [
     "/discover?tag=&sort=top",
   ]);
@@ -624,13 +636,21 @@ describe("Discover", () => {
       }));
       const onOpenRelease = vi.fn();
       const onTogglePlayback = vi.fn();
-      mocks.fetchDiscover.mockResolvedValueOnce({
-        results: releases,
-        resultCount: releases.length,
-        hasMore: false,
-      });
+      const pages = Array.from(
+        { length: Math.ceil(releases.length / 40) },
+        (_, pageIndex): DiscoverPage => {
+          const nextPageIndex = pageIndex + 1;
+          return {
+            results: releases.slice(pageIndex * 40, nextPageIndex * 40),
+            resultCount: releases.length,
+            hasMore: nextPageIndex * 40 < releases.length,
+            cursor: `cached-page-${nextPageIndex}`,
+          };
+        },
+      );
       renderDiscover(vi.fn(), {
         currentTrackId: "preview-0",
+        initialPages: pages,
         onOpenRelease,
         onTogglePlayback,
         playing: true,

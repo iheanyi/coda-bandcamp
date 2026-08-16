@@ -1,5 +1,9 @@
 import { createContext, useContext } from "react";
 
+import type {
+  RouteCommitOutcome,
+  RouteCommitResult,
+} from "@/features/navigation/routeCommit";
 import type { DailyCategory } from "@/types";
 
 import type { DailyOpenArticleRequest } from "./dailyNavigationTypes";
@@ -11,14 +15,14 @@ export type DailyArticleDestination = Readonly<{
 }>;
 
 export type DailyRouteNavigationAdapter = Readonly<{
-  goBack: (category: DailyCategory) => Promise<void>;
-  goToArticle: (destination: DailyArticleDestination) => Promise<void>;
-  goToIndex: (category: DailyCategory, replace?: boolean) => Promise<void>;
+  goBack: (category: DailyCategory) => Promise<RouteCommitResult>;
+  goToArticle: (destination: DailyArticleDestination) => Promise<RouteCommitResult>;
+  goToIndex: (category: DailyCategory, replace?: boolean) => Promise<RouteCommitResult>;
 }>;
 
 export type DailyRouteNavigationValue = Readonly<{
-  closeArticle: (slug: string, category: DailyCategory) => Promise<void>;
-  openArticle: (request: DailyOpenArticleRequest) => Promise<void>;
+  closeArticle: (slug: string, category: DailyCategory) => Promise<RouteCommitOutcome>;
+  openArticle: (request: DailyOpenArticleRequest) => Promise<RouteCommitOutcome>;
 }>;
 
 export const DailyRouteNavigationContext = createContext<

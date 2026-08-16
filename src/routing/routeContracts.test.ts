@@ -207,12 +207,22 @@ describe("Radio route parameters", () => {
     " 1",
     String(MAX_RADIO_SHOW_ID + 1),
     "https://bandcamp.com/radio/979",
-    [979],
-    { id: 979 },
   ])("rejects an invalid numeric ID (%j)", (value) => {
     expect(() => parseRadioSeriesIdParam(value)).toThrow(TypeError);
     expect(() => parseRadioShowIdParam(value)).toThrow(TypeError);
   });
+
+  it.each([[979], { id: 979 }])(
+    "rejects a non-scalar numeric ID (%j)",
+    (value) => {
+      expect(() => {
+        parseRadioSeriesIdParam(value);
+      }).toThrow(TypeError);
+      expect(() => {
+        parseRadioShowIdParam(value);
+      }).toThrow(TypeError);
+    },
+  );
 });
 
 describe("domain route parameters", () => {
@@ -254,13 +264,22 @@ describe("domain route parameters", () => {
     "//bandcamp.com/album/one",
     "x".repeat(MAX_SUBSONIC_ROUTE_ID_BYTES + 1),
     "😀".repeat(MAX_SUBSONIC_ROUTE_ID_BYTES / 4 + 1),
-    42,
-    ["album-1"],
-    { id: "album-1" },
-  ])("rejects an invalid Subsonic ID (%j)", (value) => {
+  ])("rejects an invalid Subsonic ID string (%j)", (value) => {
     expect(() => parseAlbumIdParam(value)).toThrow(TypeError);
     expect(() => parsePlaylistIdParam(value)).toThrow(TypeError);
   });
+
+  it.each([42, ["album-1"], { id: "album-1" }])(
+    "rejects a non-string Subsonic ID (%j)",
+    (value) => {
+      expect(() => {
+        parseAlbumIdParam(value);
+      }).toThrow(TypeError);
+      expect(() => {
+        parsePlaylistIdParam(value);
+      }).toThrow(TypeError);
+    },
+  );
 
   it("requires the Discover namespace and includes it in the byte bound", () => {
     const boundary = parseDiscoverReleaseIdParam(

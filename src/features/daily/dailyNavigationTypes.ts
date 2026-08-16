@@ -4,8 +4,7 @@ export type DailyOpenArticleRequest = Readonly<{
   articleSection: string;
   category: DailyCategory;
   returnScrollTop: number;
+  sharedIdentityAvailable: boolean;
   slug: string;
-  sourceArtwork?: HTMLElement;
-  sourceTitle?: HTMLElement;
   sourceTrigger?: HTMLElement;
 }>;

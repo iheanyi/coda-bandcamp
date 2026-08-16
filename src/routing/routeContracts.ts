@@ -1,6 +1,13 @@
 import { artistKey, type LibraryBrowseMode } from "@/libraryBrowse";
 import { BANDCAMP_RADIO_SERIES } from "@/radioSeries";
 import { isDailyArticleSection, isDailyCategory } from "@/daily";
+import {
+  hasControlCharacter,
+  isNumberValue,
+  isOwnDataRecord,
+  isStringValue,
+  type OwnDataRecord,
+} from "@/ownData";
 import type {
   DailyCategory,
   DiscoverFilters,
@@ -64,45 +71,10 @@ export const DEFAULT_DAILY_ROUTE_SEARCH: DailyRouteSearch = Object.freeze({
 
 const ABSOLUTE_URL = /^[a-z][a-z\d+.-]*:\/\//iu;
 
-function isPrimitiveString<Value>(value: Value): value is Value & string {
-  return (
-    Object.prototype.toString.call(value) === "[object String]" &&
-    value === String(value)
-  );
-}
-
-function isPrimitiveNumber<Value>(value: Value): value is Value & number {
-  return (
-    Object.prototype.toString.call(value) === "[object Number]" &&
-    value === Number(value)
-  );
-}
-
-function hasPlainObjectTag<Value>(value: Value): value is Value & object {
-  try {
-    return Object.prototype.toString.call(value) === "[object Object]";
-  } catch {
-    return false;
-  }
-}
-
-function isPlainRouteSearch<Value>(value: Value): value is Value & object {
-  if (!hasPlainObjectTag(value)) return false;
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
-}
-
-function containsControlCharacter(value: string): boolean {
-  for (const character of value) {
-    const codePoint = character.codePointAt(0);
-    if (
-      codePoint !== undefined &&
-      (codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f))
-    ) {
-      return true;
-    }
-  }
-  return false;
+function isPlainRouteSearch<Value>(
+  value: Value,
+): value is Value & OwnDataRecord {
+  return isOwnDataRecord(value);
 }
 
 function utf8ByteLength(value: string): number {
@@ -130,9 +102,9 @@ function normalizedSearchText<Value>({
   value: Value;
 }>): string {
   if (
-    !isPrimitiveString(value) ||
+    !isStringValue(value) ||
     value.length > maxBytes ||
-    containsControlCharacter(value)
+    hasControlCharacter(value)
   ) {
     return fallback;
   }
@@ -226,8 +198,8 @@ export function validateCollectionSearch<Value>(
       value: q,
     }),
     genre: genre.toLocaleLowerCase("en-US") === "all" ? "All" : genre,
-    sort: isPrimitiveString(sort) ? collectionSort(sort) : collectionSort(),
-    mode: isPrimitiveString(mode) ? collectionMode(mode) : collectionMode(),
+    sort: isStringValue(sort) ? collectionSort(sort) : collectionSort(),
+    mode: isStringValue(mode) ? collectionMode(mode) : collectionMode(),
   };
 }
 
@@ -244,7 +216,7 @@ export function validateDiscoverSearch<Value>(
       maxBytes: MAX_DISCOVER_TAG_BYTES,
       value: tag,
     }),
-    sort: isPrimitiveString(sort) ? discoverSort(sort) : discoverSort(),
+    sort: isStringValue(sort) ? discoverSort(sort) : discoverSort(),
   };
 }
 
@@ -254,7 +226,7 @@ export function parseRouteSearchAlbumId<Value>(
   const input = isPlainRouteSearch(value) ? value : undefined;
   const candidate = input && "albumId" in input ? input.albumId : undefined;
   try {
-    return parseAlbumIdParam(candidate);
+    return albumIdFromWire(candidate);
   } catch {
     return undefined;
   }
@@ -266,9 +238,9 @@ function parsePositiveIntegerRouteId<Value>(
   maximum: number,
 ): number {
   let parsed: number;
-  if (isPrimitiveNumber(value)) {
+  if (isNumberValue(value)) {
     parsed = value;
-  } else if (isPrimitiveString(value) && /^[1-9]\d*$/u.test(value)) {
+  } else if (isStringValue(value) && /^[1-9]\d*$/u.test(value)) {
     if (value.length > String(maximum).length) {
       throw new TypeError(`${label} is outside the supported range`);
     }
@@ -283,7 +255,7 @@ function parsePositiveIntegerRouteId<Value>(
   return parsed;
 }
 
-export function parseRadioSeriesIdParam<Value>(value: Value): RadioSeriesId {
+function radioSeriesIdFromWire<Value>(value: Value): RadioSeriesId {
   const parsed = parsePositiveIntegerRouteId(
     value,
     "Radio series ID",
@@ -295,9 +267,15 @@ export function parseRadioSeriesIdParam<Value>(value: Value): RadioSeriesId {
   return parsed;
 }
 
+export function parseRadioSeriesIdParam(value: string | number): RadioSeriesId;
+export function parseRadioSeriesIdParam<Value>(value: Value): RadioSeriesId;
+export function parseRadioSeriesIdParam<Value>(value: Value): RadioSeriesId {
+  return radioSeriesIdFromWire(value);
+}
+
 export function stringifyRadioSeriesIdParam(value: RadioSeriesId): string;
 export function stringifyRadioSeriesIdParam<Value>(value: Value): string {
-  return String(parseRadioSeriesIdParam(value));
+  return String(radioSeriesIdFromWire(value));
 }
 
 function isRadioSeriesId(value: number): value is RadioSeriesId {
@@ -310,7 +288,7 @@ function isRadioShowId(value: number): value is RadioShowId {
   );
 }
 
-export function parseRadioShowIdParam<Value>(value: Value): RadioShowId {
+function radioShowIdFromWire<Value>(value: Value): RadioShowId {
   const parsed = parsePositiveIntegerRouteId(
     value,
     "Radio show ID",
@@ -322,9 +300,15 @@ export function parseRadioShowIdParam<Value>(value: Value): RadioShowId {
   return parsed;
 }
 
+export function parseRadioShowIdParam(value: string | number): RadioShowId;
+export function parseRadioShowIdParam<Value>(value: Value): RadioShowId;
+export function parseRadioShowIdParam<Value>(value: Value): RadioShowId {
+  return radioShowIdFromWire(value);
+}
+
 export function stringifyRadioShowIdParam(value: RadioShowId): string;
 export function stringifyRadioShowIdParam<Value>(value: Value): string {
-  return String(parseRadioShowIdParam(value));
+  return String(radioShowIdFromWire(value));
 }
 
 function isBoundedNonUrlIdentifier<Value>(
@@ -332,11 +316,11 @@ function isBoundedNonUrlIdentifier<Value>(
   maximumBytes: number,
 ): value is Value & string {
   return !(
-    !isPrimitiveString(value) ||
+    !isStringValue(value) ||
     value.length === 0 ||
     value.length > maximumBytes ||
     value.trim() !== value ||
-    containsControlCharacter(value) ||
+    hasControlCharacter(value) ||
     ABSOLUTE_URL.test(value) ||
     value.startsWith("//") ||
     utf8ByteLength(value) > maximumBytes
@@ -347,32 +331,46 @@ function isAlbumId<Value>(value: Value): value is Value & AlbumId {
   return isBoundedNonUrlIdentifier(value, MAX_SUBSONIC_ROUTE_ID_BYTES);
 }
 
-export function parseAlbumIdParam<Value>(value: Value): AlbumId {
+function albumIdFromWire<Value>(value: Value): AlbumId {
   if (!isAlbumId(value)) {
     throw new TypeError("Album ID must be a bounded non-URL identifier");
   }
   return value;
 }
 
-export function stringifyAlbumIdParam(value: AlbumId): string;
-export function stringifyAlbumIdParam<Value>(value: Value): string {
-  return parseAlbumIdParam(value);
+export function parseAlbumIdParam(value: string): AlbumId;
+export function parseAlbumIdParam<Value>(value: Value): AlbumId;
+export function parseAlbumIdParam<Value>(value: Value): AlbumId {
+  return albumIdFromWire(value);
 }
 
-function isPlaylistId<Value>(value: Value): value is Value & PlaylistId {
+export function stringifyAlbumIdParam(value: AlbumId): string;
+export function stringifyAlbumIdParam<Value>(value: Value): string {
+  return albumIdFromWire(value);
+}
+
+export function isPlaylistId<Value>(
+  value: Value,
+): value is Value & PlaylistId {
   return isBoundedNonUrlIdentifier(value, MAX_SUBSONIC_ROUTE_ID_BYTES);
 }
 
-export function parsePlaylistIdParam<Value>(value: Value): PlaylistId {
+function playlistIdFromWire<Value>(value: Value): PlaylistId {
   if (!isPlaylistId(value)) {
     throw new TypeError("Playlist ID must be a bounded non-URL identifier");
   }
   return value;
 }
 
+export function parsePlaylistIdParam(value: string): PlaylistId;
+export function parsePlaylistIdParam<Value>(value: Value): PlaylistId;
+export function parsePlaylistIdParam<Value>(value: Value): PlaylistId {
+  return playlistIdFromWire(value);
+}
+
 export function stringifyPlaylistIdParam(value: PlaylistId): string;
 export function stringifyPlaylistIdParam<Value>(value: Value): string {
-  return parsePlaylistIdParam(value);
+  return playlistIdFromWire(value);
 }
 
 const DISCOVER_RELEASE_ID_PREFIX = "discover:";
@@ -390,9 +388,7 @@ export function isDiscoverReleaseId<Value>(
   return remoteValue.length > 0 && remoteValue.trim() === remoteValue;
 }
 
-export function parseDiscoverReleaseIdParam<Value>(
-  value: Value,
-): DiscoverReleaseId {
+function discoverReleaseIdFromWire<Value>(value: Value): DiscoverReleaseId {
   if (!isDiscoverReleaseId(value)) {
     throw new TypeError(
       "Discover release ID must be a bounded discover: identifier",
@@ -401,11 +397,21 @@ export function parseDiscoverReleaseIdParam<Value>(
   return value;
 }
 
+export function parseDiscoverReleaseIdParam(value: string): DiscoverReleaseId;
+export function parseDiscoverReleaseIdParam<Value>(
+  value: Value,
+): DiscoverReleaseId;
+export function parseDiscoverReleaseIdParam<Value>(
+  value: Value,
+): DiscoverReleaseId {
+  return discoverReleaseIdFromWire(value);
+}
+
 export function stringifyDiscoverReleaseIdParam(
   value: DiscoverReleaseId,
 ): string;
 export function stringifyDiscoverReleaseIdParam<Value>(value: Value): string {
-  return parseDiscoverReleaseIdParam(value);
+  return discoverReleaseIdFromWire(value);
 }
 
 function isArtistKey<Value>(value: Value): value is Value & ArtistKey {
@@ -415,14 +421,20 @@ function isArtistKey<Value>(value: Value): value is Value & ArtistKey {
   );
 }
 
-export function parseArtistKeyParam<Value>(value: Value): ArtistKey {
+function artistKeyFromWire<Value>(value: Value): ArtistKey {
   if (!isArtistKey(value)) {
     throw new TypeError("Artist key must be canonical");
   }
   return value;
 }
 
+export function parseArtistKeyParam(value: string): ArtistKey;
+export function parseArtistKeyParam<Value>(value: Value): ArtistKey;
+export function parseArtistKeyParam<Value>(value: Value): ArtistKey {
+  return artistKeyFromWire(value);
+}
+
 export function stringifyArtistKeyParam(value: ArtistKey): string;
 export function stringifyArtistKeyParam<Value>(value: Value): string {
-  return parseArtistKeyParam(value);
+  return artistKeyFromWire(value);
 }

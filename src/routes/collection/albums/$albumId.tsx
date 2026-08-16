@@ -6,6 +6,7 @@ import {
   AlbumRoutePending,
 } from "@/features/library/LibraryDetailRouteStatus";
 import { useAlbumRouteScreenResource } from "@/features/library/LibraryRouteRuntime";
+import { useActivateDetailDestination } from "@/features/navigation/useActivateDetailDestination";
 import {
   type AlbumId,
   parseAlbumIdParam,
@@ -36,6 +37,11 @@ function AlbumDetailRoute() {
   const { albumId } = Route.useLoaderData();
   const librarySession = useLibrarySession();
   const resource = useAlbumRouteScreenResource(albumId);
+  useActivateDetailDestination(
+    "album",
+    `album:${albumId}`,
+    resource.status === "ready",
+  );
   const generation = librarySession.commands.generation.current();
   const album = librarySession.albums.find(
     (candidate) => candidate.id === albumId,

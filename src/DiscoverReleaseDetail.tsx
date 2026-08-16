@@ -4,11 +4,12 @@ import {
   MapPin,
   Plus,
 } from "lucide-react";
-import { type CSSProperties, useEffect, useRef, useState } from "react";
+import { type CSSProperties, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PlaybackIcon } from "@/components/ui/playback-icon";
 import { discoverPreviewTrack } from "@/discover";
+import { useActivateDetailDestination } from "@/features/navigation/useActivateDetailDestination";
 import { formatTime, initials, paletteFor } from "@/lib";
 import { cn } from "@/lib/utils";
 import type { DiscoverRelease, Track } from "@/types";
@@ -46,7 +47,6 @@ export function DiscoverReleaseScreen({
   const track = discoverPreviewTrack(release);
   const active = Boolean(track && currentTrackId === track.id);
   const palette = paletteFor(release.id);
-  const headingRef = useRef<HTMLHeadingElement>(null);
   const artworkUrl = release.artworkUrl;
   const [failedArtworkUrl, setFailedArtworkUrl] = useState<string>();
   const [loadedArtworkUrl, setLoadedArtworkUrl] = useState<string>();
@@ -60,10 +60,10 @@ export function DiscoverReleaseScreen({
     "--cover-accent": palette[0],
     "--cover-base": palette[1],
   };
-
-  useEffect(() => {
-    headingRef.current?.focus({ preventScroll: true });
-  }, []);
+  useActivateDetailDestination(
+    "discover-release",
+    `discover-release:${release.id}`,
+  );
 
   return (
     <article
@@ -118,7 +118,6 @@ export function DiscoverReleaseScreen({
         <div className="min-w-0 pb-1">
           <Badge variant="artwork" className="mb-3">Discover release</Badge>
           <h1
-            ref={headingRef}
             id="discover-release-heading"
             className="m-0 max-w-xl font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-4xl leading-none font-semibold tracking-tighter wrap-anywhere text-foreground outline-none max-xl:text-3xl"
             tabIndex={-1}
