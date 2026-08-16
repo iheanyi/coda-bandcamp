@@ -87,14 +87,19 @@ releases as Albums/EPs. Do not infer a more specific type from names or artwork.
 - `src/App.tsx` — main renderer, library/player state, navigation, and queue UI.
 - `src/DiscoverView.tsx` — lazy-loaded anonymous Discover feed using TanStack
   Query.
-- `src/RadioView.tsx` — lazy-loaded Bandcamp Radio latest show and archive.
-- `src/SavedLibraryView.tsx` — lazy-loaded Favorites, playlists, playlist
-  details, and Add-to-playlist dialog using TanStack Query.
+- `src/features/radio/` — lazy-loaded Bandcamp Radio archive, series, show,
+  presentation, route-navigation, and playback-facing modules.
+- `src/features/saved-library/` — lazy-loaded Favorites, playlists, playlist
+  details, controllers, presentation, and Add-to-playlist dialog using TanStack
+  Query.
 - `src/radioPlayback.ts` — bounded Radio chapter ordering and playhead lookup.
 - `src/radioScrobbling.ts` — pure listened-time accounting, chapter/show
   eligibility, and bounded Radio scrobble deduplication.
-- `src/lib.ts` — typed renderer-to-Tauri bridge, URL validation, hydration, and
-  bounded runtime/local-storage caches.
+- `src/lib.ts` — thin public barrel over typed `src/data-bridge/` domain modules
+  for renderer-to-Tauri commands, validation, hydration, and bounded caches.
+- `src/detailNavigation.ts`, `src/features/navigation/routeCommit.ts`, and
+  `src/detailTransitionDescriptors.ts` — module-level detail authority, bounded
+  render-acknowledged route commits, and canonical transition contracts.
 - `src/types.ts` — shared TypeScript domain types.
 - `src/queue.ts` — pure queue operations.
 - `src/playerState.ts` — versioned player-session validation, sanitization, and
@@ -114,6 +119,9 @@ releases as Albums/EPs. Do not infer a more specific type from names or artwork.
 - `src-tauri/capabilities/default.json` — renderer capability allowlist.
 - `.github/workflows/cross-platform.yml` — Windows, macOS, and Linux CI/build
   coverage.
+
+Detail navigation state is module-level; HMR during an active transition is a
+development-only edge case and may require a full reload.
 
 Keep new domain logic in focused pure modules when practical. `App.tsx` is
 already large; do not make it the default home for independently testable
@@ -345,7 +353,8 @@ When adding a Tauri command:
 
 1. Implement and validate the Rust command.
 2. Register it in `tauri::generate_handler!`.
-3. Add a typed wrapper in `src/lib.ts`.
+3. Add a typed wrapper in the matching `src/data-bridge/` domain module and
+   re-export its public API from `src/lib.ts`.
 4. Add only the minimum capability permission required.
 5. Cover validation, failure, and success behavior with tests.
 
