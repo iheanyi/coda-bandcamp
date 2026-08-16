@@ -4,11 +4,25 @@ import type { ESTree } from "@oxlint/plugins";
 
 type RuntimeFunction = ESTree.ArrowFunctionExpression | ESTree.Function;
 
+type RuntimeTypeofOptions = {
+	readonly allowInTypeGuards: boolean;
+};
+
 function isRuntimeFunction(node: ESTree.Node): node is RuntimeFunction {
 	return (
 		node.type === "ArrowFunctionExpression" ||
 		node.type === "FunctionDeclaration" ||
 		node.type === "FunctionExpression"
+	);
+}
+
+function isRuntimeTypeofOptions<Value>(value: Value): value is Value & RuntimeTypeofOptions {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		!Array.isArray(value) &&
+		"allowInTypeGuards" in value &&
+		typeof value.allowInTypeGuards === "boolean"
 	);
 }
 
@@ -49,12 +63,9 @@ export const noRuntimeTypeofRule = defineRule({
 	createOnce(context) {
 		return {
 			UnaryExpression(node) {
-				const option = context.options?.[0];
+				const option = context.options[0];
 				const allowInTypeGuards =
-					typeof option === "object" &&
-					option !== null &&
-					!Array.isArray(option) &&
-					option.allowInTypeGuards === true;
+					isRuntimeTypeofOptions(option) && option.allowInTypeGuards;
 				if (
 					node.operator === "typeof" &&
 					(!allowInTypeGuards || !isInsideTypeGuard(node))

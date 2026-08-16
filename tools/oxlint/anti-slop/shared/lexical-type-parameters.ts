@@ -1,11 +1,22 @@
-import type { ESTree } from "@oxlint/plugins";
+import type { ESTree, SourceCode } from "@oxlint/plugins";
 
-type VisitorKeys = Readonly<Record<string, readonly string[]>>;
+type VisitorKeys = SourceCode["visitorKeys"];
 
-function isNode(value: unknown): value is ESTree.Node {
+type EstreeChild =
+	| ESTree.Node
+	| readonly ESTree.Node[]
+	| null
+	| undefined;
+
+type EstreeChildSlots = {
+	readonly [key: string]: EstreeChild;
+};
+
+function isEstreeWalkableNode<Value>(value: Value): value is Value & ESTree.Node & EstreeChildSlots {
 	return (
 		typeof value === "object" &&
 		value !== null &&
+		!Array.isArray(value) &&
 		"type" in value &&
 		typeof value.type === "string"
 	);
@@ -17,16 +28,16 @@ function collectInferTypeParameterNames(
 	names: Set<string>,
 ): void {
 	if (node.type === "TSInferType") names.add(node.typeParameter.name.name);
-	const record = node as unknown as Readonly<Record<string, unknown>>;
+	if (!isEstreeWalkableNode(node)) return;
 	for (const key of visitorKeys[node.type] ?? []) {
-		const value = record[key];
-		if (isNode(value)) {
+		const value = node[key];
+		if (isEstreeWalkableNode(value)) {
 			collectInferTypeParameterNames(value, visitorKeys, names);
 			continue;
 		}
 		if (!Array.isArray(value)) continue;
 		for (const child of value) {
-			if (isNode(child)) collectInferTypeParameterNames(child, visitorKeys, names);
+			collectInferTypeParameterNames(child, visitorKeys, names);
 		}
 	}
 }
