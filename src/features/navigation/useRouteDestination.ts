@@ -1,6 +1,7 @@
 import { useMatch, useRouterState } from "@tanstack/react-router";
 import { useMemo } from "react";
 
+import type { OwnDataValue } from "@/ownData";
 import {
   deriveLibraryRouteInput,
   type LibraryRouteInput,
@@ -66,7 +67,7 @@ type MutableCodaRouteDestination = {
   screen?: CodaScreen;
 };
 
-export type CodaRouteDestinationSnapshot<Search> = Readonly<{
+export type CodaRouteDestinationSnapshot<Search extends OwnDataValue = OwnDataValue> = Readonly<{
   albumMatch?: Readonly<{ params: Readonly<{ albumId: AlbumId }> }>;
   artistMatch?: Readonly<{
     params: Readonly<{ artistKey: ArtistKey }>;
@@ -91,14 +92,13 @@ export type CodaRouteDestinationSnapshot<Search> = Readonly<{
   }>;
 }>;
 
-type RouteIdentityParser<Value> = {
-  <Wire>(candidate: Wire): Value;
-};
+type RouteIdParser<Value> = (value: string | number) => Value;
 
-function tryParse<Wire, Value>(
-  value: Wire,
-  parse: RouteIdentityParser<Value>,
+function tryParse<Value>(
+  value: string | number | undefined,
+  parse: RouteIdParser<Value>,
 ): Value | undefined {
+  if (value === undefined) return undefined;
   try {
     return parse(value);
   } catch {
@@ -191,7 +191,7 @@ export function useRouteDestination(): CodaRouteDestination {
   );
 }
 
-export function projectRouteDestination<Search>({
+export function projectRouteDestination<Search extends OwnDataValue>({
   albumMatch,
   artistMatch,
   discoverReleaseMatch,

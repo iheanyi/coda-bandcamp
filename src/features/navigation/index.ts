@@ -3,9 +3,10 @@ export {
   useDailyRouteNavigationAdapter,
   usePlaylistRouteNavigationAdapter,
   useRadioRouteNavigationAdapter,
+  useRouteNavigationAdapter,
 } from "./routeNavigationAdapters";
 export {
-  useDetailNavigationController,
+  useDetailNavigation,
   type AlbumDetailNavigationRequest,
   type ArtistDetailNavigationRequest,
   type DetailNavigationController,
@@ -13,7 +14,7 @@ export {
   type DetailNavigationRequest,
   type DiscoverDetailNavigationRequest,
   type NowPlayingNavigationRequest,
-} from "./useDetailNavigationController";
+} from "./useDetailNavigation";
 export {
   detailDestinationKey,
   useRouteDestination,
