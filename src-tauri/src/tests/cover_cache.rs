@@ -296,6 +296,7 @@ fn publication_rejects_disconnect_and_account_replacement_races() {
 
 #[test]
 fn invalidation_waits_for_publication_and_returns_a_newer_sequence() {
+    let _generation_test_guard = ALBUM_CACHE_GENERATION_TEST_LOCK.lock().unwrap();
     let root = temporary_player_state_path("cover-cache-publication-invalidation-order")
         .parent()
         .unwrap()
@@ -347,6 +348,7 @@ fn invalidation_waits_for_publication_and_returns_a_newer_sequence() {
 
 #[test]
 fn overlapping_invalidations_receive_unique_monotonic_sequences() {
+    let _generation_test_guard = ALBUM_CACHE_GENERATION_TEST_LOCK.lock().unwrap();
     let root = temporary_player_state_path("cover-cache-overlapping-invalidations")
         .parent()
         .unwrap()
@@ -413,6 +415,7 @@ fn completed_key_work_is_removed_but_live_waiters_keep_the_deduplication_lock() 
 
 #[test]
 fn authorized_warm_disk_hits_do_not_invoke_the_authenticated_fetch_path() {
+    let _generation_test_guard = ALBUM_CACHE_GENERATION_TEST_LOCK.lock().unwrap();
     let root = temporary_player_state_path("cover-cache-warm-hit")
         .parent()
         .unwrap()
@@ -457,6 +460,7 @@ fn authorized_warm_disk_hits_do_not_invoke_the_authenticated_fetch_path() {
 
 #[test]
 fn authorized_cache_misses_invoke_the_authenticated_fetch_path_once() {
+    let _generation_test_guard = ALBUM_CACHE_GENERATION_TEST_LOCK.lock().unwrap();
     let root = temporary_player_state_path("cover-cache-miss")
         .parent()
         .unwrap()
@@ -500,6 +504,7 @@ fn authorized_cache_misses_invoke_the_authenticated_fetch_path_once() {
 
 #[test]
 fn unauthorized_cover_ids_never_reach_disk_or_authenticated_fetching() {
+    let _generation_test_guard = ALBUM_CACHE_GENERATION_TEST_LOCK.lock().unwrap();
     let root = temporary_player_state_path("cover-cache-unauthorized")
         .parent()
         .unwrap()

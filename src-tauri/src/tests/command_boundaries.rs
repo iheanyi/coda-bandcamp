@@ -2,7 +2,17 @@
 fn every_tauri_command_enters_through_the_async_runtime() {
     let sources = [
         ("daily", include_str!("../daily.rs")),
-        ("cover_cache", include_str!("../cover_cache.rs")),
+        ("cover_cache", include_str!("../cover_cache/mod.rs")),
+        (
+            "cover_cache_diagnostics",
+            include_str!("../cover_cache/diagnostics.rs"),
+        ),
+        ("cover_cache_fetch", include_str!("../cover_cache/fetch.rs")),
+        (
+            "cover_cache_protocol",
+            include_str!("../cover_cache/protocol.rs"),
+        ),
+        ("cover_cache_store", include_str!("../cover_cache/store.rs")),
         ("discover", include_str!("../discover.rs")),
         ("favorites", include_str!("../favorites.rs")),
         ("lastfm", include_str!("../lastfm.rs")),
@@ -73,7 +83,17 @@ fn production_modules_declare_their_dependencies_explicitly() {
     let sources = [
         ("album_cache", include_str!("../album_cache.rs")),
         ("bandcamp_http", include_str!("../bandcamp_http.rs")),
-        ("cover_cache", include_str!("../cover_cache.rs")),
+        ("cover_cache", include_str!("../cover_cache/mod.rs")),
+        (
+            "cover_cache_diagnostics",
+            include_str!("../cover_cache/diagnostics.rs"),
+        ),
+        ("cover_cache_fetch", include_str!("../cover_cache/fetch.rs")),
+        (
+            "cover_cache_protocol",
+            include_str!("../cover_cache/protocol.rs"),
+        ),
+        ("cover_cache_store", include_str!("../cover_cache/store.rs")),
         ("daily", include_str!("../daily.rs")),
         ("desktop", include_str!("../desktop.rs")),
         ("discover", include_str!("../discover.rs")),
@@ -153,23 +173,24 @@ fn cover_protocol_csp_is_image_only_and_does_not_enable_filesystem_assets() {
     }
     assert!(!config.contains("assetProtocol"));
 
-    let cover_cache = include_str!("../cover_cache.rs");
-    assert!(cover_cache.contains(".redirect(Policy::custom("));
-    assert!(cover_cache.contains("UrlKind::BandcampMedia"));
-    assert!(cover_cache.contains("MAX_COVER_REDIRECTS"));
-    assert!(!cover_cache.contains("foreground_fetches"));
-    assert!(cover_cache.contains("header::CACHE_CONTROL, \"no-store\""));
-    assert!(cover_cache.contains("private, max-age=31536000, immutable"));
+    let cover_cache_fetch = include_str!("../cover_cache/fetch.rs");
+    let cover_cache_protocol = include_str!("../cover_cache/protocol.rs");
+    assert!(cover_cache_fetch.contains(".redirect(Policy::custom("));
+    assert!(cover_cache_fetch.contains("UrlKind::BandcampMedia"));
+    assert!(cover_cache_fetch.contains("MAX_COVER_REDIRECTS"));
+    assert!(!cover_cache_fetch.contains("foreground_fetches"));
+    assert!(cover_cache_protocol.contains("header::CACHE_CONTROL, \"no-store\""));
+    assert!(cover_cache_protocol.contains("private, max-age=31536000, immutable"));
 
-    let resolver = cover_cache
+    let resolver = cover_cache_fetch
         .split("pub(crate) async fn resolve_cover_art(")
         .nth(1)
         .unwrap()
-        .split("#[cfg(test)]")
+        .split("pub(super) fn invalidate_entry_ordered(")
         .next()
         .unwrap();
     assert!(!resolver.contains("load_credentials_async"));
-    let authenticated_fetch = cover_cache
+    let authenticated_fetch = cover_cache_fetch
         .split("async fn fetch_and_publish(")
         .nth(1)
         .unwrap()
