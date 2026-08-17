@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Album, Track } from "./types";
 import { album, deferred, mocks, renderApp, single, tracks } from "./test/appTestHarness";
 
-describe("Coda library behavior flows", { timeout: 10_000 }, () => {
+describe("Coda library behavior flows", () => {
 
   it("separates release types and navigates through artist and album views", async () => {
     mocks.hasConnection.mockResolvedValue(true);

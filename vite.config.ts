@@ -52,6 +52,11 @@ export default defineConfig(({ mode }) => {
     test: {
       environment: "jsdom",
       exclude: [...configDefaults.exclude, "**/.worktrees/**"],
+      // Windows CI runners execute the coverage suite ~2-3x slower than
+      // Ubuntu/macOS, so full-App integration tests that need ~4s there can
+      // exceed 10s on Windows. Size the per-test ceiling for the slowest
+      // runner; it is a hang detector, not a performance budget.
+      testTimeout: 20_000,
       // Node 25+ enables its own Web Storage globals by default. Disable them in
       // test workers so jsdom remains the single browser-storage implementation.
       execArgv: nodeMajorVersion >= 25 ? ["--no-experimental-webstorage"] : [],

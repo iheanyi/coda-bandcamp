@@ -4,7 +4,7 @@ import { albumQueryKey } from "./libraryQueries";
 import type { Album, Track } from "./types";
 import { album, deferred, mocks, renderApp, resizeObserverEntry, tracks } from "./test/appTestHarness";
 
-describe("Coda library navigation and motion flows", { timeout: 10_000 }, () => {
+describe("Coda library navigation and motion flows", () => {
 
   it("reverse-morphs a cold album into its exact release card on Back", async () => {
     const request = deferred<Track[]>();

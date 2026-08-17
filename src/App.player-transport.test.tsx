@@ -4,7 +4,7 @@ import { albumQueryKey } from "./libraryQueries";
 import type { Album, Track } from "./types";
 import { album, deferred, findAudioElement, mocks, renderApp, single, type TestMediaSession, tracks } from "./test/appTestHarness";
 
-describe("Coda player transport flows", { timeout: 10_000 }, () => {
+describe("Coda player transport flows", () => {
 
   it("plays an album, exposes native AirPlay, and preserves now playing when clearing", async () => {
     const airPlayPicker = vi.fn();

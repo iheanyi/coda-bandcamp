@@ -25,7 +25,7 @@ import {
 } from "./test/appTestHarness";
 import type { FavoriteCollection } from "./types";
 
-describe("App saved-library navigation", { timeout: 10_000 }, () => {
+describe("App saved-library navigation", () => {
   it("does not mutate Bandcamp Favorites before their initial hydration", async () => {
     const favoritesRequest = deferred<FavoriteCollection>();
     mocks.fetchFavorites.mockReturnValueOnce(favoritesRequest.promise);

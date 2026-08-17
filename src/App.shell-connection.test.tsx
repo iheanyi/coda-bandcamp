@@ -5,7 +5,7 @@ import { LIBRARY_STARTUP_STEP_TIMEOUT_MS } from "./libraryStartup";
 import type { Album, Track } from "./types";
 import { album, deferred, mocks, renderApp, tracks } from "./test/appTestHarness";
 
-describe("Coda shell and connection flows", { timeout: 10_000 }, () => {
+describe("Coda shell and connection flows", () => {
   it("announces the initial collection skeleton without a competing spinner", async () => {
     const request = deferred<Album[]>();
     mocks.hasConnection.mockResolvedValue(true);

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Album, Track } from "./types";
 import { album, findAudioElement, mocks, renderApp, tracks } from "./test/appTestHarness";
 
-describe("Coda queue and playback flows", { timeout: 10_000 }, () => {
+describe("Coda queue and playback flows", () => {
 
   it("durably saves a changed queue after the structural debounce", async () => {
     mocks.hasConnection.mockResolvedValue(true);

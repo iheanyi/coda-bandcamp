@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Album, Track } from "./types";
 import { album, mocks, renderApp, tracks } from "./test/appTestHarness";
 
-describe("Coda Discover and Now Playing navigation flows", { timeout: 10_000 }, () => {
+describe("Coda Discover and Now Playing navigation flows", () => {
 
   it("uses a shared-element view transition when the WebView supports it", async () => {
     const originalDescriptor = Object.getOwnPropertyDescriptor(

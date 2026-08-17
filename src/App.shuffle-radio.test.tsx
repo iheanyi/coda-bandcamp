@@ -4,7 +4,7 @@ import { albumQueryKey } from "./libraryQueries";
 import type { Album, Track } from "./types";
 import { album, deferred, findAudioElement, mocks, renderApp, single, startArtistShuffle, tracks } from "./test/appTestHarness";
 
-describe("Coda shuffle and Radio playback flows", { timeout: 10_000 }, () => {
+describe("Coda shuffle and Radio playback flows", () => {
 
   it("can surprise with a complete album from the current browsing context", async () => {
     mocks.hasConnection.mockResolvedValue(true);
