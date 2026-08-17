@@ -562,6 +562,10 @@ runRule("no-unknown-parameters", noUnknownParametersRule, {
 		"function parse(payload: string): number { return payload.length; }",
 		"function pick<Value>(value: Value): Value { return value; }",
 		"function enrich(cause: unknown): Error { return new Error('wrapped', { cause }); }",
+		"function parse(value: string | number): void { void value; }",
+		"function enrich(cause: string | unknown): Error { return new Error('wrapped', { cause }); }",
+		"function parse<Value>(value: Value | string): void { void value; }",
+		"type Hidden = string | unknown; function parse<Hidden>(value: Hidden): void { void value; }",
 	],
 	invalid: [
 		{
@@ -588,6 +592,24 @@ runRule("no-unknown-parameters", noUnknownParametersRule, {
 				{
 					messageId: "unknownParameter",
 					data: { parameter: "raw" },
+				},
+			],
+		},
+		{
+			code: "function parse(value: string | unknown): void { void value; }",
+			errors: [
+				{
+					messageId: "unknownParameter",
+					data: { parameter: "value" },
+				},
+			],
+		},
+		{
+			code: "type Hidden = string | unknown; function parse(value: Hidden): void { void value; }",
+			errors: [
+				{
+					messageId: "unknownParameter",
+					data: { parameter: "value" },
 				},
 			],
 		},
@@ -620,6 +642,7 @@ runRule("no-unknown-type-aliases", noUnknownTypeAliasesRule, {
 		"type Payload = string | number;",
 		"type Boxed<Value> = Value;",
 		"type WithCause = { cause: unknown };",
+		"type Boxed<Value> = Value | string;",
 	],
 	invalid: [
 		{
@@ -633,6 +656,28 @@ runRule("no-unknown-type-aliases", noUnknownTypeAliasesRule, {
 		},
 		{
 			code: "type Inner = unknown; type Outer = Inner;",
+			errors: [
+				{
+					messageId: "unknownAlias",
+					data: { alias: "Inner" },
+				},
+				{
+					messageId: "unknownAlias",
+					data: { alias: "Outer" },
+				},
+			],
+		},
+		{
+			code: "type Hidden = string | unknown;",
+			errors: [
+				{
+					messageId: "unknownAlias",
+					data: { alias: "Hidden" },
+				},
+			],
+		},
+		{
+			code: "type Inner = string | unknown; type Outer = Inner;",
 			errors: [
 				{
 					messageId: "unknownAlias",
