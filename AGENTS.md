@@ -375,6 +375,14 @@ position, size, maximized state, and visibility; restore it safely, including
 when a saved monitor is disconnected. Startup and tray restore should
 unminimize, show, and focus the window. Quit should save state before exiting.
 
+The main window sets `backgroundThrottling: "disabled"` in `tauri.conf.json`
+because WebKit's default policy fully suspends a hidden or occluded view's
+tasks after roughly five minutes. A tray-parked or covered Coda window must
+keep its renderer event loop alive so session restore, playback controls, and
+tray restore stay responsive. macOS honors the policy; Windows and Linux do
+not support it and keep their current behavior. Do not remove it to save idle
+power without re-proving hidden-window liveness on the real app.
+
 Tray controls and window lifecycle require testing in the actual native app on
 the host operating system. A DOM test cannot validate title-bar dragging,
 multi-monitor placement, Snap, traffic lights, system menus, or tray behavior.
