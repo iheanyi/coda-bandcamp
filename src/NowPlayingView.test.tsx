@@ -11,27 +11,15 @@ import {
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const mocks = vi.hoisted(() => ({
-  fetchRadioShow: vi.fn(),
-  openBandcampUrl: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock("@/lib", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib")>();
-  return {
-    ...actual,
-    fetchRadioShow: mocks.fetchRadioShow,
-    openBandcampUrl: mocks.openBandcampUrl,
-  };
-});
-
-import { NowPlayingView } from "./NowPlayingView";
 import { Drawer } from "@/components/ui/drawer";
+import { resetDetailNavigation } from "@/detailNavigation";
 import { createPlaybackClock } from "@/playbackClock";
 import { boundRadioChapters } from "@/radioPlayback";
 import { createCodaMemoryRouter } from "@/router";
 import type { Album, Track } from "@/types";
+import { NowPlayingView } from "./NowPlayingView";
+
+const openBandcampUrl = vi.fn<(url: string) => Promise<void>>();
 
 const radioTrack: Track = {
   id: "radio:979",
@@ -88,6 +76,46 @@ function renderNowPlaying(ui: ReactNode) {
   return { ...rendered, router };
 }
 
+function radioTimelineView(
+  track: Track,
+  timeline = boundRadioChapters(track.radioChapters ?? []),
+) {
+  const noOp = () => undefined;
+  return (
+    <NowPlayingView
+      track={track}
+      radioTimeline={timeline}
+      queue={[track]}
+      currentIndex={0}
+      playing
+      playbackClock={createPlaybackClock(0)}
+      duration={track.duration}
+      volume={0.7}
+      repeat="off"
+      artwork={<span>Artwork</span>}
+      airPlayAvailable={false}
+      queueOpen={false}
+      onBack={noOp}
+      onToggle={noOp}
+      onPrevious={noOp}
+      onNext={noOp}
+      canPrevious={false}
+      canNext={false}
+      onSeek={noOp}
+      onVolume={noOp}
+      onRepeat={noOp}
+      onAirPlay={noOp}
+      onArtist={noOp}
+      onAlbum={noOp}
+      onPlayQueueIndex={noOp}
+      onRadioSeries={noOp}
+      recommendationLoading={false}
+      onPlayRecommendation={noOp}
+      onAnotherRecommendation={noOp}
+    />
+  );
+}
+
 function linkLocation(link: HTMLElement) {
   const href = link.getAttribute("href");
   if (!href) throw new Error("Expected a semantic link href.");
@@ -95,8 +123,8 @@ function linkLocation(link: HTMLElement) {
 }
 
 beforeEach(() => {
-  mocks.fetchRadioShow.mockReset();
-  mocks.openBandcampUrl.mockClear();
+  resetDetailNavigation();
+  openBandcampUrl.mockReset().mockResolvedValue(undefined);
 });
 
 describe("NowPlayingView Radio metadata", () => {
@@ -312,6 +340,15 @@ describe("NowPlayingView Radio metadata", () => {
 
     const radioHeading = screen.getByRole("heading", { name: "Kinrose" });
     expect(radioHeading).toHaveFocus();
+    const detailSurface = radioHeading.closest(
+      "[data-coda-now-playing-detail-surface]",
+    );
+    expect(detailSurface).toHaveAttribute(
+      "data-coda-now-playing-detail-surface",
+    );
+    expect(detailSurface).not.toContainElement(
+      screen.getByRole("button", { name: "Back" }),
+    );
     expect(radioHeading).not.toHaveAttribute(
       "data-coda-now-playing-title-detail",
     );
@@ -389,6 +426,7 @@ describe("NowPlayingView Radio metadata", () => {
         onAlbum={onAlbum}
         onPlayQueueIndex={onPlayQueueIndex}
         onRadioSeries={onRadioSeries}
+        openExternal={openBandcampUrl}
         recommendationLoading={false}
         onPlayRecommendation={noOp}
         onAnotherRecommendation={noOp}
@@ -421,13 +459,10 @@ describe("NowPlayingView Radio metadata", () => {
         to: "/radio/shows/$showId",
       }),
     );
-    expect(mocks.fetchRadioShow).not.toHaveBeenCalled();
-
     await user.keyboard("{Enter}");
     expect(onAlbum).toHaveBeenCalledWith(radioTrack, showLink);
     expect(onToggle).not.toHaveBeenCalled();
     expect(onPlayQueueIndex).not.toHaveBeenCalled();
-    expect(mocks.fetchRadioShow).not.toHaveBeenCalled();
     expect(
       container.querySelector("a button, button a"),
     ).not.toBeInTheDocument();
@@ -437,7 +472,7 @@ describe("NowPlayingView Radio metadata", () => {
         name: "Open Kinrose on Bandcamp Radio",
       }),
     );
-    expect(mocks.openBandcampUrl).toHaveBeenCalledWith(
+    expect(openBandcampUrl).toHaveBeenCalledWith(
       "https://bandcamp.com/radio?show=979",
     );
     const radioLink = screen.getByRole("link", { name: "Bandcamp Radio" });
@@ -464,6 +499,36 @@ describe("NowPlayingView Radio metadata", () => {
       }),
     );
     expect(onSeek).toHaveBeenCalledWith(30);
+  });
+
+  it("bounds initial chapter work and resets the batch for a different show", () => {
+    const longTrack: Track = {
+      ...radioTrack,
+      id: "radio:980",
+      radioChapters: Array.from({ length: 20 }, (_, index) => ({
+        artist: `Artist ${index + 1}`,
+        timecode: index * 60,
+        title: `Chapter ${index + 1}`,
+      })),
+    };
+    const shortTrack: Track = {
+      ...radioTrack,
+      id: "radio:981",
+    };
+    const { rerender } = renderNowPlaying(radioTimelineView(longTrack));
+    const longList = screen.getByRole("list", {
+      name: "Radio chapter timeline",
+    });
+
+    expect(longList).toHaveAttribute("aria-busy", "true");
+    expect(within(longList).getAllByRole("listitem")).toHaveLength(6);
+
+    rerender(radioTimelineView(shortTrack));
+    const shortList = screen.getByRole("list", {
+      name: "Radio chapter timeline",
+    });
+    expect(shortList).not.toHaveAttribute("aria-busy");
+    expect(within(shortList).getAllByRole("listitem")).toHaveLength(2);
   });
 
   it("updates progress each second without rerendering Radio metadata inside a chapter", () => {

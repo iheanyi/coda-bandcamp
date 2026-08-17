@@ -33,7 +33,53 @@ import {
   useMotionProfileState,
 } from "@/motionProfileStore";
 
-type MotionFamily = "page" | "component" | "shared" | "detail" | "feedback";
+type MotionFamily = "page" | "component" | "feedback";
+
+function motionTypeFromControl(
+  value: string,
+  fallback: MotionTiming["type"],
+): MotionTiming["type"] {
+  switch (value) {
+    case "spring":
+      return "spring";
+    case "tween":
+      return "tween";
+    default:
+      return fallback;
+  }
+}
+
+function motionEaseFromControl(
+  value: string,
+  fallback: MotionEase,
+): MotionEase {
+  switch (value) {
+    case "accelerate":
+      return "accelerate";
+    case "emphasized":
+      return "emphasized";
+    case "linear":
+      return "linear";
+    case "standard":
+      return "standard";
+    default:
+      return fallback;
+  }
+}
+
+function pageModeFromControl(
+  value: string,
+  fallback: MotionProfile["page"]["mode"],
+): MotionProfile["page"]["mode"] {
+  switch (value) {
+    case "crossfade":
+      return "crossfade";
+    case "slide":
+      return "slide";
+    default:
+      return fallback;
+  }
+}
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -105,7 +151,10 @@ function TimingEditor({
             onChange={(event) =>
               onChange({
                 ...value,
-                type: event.currentTarget.value as MotionTiming["type"],
+                type: motionTypeFromControl(
+                  event.currentTarget.value,
+                  value.type,
+                ),
               })
             }
             value={value.type}
@@ -122,7 +171,10 @@ function TimingEditor({
             onChange={(event) =>
               onChange({
                 ...value,
-                ease: event.currentTarget.value as MotionEase,
+                ease: motionEaseFromControl(
+                  event.currentTarget.value,
+                  value.ease,
+                ),
               })
             }
             value={value.ease}
@@ -175,7 +227,9 @@ function PageControls({ profile }: { profile: MotionProfile }) {
           aria-label="Page choreography"
           className="h-8 rounded-md border border-input bg-coda-field px-2 text-xs text-foreground"
           onChange={(event) =>
-            set({ mode: event.currentTarget.value as typeof family.mode })
+            set({
+              mode: pageModeFromControl(event.currentTarget.value, family.mode),
+            })
           }
           value={family.mode}
         >
@@ -211,22 +265,6 @@ function PageControls({ profile }: { profile: MotionProfile }) {
         unit="px"
         value={family.translationPx}
       />
-      <NumberControl
-        label="Scale from"
-        maximum={1.2}
-        minimum={0.7}
-        onChange={(scaleFrom) => set({ scaleFrom })}
-        step={0.01}
-        value={family.scaleFrom}
-      />
-      <NumberControl
-        label="Opacity from"
-        maximum={1}
-        minimum={0}
-        onChange={(opacityFrom) => set({ opacityFrom })}
-        step={0.05}
-        value={family.opacityFrom}
-      />
     </div>
   );
 }
@@ -246,108 +284,6 @@ function ComponentControls({ profile }: { profile: MotionProfile }) {
         label="Exit"
         onChange={(exit) => set({ exit })}
         value={family.exit}
-      />
-      <NumberControl
-        label="Translation"
-        maximum={80}
-        minimum={0}
-        onChange={(translationPx) => set({ translationPx })}
-        step={1}
-        unit="px"
-        value={family.translationPx}
-      />
-      <NumberControl
-        label="Scale from"
-        maximum={1.2}
-        minimum={0.7}
-        onChange={(scaleFrom) => set({ scaleFrom })}
-        step={0.01}
-        value={family.scaleFrom}
-      />
-      <NumberControl
-        label="Opacity from"
-        maximum={1}
-        minimum={0}
-        onChange={(opacityFrom) => set({ opacityFrom })}
-        step={0.05}
-        value={family.opacityFrom}
-      />
-    </div>
-  );
-}
-
-function SharedControls({ profile }: { profile: MotionProfile }) {
-  const family = profile.shared;
-  const set = (patch: Partial<typeof family>) =>
-    updateFamily("shared", { ...family, ...patch });
-  return (
-    <div className="grid gap-3">
-      <Field label="Shared choreography">
-        <select
-          aria-label="Shared choreography"
-          className="h-8 rounded-md border border-input bg-coda-field px-2 text-xs text-foreground"
-          onChange={(event) =>
-            set({
-              choreography: event.currentTarget
-                .value as typeof family.choreography,
-            })
-          }
-          value={family.choreography}
-        >
-          <option value="morph">Native morph</option>
-          <option value="crossfade">Crossfade baseline</option>
-        </select>
-      </Field>
-      <TimingEditor
-        label="Artwork"
-        onChange={(artwork) => set({ artwork })}
-        value={family.artwork}
-      />
-      <TimingEditor
-        label="Identity"
-        onChange={(identity) => set({ identity })}
-        value={family.identity}
-      />
-      <TimingEditor
-        label="Title"
-        onChange={(title) => set({ title })}
-        value={family.title}
-      />
-      <TimingEditor
-        label="Crossfade"
-        onChange={(crossfade) => set({ crossfade })}
-        value={family.crossfade}
-      />
-      <NumberControl
-        label="Scale from"
-        maximum={1.2}
-        minimum={0.7}
-        onChange={(scaleFrom) => set({ scaleFrom })}
-        step={0.01}
-        value={family.scaleFrom}
-      />
-      <NumberControl
-        label="Opacity from"
-        maximum={1}
-        minimum={0}
-        onChange={(opacityFrom) => set({ opacityFrom })}
-        step={0.05}
-        value={family.opacityFrom}
-      />
-    </div>
-  );
-}
-
-function DetailControls({ profile }: { profile: MotionProfile }) {
-  const family = profile.detail;
-  const set = (patch: Partial<typeof family>) =>
-    updateFamily("detail", { ...family, ...patch });
-  return (
-    <div className="grid gap-3">
-      <TimingEditor
-        label="Surface"
-        onChange={(surface) => set({ surface })}
-        value={family.surface}
       />
       <NumberControl
         label="Translation"
@@ -401,6 +337,10 @@ function formatRect(
   return rect ? `${rect.x}, ${rect.y} · ${rect.width}×${rect.height}` : "—";
 }
 
+function formatDuration(durationMs: number | undefined) {
+  return durationMs === undefined ? "—" : `${Math.round(durationMs)}ms`;
+}
+
 function Diagnostics() {
   const diagnostic = useMotionDiagnostic();
   if (!diagnostic) {
@@ -425,6 +365,51 @@ function Diagnostics() {
           ? (diagnostic.reason ?? "Fallback used")
           : "None"}
       </dd>
+      <dt className="text-muted-foreground">Input → coordinator</dt>
+      <dd>
+        {formatDuration(diagnostic.inputToCoordinatorMs)} ·{" "}
+        {diagnostic.inputType ?? "programmatic"}
+      </dd>
+      <dt className="text-muted-foreground">Coordinator → update</dt>
+      <dd>{formatDuration(diagnostic.phaseTimings.updateStartMs)}</dd>
+      <dt className="text-muted-foreground">Source feedback queued / paint</dt>
+      <dd>
+        {formatDuration(diagnostic.phaseTimings.sourceFeedbackMs)} /{" "}
+        {formatDuration(diagnostic.phaseTimings.sourceFeedbackPaintMs)}
+      </dd>
+      <dt className="text-muted-foreground">Route update</dt>
+      <dd>{formatDuration(diagnostic.phaseTimings.updateMs)}</dd>
+      <dt className="text-muted-foreground">Router nav / render / release</dt>
+      <dd>
+        {formatDuration(diagnostic.phaseTimings.routerNavigationMs)} /{" "}
+        {formatDuration(diagnostic.phaseTimings.routerRenderMs)} /{" "}
+        {formatDuration(diagnostic.phaseTimings.routerReleaseMs)}
+      </dd>
+      <dt className="text-muted-foreground">React actual / base</dt>
+      <dd>
+        {formatDuration(diagnostic.phaseTimings.reactRenderMs)} /{" "}
+        {formatDuration(diagnostic.phaseTimings.reactBaseRenderMs)}
+      </dd>
+      <dt className="text-muted-foreground">React chrome / outlet</dt>
+      <dd>
+        {formatDuration(diagnostic.phaseTimings.reactChromeRenderMs)} /{" "}
+        {formatDuration(diagnostic.phaseTimings.reactOutletRenderMs)}
+      </dd>
+      <dt className="text-muted-foreground">Native ready</dt>
+      <dd>{formatDuration(diagnostic.phaseTimings.readyMs)}</dd>
+      <dt className="text-muted-foreground">Exit / entrance</dt>
+      <dd>
+        {formatDuration(diagnostic.phaseTimings.exitMs)} /{" "}
+        {formatDuration(diagnostic.phaseTimings.entranceMs)}
+      </dd>
+      <dt className="text-muted-foreground">Entrance starts</dt>
+      <dd>{formatDuration(diagnostic.phaseTimings.entranceStartMs)}</dd>
+      <dt className="text-muted-foreground">Compositor check</dt>
+      <dd>{formatDuration(diagnostic.phaseTimings.compositorMs)}</dd>
+      <dt className="text-muted-foreground">First visual</dt>
+      <dd>{formatDuration(diagnostic.firstVisualMs)}</dd>
+      <dt className="text-muted-foreground">Input → settled</dt>
+      <dd>{formatDuration(diagnostic.totalFromInputMs)}</dd>
       <dt className="text-muted-foreground">Native morph</dt>
       <dd>
         {diagnostic.sharedExpected
@@ -562,6 +547,11 @@ export function MotionLabPanel({
 
       <div className="grid gap-4 overflow-y-auto p-4">
         <section className="grid gap-2">
+          <h3 className="text-xs font-semibold">Last transition</h3>
+          <Diagnostics />
+        </section>
+
+        <section className="grid gap-2">
           <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
             <Field label="Preset">
               <select
@@ -676,9 +666,7 @@ export function MotionLabPanel({
             value={state.profile.speed}
           />
           <nav aria-label="Motion families" className="flex flex-wrap gap-1">
-            {(
-              ["page", "component", "shared", "detail", "feedback"] as const
-            ).map((item) => (
+            {(["page", "component", "feedback"] as const).map((item) => (
               <button
                 className="rounded-md border border-border px-2 py-1 text-[11px] capitalize data-[active=true]:border-primary/50 data-[active=true]:bg-primary/15 data-[active=true]:text-primary"
                 data-active={family === item}
@@ -690,24 +678,17 @@ export function MotionLabPanel({
               </button>
             ))}
           </nav>
+          <p className="m-0 text-[11px]/relaxed text-muted-foreground">
+            Shared artwork and detail surfaces use fixed native, compositor-safe
+            choreography.
+          </p>
           {family === "page" ? <PageControls profile={state.profile} /> : null}
           {family === "component" ? (
             <ComponentControls profile={state.profile} />
           ) : null}
-          {family === "shared" ? (
-            <SharedControls profile={state.profile} />
-          ) : null}
-          {family === "detail" ? (
-            <DetailControls profile={state.profile} />
-          ) : null}
           {family === "feedback" ? (
             <FeedbackControls profile={state.profile} />
           ) : null}
-        </section>
-
-        <section className="grid gap-2">
-          <h3 className="text-xs font-semibold">Last transition</h3>
-          <Diagnostics />
         </section>
       </div>
     </aside>

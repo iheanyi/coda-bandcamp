@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterContextProvider, RouterProvider } from "@tanstack/react-router";
+import type { InvokeArgs } from "@tauri-apps/api/core";
 import { domAnimation, LazyMotion, MotionConfig } from "motion/react";
 import {
   act,
@@ -23,21 +24,65 @@ import {
   stringifyRadioShowIdParam,
   type RadioSeriesId,
 } from "@/routing/routeContracts";
-import type { RadioShow } from "@/types";
+import {
+  readTauriInvokeArguments,
+  tauriNumber,
+  tauriString,
+} from "@/test/tauriInvoke";
+import type { RadioShow, RadioShowsPage } from "@/types";
 
-const mocks = vi.hoisted(() => ({
-  fetchRadioShow: vi.fn(),
-  fetchRadioShows: vi.fn(),
-}));
+const mocks = {
+  fetchRadioShow: vi.fn<(showId: number) => Promise<RadioShow>>(),
+  fetchRadioShows:
+    vi.fn<
+      (request: {
+        cursor?: string;
+        seriesId?: number;
+      }) => Promise<RadioShowsPage>
+    >(),
+};
 
-vi.mock("@/lib", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib")>();
-  return {
-    ...actual,
-    fetchRadioShow: mocks.fetchRadioShow,
-    fetchRadioShows: mocks.fetchRadioShows,
-  };
-});
+function numberInvokeArgument(
+  args: InvokeArgs | undefined,
+  key: "seriesId" | "showId",
+): number {
+  const number = tauriNumber(readTauriInvokeArguments(args)[key], key);
+  if (number <= 0) {
+    throw new TypeError(`Radio command ${key} is invalid`);
+  }
+  return number;
+}
+
+function radioArchiveRequest(
+  args: InvokeArgs | undefined,
+): Parameters<typeof mocks.fetchRadioShows>[0] {
+  const values = readTauriInvokeArguments(args);
+  const request: Parameters<typeof mocks.fetchRadioShows>[0] = {};
+  if (values.seriesId !== undefined) {
+    request.seriesId = numberInvokeArgument(args, "seriesId");
+  }
+  if (values.cursor !== undefined) {
+    request.cursor = tauriString(values.cursor, "cursor");
+  }
+  return request;
+}
+
+function installRadioBridge(): void {
+  Object.defineProperty(window, "__TAURI_INTERNALS__", {
+    configurable: true,
+    value: {
+      invoke: async (command: string, args?: InvokeArgs) => {
+        if (command === "radio_show") {
+          return mocks.fetchRadioShow(numberInvokeArgument(args, "showId"));
+        }
+        if (command === "radio_shows") {
+          return mocks.fetchRadioShows(radioArchiveRequest(args));
+        }
+        throw new Error(`Unexpected Radio command: ${command}`);
+      },
+    },
+  });
+}
 
 const show: RadioShow = {
   id: 977,
@@ -45,6 +90,7 @@ const show: RadioShow = {
   subtitle: "Deep Focus",
   description: "An hour of patient, independent music.",
   publishedAt: "24 Jul 2026 00:00:00 GMT",
+  artworkUrl: "https://f4.bcbits.com/img/deep-focus.jpg",
   duration: 3_600,
   streamUrl: "https://bandcamp.com/radio-stream",
   chapters: [],
@@ -149,6 +195,7 @@ function createRadioSeriesNavHarness(
 }
 
 beforeEach(() => {
+  installRadioBridge();
   vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
   mocks.fetchRadioShow.mockReset().mockResolvedValue(show);
   mocks.fetchRadioShows.mockReset().mockResolvedValue({
@@ -160,6 +207,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   document.documentElement.classList.remove(
@@ -339,6 +387,50 @@ describe("Radio file routes", () => {
     expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument();
   });
 
+  it("commits the summary route shell before signed media resolves", async () => {
+    let resolveShow: ((value: RadioShow) => void) | undefined;
+    mocks.fetchRadioShow.mockReturnValueOnce(
+      new Promise<RadioShow>((resolve) => {
+        resolveShow = resolve;
+      }),
+    );
+    const { router } = renderRadioRoute("/radio");
+
+    await screen.findByRole("heading", { name: show.subtitle });
+    fireEvent.click(screen.getByRole("link", { name: "View tracklist" }));
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/radio/shows/977");
+    });
+    expect(
+      screen.getByRole("heading", { name: show.subtitle, level: 1 }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Back" })).toBeVisible();
+    expect(
+      document
+        .querySelector('[data-coda-radio-artwork-detail="977"]')
+        ?.querySelector("img"),
+    ).toHaveAttribute("src", show.artworkUrl);
+    expect(
+      screen.getByRole("status", {
+        name: "Loading Radio show tracklist",
+      }),
+    ).toHaveAttribute("aria-busy", "true");
+    expect(
+      screen.getByRole("button", { name: "Loading show audio" }),
+    ).toBeDisabled();
+    expect(mocks.fetchRadioShow).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveShow?.(show);
+    });
+
+    expect(
+      await screen.findByRole("button", { name: "Play show" }),
+    ).toBeEnabled();
+    expect(mocks.fetchRadioShow).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps rapid series choices URL-backed without invoking a major view transition", async () => {
     vi.stubEnv("MODE", "coda-dev");
     const startViewTransition = vi.fn((update: () => void | Promise<void>) => {
@@ -481,7 +573,7 @@ describe("Radio file routes", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders the show pending boundary while activation resolves signed media", async () => {
+  it("renders an honest show pending state on a summary-free deep link", async () => {
     let resolveShow: ((value: RadioShow) => void) | undefined;
     mocks.fetchRadioShow.mockReturnValueOnce(
       new Promise<RadioShow>((resolve) => {
@@ -489,21 +581,16 @@ describe("Radio file routes", () => {
       }),
     );
 
-    renderRadioRoute("/radio/shows/977");
+    const { router } = renderRadioRoute("/radio/shows/977");
 
-    expect(
-      await screen.findByRole(
-        "heading",
-        { name: "Opening Radio show…" },
-        { timeout: 2_000 },
-      ),
-    ).toBeInTheDocument();
-    const pending = screen.getByRole("status", {
-      name: "Opening Radio show…",
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/radio/shows/977");
+      expect(mocks.fetchRadioShow).toHaveBeenCalledTimes(1);
     });
-    expect(pending).toHaveAttribute("aria-busy", "true");
-    expect(pending.querySelector('[data-slot="spinner"]')).toBeInTheDocument();
-    expect(mocks.fetchRadioShow).toHaveBeenCalledTimes(1);
+    const pending = await screen.findByRole("status", {
+      name: "Loading Radio show details",
+    });
+    expect(pending).toBeInTheDocument();
 
     await act(async () => {
       resolveShow?.(show);
@@ -514,20 +601,41 @@ describe("Radio file routes", () => {
     expect(mocks.fetchRadioShow).toHaveBeenCalledTimes(1);
   });
 
-  it("routes an activated show query failure through the show error boundary", async () => {
+  it("shows an honest error when a summary-free deep link fails", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    mocks.fetchRadioShow.mockRejectedValueOnce(
-      new Error("The signed Radio stream expired"),
+    let rejectShow: ((reason?: Error) => void) | undefined;
+    mocks.fetchRadioShow.mockReturnValueOnce(
+      new Promise<RadioShow>((_, reject) => {
+        rejectShow = (reason) => reject(reason);
+      }),
     );
 
-    renderRadioRoute("/radio/shows/977");
+    const { router } = renderRadioRoute("/radio/shows/977");
 
-    expect(
-      await screen.findByRole("heading", {
-        name: "Radio could not be opened",
-      }),
-    ).toBeInTheDocument();
+    await waitFor(
+      () => {
+        expect(router.state.location.pathname).toBe("/radio/shows/977");
+        expect(mocks.fetchRadioShow).toHaveBeenCalledTimes(1);
+      },
+      { timeout: 1_000 },
+    );
+    await screen.findByRole(
+      "status",
+      {
+        name: "Loading Radio show details",
+      },
+      { timeout: 1_000 },
+    );
+    rejectShow?.(new Error("The signed Radio stream expired"));
+    await waitFor(
+      () => {
+        expect(document.body).toHaveTextContent(
+          "This Radio show is off the air",
+        );
+      },
+      { timeout: 1_000 },
+    );
     expect(mocks.fetchRadioShow).toHaveBeenCalledTimes(1);
     expect(mocks.fetchRadioShows).not.toHaveBeenCalled();
   });

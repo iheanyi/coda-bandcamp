@@ -115,10 +115,7 @@ test("keeps automation builds on the isolated non-updating app profile", () => {
   assert.equal(
     devCapability.permissions.some(
       (permission) =>
-        (typeof permission === "string"
-          ? permission
-          : permission.identifier
-        ).startsWith("updater:"),
+        String(permission?.identifier ?? permission).startsWith("updater:"),
     ),
     false,
   );

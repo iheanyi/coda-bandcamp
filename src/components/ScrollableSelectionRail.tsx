@@ -1,5 +1,10 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { useId, type Ref } from "react";
+import {
+  useId,
+  type ComponentProps,
+  type JSXElementConstructor,
+  type Ref,
+} from "react";
 import { LayoutGroup } from "motion/react";
 import * as m from "motion/react-m";
 
@@ -13,6 +18,10 @@ export type ScrollableSelectionRailItem = Readonly<{
   value: string;
 }>;
 
+type ScrollableSelectionRailIndicatorComponent = JSXElementConstructor<
+  ComponentProps<typeof m.div>
+>;
+
 export type ScrollableSelectionRailProps = Readonly<{
   "aria-label": string;
   className?: string;
@@ -21,6 +30,7 @@ export type ScrollableSelectionRailProps = Readonly<{
     end: boolean;
     start: boolean;
   }>;
+  indicatorComponent?: ScrollableSelectionRailIndicatorComponent;
   items: readonly ScrollableSelectionRailItem[];
   navClassName?: string;
   nextLabel?: string;
@@ -43,6 +53,7 @@ export function ScrollableSelectionRail({
   className,
   disabled = false,
   edges,
+  indicatorComponent: IndicatorComponent = m.div,
   items,
   navClassName,
   nextLabel = "Show more options",
@@ -89,7 +100,7 @@ export function ScrollableSelectionRail({
                 variant="ghost"
               >
                 {selected ? (
-                  <m.div
+                  <IndicatorComponent
                     aria-hidden="true"
                     className="pointer-events-none absolute inset-0 z-0 rounded-sm bg-coda-active"
                     data-selection-rail-indicator=""

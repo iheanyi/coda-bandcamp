@@ -1,45 +1,20 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { RouterProvider } from "@tanstack/react-router";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient } from "@tanstack/react-query";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
-import { type SavedLibraryRuntimeValue } from "@/features/saved-library/SavedLibraryRuntimeContext";
-import { SavedLibraryRuntimeProvider } from "@/features/saved-library/SavedLibraryRuntimeProvider";
 import { createLibrarySessionController } from "@/features/library-session";
 import { createCodaMemoryRouter } from "@/router";
 import { parsePlaylistIdParam } from "@/routing/routeContracts";
+import { mocks, renderApp } from "@/test/appTestHarness";
 import type { PlaylistDetail, PlaylistSummary, Track } from "@/types";
-
-const mocks = vi.hoisted(() => ({
-  fetchPlaylist: vi.fn(),
-  fetchPlaylists: vi.fn(),
-  fetchStreamUrl: vi.fn(),
-  readLocalFavoritesAsync: vi.fn(),
-}));
-
-vi.mock("@/App", async () => {
-  const { Outlet } = await import("@tanstack/react-router");
-  return { default: Outlet };
-});
-
-vi.mock("@/lib", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib")>();
-  return {
-    ...actual,
-    fetchPlaylist: mocks.fetchPlaylist,
-    fetchPlaylists: mocks.fetchPlaylists,
-    fetchStreamUrl: mocks.fetchStreamUrl,
-  };
-});
-
-vi.mock("@/localFavoritesStore", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/localFavoritesStore")>();
-  return {
-    ...actual,
-    readLocalFavoritesAsync: mocks.readLocalFavoritesAsync,
-  };
-});
 
 const track: Track = {
   album: "Mirage",
@@ -64,27 +39,6 @@ const detail: PlaylistDetail = {
   tracks: [track],
 };
 
-const runtime: SavedLibraryRuntimeValue = {
-  connected: true,
-  favoritesLoading: false,
-  onAddToPlaylist: vi.fn(),
-  onNotify: vi.fn(),
-  onOpenAlbum: vi.fn(),
-  onOpenArtist: vi.fn(),
-  onOpenRadioSeries: vi.fn(),
-  onOpenRadioShow: vi.fn(),
-  onOpenTrackAlbum: vi.fn(),
-  onPlayTrack: vi.fn(),
-  onPlayTracks: vi.fn(),
-  onQueueTrack: vi.fn(),
-  onQueueTracks: vi.fn(),
-  onRefreshFavorites: vi.fn(),
-  onToggleFavorite: vi.fn(),
-  onTogglePlayback: vi.fn(),
-  onToggleRadioFavorite: vi.fn(),
-  playing: false,
-};
-
 type TransitionSnapshot = {
   afterDetail?: string;
   afterReturn?: string;
@@ -95,33 +49,15 @@ type TransitionSnapshot = {
 };
 
 function renderPlaylistRoute(initialEntry = "/playlists") {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      mutations: { retry: false },
-      queries: { retry: false },
-    },
+  const view = renderApp({
+    connectedLibrary: [],
+    initialEntries: [initialEntry],
   });
-  const librarySession = createLibrarySessionController({ queryClient });
-  librarySession.commands.acceptConnectedLibrary([], { announce: false });
-  queryClient.setQueryData(["bandcamp", "playlists", summary.id], detail);
-  const router = createCodaMemoryRouter(
-    queryClient,
-    [initialEntry],
-    librarySession,
+  view.queryClient.setQueryData(
+    ["bandcamp", "playlists", summary.id],
+    detail,
   );
-  render(
-    <QueryClientProvider client={queryClient}>
-      <SavedLibraryRuntimeProvider value={runtime}>
-        <div
-          data-coda-library-scroll
-          style={{ height: 600, overflowY: "auto" }}
-        >
-          <RouterProvider router={router} />
-        </div>
-      </SavedLibraryRuntimeProvider>
-    </QueryClientProvider>,
-  );
-  return { queryClient, router };
+  return view;
 }
 
 const originalStartViewTransition = Object.getOwnPropertyDescriptor(
@@ -133,11 +69,6 @@ beforeEach(() => {
   vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
   mocks.fetchPlaylist.mockReset().mockResolvedValue(detail);
   mocks.fetchPlaylists.mockReset().mockResolvedValue([summary]);
-  mocks.fetchStreamUrl.mockReset();
-  mocks.readLocalFavoritesAsync.mockReset();
-  Object.values(runtime).forEach((value) => {
-    if (vi.isMockFunction(value)) value.mockClear();
-  });
 });
 
 afterEach(() => {
@@ -195,7 +126,6 @@ describe("Playlist file routes", () => {
 
       expect(mocks.fetchPlaylists).not.toHaveBeenCalled();
       expect(mocks.fetchPlaylist).not.toHaveBeenCalled();
-      expect(mocks.readLocalFavoritesAsync).not.toHaveBeenCalled();
       expect(mocks.fetchStreamUrl).not.toHaveBeenCalled();
       deactivate?.();
     },
@@ -232,7 +162,7 @@ describe("Playlist file routes", () => {
     await disconnectRequest;
   });
 
-  it("primes connected list and detail data once, then reuses both on activation", async () => {
+  it("preloads direct detail independently, then primes the list at its owning route", async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
@@ -251,7 +181,7 @@ describe("Playlist file routes", () => {
       to: "/playlists/$playlistId",
     });
 
-    expect(mocks.fetchPlaylists).toHaveBeenCalledOnce();
+    expect(mocks.fetchPlaylists).not.toHaveBeenCalled();
     expect(mocks.fetchPlaylist).toHaveBeenCalledOnce();
     expect(checkConnection).not.toHaveBeenCalled();
 
@@ -260,15 +190,21 @@ describe("Playlist file routes", () => {
       to: "/playlists/$playlistId",
     });
 
+    expect(mocks.fetchPlaylists).not.toHaveBeenCalled();
+    expect(mocks.fetchPlaylist).toHaveBeenCalledOnce();
+    expect(mocks.fetchStreamUrl).not.toHaveBeenCalled();
+
+    await router.preloadRoute({ to: "/playlists" });
+
     expect(mocks.fetchPlaylists).toHaveBeenCalledOnce();
     expect(mocks.fetchPlaylist).toHaveBeenCalledOnce();
-    expect(mocks.readLocalFavoritesAsync).not.toHaveBeenCalled();
-    expect(mocks.fetchStreamUrl).not.toHaveBeenCalled();
   });
 
   it("activates a typed playlist link from the keyboard without starting playback", async () => {
     const user = userEvent.setup();
     const { router } = renderPlaylistRoute();
+    const play = vi.mocked(HTMLMediaElement.prototype.play);
+    play.mockClear();
     const playlistLink = await screen.findByRole("link", {
       name: /Night drive/u,
     });
@@ -282,9 +218,8 @@ describe("Playlist file routes", () => {
     await waitFor(() => {
       expect(router.state.location.pathname).toBe("/playlists/playlist-1");
     });
-    expect(runtime.onPlayTrack).not.toHaveBeenCalled();
-    expect(runtime.onPlayTracks).not.toHaveBeenCalled();
-    expect(runtime.onTogglePlayback).not.toHaveBeenCalled();
+    expect(mocks.fetchStreamUrl).not.toHaveBeenCalled();
+    expect(play).not.toHaveBeenCalled();
   });
 
   it("restores the exact list trigger, scroll, and shared identity after detail Back", async () => {
@@ -321,15 +256,15 @@ describe("Playlist file routes", () => {
     });
 
     const { router } = renderPlaylistRoute();
+    const openPlaylist = await screen.findByRole("link", {
+      name: /Night drive/u,
+    });
     const scrollRoot = document.querySelector<HTMLElement>(
       "[data-coda-library-scroll]",
     );
     expect(scrollRoot).not.toBeNull();
     if (scrollRoot) scrollRoot.scrollTop = 173;
 
-    const openPlaylist = await screen.findByRole("link", {
-      name: /Night drive/u,
-    });
     expect(openPlaylist).toHaveAttribute("href", "/playlists/playlist-1");
     openPlaylist.focus();
     fireEvent.click(openPlaylist);

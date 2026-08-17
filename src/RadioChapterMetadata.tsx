@@ -8,6 +8,7 @@ import { handleCodaLinkActivation } from "@/routing/linkActivation";
 import {
   type AlbumId,
   type ArtistKey,
+  type CollectionRouteSearch,
   validateCollectionSearch,
 } from "@/routing/routeContracts";
 import type { RadioChapter } from "@/types";
@@ -140,15 +141,16 @@ export const RadioChapterCopy = memo(function RadioChapterCopy({
               handleCodaLinkActivation(event, localLinks.artist.onNavigate);
             }}
             params={{ artistKey: localLinks.artist.artistKey }}
-            search={(previous) => ({
-              ...validateCollectionSearch(previous),
-              genre: "All",
-              mode: "artists",
-              q: "",
-              ...(localLinks.artist?.sourceAlbumId
-                ? { albumId: localLinks.artist.sourceAlbumId }
-                : {}),
-            })}
+            search={(previous) => {
+              const search: CollectionRouteSearch = {
+                ...validateCollectionSearch(previous),
+                genre: "All",
+                mode: "artists",
+                q: "",
+              };
+              const sourceAlbumId = localLinks.artist?.sourceAlbumId;
+              return sourceAlbumId ? { ...search, albumId: sourceAlbumId } : search;
+            }}
             title="Open artist in Coda"
             to="/collection/artists/$artistKey"
           >

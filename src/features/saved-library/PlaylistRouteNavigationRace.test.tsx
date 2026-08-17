@@ -1,7 +1,15 @@
+import { QueryClient } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { resetDetailNavigation } from "@/detailNavigation";
+import {
+  createRouteNavigationAdapter,
+  PLAYLIST_ROUTE_SPEC,
+} from "@/features/navigation/routeNavigationAdapters";
+import { createCodaMemoryRouter } from "@/router";
 import { parsePlaylistIdParam } from "@/routing/routeContracts";
+import { installDocumentViewTransitionHarness } from "@/test/documentViewTransitionHarness";
 
 import { PlaylistRouteNavigationProvider } from "./PlaylistRouteNavigationContext";
 import {
@@ -9,30 +17,15 @@ import {
   type PlaylistRouteNavigationAdapter,
 } from "./playlistRouteNavigation";
 
-type PendingTransition = Readonly<{
-  promise: Promise<void>;
-  resolve: () => void;
-}>;
-
-const transitions = vi.hoisted(() => ({
-  pending: [] as PendingTransition[],
-}));
-
-vi.mock("@/viewTransitions", () => ({
-  transitionCodaView: vi.fn((update: () => void | Promise<void>) => {
-    let resolveCompletion!: () => void;
-    const completion = new Promise<void>((resolve) => {
-      resolveCompletion = resolve;
-    });
-    const promise = Promise.resolve()
-      .then(update)
-      .then(() => completion);
-    transitions.pending.push({ promise, resolve: resolveCompletion });
-    return promise;
-  }),
-}));
+let transitionHarness: ReturnType<
+  typeof installDocumentViewTransitionHarness
+>;
 
 const playlistId = parsePlaylistIdParam("playlist-1");
+const RENDERED_PLAYLIST_COMMIT = {
+  locationKey: "playlist-rendered",
+  outcome: "rendered" as const,
+};
 
 function PlaylistHarness() {
   const navigation = usePlaylistRouteNavigation();
@@ -41,11 +34,16 @@ function PlaylistHarness() {
       <button
         aria-label="Open playlist"
         data-playlist-open={playlistId}
-        onClick={() => void navigation.openPlaylist(playlistId)}
+        onClick={(event) =>
+          void navigation.openPlaylist({
+            playlistId,
+            sharedIdentityAvailable: true,
+            sourceTrigger: event.currentTarget,
+          })
+        }
         type="button"
       >
         <span
-          data-coda-playlist-identity-source={playlistId}
           data-playlist-identity={playlistId}
         >
           Playlist identity
@@ -69,23 +67,31 @@ function PlaylistHarness() {
 
 function createAdapter(): PlaylistRouteNavigationAdapter {
   return {
-    goBack: vi.fn().mockResolvedValue(undefined),
-    goToIndex: vi.fn().mockResolvedValue(undefined),
-    goToPlaylist: vi.fn().mockResolvedValue(undefined),
+    goBack: vi.fn().mockResolvedValue(RENDERED_PLAYLIST_COMMIT),
+    goToIndex: vi.fn().mockResolvedValue(RENDERED_PLAYLIST_COMMIT),
+    goToPlaylist: vi.fn().mockResolvedValue(RENDERED_PLAYLIST_COMMIT),
   };
 }
 
 async function settleTransition(index: number) {
-  const transition = transitions.pending[index];
-  expect(transition).toBeDefined();
+  const pendingTransition = transitionHarness.transitions[index];
+  if (!pendingTransition) {
+    throw new Error(`Expected pending playlist transition ${index}`);
+  }
   await act(async () => {
-    transition!.resolve();
-    await transition!.promise;
+    pendingTransition.resolve();
+    await pendingTransition.finished;
   });
 }
 
 beforeEach(() => {
-  transitions.pending.length = 0;
+  vi.clearAllMocks();
+  transitionHarness = installDocumentViewTransitionHarness();
+});
+
+afterEach(() => {
+  resetDetailNavigation();
+  transitionHarness.restore();
 });
 
 describe("Playlist route transition race cleanup", () => {
@@ -119,11 +125,14 @@ describe("Playlist route transition race cleanup", () => {
         replacementIdentity = identity;
         replacementTitle = title;
       });
+      return RENDERED_PLAYLIST_COMMIT;
     });
 
     render(
       <div data-coda-library-scroll>
-        <PlaylistRouteNavigationProvider adapter={adapter}>
+        <PlaylistRouteNavigationProvider
+          adapter={adapter}
+        >
           <PlaylistHarness />
         </PlaylistRouteNavigationProvider>
       </div>,
@@ -135,6 +144,7 @@ describe("Playlist route transition race cleanup", () => {
     if (scrollRoot) scrollRoot.scrollTop = scrollTop;
     const source = screen.getByRole("button", { name: "Open playlist" });
     fireEvent.click(source);
+    await settleTransition(0);
     source.remove();
     if (scrollRoot) scrollRoot.scrollTop = 0;
 
@@ -155,7 +165,7 @@ describe("Playlist route transition race cleanup", () => {
       "visible",
     );
 
-    await settleTransition(0);
+    await settleTransition(1);
 
     expect(replacement).toHaveFocus();
     expect(replacementIdentity).not.toHaveAttribute(
@@ -172,7 +182,9 @@ describe("Playlist route transition race cleanup", () => {
   it("does not let an older close clear newer same-playlist return markers", async () => {
     render(
       <div data-coda-library-scroll>
-        <PlaylistRouteNavigationProvider adapter={createAdapter()}>
+        <PlaylistRouteNavigationProvider
+          adapter={createAdapter()}
+        >
           <PlaylistHarness />
         </PlaylistRouteNavigationProvider>
       </div>,
@@ -185,6 +197,7 @@ describe("Playlist route transition race cleanup", () => {
     });
 
     fireEvent.click(open);
+    await settleTransition(0);
     fireEvent.click(close);
     await act(async () => Promise.resolve());
     fireEvent.click(restore);
@@ -201,34 +214,100 @@ describe("Playlist route transition race cleanup", () => {
     expect(screen.getByText("Playlist identity")).not.toHaveAttribute(
       "data-coda-playlist-identity-return",
     );
+    await settleTransition(2);
     fireEvent.click(close);
     await act(async () => Promise.resolve());
     fireEvent.click(restore);
-    expect(screen.getByText("Playlist identity")).toHaveAttribute(
-      "data-coda-playlist-identity-return",
-      playlistId,
-    );
-    expect(screen.getByText("Open playlist")).toHaveAttribute(
-      "data-coda-playlist-title-return",
-      playlistId,
-    );
-
-    await settleTransition(0);
-    expect(screen.getByText("Playlist identity")).toHaveAttribute(
-      "data-coda-playlist-identity-return",
-      playlistId,
-    );
+    await vi.waitFor(() => {
+      expect(screen.getByText("Playlist identity")).toHaveAttribute(
+        "data-coda-playlist-identity-return",
+        playlistId,
+      );
+    });
     expect(screen.getByText("Open playlist")).toHaveAttribute(
       "data-coda-playlist-title-return",
       playlistId,
     );
 
     await settleTransition(1);
+    expect(screen.getByText("Playlist identity")).toHaveAttribute(
+      "data-coda-playlist-identity-return",
+      playlistId,
+    );
+    expect(screen.getByText("Open playlist")).toHaveAttribute(
+      "data-coda-playlist-title-return",
+      playlistId,
+    );
+
+    await settleTransition(3);
     expect(screen.getByText("Playlist identity")).not.toHaveAttribute(
       "data-coda-playlist-identity-return",
     );
     expect(screen.getByText("Open playlist")).not.toHaveAttribute(
       "data-coda-playlist-title-return",
     );
+  });
+
+  it("coalesces rapid Back requests into one close transaction", async () => {
+    const adapter = createAdapter();
+    render(
+      <div data-coda-library-scroll>
+        <PlaylistRouteNavigationProvider
+          adapter={adapter}
+        >
+          <PlaylistHarness />
+        </PlaylistRouteNavigationProvider>
+      </div>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Open playlist" }));
+    await settleTransition(0);
+
+    const close = screen.getByRole("button", { name: "Close playlist" });
+    fireEvent.click(close);
+    fireEvent.click(close);
+    await act(async () => Promise.resolve());
+
+    expect(transitionHarness.transitions.map(({ kind }) => kind)).toEqual([
+      "playlist-detail",
+      "playlist-detail-close",
+    ]);
+    expect(adapter.goBack).toHaveBeenCalledOnce();
+
+    await settleTransition(1);
+  });
+
+  it("keeps a failed playlist leave on the deleted URL until index replace", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const router = createCodaMemoryRouter(queryClient, [
+      "/playlists",
+      `/playlists/${playlistId}`,
+    ]);
+    await router.load();
+    expect(router.state.location.pathname).toBe(`/playlists/${playlistId}`);
+
+    const adapter = createRouteNavigationAdapter(
+      {
+        navigate: (options) => router.navigate(options),
+        router,
+      },
+      PLAYLIST_ROUTE_SPEC,
+    );
+    vi.spyOn(router.history, "back").mockImplementation(() => {
+      throw new Error("leave failed");
+    });
+
+    const failedLeave = await adapter.goBack();
+    expect(failedLeave.outcome).toBe("failed");
+    expect(router.state.location.pathname).toBe(`/playlists/${playlistId}`);
+
+    await router.navigate({
+      replace: true,
+      to: "/playlists",
+      viewTransition: false,
+    });
+    expect(router.state.location.pathname).toBe("/playlists");
   });
 });

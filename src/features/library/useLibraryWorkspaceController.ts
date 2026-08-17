@@ -461,28 +461,37 @@ export function useLibraryWorkspaceController({
     releaseResultsModel,
   };
   const visibility = libraryRouteChromeVisibility(routeInput);
-  const chrome =
-    routeInput.kind === "inactive"
-      ? undefined
-      : {
-          model: chromeModel,
-          actions: chromeActions,
-          refs: {
-            search: search.refs.search,
-            genreRail: genreRail.ref,
-          },
-          ...(visibility.browse
-            ? { browse: { model: browseModel, actions: browseActions } }
-            : {}),
-          ...(visibility.filter
-            ? { filter: { model: filterModel, actions: filterActions } }
-            : {}),
-        };
+  let chrome: LibraryScreenChromeProps | undefined;
+  if (routeInput.kind !== "inactive") {
+    const activeChrome: LibraryScreenChromeProps = {
+      model: chromeModel,
+      actions: chromeActions,
+      refs: {
+        search: search.refs.search,
+        genreRail: genreRail.ref,
+      },
+    };
+    if (visibility.browse) {
+      activeChrome.browse = { model: browseModel, actions: browseActions };
+    }
+    if (visibility.filter) {
+      activeChrome.filter = { model: filterModel, actions: filterActions };
+    }
+    chrome = activeChrome;
+  }
 
+  const state = { isInitialLoading, surpriseScope };
+  if (chrome) {
+    return {
+      browse,
+      chrome,
+      screens,
+      state,
+    };
+  }
   return {
     browse,
-    ...(chrome ? { chrome } : {}),
     screens,
-    state: { isInitialLoading, surpriseScope },
+    state,
   };
 }

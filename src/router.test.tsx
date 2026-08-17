@@ -1,23 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCodaMemoryRouter } from "./router";
 import { CodaRouteError, CodaRoutePending } from "./routes/-route-status";
-
-vi.mock("./App", async () => {
-  const { Outlet } = await import("@tanstack/react-router");
-  return { default: Outlet };
-});
-
-vi.mock("@/features/library/CollectionRouteScreen", () => ({
-  CollectionRouteScreen: () => (
-    <main>
-      <h1>Collection route</h1>
-    </main>
-  ),
-}));
 
 beforeEach(() => {
   vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
@@ -64,35 +51,27 @@ describe("Coda router foundation", () => {
   });
 
   it("redirects the root entry to Collection", async () => {
-    const { router } = renderRouter("/");
+    const queryClient = new QueryClient();
+    const router = createCodaMemoryRouter(queryClient, ["/"]);
 
-    expect(
-      await screen.findByRole("heading", { name: "Collection route" }),
-    ).toBeInTheDocument();
-    await waitFor(() => {
-      expect(router.state.location.pathname).toBe("/collection");
-    });
+    await router.load();
+
+    expect(router.state.location.pathname).toBe("/collection");
   });
 
   it("opens Collection directly with an isolated memory history", async () => {
-    const first = renderRouter("/collection");
+    const firstQueryClient = new QueryClient();
+    const firstRouter = createCodaMemoryRouter(firstQueryClient, [
+      "/collection",
+    ]);
 
-    expect(
-      await screen.findByRole("heading", { name: "Collection route" }),
-    ).toBeInTheDocument();
-    expect(first.router.state.location.pathname).toBe("/collection");
-    first.unmount();
+    await firstRouter.load();
+    expect(firstRouter.state.location.pathname).toBe("/collection");
 
     const secondQueryClient = new QueryClient();
     const secondRouter = createCodaMemoryRouter(secondQueryClient, ["/"]);
-    expect(secondRouter.history).not.toBe(first.router.history);
+    expect(secondRouter.history).not.toBe(firstRouter.history);
     expect(secondRouter.state.location.pathname).toBe("/");
-  });
-
-  it("delays pending UI briefly and keeps it stable once shown", () => {
-    const queryClient = new QueryClient();
-    const router = createCodaMemoryRouter(queryClient, ["/collection"]);
-
   });
 
   it("renders the root not-found destination for an unknown route", async () => {

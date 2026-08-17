@@ -1,57 +1,57 @@
 import { fetchDailyArticle, paletteFor } from "@/lib";
 import { DAILY_CATEGORIES } from "@/dailyCatalog";
 export { DAILY_CATEGORIES, DAILY_CATEGORY_GROUPS } from "@/dailyCatalog";
+import { isStringValue, type OwnDataValue } from "@/ownData";
 import type {
   DailyArticle,
+  DailyArticleSummary,
   DailyCategory,
   DailyEmbed,
   DailyTrackSource,
   Track,
 } from "@/types";
 
-const DAILY_CATEGORY_VALUES = new Set<DailyCategory>(
-  DAILY_CATEGORIES.map(({ value }) => value),
-);
-
-export function isDailyCategory(value: unknown): value is DailyCategory {
-  return (
-    typeof value === "string" &&
-    DAILY_CATEGORY_VALUES.has(value as DailyCategory)
-  );
+export function isDailyCategory(value: OwnDataValue): value is DailyCategory {
+  return DAILY_CATEGORIES.some((category) => category.value === value);
 }
 
-export function parseDailyCategory(value: unknown): DailyCategory {
+export function parseDailyCategory(value: string): DailyCategory;
+export function parseDailyCategory(value: OwnDataValue): DailyCategory {
   if (!isDailyCategory(value)) {
     throw new TypeError("Bandcamp Daily category is invalid");
   }
   return value;
 }
 
-export function parseDailyArticleSlug(value: unknown): string {
+export function parseDailyArticleSlug(value: string): string;
+export function parseDailyArticleSlug(value: OwnDataValue): string {
+  const slug = isStringValue(value) ? value : undefined;
   if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.length > 160 ||
-    !/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value)
+    slug === undefined ||
+    slug.length === 0 ||
+    slug.length > 160 ||
+    !/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(slug)
   ) {
     throw new TypeError("Bandcamp Daily article slug is invalid");
   }
-  return value;
+  return slug;
 }
 
-export function parseDailyArticleSection(value: unknown): string {
+export function parseDailyArticleSection(value: string): string;
+export function parseDailyArticleSection(value: OwnDataValue): string {
   if (!isDailyArticleSection(value)) {
     throw new TypeError("Bandcamp Daily article section is invalid");
   }
-  return value;
+  return String(value);
 }
 
-export function isDailyArticleSection(value: unknown): value is string {
+export function isDailyArticleSection(value: OwnDataValue): value is string {
+  const section = isStringValue(value) ? value : undefined;
   return (
-    typeof value === "string" &&
-    value.length > 0 &&
-    value.length <= 96 &&
-    /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(value)
+    section !== undefined &&
+    section.length > 0 &&
+    section.length <= 96 &&
+    /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(section)
   );
 }
 
@@ -76,14 +76,15 @@ export function dailyTrackSource(
   article: DailyArticle,
   embed: DailyEmbed,
 ): DailyTrackSource {
-  return {
+  const source: DailyTrackSource = {
     articleSection: article.articleSection,
     articleSlug: article.slug,
     articleTitle: article.title,
     articleUrl: article.articleUrl,
     itemUrl: embed.itemUrl,
-    ...(embed.artistUrl ? { artistUrl: embed.artistUrl } : {}),
   };
+  if (embed.artistUrl) source.artistUrl = embed.artistUrl;
+  return source;
 }
 
 export function dailyTracksFromEmbed(
@@ -129,12 +130,13 @@ export function formatDailyDate(value: string | undefined): string | undefined {
       )
     : new Date(value);
   if (Number.isNaN(date.getTime())) return undefined;
-  return new Intl.DateTimeFormat(undefined, {
+  const options: Intl.DateTimeFormatOptions = {
     day: "numeric",
     month: "short",
     year: "numeric",
-    ...(dateOnly ? { timeZone: "UTC" } : {}),
-  }).format(date);
+  };
+  if (dateOnly) options.timeZone = "UTC";
+  return new Intl.DateTimeFormat(undefined, options).format(date);
 }
 
 function dailyPublishedAtTimestamp(value: string | undefined): number {
@@ -144,8 +146,8 @@ function dailyPublishedAtTimestamp(value: string | undefined): number {
 }
 
 export function dailyArticlesNewestFirst(
-  articles: readonly import("@/types").DailyArticleSummary[],
-): import("@/types").DailyArticleSummary[] {
+  articles: readonly DailyArticleSummary[],
+): DailyArticleSummary[] {
   const seen = new Set<string>();
   return articles
     .filter((article) => {

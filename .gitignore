@@ -3,10 +3,12 @@ dist
 src-tauri/target
 src-tauri/gen
 .playwright-cli
-output/playwright
+output/
 coverage
+tools/oxlint/anti-slop/.generated/
 .DS_Store
 *.log
 .env
 .env.*
 !.env.example
+.nvimlog

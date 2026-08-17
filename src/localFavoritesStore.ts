@@ -16,7 +16,7 @@ const FAVORITES_STORE = "favorites";
 const FAVORITES_KEY = "current";
 
 export type LocalFavoritesStorage = {
-  read: () => Promise<unknown | undefined>;
+  read: () => Promise<string | null | undefined>;
   write: (serialized: string) => Promise<void>;
   clear: () => Promise<void>;
 };
@@ -30,8 +30,14 @@ class LocalFavoritesStoreClient {
     read: () => this.transact("readonly", (store, resolve, reject) => {
       const request = store.get(FAVORITES_KEY);
       request.onsuccess = () => {
-        const stored: unknown = request.result;
-        resolve(stored);
+        const stored = request.result;
+        if (stored === undefined) {
+          resolve(undefined);
+        } else if (String(stored) === stored) {
+          resolve(stored);
+        } else {
+          resolve(null);
+        }
       };
       request.onerror = () => reject(request.error);
     }),
@@ -49,7 +55,7 @@ class LocalFavoritesStoreClient {
   };
 
   availableIndexedStorage(): LocalFavoritesStorage | undefined {
-    if (typeof window === "undefined" || this.indexedStorageUnavailable) {
+    if (!("window" in globalThis) || this.indexedStorageUnavailable) {
       return undefined;
     }
     try {
@@ -173,7 +179,7 @@ class LocalFavoritesStoreClient {
 const localFavoritesStore = new LocalFavoritesStoreClient();
 
 function removeLegacyFavorites(): void {
-  if (typeof window === "undefined") return;
+  if (!("window" in globalThis)) return;
   try {
     window.localStorage.removeItem(LOCAL_FAVORITES_KEY);
   } catch {
@@ -182,7 +188,7 @@ function removeLegacyFavorites(): void {
 }
 
 function readLegacySerialized(): string | undefined {
-  if (typeof window === "undefined") return undefined;
+  if (!("window" in globalThis)) return undefined;
   try {
     const serialized = window.localStorage.getItem(LOCAL_FAVORITES_KEY);
     if (!serialized) return undefined;
@@ -197,7 +203,7 @@ function readLegacySerialized(): string | undefined {
 }
 
 function writeLegacyPrepared(prepared: PreparedLocalFavorites): void {
-  if (typeof window === "undefined") {
+  if (!("window" in globalThis)) {
     throw new Error("Coda cannot access local Favorites in this environment.");
   }
   window.localStorage.setItem(LOCAL_FAVORITES_KEY, prepared.serialized);
@@ -237,7 +243,7 @@ export function readLocalFavoritesAsync(
     if (!storage) return emptyLocalFavorites();
     try {
       const stored = await storage.read();
-      if (typeof stored === "string") {
+      if (stored !== null && stored !== undefined) {
         const favorites = await preparation.parse(stored);
         if (favorites) return favorites;
       }

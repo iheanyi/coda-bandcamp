@@ -10,7 +10,7 @@ import {
   Plus,
   RefreshCw,
 } from "lucide-react";
-import { memo, useLayoutEffect, useMemo } from "react";
+import { memo, useMemo } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +33,7 @@ import {
 } from "@/daily";
 import { CoverArt } from "@/features/artwork/CoverArt";
 import { useDailyRouteNavigation } from "@/features/daily/DailyRouteNavigationState";
+import { useActivateDetailDestination } from "@/features/navigation/useActivateDetailDestination";
 import { formatTime, openBandcampUrl, paletteFor } from "@/lib";
 import { cn } from "@/lib/utils";
 import { dailyArticlesInfiniteQueryOptions } from "@/queries/dailyQueries";
@@ -154,16 +155,8 @@ const DailyArticleCard = memo(function DailyArticleCard({
               articleSection: article.articleSection,
               category,
               returnScrollTop: scrollRoot?.scrollTop ?? 0,
+              sharedIdentityAvailable: Boolean(article.artworkUrl),
               slug: article.slug,
-              sourceArtwork: article.artworkUrl
-                ? (sourceTrigger.querySelector<HTMLElement>(
-                    "[data-daily-article-artwork]",
-                  ) ?? undefined)
-                : undefined,
-              sourceTitle:
-                sourceTrigger.querySelector<HTMLElement>(
-                  "[data-daily-article-title]",
-                ) ?? undefined,
               sourceTrigger,
             });
           })
@@ -491,11 +484,7 @@ export function DailyArticleScreen({
       article.embeds.flatMap((embed) => dailyTracksFromEmbed(article, embed)),
     [article],
   );
-  useLayoutEffect(() => {
-    document
-      .getElementById("daily-article-heading")
-      ?.focus({ preventScroll: true });
-  }, [article.slug]);
+  useActivateDetailDestination("daily", `daily:${article.slug}`);
 
   return (
     <section
@@ -514,9 +503,9 @@ export function DailyArticleScreen({
       >
         <ArrowLeft size={15} /> Back to {dailyCategoryLabel(section)}
       </Link>
+      <div data-coda-daily-detail-surface>
       <header
         className="mt-3 grid gap-6 rounded-xl border border-border bg-[radial-gradient(circle_at_85%_15%,rgba(221,101,73,0.14),transparent_35%),linear-gradient(135deg,#24282a,#191c1e_70%)] p-6 sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)] lg:p-8"
-        data-coda-daily-detail-surface
       >
         {article.artworkUrl ? (
           <div
@@ -604,6 +593,7 @@ export function DailyArticleScreen({
           </div>
         </div>
       )}
+      </div>
     </section>
   );
 }

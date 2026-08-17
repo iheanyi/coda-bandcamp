@@ -18,7 +18,7 @@ import { useLibraryWorkspaceController } from "@/features/library/useLibraryWork
 import { useLibraryActionsController } from "@/features/library-actions/useLibraryActionsController";
 import { useLibrarySession } from "@/features/library-session";
 import {
-  useDetailNavigationController,
+  useDetailNavigation,
   useRouteDestination,
 } from "@/features/navigation";
 import { useCodaNavigationController } from "@/features/navigation/useCodaNavigationController";
@@ -37,7 +37,6 @@ import { useAppKeyboardShortcuts } from "@/features/shell/useAppKeyboardShortcut
 import { useMainWindowController } from "@/features/shell/useMainWindowController";
 import { countLabel } from "./countLabel";
 import { cachedAlbumTracks, updateLibraryData } from "./libraryQueries";
-import { radioShowQueryOptions } from "@/queries/radioQueries";
 import type { Album, Track } from "./types";
 
 // Keep non-component exports in focused modules so Fast Refresh preserves App state.
@@ -49,7 +48,7 @@ export default function App() {
   }, []);
   const queryClient = useQueryClient();
   const routeDestination = useRouteDestination();
-  const detailNavigation = useDetailNavigationController(routeDestination);
+  const detailNavigation = useDetailNavigation(routeDestination);
   const nowPlayingOpen = routeDestination.nowPlayingOpen;
   const libraryRouteInput = routeDestination.libraryRouteInput;
   const view = routeDestination.primaryView;
@@ -111,12 +110,6 @@ export default function App() {
       applyRecoveredAlbums: ignorePlaybackRecoveredAlbums,
     },
     onShuffleEntireLibrary: shuffleEntireLibrary,
-    adapters: {
-      audio: {
-        loadRadioShow: (showId) =>
-          queryClient.fetchQuery(radioShowQueryOptions(showId)),
-      },
-    },
   });
   const { queue, currentTrack, open: queueOpen } = playback.queue;
   const { playing } = playback.transport;
@@ -194,7 +187,6 @@ export default function App() {
       chapterLinks: getRadioChapterLocalLinks,
       openExternal: openRadioItem,
       openSeries: browseRadioSeries,
-      openShow: openRadioShow,
     },
     sidebar: {
       beforeDiscoverNavigate,
@@ -383,6 +375,7 @@ export default function App() {
           ) : undefined,
           outlet: <Outlet />,
           libraryPaneRef,
+          transitionKey: routeDestination.locationKey,
         }}
         queue={{
           open: queueOpen,

@@ -18,17 +18,22 @@ use std::{
     fs,
     io::{Read, Write},
     path::PathBuf,
+    sync::Mutex,
     time::{Duration, UNIX_EPOCH},
 };
 
+pub(super) static ALBUM_CACHE_GENERATION_TEST_LOCK: Mutex<()> = Mutex::new(());
+
 mod command_boundaries;
 mod cover_cache;
+mod cover_ordering;
 mod daily;
 mod desktop;
 mod discover;
 mod favorites;
 mod lastfm;
 mod library;
+mod library_network;
 mod media_session;
 mod player_state;
 mod playlists;

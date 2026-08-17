@@ -14,6 +14,7 @@ import {
   parseMiniPlayerCommand,
   type MiniPlayerSnapshot,
 } from "./miniPlayer";
+import type { OwnDataValue } from "./ownData";
 import type { PlaybackClock } from "./playbackClock";
 import {
   nextRadioChapterTimeInTimeline,
@@ -22,14 +23,15 @@ import {
 } from "./radioPlayback";
 import type { RadioChapter, Track } from "./types";
 
-export type MiniPlayerEventBridge = {
+type MiniPlayerEventBridge = {
   emitSnapshot: (snapshot: MiniPlayerSnapshot) => Promise<void>;
   listenForRequest: (handler: () => void) => Promise<() => void>;
-  listenForCommand: (handler: (payload: unknown) => void) => Promise<() => void>;
+  listenForCommand: (
+    handler: (payload: OwnDataValue) => void,
+  ) => Promise<() => void>;
 };
 
 type MiniPlayerBridgeProps = {
-  eventBridge?: MiniPlayerEventBridge;
   track?: Track;
   artwork?: Pick<Track, "coverArt" | "artworkUrl">;
   radioTimeline: readonly RadioChapter[];
@@ -45,7 +47,6 @@ type MiniPlayerBridgeProps = {
   onSeek: (positionSeconds: number) => void;
   onSetVolume: (volume: number) => void;
   onShowMain: () => void;
-  createArtworkSource?: (coverArt: string) => string;
 };
 
 let nativeEventBridgeRequest: Promise<MiniPlayerEventBridge> | undefined;
@@ -58,8 +59,8 @@ function nativeEventBridge(): Promise<MiniPlayerEventBridge> {
           emitTo("mini-player", MINI_PLAYER_STATE_EVENT, snapshot),
         listenForRequest: (handler: () => void) =>
           listen(MINI_PLAYER_REQUEST_STATE_EVENT, handler),
-        listenForCommand: (handler: (payload: unknown) => void) =>
-          listen<unknown>(
+        listenForCommand: (handler: (payload: OwnDataValue) => void) =>
+          listen<OwnDataValue>(
             MINI_PLAYER_COMMAND_EVENT,
             ({ payload }) => handler(payload),
           ),
@@ -70,7 +71,6 @@ function nativeEventBridge(): Promise<MiniPlayerEventBridge> {
 }
 
 export function MiniPlayerBridge({
-  eventBridge,
   track,
   artwork,
   radioTimeline,
@@ -86,9 +86,8 @@ export function MiniPlayerBridge({
   onSeek,
   onSetVolume,
   onShowMain,
-  createArtworkSource,
 }: MiniPlayerBridgeProps) {
-  const bridgeEnabled = Boolean(eventBridge) || isDesktop();
+  const bridgeEnabled = isDesktop();
   const positionSeconds = useSyncExternalStore(
     playbackClock.subscribe,
     playbackClock.getSnapshot,
@@ -110,7 +109,7 @@ export function MiniPlayerBridge({
   const subscribedArtworkUrl = useCoverArtSource(coverArtId);
   const resolvedArtworkUrl = directArtworkUrl ?? (
     bridgeEnabled && coverArtId
-      ? (createArtworkSource?.(coverArtId) ?? subscribedArtworkUrl)
+      ? subscribedArtworkUrl
       : undefined
   );
 
@@ -183,13 +182,8 @@ export function MiniPlayerBridge({
   };
 
   const bridgeRequest = useMemo(
-    () =>
-      eventBridge
-        ? Promise.resolve(eventBridge)
-        : bridgeEnabled
-          ? nativeEventBridge()
-          : undefined,
-    [bridgeEnabled, eventBridge],
+    () => bridgeEnabled ? nativeEventBridge() : undefined,
+    [bridgeEnabled],
   );
 
   useEffect(() => {

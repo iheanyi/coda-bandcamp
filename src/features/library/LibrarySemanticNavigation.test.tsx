@@ -5,7 +5,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { ArtistGroup } from "@/libraryBrowse";
-import { createCodaMemoryRouter, type CodaRouter } from "@/router";
+import { createCodaMemoryRouter } from "@/router";
 import type { Album, Track } from "@/types";
 import { AlbumCard } from "./AlbumCard";
 import { AlbumDetailPage } from "./AlbumDetailPage";
@@ -218,6 +218,52 @@ describe("library semantic navigation", () => {
         .parentElement,
     ).toHaveAttribute("data-slot", "row-action-group");
     expectNoNestedInteractiveElements(container);
+  });
+
+  it("keeps track actions outside the album-detail-close snapshot", async () => {
+    const { container } = await renderWithRouter(
+      <AlbumDetailPage
+        album={album}
+        currentAlbumId={undefined}
+        currentTrackId={undefined}
+        favoriteAlbum={false}
+        favoriteTrackIds={new Set<string>()}
+        loading={false}
+        onAddToPlaylist={vi.fn()}
+        onArtist={vi.fn()}
+        onBack={vi.fn()}
+        onPlayAlbum={vi.fn()}
+        onPlayTrack={vi.fn()}
+        onQueueAlbum={vi.fn()}
+        onQueueTrack={vi.fn()}
+        onToggleFavoriteAlbum={vi.fn()}
+        onToggleFavoriteTrack={vi.fn()}
+        onTogglePlayback={vi.fn()}
+        playing={false}
+      />,
+    );
+    const detailSurface = container.querySelector<HTMLElement>(
+      "[data-coda-album-detail-surface]",
+    );
+    if (!detailSurface) throw new Error("Expected album detail surface");
+    const closeSurface = container.querySelector<HTMLElement>(
+      "[data-coda-album-detail-close-surface]",
+    );
+    if (!closeSurface) throw new Error("Expected album detail close surface");
+    const trackList = screen.getByRole("region", { name: "Track list" });
+    const queueAction = await screen.findByRole("button", {
+      name: "Add Glass Lines to queue",
+    });
+
+    expect(closeSurface.tagName).toBe("HEADER");
+    expect(closeSurface).toContainElement(
+      screen.getByRole("heading", { name: "Blue Hours" }),
+    );
+    expect(closeSurface).not.toContainElement(trackList);
+    expect(closeSurface).not.toContainElement(queueAction);
+    expect(detailSurface).toContainElement(closeSurface);
+    expect(detailSurface).toContainElement(trackList);
+    expect(detailSurface).toContainElement(queueAction);
   });
 
   it("routes Recently Added releases through the shared AlbumCard choreography", async () => {

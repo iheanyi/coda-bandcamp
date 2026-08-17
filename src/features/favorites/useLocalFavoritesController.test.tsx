@@ -2,15 +2,17 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { emptyLocalFavorites } from "@/localFavorites";
+import { emptyLocalFavorites, MAX_FAVORITE_TRACKS } from "@/localFavorites";
 import type {
   Album,
+  FavoriteCollection,
   FavoriteInput,
   FavoriteMutationResult,
   LocalFavoriteCollection,
   Track,
 } from "@/types";
 import {
+  FAVORITES_QUERY_KEY,
   type LocalFavoritesRepository,
   type MusicFavoritesRepository,
   useLocalFavoritesController,
@@ -47,16 +49,15 @@ function successfulMutation(
       favorite: input.favorite,
     };
   }
+  const favoriteTrack: Track = { ...track };
+  if (input.favorite) {
+    favoriteTrack.starredAt = "2026-08-12T18:01:00Z";
+  }
   return {
     accepted: true,
     verification: "verified",
     favorite: input.favorite,
-    track: {
-      ...track,
-      ...(input.favorite
-        ? { starredAt: "2026-08-12T18:01:00Z" }
-        : {}),
-    },
+    track: favoriteTrack,
   };
 }
 
@@ -736,5 +737,226 @@ describe("useLocalFavoritesController", () => {
     expect(result.current.collection.tracks[0]?.title).toBe(
       "Glass Lines (Bandcamp)",
     );
+  });
+
+  it("does not restore a rejected track unstar after disconnect clears the index", async () => {
+    const write = deferred<FavoriteMutationResult>();
+    const starredTrack = {
+      ...track,
+      starredAt: "2026-08-12T18:01:00Z",
+    };
+    const repository: LocalFavoritesRepository = {
+      read: vi.fn().mockResolvedValue({
+        ...emptyLocalFavorites(),
+        songIds: [track.id],
+        tracks: [starredTrack],
+        radioShowIds: [radioShow.id],
+        radioShows: [radioShow],
+      }),
+      write: vi.fn().mockImplementation(async (favorites) => favorites),
+    };
+    const musicRepository: MusicFavoritesRepository = {
+      read: vi.fn().mockResolvedValue({
+        albumIds: [],
+        songIds: [],
+        albums: [],
+        tracks: [],
+      }),
+      write: vi.fn().mockReturnValue(write.promise),
+    };
+    const notify = vi.fn();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { result, rerender } = renderHook(
+      ({ connected }: { connected: boolean }) => useLocalFavoritesController({
+        albums: [album],
+        connected,
+        musicRepository,
+        notify,
+        queue: [track],
+        repository,
+        selectedAlbum: album,
+      }),
+      {
+        initialProps: { connected: true },
+        wrapper: ({ children }: { children: ReactNode }) => (
+          <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+        ),
+      },
+    );
+    await waitFor(() => expect(result.current.ready).toBe(true));
+    expect(result.current.favoriteTrackIds.has(track.id)).toBe(true);
+
+    act(() => result.current.toggleFavorite(track.id, "song", false));
+    await waitFor(() => {
+      expect(result.current.favoriteTrackIds.has(track.id)).toBe(false);
+    });
+
+    rerender({ connected: false });
+    await waitFor(() => {
+      expect(repository.write).toHaveBeenCalledWith(expect.objectContaining({
+        songIds: [],
+        tracks: [],
+        radioShowIds: [radioShow.id],
+        radioShows: [radioShow],
+      }));
+    });
+
+    await act(async () => {
+      write.reject(new Error("Bandcamp credentials changed"));
+      await expect(write.promise).rejects.toThrow("Bandcamp credentials changed");
+    });
+
+    expect(result.current.favoriteTrackIds.has(track.id)).toBe(false);
+    expect(result.current.collection.tracks).toEqual([]);
+    expect(notify).not.toHaveBeenCalledWith("Bandcamp credentials changed", "bad");
+    expect(repository.write).not.toHaveBeenCalledWith(expect.objectContaining({
+      songIds: expect.arrayContaining([track.id]),
+    }));
+  });
+
+  it("does not merge a previous account's track stars into a new session", async () => {
+    const write = deferred<FavoriteMutationResult>();
+    const starredTrack = {
+      ...track,
+      starredAt: "2026-08-12T18:01:00Z",
+    };
+    const accountTwoAlbum: Album = {
+      ...album,
+      id: "album-2",
+      title: "Other Hours",
+    };
+    const repository: LocalFavoritesRepository = {
+      read: vi.fn().mockResolvedValue({
+        ...emptyLocalFavorites(),
+        songIds: [track.id],
+        tracks: [starredTrack],
+      }),
+      write: vi.fn().mockImplementation(async (favorites) => favorites),
+    };
+    const accountOne: MusicFavoritesRepository = {
+      read: vi.fn().mockResolvedValue({
+        albumIds: [],
+        songIds: [],
+        albums: [],
+        tracks: [],
+      }),
+      write: vi.fn().mockReturnValue(write.promise),
+    };
+    const accountTwo: MusicFavoritesRepository = {
+      read: vi.fn().mockResolvedValue({
+        albumIds: [accountTwoAlbum.id],
+        songIds: [],
+        albums: [accountTwoAlbum],
+        tracks: [],
+      }),
+      write: vi.fn(),
+    };
+    const notify = vi.fn();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { result, rerender } = renderHook(
+      ({
+        connected,
+        musicRepository,
+      }: {
+        connected: boolean;
+        musicRepository: MusicFavoritesRepository;
+      }) => useLocalFavoritesController({
+        albums: [album, accountTwoAlbum],
+        connected,
+        musicRepository,
+        notify,
+        queue: [track],
+        repository,
+        selectedAlbum: album,
+      }),
+      {
+        initialProps: { connected: true, musicRepository: accountOne },
+        wrapper: ({ children }: { children: ReactNode }) => (
+          <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+        ),
+      },
+    );
+    await waitFor(() => expect(result.current.ready).toBe(true));
+
+    act(() => result.current.toggleFavorite(track.id, "song", false));
+    await waitFor(() => {
+      expect(result.current.favoriteTrackIds.has(track.id)).toBe(false);
+    });
+
+    rerender({ connected: false, musicRepository: accountOne });
+    await waitFor(() => {
+      expect(result.current.collection.tracks).toEqual([]);
+    });
+
+    await act(async () => {
+      write.reject(new Error("Bandcamp credentials changed"));
+      await expect(write.promise).rejects.toThrow("Bandcamp credentials changed");
+    });
+
+    rerender({ connected: true, musicRepository: accountTwo });
+    await waitFor(() => {
+      expect(accountTwo.read).toHaveBeenCalled();
+      expect(result.current.favoriteAlbumIds.has(accountTwoAlbum.id)).toBe(true);
+    });
+    expect(result.current.favoriteTrackIds.has(track.id)).toBe(false);
+    expect(result.current.collection.tracks).toEqual([]);
+    expect(
+      result.current.collection.tracks.some((item) => item.title === track.title),
+    ).toBe(false);
+  });
+
+  it("rejects a track star at the local index bound before publishing query cache", async () => {
+    const overflowTrack: Track = {
+      ...track,
+      id: "song-overflow",
+      title: "Overflow",
+    };
+    const songIds = Array.from(
+      { length: MAX_FAVORITE_TRACKS },
+      (_value, index) => `song-bound-${index}`,
+    );
+    const repository: LocalFavoritesRepository = {
+      read: vi.fn().mockResolvedValue({
+        ...emptyLocalFavorites(),
+        songIds,
+      }),
+      write: vi.fn().mockImplementation(async (favorites) => favorites),
+    };
+    const musicRepository = {
+      read: vi.fn().mockResolvedValue({
+        albumIds: [],
+        songIds: [],
+        albums: [],
+        tracks: [],
+      }),
+      write: vi.fn(),
+    };
+    const { result, notify, queryClient } = renderController(repository, vi.fn(), {
+      albums: [{ ...album, tracks: [overflowTrack] }],
+      musicRepository,
+      queue: [overflowTrack],
+      selectedAlbum: { ...album, tracks: [overflowTrack] },
+    });
+    await waitFor(() => expect(result.current.ready).toBe(true));
+
+    act(() => result.current.toggleFavorite(overflowTrack.id, "song", true));
+
+    expect(notify).toHaveBeenCalledWith(
+      "Coda can save at most 25,000 favorite tracks.",
+      "bad",
+    );
+    expect(musicRepository.write).not.toHaveBeenCalled();
+    expect(repository.write).not.toHaveBeenCalled();
+    expect(result.current.favoriteTrackIds.has(overflowTrack.id)).toBe(false);
+    expect(queryClient.getQueryData<FavoriteCollection>(FAVORITES_QUERY_KEY)).toEqual({
+      albumIds: [],
+      songIds: [],
+      albums: [],
+      tracks: [],
+    });
   });
 });

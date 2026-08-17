@@ -173,7 +173,7 @@ function readReleaseAssetNames(assets, errors) {
   for (const asset of assets) {
     if (
       !isRecord(asset) ||
-      typeof asset.name !== "string" ||
+      !isString(asset.name) ||
       asset.name.length === 0 ||
       asset.name.length > 512 ||
       basename(asset.name) !== asset.name
@@ -208,5 +208,16 @@ function readJson(path) {
 }
 
 function isRecord(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return (
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype
+  );
+}
+
+function isString(value) {
+  return (
+    Object.prototype.toString.call(value) === "[object String]" &&
+    value === String(value)
+  );
 }

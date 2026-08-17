@@ -4,7 +4,9 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc;
+use std::sync::{Arc, Barrier, Mutex};
+use std::time::Duration;
 use tauri::http::Method;
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -158,6 +160,7 @@ fn deterministic_lru_uses_key_order_for_equal_access_times_and_skips_leases() {
         .insert(third.clone(), cache_entry(&third, &hash('c'), 1, 8));
     let runtime = CoverCacheRuntime {
         generation: 0,
+        ordering_sequence: 0,
         authorized_ids: HashSet::new(),
         index,
         leases: HashMap::from([(first.clone(), 1)]),
@@ -178,6 +181,7 @@ fn deterministic_lru_uses_key_order_for_equal_access_times_and_skips_leases() {
 fn authorization_is_scoped_to_the_exact_connection_generation_and_cleanup_state() {
     let mut runtime = CoverCacheRuntime {
         generation: 7,
+        ordering_sequence: 0,
         authorized_ids: HashSet::from(["cover-1".into()]),
         index: CoverCacheIndex::default(),
         leases: HashMap::new(),
@@ -198,6 +202,7 @@ fn authorization_is_scoped_to_the_exact_connection_generation_and_cleanup_state(
 fn authorization_rejects_connection_changes_and_credential_replacement() {
     let runtime = CoverCacheRuntime {
         generation: 7,
+        ordering_sequence: 0,
         authorized_ids: HashSet::new(),
         index: CoverCacheIndex::default(),
         leases: HashMap::new(),
@@ -254,6 +259,7 @@ fn authorization_rejects_connection_changes_and_credential_replacement() {
 fn publication_rejects_disconnect_and_account_replacement_races() {
     let runtime = CoverCacheRuntime {
         generation: 11,
+        ordering_sequence: 0,
         authorized_ids: HashSet::from(["cover-1".into()]),
         index: CoverCacheIndex::default(),
         leases: HashMap::new(),
@@ -272,22 +278,116 @@ fn publication_rejects_disconnect_and_account_replacement_races() {
         password: "replacement-password".into(),
     };
     assert!(publication_is_current(
-        &runtime,
-        "cover-1",
-        11,
+        runtime_authorizes(&runtime, "cover-1", runtime.generation, 11),
         &first,
         Some(&first),
     ));
     assert!(!publication_is_current(
-        &runtime, "cover-1", 12, &first, None,
+        runtime_authorizes(&runtime, "cover-1", runtime.generation, 12),
+        &first,
+        None,
     ));
     assert!(!publication_is_current(
-        &runtime,
-        "cover-1",
-        11,
+        runtime_authorizes(&runtime, "cover-1", runtime.generation, 11),
         &first,
         Some(&replacement),
     ));
+}
+
+#[test]
+fn invalidation_waits_for_publication_and_returns_a_newer_sequence() {
+    let _generation_test_guard = ALBUM_CACHE_GENERATION_TEST_LOCK.lock().unwrap();
+    let root = temporary_player_state_path("cover-cache-publication-invalidation-order")
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let cache_directory = root.join(COVER_CACHE_DIRECTORY);
+    fs::create_dir_all(&cache_directory).unwrap();
+    let cover_art_id = "ordered-cover";
+    let generation = current_connection_generation();
+    let state = cover_cache_state_for_test(
+        cache_directory,
+        root.join(COVER_CACHE_INVALIDATION_FILE),
+        generation,
+        HashSet::from([cover_art_id.into()]),
+        CoverCacheIndex::default(),
+    );
+    let publication_guard = cover_cache_publication_guard().unwrap();
+    let publication_sequence = next_cover_ordering_sequence_for_test(&state).unwrap();
+    let invalidation_state = state.clone();
+    let (started_sender, started_receiver) = mpsc::channel();
+    let (sender, receiver) = mpsc::channel();
+    let invalidation = std::thread::spawn(move || {
+        started_sender.send(()).unwrap();
+        sender
+            .send(invalidate_entry_ordered(
+                &invalidation_state,
+                cover_art_id,
+                generation,
+            ))
+            .unwrap();
+    });
+
+    started_receiver
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap();
+    assert!(receiver.recv_timeout(Duration::from_millis(20)).is_err());
+    drop(publication_guard);
+    let receipt = receiver
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap()
+        .unwrap();
+    invalidation.join().unwrap();
+
+    assert!(
+        receipt.sequence.parse::<u64>().unwrap() > publication_sequence,
+        "invalidation must be ordered after the publication it waited for"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn overlapping_invalidations_receive_unique_monotonic_sequences() {
+    let _generation_test_guard = ALBUM_CACHE_GENERATION_TEST_LOCK.lock().unwrap();
+    let root = temporary_player_state_path("cover-cache-overlapping-invalidations")
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let cache_directory = root.join(COVER_CACHE_DIRECTORY);
+    fs::create_dir_all(&cache_directory).unwrap();
+    let cover_art_id = "overlapping-cover";
+    let generation = current_connection_generation();
+    let state = cover_cache_state_for_test(
+        cache_directory,
+        root.join(COVER_CACHE_INVALIDATION_FILE),
+        generation,
+        HashSet::from([cover_art_id.into()]),
+        CoverCacheIndex::default(),
+    );
+    let barrier = Arc::new(Barrier::new(3));
+    let operations = (0..2)
+        .map(|_| {
+            let operation_state = state.clone();
+            let operation_barrier = barrier.clone();
+            std::thread::spawn(move || {
+                operation_barrier.wait();
+                invalidate_entry_ordered(&operation_state, cover_art_id, generation)
+                    .unwrap()
+                    .sequence
+                    .parse::<u64>()
+                    .unwrap()
+            })
+        })
+        .collect::<Vec<_>>();
+    barrier.wait();
+    let mut sequences = operations
+        .into_iter()
+        .map(|operation| operation.join().unwrap())
+        .collect::<Vec<_>>();
+    sequences.sort_unstable();
+
+    assert_eq!(sequences, vec![1, 2]);
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -315,6 +415,7 @@ fn completed_key_work_is_removed_but_live_waiters_keep_the_deduplication_lock() 
 
 #[test]
 fn authorized_warm_disk_hits_do_not_invoke_the_authenticated_fetch_path() {
+    let _generation_test_guard = ALBUM_CACHE_GENERATION_TEST_LOCK.lock().unwrap();
     let root = temporary_player_state_path("cover-cache-warm-hit")
         .parent()
         .unwrap()
@@ -359,6 +460,7 @@ fn authorized_warm_disk_hits_do_not_invoke_the_authenticated_fetch_path() {
 
 #[test]
 fn authorized_cache_misses_invoke_the_authenticated_fetch_path_once() {
+    let _generation_test_guard = ALBUM_CACHE_GENERATION_TEST_LOCK.lock().unwrap();
     let root = temporary_player_state_path("cover-cache-miss")
         .parent()
         .unwrap()
@@ -402,6 +504,7 @@ fn authorized_cache_misses_invoke_the_authenticated_fetch_path_once() {
 
 #[test]
 fn unauthorized_cover_ids_never_reach_disk_or_authenticated_fetching() {
+    let _generation_test_guard = ALBUM_CACHE_GENERATION_TEST_LOCK.lock().unwrap();
     let root = temporary_player_state_path("cover-cache-unauthorized")
         .parent()
         .unwrap()

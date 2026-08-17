@@ -1,6 +1,13 @@
 import { artistKey, type LibraryBrowseMode } from "@/libraryBrowse";
 import { BANDCAMP_RADIO_SERIES } from "@/radioSeries";
 import { isDailyArticleSection, isDailyCategory } from "@/daily";
+import {
+  hasControlCharacter,
+  isNumberValue,
+  isOwnDataRecord,
+  isStringValue,
+  type OwnDataRecord,
+} from "@/ownData";
 import type {
   DailyCategory,
   DiscoverFilters,
@@ -62,18 +69,12 @@ export const DEFAULT_DAILY_ROUTE_SEARCH: DailyRouteSearch = Object.freeze({
   category: "album-of-the-day",
 });
 
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
 const ABSOLUTE_URL = /^[a-z][a-z\d+.-]*:\/\//iu;
 
-function isPlainUnknownRecord(
-  value: unknown,
-): value is Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
+function isPlainRouteSearch<Value>(
+  value: Value,
+): value is Value & OwnDataRecord {
+  return isOwnDataRecord(value);
 }
 
 function utf8ByteLength(value: string): number {
@@ -89,7 +90,7 @@ function utf8ByteLength(value: string): number {
   return bytes;
 }
 
-function normalizedSearchText({
+function normalizedSearchText<Value>({
   allowEmpty,
   fallback,
   maxBytes,
@@ -98,12 +99,12 @@ function normalizedSearchText({
   allowEmpty: boolean;
   fallback: string;
   maxBytes: number;
-  value: unknown;
+  value: Value;
 }>): string {
   if (
-    typeof value !== "string" ||
+    !isStringValue(value) ||
     value.length > maxBytes ||
-    CONTROL_CHARACTERS.test(value)
+    hasControlCharacter(value)
   ) {
     return fallback;
   }
@@ -118,61 +119,75 @@ function normalizedSearchText({
   return normalized;
 }
 
-function collectionSort(value: unknown): SortMode {
+function collectionSort(value?: string): SortMode {
   switch (value) {
     case "recent":
+      return "recent";
     case "artist":
+      return "artist";
     case "title":
+      return "title";
     case "year":
-      return value;
+      return "year";
     default:
       return DEFAULT_COLLECTION_ROUTE_SEARCH.sort;
   }
 }
 
-function collectionMode(value: unknown): LibraryBrowseMode {
+function collectionMode(value?: string): LibraryBrowseMode {
   switch (value) {
     case "releases":
+      return "releases";
     case "artists":
+      return "artists";
     case "albums":
+      return "albums";
     case "singles":
-      return value;
+      return "singles";
     default:
       return DEFAULT_COLLECTION_ROUTE_SEARCH.mode;
   }
 }
 
-function discoverSort(value: unknown): DiscoverSort {
+function discoverSort(value?: string): DiscoverSort {
   switch (value) {
     case "top":
+      return "top";
     case "new":
-      return value;
+      return "new";
     default:
       return DEFAULT_DISCOVER_ROUTE_SEARCH.sort;
   }
 }
 
-export function validateDailySearch(value: unknown): DailyRouteSearch {
-  const search = isPlainUnknownRecord(value) ? value : {};
-  return {
-    category: isDailyCategory(search.category)
-      ? search.category
-      : DEFAULT_DAILY_ROUTE_SEARCH.category,
-    ...(isDailyArticleSection(search.articleSection)
-      ? { articleSection: search.articleSection }
-      : {}),
-  };
+export function validateDailySearch<Value>(value: Value): DailyRouteSearch {
+  const input = isPlainRouteSearch(value) ? value : undefined;
+  const categoryCandidate =
+    input && "category" in input ? input.category : undefined;
+  const category = isDailyCategory(categoryCandidate)
+    ? categoryCandidate
+    : DEFAULT_DAILY_ROUTE_SEARCH.category;
+  const articleSection =
+    input && "articleSection" in input ? input.articleSection : undefined;
+  if (isDailyArticleSection(articleSection)) {
+    return { articleSection, category };
+  }
+  return { category };
 }
 
-export function validateCollectionSearch(
-  value: unknown,
+export function validateCollectionSearch<Value>(
+  value: Value,
 ): CollectionRouteSearch {
-  const search = isPlainUnknownRecord(value) ? value : {};
+  const input = isPlainRouteSearch(value) ? value : undefined;
+  const q = input && "q" in input ? input.q : undefined;
+  const genreValue = input && "genre" in input ? input.genre : undefined;
+  const sort = input && "sort" in input ? input.sort : undefined;
+  const mode = input && "mode" in input ? input.mode : undefined;
   const genre = normalizedSearchText({
     allowEmpty: false,
     fallback: DEFAULT_COLLECTION_ROUTE_SEARCH.genre,
     maxBytes: MAX_ROUTE_SEARCH_TEXT_BYTES,
-    value: search.genre,
+    value: genreValue,
   });
 
   return {
@@ -180,36 +195,52 @@ export function validateCollectionSearch(
       allowEmpty: true,
       fallback: DEFAULT_COLLECTION_ROUTE_SEARCH.q,
       maxBytes: MAX_ROUTE_SEARCH_TEXT_BYTES,
-      value: search.q,
+      value: q,
     }),
     genre: genre.toLocaleLowerCase("en-US") === "all" ? "All" : genre,
-    sort: collectionSort(search.sort),
-    mode: collectionMode(search.mode),
+    sort: isStringValue(sort) ? collectionSort(sort) : collectionSort(),
+    mode: isStringValue(mode) ? collectionMode(mode) : collectionMode(),
   };
 }
 
-export function validateDiscoverSearch(value: unknown): DiscoverRouteSearch {
-  const search = isPlainUnknownRecord(value) ? value : {};
+export function validateDiscoverSearch<Value>(
+  value: Value,
+): DiscoverRouteSearch {
+  const input = isPlainRouteSearch(value) ? value : undefined;
+  const tag = input && "tag" in input ? input.tag : undefined;
+  const sort = input && "sort" in input ? input.sort : undefined;
   return {
     tag: normalizedSearchText({
       allowEmpty: true,
       fallback: DEFAULT_DISCOVER_ROUTE_SEARCH.tag,
       maxBytes: MAX_DISCOVER_TAG_BYTES,
-      value: search.tag,
+      value: tag,
     }),
-    sort: discoverSort(search.sort),
+    sort: isStringValue(sort) ? discoverSort(sort) : discoverSort(),
   };
 }
 
-function parsePositiveIntegerRouteId(
-  value: unknown,
+export function parseRouteSearchAlbumId<Value>(
+  value: Value,
+): AlbumId | undefined {
+  const input = isPlainRouteSearch(value) ? value : undefined;
+  const candidate = input && "albumId" in input ? input.albumId : undefined;
+  try {
+    return albumIdFromWire(candidate);
+  } catch {
+    return undefined;
+  }
+}
+
+function parsePositiveIntegerRouteId<Value>(
+  value: Value,
   label: string,
   maximum: number,
 ): number {
   let parsed: number;
-  if (typeof value === "number") {
+  if (isNumberValue(value)) {
     parsed = value;
-  } else if (typeof value === "string" && /^[1-9]\d*$/u.test(value)) {
+  } else if (isStringValue(value) && /^[1-9]\d*$/u.test(value)) {
     if (value.length > String(maximum).length) {
       throw new TypeError(`${label} is outside the supported range`);
     }
@@ -224,7 +255,7 @@ function parsePositiveIntegerRouteId(
   return parsed;
 }
 
-export function parseRadioSeriesIdParam(value: unknown): RadioSeriesId {
+function radioSeriesIdFromWire<Value>(value: Value): RadioSeriesId {
   const parsed = parsePositiveIntegerRouteId(
     value,
     "Radio series ID",
@@ -236,9 +267,15 @@ export function parseRadioSeriesIdParam(value: unknown): RadioSeriesId {
   return parsed;
 }
 
+export function parseRadioSeriesIdParam(value: string | number): RadioSeriesId;
+export function parseRadioSeriesIdParam<Value>(value: Value): RadioSeriesId;
+export function parseRadioSeriesIdParam<Value>(value: Value): RadioSeriesId {
+  return radioSeriesIdFromWire(value);
+}
+
 export function stringifyRadioSeriesIdParam(value: RadioSeriesId): string;
-export function stringifyRadioSeriesIdParam(value: unknown): string {
-  return String(parseRadioSeriesIdParam(value));
+export function stringifyRadioSeriesIdParam<Value>(value: Value): string {
+  return String(radioSeriesIdFromWire(value));
 }
 
 function isRadioSeriesId(value: number): value is RadioSeriesId {
@@ -251,7 +288,7 @@ function isRadioShowId(value: number): value is RadioShowId {
   );
 }
 
-export function parseRadioShowIdParam(value: unknown): RadioShowId {
+function radioShowIdFromWire<Value>(value: Value): RadioShowId {
   const parsed = parsePositiveIntegerRouteId(
     value,
     "Radio show ID",
@@ -263,62 +300,84 @@ export function parseRadioShowIdParam(value: unknown): RadioShowId {
   return parsed;
 }
 
-export function stringifyRadioShowIdParam(value: RadioShowId): string;
-export function stringifyRadioShowIdParam(value: unknown): string {
-  return String(parseRadioShowIdParam(value));
+export function parseRadioShowIdParam(value: string | number): RadioShowId;
+export function parseRadioShowIdParam<Value>(value: Value): RadioShowId;
+export function parseRadioShowIdParam<Value>(value: Value): RadioShowId {
+  return radioShowIdFromWire(value);
 }
 
-function isBoundedNonUrlIdentifier(
-  value: unknown,
+export function stringifyRadioShowIdParam(value: RadioShowId): string;
+export function stringifyRadioShowIdParam<Value>(value: Value): string {
+  return String(radioShowIdFromWire(value));
+}
+
+function isBoundedNonUrlIdentifier<Value>(
+  value: Value,
   maximumBytes: number,
-): value is string {
+): value is Value & string {
   return !(
-    typeof value !== "string" ||
+    !isStringValue(value) ||
     value.length === 0 ||
     value.length > maximumBytes ||
     value.trim() !== value ||
-    CONTROL_CHARACTERS.test(value) ||
+    hasControlCharacter(value) ||
     ABSOLUTE_URL.test(value) ||
     value.startsWith("//") ||
     utf8ByteLength(value) > maximumBytes
   );
 }
 
-function isAlbumId(value: unknown): value is AlbumId {
+function isAlbumId<Value>(value: Value): value is Value & AlbumId {
   return isBoundedNonUrlIdentifier(value, MAX_SUBSONIC_ROUTE_ID_BYTES);
 }
 
-export function parseAlbumIdParam(value: unknown): AlbumId {
+function albumIdFromWire<Value>(value: Value): AlbumId {
   if (!isAlbumId(value)) {
     throw new TypeError("Album ID must be a bounded non-URL identifier");
   }
   return value;
 }
 
-export function stringifyAlbumIdParam(value: AlbumId): string;
-export function stringifyAlbumIdParam(value: unknown): string {
-  return parseAlbumIdParam(value);
+export function parseAlbumIdParam(value: string): AlbumId;
+export function parseAlbumIdParam<Value>(value: Value): AlbumId;
+export function parseAlbumIdParam<Value>(value: Value): AlbumId {
+  return albumIdFromWire(value);
 }
 
-function isPlaylistId(value: unknown): value is PlaylistId {
+export function stringifyAlbumIdParam(value: AlbumId): string;
+export function stringifyAlbumIdParam<Value>(value: Value): string {
+  return albumIdFromWire(value);
+}
+
+export function isPlaylistId<Value>(
+  value: Value,
+): value is Value & PlaylistId {
   return isBoundedNonUrlIdentifier(value, MAX_SUBSONIC_ROUTE_ID_BYTES);
 }
 
-export function parsePlaylistIdParam(value: unknown): PlaylistId {
+function playlistIdFromWire<Value>(value: Value): PlaylistId {
   if (!isPlaylistId(value)) {
     throw new TypeError("Playlist ID must be a bounded non-URL identifier");
   }
   return value;
 }
 
+export function parsePlaylistIdParam(value: string): PlaylistId;
+export function parsePlaylistIdParam<Value>(value: Value): PlaylistId;
+export function parsePlaylistIdParam<Value>(value: Value): PlaylistId {
+  return playlistIdFromWire(value);
+}
+
 export function stringifyPlaylistIdParam(value: PlaylistId): string;
-export function stringifyPlaylistIdParam(value: unknown): string {
-  return parsePlaylistIdParam(value);
+export function stringifyPlaylistIdParam<Value>(value: Value): string {
+  return playlistIdFromWire(value);
 }
 
 const DISCOVER_RELEASE_ID_PREFIX = "discover:";
 
-export function isDiscoverReleaseId(value: unknown): value is DiscoverReleaseId {
+export function isDiscoverReleaseId<Value>(
+  value: Value,
+): value is Value & DiscoverReleaseId {
   if (
     !isBoundedNonUrlIdentifier(value, MAX_DISCOVER_RELEASE_ID_BYTES) ||
     !value.startsWith(DISCOVER_RELEASE_ID_PREFIX)
@@ -329,7 +388,7 @@ export function isDiscoverReleaseId(value: unknown): value is DiscoverReleaseId 
   return remoteValue.length > 0 && remoteValue.trim() === remoteValue;
 }
 
-export function parseDiscoverReleaseIdParam(value: unknown): DiscoverReleaseId {
+function discoverReleaseIdFromWire<Value>(value: Value): DiscoverReleaseId {
   if (!isDiscoverReleaseId(value)) {
     throw new TypeError(
       "Discover release ID must be a bounded discover: identifier",
@@ -338,28 +397,44 @@ export function parseDiscoverReleaseIdParam(value: unknown): DiscoverReleaseId {
   return value;
 }
 
+export function parseDiscoverReleaseIdParam(value: string): DiscoverReleaseId;
+export function parseDiscoverReleaseIdParam<Value>(
+  value: Value,
+): DiscoverReleaseId;
+export function parseDiscoverReleaseIdParam<Value>(
+  value: Value,
+): DiscoverReleaseId {
+  return discoverReleaseIdFromWire(value);
+}
+
 export function stringifyDiscoverReleaseIdParam(
   value: DiscoverReleaseId,
 ): string;
-export function stringifyDiscoverReleaseIdParam(value: unknown): string {
-  return parseDiscoverReleaseIdParam(value);
+export function stringifyDiscoverReleaseIdParam<Value>(value: Value): string {
+  return discoverReleaseIdFromWire(value);
 }
 
-function isArtistKey(value: unknown): value is ArtistKey {
+function isArtistKey<Value>(value: Value): value is Value & ArtistKey {
   return (
     isBoundedNonUrlIdentifier(value, MAX_ARTIST_KEY_BYTES) &&
     artistKey(value) === value
   );
 }
 
-export function parseArtistKeyParam(value: unknown): ArtistKey {
+function artistKeyFromWire<Value>(value: Value): ArtistKey {
   if (!isArtistKey(value)) {
     throw new TypeError("Artist key must be canonical");
   }
   return value;
 }
 
+export function parseArtistKeyParam(value: string): ArtistKey;
+export function parseArtistKeyParam<Value>(value: Value): ArtistKey;
+export function parseArtistKeyParam<Value>(value: Value): ArtistKey {
+  return artistKeyFromWire(value);
+}
+
 export function stringifyArtistKeyParam(value: ArtistKey): string;
-export function stringifyArtistKeyParam(value: unknown): string {
-  return parseArtistKeyParam(value);
+export function stringifyArtistKeyParam<Value>(value: Value): string {
+  return artistKeyFromWire(value);
 }

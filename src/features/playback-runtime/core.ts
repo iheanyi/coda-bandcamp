@@ -196,7 +196,7 @@ export function usePlaybackCoreController({
   const applyRestore = useCallback(
     (state: PlayerStateSnapshot) => {
       cancelShuffleRef.current();
-      const queue = state.queue as Track[];
+      const queue = state.queue;
       const restoredTrack = queue[state.currentIndex];
       pendingPosition.current =
         restoredTrack && state.positionSeconds > 0

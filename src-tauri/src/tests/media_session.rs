@@ -133,8 +133,8 @@ fn playback_blocking_commands_are_dispatched_off_the_window_thread() {
     let playlist_source = include_str!("../playlists.rs").replace("\r\n", "\n");
     assert!(playlist_source.contains("#[tauri::command]\npub(super) async fn get_stream_url"));
 
-    let cover_cache_source = include_str!("../cover_cache.rs").replace("\r\n", "\n");
+    let cover_cache_source = include_str!("../cover_cache/fetch.rs").replace("\r\n", "\n");
     assert!(
-        cover_cache_source.contains("#[tauri::command]\npub(super) async fn invalidate_cover_art")
+        cover_cache_source.contains("#[tauri::command]\npub(crate) async fn invalidate_cover_art")
     );
 }

@@ -1,6 +1,6 @@
 import { createContext, useContext } from "react";
 
-import type { FavoritesScreenProps } from "@/SavedLibraryView";
+import type { FavoritesScreenProps } from "./savedLibraryTypes";
 
 export type SavedLibraryRuntimeValue = Readonly<
   Omit<FavoritesScreenProps, "className"> & {

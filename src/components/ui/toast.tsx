@@ -8,14 +8,20 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
-import { AnimatePresence, usePresence } from "motion/react";
-import * as m from "motion/react-m";
+import { AnimatePresence } from "motion/react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { MotionExitPresence } from "@/components/ui/MotionExitPresence";
 import { useCodaMotion } from "@/motion";
 import { toast } from "@/components/ui/toastManager";
-import { useMotionExitWatchdog } from "@/components/ui/useMotionExitWatchdog";
+
+type ToastMotionItemProps = Readonly<{
+  index: number;
+  toastItem: ToastPrimitive.Root.Props["toast"];
+}>;
+
+type ToasterProps = ToastPrimitive.Provider.Props;
 
 function ToastProvider({ ...props }: ToastPrimitive.Provider.Props) {
   return <ToastPrimitive.Provider {...props} />;
@@ -169,25 +175,14 @@ function ToastIcon({ type }: { type: string | undefined }) {
 function ToastMotionItem({
   index,
   toastItem,
-}: Readonly<{
-  index: number;
-  toastItem: ToastPrimitive.Root.Props["toast"];
-}>) {
+}: ToastMotionItemProps) {
   const codaMotion = useCodaMotion();
-  const [isPresent, safeToRemove] = usePresence();
-  const completeExit = useMotionExitWatchdog({
-    open: isPresent,
-    onExitComplete: () => safeToRemove?.(),
-  });
 
   return (
-    <m.div
+    <MotionExitPresence
       data-slot="toast-motion"
       className="pointer-events-none absolute right-0 bottom-0 w-full origin-bottom"
-      inert={!isPresent || undefined}
-      aria-hidden={!isPresent || undefined}
       style={{
-        pointerEvents: isPresent ? undefined : "none",
         zIndex: 1000 - index,
       }}
       initial={{
@@ -204,7 +199,6 @@ function ToastMotionItem({
         transform: `translateY(${codaMotion.profile.component.translationPx * 0.7}px) scale(${codaMotion.profile.component.scaleFrom})`,
         transition: codaMotion.componentExit,
       }}
-      onAnimationComplete={completeExit}
     >
       <Toast toast={toastItem}>
         <ToastContent>
@@ -217,7 +211,7 @@ function ToastMotionItem({
           <ToastClose />
         </ToastContent>
       </Toast>
-    </m.div>
+    </MotionExitPresence>
   );
 }
 
@@ -241,7 +235,7 @@ function Toaster({
   children,
   toastManager = toast,
   ...props
-}: ToastPrimitive.Provider.Props) {
+}: ToasterProps) {
   return (
     <ToastProvider toastManager={toastManager} {...props}>
       {children}

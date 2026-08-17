@@ -14,12 +14,13 @@ describe("system artwork", () => {
       letterSpacing: "",
       textBaseline: "",
     };
-    const canvas = {
-      width: 0,
-      height: 0,
-      getContext: vi.fn(() => context),
-      toDataURL: vi.fn(() => "data:image/png;base64,Y29kYS1jb3Zlcg=="),
-    };
+    const canvas = document.createElement("canvas");
+    const getContext = vi.fn(() => context);
+    const toDataURL = vi.fn(() => "data:image/png;base64,Y29kYS1jb3Zlcg==");
+    Object.defineProperties(canvas, {
+      getContext: { configurable: true, value: getContext },
+      toDataURL: { configurable: true, value: toDataURL },
+    });
 
     const result = createSystemArtworkDataUrl(
       {
@@ -27,21 +28,22 @@ describe("system artwork", () => {
         artist: "Night Archive",
         palette: ["#dd6549", "#202326"],
       },
-      () => canvas as unknown as HTMLCanvasElement,
+      () => canvas,
     );
 
     expect(result).toBe("data:image/png;base64,Y29kYS1jb3Zlcg==");
     expect(canvas).toMatchObject({ width: 600, height: 600 });
-    expect(canvas.toDataURL).toHaveBeenCalledExactlyOnceWith("image/png");
+    expect(toDataURL).toHaveBeenCalledExactlyOnceWith("image/png");
   });
 
   it("fails closed when canvas rendering is unavailable", () => {
-    const canvas = {
-      width: 0,
-      height: 0,
-      getContext: vi.fn(() => null),
-      toDataURL: vi.fn(),
-    };
+    const canvas = document.createElement("canvas");
+    const getContext = vi.fn(() => null);
+    const toDataURL = vi.fn();
+    Object.defineProperties(canvas, {
+      getContext: { configurable: true, value: getContext },
+      toDataURL: { configurable: true, value: toDataURL },
+    });
 
     expect(
       createSystemArtworkDataUrl(
@@ -50,9 +52,9 @@ describe("system artwork", () => {
           artist: "Night Archive",
           palette: ["#dd6549", "#202326"],
         },
-        () => canvas as unknown as HTMLCanvasElement,
+        () => canvas,
       ),
     ).toBeUndefined();
-    expect(canvas.toDataURL).not.toHaveBeenCalled();
+    expect(toDataURL).not.toHaveBeenCalled();
   });
 });

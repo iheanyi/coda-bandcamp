@@ -6,6 +6,7 @@ import {
   AlbumRoutePending,
 } from "@/features/library/LibraryDetailRouteStatus";
 import { useAlbumRouteScreenResource } from "@/features/library/LibraryRouteRuntime";
+import { useActivateDetailDestination } from "@/features/navigation/useActivateDetailDestination";
 import {
   type AlbumId,
   parseAlbumIdParam,
@@ -22,10 +23,12 @@ type AlbumRouteIdentityLoaderInput = Readonly<{
   params: Readonly<{ albumId: AlbumId }>;
 }>;
 
+type AlbumRouteIdentity = Readonly<{ albumId: AlbumId }>;
+
 export function loadAlbumRouteIdentity({
   librarySession,
   params,
-}: AlbumRouteIdentityLoaderInput): Readonly<{ albumId: AlbumId }> {
+}: AlbumRouteIdentityLoaderInput): AlbumRouteIdentity {
   librarySession?.preloadAlbum(params.albumId);
   return { albumId: params.albumId };
 }
@@ -34,6 +37,11 @@ function AlbumDetailRoute() {
   const { albumId } = Route.useLoaderData();
   const librarySession = useLibrarySession();
   const resource = useAlbumRouteScreenResource(albumId);
+  useActivateDetailDestination(
+    "album",
+    `album:${albumId}`,
+    resource.status === "ready",
+  );
   const generation = librarySession.commands.generation.current();
   const album = librarySession.albums.find(
     (candidate) => candidate.id === albumId,

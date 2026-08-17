@@ -6,7 +6,16 @@ import type {
   RadioShowSummary,
   Track,
 } from "./types";
-import { isItemDate, parseLibraryDate } from "./libraryDates";
+import { parseLibraryDate } from "./libraryDates";
+import {
+  copyOwnDataArray,
+  hasControlCharacter,
+  isAbsent,
+  isNumberValue,
+  isStringValue,
+  projectOwnDataRecord,
+  type OwnDataValue,
+} from "./ownData";
 
 export const LOCAL_FAVORITES_KEY = "coda.local-favorites.v1";
 
@@ -14,7 +23,21 @@ export const LOCAL_FAVORITES_VERSION = 3;
 export const MAX_FAVORITE_ALBUMS = 5_000;
 export const MAX_FAVORITE_TRACKS = 25_000;
 export const MAX_FAVORITE_RADIO_SHOWS = 5_000;
+
+export function localTrackStarBoundMessage(): string {
+  return `Coda can save at most ${MAX_FAVORITE_TRACKS.toLocaleString()} favorite tracks.`;
+}
+
+export function localTrackStarIndexCanAccept(
+  current: LocalFavoriteCollection,
+  trackId: string,
+): boolean {
+  if (current.songIds.length < MAX_FAVORITE_TRACKS) return true;
+  return current.songIds.includes(trackId);
+}
+
 const MAX_TRACKS_PER_ALBUM = 5_000;
+const MAX_TRACK_NUMBER = 100_000;
 export const MAX_LOCAL_FAVORITES_BYTES = 4 * 1024 * 1024;
 const MAX_TEXT_LENGTH = 1_024;
 const MAX_DURATION_SECONDS = 7 * 24 * 60 * 60;
@@ -23,24 +46,45 @@ export type LocalFavoritesSnapshot = LocalFavoriteCollection & {
   version: typeof LOCAL_FAVORITES_VERSION;
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+export function parseLocalFavoritesSerialized(
+  serialized: string,
+): LocalFavoriteCollection | undefined {
+  if (serialized.length > MAX_LOCAL_FAVORITES_BYTES) return undefined;
+  try {
+    const parsed: OwnDataValue = JSON.parse(serialized);
+    return parseLocalFavoritesSnapshot(parsed);
+  } catch {
+    return undefined;
+  }
 }
 
-function isText(value: unknown, required = true): value is string {
+// ownData has no bounded-text helper; isStringValue + hasControlCharacter
+// omit the 1,024-code-unit cap and required-nonempty policy used here.
+function isText(
+  value: OwnDataValue,
+  required = true,
+): value is string {
   return (
-    typeof value === "string" &&
+    isStringValue(value) &&
     value.length <= MAX_TEXT_LENGTH &&
     (!required || value.length > 0) &&
-    !/[\u0000-\u001f\u007f-\u009f]/u.test(value)
+    !hasControlCharacter(value)
   );
 }
 
-function isCount(value: unknown): value is number {
-  return Number.isSafeInteger(value) && Number(value) >= 0;
+function isCount(
+  value: OwnDataValue,
+  maximum = Number.MAX_SAFE_INTEGER,
+): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 0 &&
+    value <= maximum
+  );
 }
 
-function isDuration(value: unknown): value is number {
+function isDuration(value: OwnDataValue): value is number {
   return (
     typeof value === "number" &&
     Number.isFinite(value) &&
@@ -49,30 +93,59 @@ function isDuration(value: unknown): value is number {
   );
 }
 
-function isMusicBrainzId(value: unknown): value is string {
+function isMusicBrainzId(value: OwnDataValue): value is string {
   return (
     typeof value === "string" &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(value)
   );
 }
 
-function isAbsent(value: unknown): value is null | undefined {
-  return value === undefined || value === null;
-}
-
-function sanitizeDateText(value: unknown): string | undefined {
+function sanitizeDateText(value: OwnDataValue): string | undefined {
   return isText(value, false) && parseLibraryDate(value) !== undefined
     ? value
     : undefined;
 }
 
-function sanitizeItemDate(value: unknown): ItemDate | undefined {
-  if (!isItemDate(value)) return undefined;
-  return {
-    year: value.year,
-    ...(value.month === undefined ? {} : { month: value.month }),
-    ...(value.day === undefined ? {} : { day: value.day }),
-  };
+function isCalendarDate(year: number, month: number, day: number): boolean {
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  date.setUTCHours(0, 0, 0, 0);
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
+function sanitizeItemDate(value: OwnDataValue): ItemDate | undefined {
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return undefined;
+  const year = record.year;
+  const month = record.month;
+  const day = record.day;
+  if (
+    !isCount(year, 9_999) ||
+    year === 0 ||
+    (!isAbsent(month) &&
+      (!isCount(month, 12) || month === 0)) ||
+    (!isAbsent(day) &&
+      (!isCount(day, 31) || day === 0)) ||
+    (!isAbsent(day) && isAbsent(month))
+  ) {
+    return undefined;
+  }
+  const sanitized: ItemDate = { year };
+  if (isNumberValue(month)) sanitized.month = month;
+  if (isNumberValue(day)) {
+    if (
+      !isNumberValue(month) ||
+      !isCalendarDate(year, month, day)
+    ) {
+      return undefined;
+    }
+    sanitized.day = day;
+  }
+  return sanitized;
 }
 
 function sameItemDate(
@@ -86,55 +159,86 @@ function sameItemDate(
   );
 }
 
-function palette(value: unknown): [string, string] | undefined {
+function palette(value: OwnDataValue): [string, string] | undefined {
+  const colors = copyOwnDataArray(value, 2);
+  if (colors === undefined || colors.length !== 2) return undefined;
+  const [first, second] = colors;
   if (
-    !Array.isArray(value) ||
-    value.length !== 2 ||
-    !value.every((item) => isText(item) && item.length <= 64)
+    !isText(first) ||
+    first.length > 64 ||
+    !isText(second) ||
+    second.length > 64
   ) {
     return undefined;
   }
-  return [value[0], value[1]];
+  return [first, second];
 }
 
-function sanitizeTrack(value: unknown): Track | undefined {
-  if (!isRecord(value)) return undefined;
-  const colors = palette(value.palette);
-  const starredAt = isAbsent(value.starredAt)
+function sanitizeTrack(value: OwnDataValue): Track | undefined {
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return undefined;
+  const id = record.id;
+  const title = record.title;
+  const artist = record.artist;
+  const albumTitle = record.album;
+  const albumId = record.albumId;
+  const duration = record.duration;
+  const trackNumber = record.track;
+  const paletteValue = record.palette;
+  const discValue = record.disc;
+  const albumArtistValue = record.albumArtist;
+  const musicBrainzIdValue = record.musicBrainzId;
+  const coverArtValue = record.coverArt;
+  const starredAtValue = record.starredAt;
+  const colors = palette(paletteValue);
+  const disc = isCount(discValue, MAX_TRACK_NUMBER)
+    ? discValue
+    : undefined;
+  const albumArtist = isText(albumArtistValue, false)
+    ? albumArtistValue
+    : undefined;
+  const musicBrainzId = isMusicBrainzId(musicBrainzIdValue)
+    ? musicBrainzIdValue
+    : undefined;
+  const coverArt = isText(coverArtValue, false)
+    ? coverArtValue
+    : undefined;
+  const starredAt = isAbsent(starredAtValue)
     ? undefined
-    : sanitizeDateText(value.starredAt);
+    : sanitizeDateText(starredAtValue);
   if (
-    !isText(value.id) ||
-    !isText(value.title) ||
-    !isText(value.artist) ||
-    !isText(value.album) ||
-    !isText(value.albumId) ||
-    !isDuration(value.duration) ||
-    !isCount(value.track) ||
-    (!isAbsent(value.disc) && !isCount(value.disc)) ||
-    (!isAbsent(value.albumArtist) && !isText(value.albumArtist, false)) ||
-    (!isAbsent(value.musicBrainzId) && !isMusicBrainzId(value.musicBrainzId)) ||
-    (!isAbsent(value.coverArt) && !isText(value.coverArt, false)) ||
-    (!isAbsent(value.starredAt) && starredAt === undefined) ||
+    !isText(id) ||
+    !isText(title) ||
+    !isText(artist) ||
+    !isText(albumTitle) ||
+    !isText(albumId) ||
+    !isDuration(duration) ||
+    !isCount(trackNumber, MAX_TRACK_NUMBER) ||
+    (!isAbsent(discValue) && disc === undefined) ||
+    (!isAbsent(albumArtistValue) && albumArtist === undefined) ||
+    (!isAbsent(musicBrainzIdValue) && musicBrainzId === undefined) ||
+    (!isAbsent(coverArtValue) && coverArt === undefined) ||
+    (!isAbsent(starredAtValue) && starredAt === undefined) ||
     !colors
   ) {
     return undefined;
   }
-  return {
-    id: value.id,
-    title: value.title,
-    artist: value.artist,
-    album: value.album,
-    albumId: value.albumId,
-    duration: value.duration,
-    track: value.track,
-    ...(isAbsent(value.disc) ? {} : { disc: value.disc }),
-    ...(isAbsent(value.albumArtist) ? {} : { albumArtist: value.albumArtist }),
-    ...(isAbsent(value.musicBrainzId) ? {} : { musicBrainzId: value.musicBrainzId }),
-    ...(isAbsent(value.coverArt) ? {} : { coverArt: value.coverArt }),
-    ...(starredAt === undefined ? {} : { starredAt }),
+  const track: Track = {
+    id,
+    title,
+    artist,
+    album: albumTitle,
+    albumId,
+    duration,
+    track: trackNumber,
     palette: colors,
   };
+  if (disc !== undefined) track.disc = disc;
+  if (albumArtist !== undefined) track.albumArtist = albumArtist;
+  if (musicBrainzId !== undefined) track.musicBrainzId = musicBrainzId;
+  if (coverArt !== undefined) track.coverArt = coverArt;
+  if (starredAt !== undefined) track.starredAt = starredAt;
+  return track;
 }
 
 /**
@@ -154,133 +258,217 @@ export function localTrackStarIndexAndRadio(
   };
 }
 
-function sanitizeAlbum(value: unknown): Album | undefined {
-  if (!isRecord(value)) return undefined;
-  const colors = palette(value.palette);
-  const addedAt = isAbsent(value.addedAt)
+function sanitizeAlbum(value: OwnDataValue): Album | undefined {
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return undefined;
+  const id = record.id;
+  const title = record.title;
+  const artist = record.artist;
+  const songCount = record.songCount;
+  const duration = record.duration;
+  const paletteValue = record.palette;
+  const coverArtValue = record.coverArt;
+  const yearValue = record.year;
+  const genreValue = record.genre;
+  const addedAtValue = record.addedAt;
+  const starredAtValue = record.starredAt;
+  const playedAtValue = record.playedAt;
+  const originalReleaseDateValue = record.originalReleaseDate;
+  const releaseDateValue = record.releaseDate;
+  const tracksValue = record.tracks;
+  const colors = palette(paletteValue);
+  const coverArt = isText(coverArtValue, false)
+    ? coverArtValue
+    : undefined;
+  const year = isCount(yearValue, 9_999) && yearValue > 0
+    ? yearValue
+    : undefined;
+  const genre = isText(genreValue, false) ? genreValue : undefined;
+  const addedAt = isAbsent(addedAtValue)
     ? undefined
-    : sanitizeDateText(value.addedAt);
-  const starredAt = isAbsent(value.starredAt)
+    : sanitizeDateText(addedAtValue);
+  const starredAt = isAbsent(starredAtValue)
     ? undefined
-    : sanitizeDateText(value.starredAt);
-  const playedAt = isAbsent(value.playedAt)
+    : sanitizeDateText(starredAtValue);
+  const playedAt = isAbsent(playedAtValue)
     ? undefined
-    : sanitizeDateText(value.playedAt);
-  const originalReleaseDate = isAbsent(value.originalReleaseDate)
+    : sanitizeDateText(playedAtValue);
+  const originalReleaseDate = isAbsent(originalReleaseDateValue)
     ? undefined
-    : sanitizeItemDate(value.originalReleaseDate);
-  const releaseDate = isAbsent(value.releaseDate)
+    : sanitizeItemDate(originalReleaseDateValue);
+  const releaseDate = isAbsent(releaseDateValue)
     ? undefined
-    : sanitizeItemDate(value.releaseDate);
-  const tracks = isAbsent(value.tracks)
-    ? undefined
-    : Array.isArray(value.tracks) && value.tracks.length <= MAX_TRACKS_PER_ALBUM
-      ? value.tracks.map(sanitizeTrack)
-      : undefined;
+    : sanitizeItemDate(releaseDateValue);
+  if (!isAbsent(tracksValue)) {
+    const albumTracks = copyOwnDataArray(tracksValue, MAX_TRACKS_PER_ALBUM);
+    if (albumTracks === undefined) return undefined;
+    for (const entry of albumTracks) {
+      const track = sanitizeTrack(entry);
+      if (!track || !isText(id) || track.albumId !== id) return undefined;
+    }
+  }
   if (
-    !isText(value.id) ||
-    !isText(value.title) ||
-    !isText(value.artist) ||
-    !isCount(value.songCount) ||
-    !isDuration(value.duration) ||
-    (!isAbsent(value.coverArt) && !isText(value.coverArt, false)) ||
-    (!isAbsent(value.year) && !isCount(value.year)) ||
-    (!isAbsent(value.genre) && !isText(value.genre, false)) ||
-    (!isAbsent(value.addedAt) && addedAt === undefined) ||
-    (!isAbsent(value.starredAt) && starredAt === undefined) ||
-    (!isAbsent(value.playedAt) && playedAt === undefined) ||
-    (!isAbsent(value.originalReleaseDate) && originalReleaseDate === undefined) ||
-    (!isAbsent(value.releaseDate) && releaseDate === undefined) ||
-    (!isAbsent(value.tracks) &&
-      (!tracks ||
-        tracks.some((track) => !track || track.albumId !== value.id))) ||
+    !isText(id) ||
+    !isText(title) ||
+    !isText(artist) ||
+    !isCount(songCount, MAX_FAVORITE_TRACKS) ||
+    !isDuration(duration) ||
+    (!isAbsent(coverArtValue) && coverArt === undefined) ||
+    (!isAbsent(yearValue) && year === undefined) ||
+    (!isAbsent(genreValue) && genre === undefined) ||
+    (!isAbsent(addedAtValue) && addedAt === undefined) ||
+    (!isAbsent(starredAtValue) && starredAt === undefined) ||
+    (!isAbsent(playedAtValue) && playedAt === undefined) ||
+    (!isAbsent(originalReleaseDateValue) &&
+      originalReleaseDate === undefined) ||
+    (!isAbsent(releaseDateValue) && releaseDate === undefined) ||
     !colors
   ) {
     return undefined;
   }
-  return {
-    id: value.id,
-    title: value.title,
-    artist: value.artist,
-    songCount: value.songCount,
-    duration: value.duration,
-    ...(isAbsent(value.coverArt) ? {} : { coverArt: value.coverArt }),
-    ...(isAbsent(value.year) ? {} : { year: value.year }),
-    ...(isAbsent(value.genre) ? {} : { genre: value.genre }),
-    ...(addedAt === undefined ? {} : { addedAt }),
-    ...(starredAt === undefined ? {} : { starredAt }),
-    ...(playedAt === undefined ? {} : { playedAt }),
-    ...(originalReleaseDate === undefined ? {} : { originalReleaseDate }),
-    ...(releaseDate === undefined ? {} : { releaseDate }),
+  const album: Album = {
+    id,
+    title,
+    artist,
+    songCount,
+    duration,
     palette: colors,
   };
+  if (coverArt !== undefined) album.coverArt = coverArt;
+  if (year !== undefined) album.year = year;
+  if (genre !== undefined) album.genre = genre;
+  if (addedAt !== undefined) album.addedAt = addedAt;
+  if (starredAt !== undefined) album.starredAt = starredAt;
+  if (playedAt !== undefined) album.playedAt = playedAt;
+  if (originalReleaseDate !== undefined) {
+    album.originalReleaseDate = originalReleaseDate;
+  }
+  if (releaseDate !== undefined) album.releaseDate = releaseDate;
+  return album;
 }
 
-function sanitizeRadioShow(value: unknown): RadioShowSummary | undefined {
-  const series = isRecord(value) && isRecord(value.series) &&
-    Number.isSafeInteger(value.series.id) &&
-    Number(value.series.id) > 0 &&
-    isText(value.series.title) &&
-    isText(value.series.slug)
+function sanitizeRadioShow(
+  value: OwnDataValue,
+): RadioShowSummary | undefined {
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return undefined;
+  const id = record.id;
+  const subtitle = record.subtitle;
+  const description = record.description;
+  const publishedAt = record.publishedAt;
+  const seriesRecord = projectOwnDataRecord(record.series);
+  const seriesId = seriesRecord?.id;
+  const seriesTitle = seriesRecord?.title;
+  const seriesSlug = seriesRecord?.slug;
+  const series = isCount(seriesId) &&
+      seriesId > 0 &&
+      isText(seriesTitle) &&
+      isText(seriesSlug)
     ? {
-        id: Number(value.series.id),
-        title: value.series.title,
-        slug: value.series.slug,
+        id: seriesId,
+        title: seriesTitle,
+        slug: seriesSlug,
       }
     : undefined;
   if (
-    !isRecord(value) ||
-    !Number.isSafeInteger(value.id) ||
-    Number(value.id) <= 0 ||
-    !isText(value.subtitle) ||
-    !isText(value.description, false) ||
-    !isText(value.publishedAt, false)
+    !isCount(id) ||
+    id <= 0 ||
+    !isText(subtitle) ||
+    !isText(description, false) ||
+    !isText(publishedAt, false)
   ) {
     return undefined;
   }
-  return {
-    id: Number(value.id),
-    subtitle: value.subtitle,
-    description: value.description,
-    publishedAt: value.publishedAt,
-    ...(series ? { series } : {}),
+  const show: RadioShowSummary = {
+    id,
+    subtitle,
+    description,
+    publishedAt,
   };
+  if (series) show.series = series;
+  return show;
 }
 
-function uniqueText(values: unknown, maximum: number): string[] | undefined {
-  if (!Array.isArray(values) || values.length > maximum || !values.every((id) => isText(id))) {
-    return undefined;
-  }
-  return [...new Set(values)];
-}
-
-function uniqueNumbers(values: unknown, maximum: number): number[] | undefined {
-  if (
-    !Array.isArray(values) ||
-    values.length > maximum ||
-    !values.every((id) => Number.isSafeInteger(id) && Number(id) > 0)
-  ) {
-    return undefined;
-  }
-  return [...new Set(values.map(Number))];
-}
-
-function uniqueById<T extends { id: string }>(items: T[]): T[] {
+function uniqueText(
+  values: OwnDataValue,
+  maximum: number,
+): string[] | undefined {
+  const copied = copyOwnDataArray(values, maximum);
+  if (copied === undefined) return undefined;
+  const unique: string[] = [];
   const seen = new Set<string>();
-  return items.filter((item) => {
-    if (seen.has(item.id)) return false;
-    seen.add(item.id);
-    return true;
-  });
+  for (const id of copied) {
+    if (!isText(id)) return undefined;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    unique.push(id);
+  }
+  return unique;
 }
 
-function uniqueRadioShows(items: RadioShowSummary[]): RadioShowSummary[] {
+function uniqueNumbers(
+  values: OwnDataValue,
+  maximum: number,
+): number[] | undefined {
+  const copied = copyOwnDataArray(values, maximum);
+  if (copied === undefined) return undefined;
+  const unique: number[] = [];
   const seen = new Set<number>();
-  return items.filter((item) => {
-    if (seen.has(item.id)) return false;
-    seen.add(item.id);
-    return true;
-  });
+  for (const id of copied) {
+    if (!isCount(id) || id <= 0) return undefined;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    unique.push(id);
+  }
+  return unique;
+}
+
+function sanitizeFavoriteAlbums(
+  values: readonly OwnDataValue[],
+  wantedIds: ReadonlySet<string>,
+): Album[] | undefined {
+  const albums: Album[] = [];
+  const seen = new Set<string>();
+  for (const entry of values) {
+    const album = sanitizeAlbum(entry);
+    if (!album) return undefined;
+    if (!wantedIds.has(album.id) || seen.has(album.id)) continue;
+    seen.add(album.id);
+    albums.push(album);
+  }
+  return albums;
+}
+
+function sanitizeFavoriteTracks(
+  values: readonly OwnDataValue[],
+  wantedIds: ReadonlySet<string>,
+): Track[] | undefined {
+  const tracks: Track[] = [];
+  const seen = new Set<string>();
+  for (const entry of values) {
+    const track = sanitizeTrack(entry);
+    if (!track) return undefined;
+    if (!wantedIds.has(track.id) || seen.has(track.id)) continue;
+    seen.add(track.id);
+    tracks.push(track);
+  }
+  return tracks;
+}
+
+function sanitizeFavoriteRadioShows(
+  values: readonly OwnDataValue[],
+  wantedIds: ReadonlySet<number>,
+): RadioShowSummary[] | undefined {
+  const radioShows: RadioShowSummary[] = [];
+  const seen = new Set<number>();
+  for (const entry of values) {
+    const show = sanitizeRadioShow(entry);
+    if (!show) return undefined;
+    if (!wantedIds.has(show.id) || seen.has(show.id)) continue;
+    seen.add(show.id);
+    radioShows.push(show);
+  }
+  return radioShows;
 }
 
 function sameAlbumMetadata(left: Album, right: Album): boolean {
@@ -303,26 +491,54 @@ function sameAlbumMetadata(left: Album, right: Album): boolean {
   );
 }
 
+function sameFavoriteTrack(left: Track, right: Track): boolean {
+  return (
+    left.id === right.id &&
+    left.title === right.title &&
+    left.artist === right.artist &&
+    left.album === right.album &&
+    left.albumId === right.albumId &&
+    left.duration === right.duration &&
+    left.track === right.track &&
+    left.disc === right.disc &&
+    left.albumArtist === right.albumArtist &&
+    left.musicBrainzId === right.musicBrainzId &&
+    left.coverArt === right.coverArt &&
+    left.starredAt === right.starredAt &&
+    left.artworkUrl === right.artworkUrl &&
+    left.streamUrl === right.streamUrl &&
+    left.radioChapters === right.radioChapters &&
+    left.discoverRelease === right.discoverRelease &&
+    left.dailySource === right.dailySource &&
+    left.palette[0] === right.palette[0] &&
+    left.palette[1] === right.palette[1]
+  );
+}
+
 function preserveAlbumDates(candidate: Album, existing: Album): Album {
-  return {
-    ...candidate,
-    ...(candidate.addedAt === undefined && existing.addedAt !== undefined
-      ? { addedAt: existing.addedAt }
-      : {}),
-    ...(candidate.starredAt === undefined && existing.starredAt !== undefined
-      ? { starredAt: existing.starredAt }
-      : {}),
-    ...(candidate.playedAt === undefined && existing.playedAt !== undefined
-      ? { playedAt: existing.playedAt }
-      : {}),
-    ...(candidate.originalReleaseDate === undefined &&
-        existing.originalReleaseDate !== undefined
-      ? { originalReleaseDate: existing.originalReleaseDate }
-      : {}),
-    ...(candidate.releaseDate === undefined && existing.releaseDate !== undefined
-      ? { releaseDate: existing.releaseDate }
-      : {}),
-  };
+  const preserved = { ...candidate };
+  if (preserved.addedAt === undefined && existing.addedAt !== undefined) {
+    preserved.addedAt = existing.addedAt;
+  }
+  if (preserved.starredAt === undefined && existing.starredAt !== undefined) {
+    preserved.starredAt = existing.starredAt;
+  }
+  if (preserved.playedAt === undefined && existing.playedAt !== undefined) {
+    preserved.playedAt = existing.playedAt;
+  }
+  if (
+    preserved.originalReleaseDate === undefined &&
+    existing.originalReleaseDate !== undefined
+  ) {
+    preserved.originalReleaseDate = existing.originalReleaseDate;
+  }
+  if (
+    preserved.releaseDate === undefined &&
+    existing.releaseDate !== undefined
+  ) {
+    preserved.releaseDate = existing.releaseDate;
+  }
+  return preserved;
 }
 
 export function emptyLocalFavorites(): LocalFavoriteCollection {
@@ -336,63 +552,60 @@ export function emptyLocalFavorites(): LocalFavoriteCollection {
   };
 }
 
-export function sanitizeLocalFavorites(value: unknown): LocalFavoriteCollection | undefined {
-  if (!isRecord(value)) return undefined;
-  const albumIds = uniqueText(value.albumIds, MAX_FAVORITE_ALBUMS);
-  const songIds = uniqueText(value.songIds, MAX_FAVORITE_TRACKS);
+export function sanitizeLocalFavorites(
+  value: OwnDataValue,
+): LocalFavoriteCollection | undefined {
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return undefined;
+  const albumIds = uniqueText(record.albumIds, MAX_FAVORITE_ALBUMS);
+  const songIds = uniqueText(record.songIds, MAX_FAVORITE_TRACKS);
   const radioShowIds = uniqueNumbers(
-    isAbsent(value.radioShowIds) ? [] : value.radioShowIds,
+    isAbsent(record.radioShowIds) ? [] : record.radioShowIds,
     MAX_FAVORITE_RADIO_SHOWS,
   );
-  const rawRadioShows = isAbsent(value.radioShows) ? [] : value.radioShows;
+  const rawRadioShows = isAbsent(record.radioShows) ? [] : record.radioShows;
+  const albumsValue = copyOwnDataArray(record.albums, MAX_FAVORITE_ALBUMS);
+  const tracksValue = copyOwnDataArray(record.tracks, MAX_FAVORITE_TRACKS);
+  const radioShowValues = copyOwnDataArray(
+    rawRadioShows,
+    MAX_FAVORITE_RADIO_SHOWS,
+  );
   if (
     !albumIds ||
     !songIds ||
     !radioShowIds ||
-    !Array.isArray(value.albums) ||
-    value.albums.length > MAX_FAVORITE_ALBUMS ||
-    !Array.isArray(value.tracks) ||
-    value.tracks.length > MAX_FAVORITE_TRACKS ||
-    !Array.isArray(rawRadioShows) ||
-    rawRadioShows.length > MAX_FAVORITE_RADIO_SHOWS
+    albumsValue === undefined ||
+    tracksValue === undefined ||
+    radioShowValues === undefined
   ) {
     return undefined;
   }
   const wantedAlbumIds = new Set(albumIds);
   const wantedSongIds = new Set(songIds);
   const wantedRadioShowIds = new Set(radioShowIds);
-  const albums = value.albums.map(sanitizeAlbum);
-  const tracks = value.tracks.map(sanitizeTrack);
-  const radioShows = rawRadioShows.map(sanitizeRadioShow);
-  if (
-    albums.some((item) => !item) ||
-    tracks.some((item) => !item) ||
-    radioShows.some((item) => !item)
-  ) {
-    return undefined;
-  }
+  const albums = sanitizeFavoriteAlbums(albumsValue, wantedAlbumIds);
+  const tracks = sanitizeFavoriteTracks(tracksValue, wantedSongIds);
+  const radioShows = sanitizeFavoriteRadioShows(
+    radioShowValues,
+    wantedRadioShowIds,
+  );
+  if (!albums || !tracks || !radioShows) return undefined;
   return {
     albumIds,
     songIds,
     radioShowIds,
-    albums: uniqueById(albums as Album[]).filter((album) => wantedAlbumIds.has(album.id)),
-    tracks: uniqueById(tracks as Track[]).filter((track) => wantedSongIds.has(track.id)),
-    radioShows: uniqueRadioShows(radioShows as RadioShowSummary[])
-      .filter((show) => wantedRadioShowIds.has(show.id)),
+    albums,
+    tracks,
+    radioShows,
   };
 }
 
 export function readLocalFavorites(): LocalFavoriteCollection {
-  if (typeof window === "undefined") return emptyLocalFavorites();
+  if (!("window" in globalThis)) return emptyLocalFavorites();
   try {
     const serialized = window.localStorage.getItem(LOCAL_FAVORITES_KEY);
     if (!serialized) return emptyLocalFavorites();
-    if (serialized.length > MAX_LOCAL_FAVORITES_BYTES) {
-      window.localStorage.removeItem(LOCAL_FAVORITES_KEY);
-      return emptyLocalFavorites();
-    }
-    const value: unknown = JSON.parse(serialized);
-    const favorites = parseLocalFavoritesSnapshot(value);
+    const favorites = parseLocalFavoritesSerialized(serialized);
     if (!favorites) {
       window.localStorage.removeItem(LOCAL_FAVORITES_KEY);
       return emptyLocalFavorites();
@@ -410,17 +623,21 @@ export function readLocalFavorites(): LocalFavoriteCollection {
 }
 
 export function parseLocalFavoritesSnapshot(
-  value: unknown,
+  value: OwnDataValue,
 ): LocalFavoriteCollection | undefined {
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return undefined;
+  const version = record.version;
   if (
-    !isRecord(value) ||
-    ![1, 2, LOCAL_FAVORITES_VERSION].includes(Number(value.version))
+    !isNumberValue(version) ||
+    !Number.isSafeInteger(version) ||
+    ![1, 2, LOCAL_FAVORITES_VERSION].includes(version)
   ) {
     return undefined;
   }
-  const sanitized = sanitizeLocalFavorites(value);
+  const sanitized = sanitizeLocalFavorites(record);
   if (!sanitized) return undefined;
-  if (value.version === LOCAL_FAVORITES_VERSION) {
+  if (version === LOCAL_FAVORITES_VERSION) {
     return localTrackStarIndexAndRadio(sanitized);
   }
   return {
@@ -459,15 +676,11 @@ export function writeLocalFavorites(
 export function updateLocalFavorites(
   current: LocalFavoriteCollection,
   input: FavoriteInput,
-  candidate?: Album | Track,
+  candidate?: OwnDataValue,
 ): LocalFavoriteCollection {
   if (input.kind === "song") {
-    if (
-      input.favorite &&
-      !current.songIds.includes(input.id) &&
-      current.songIds.length >= MAX_FAVORITE_TRACKS
-    ) {
-      throw new Error(`Coda can save at most ${MAX_FAVORITE_TRACKS.toLocaleString()} favorite tracks.`);
+    if (input.favorite && !localTrackStarIndexCanAccept(current, input.id)) {
+      throw new Error(localTrackStarBoundMessage());
     }
     const songIds = current.songIds.filter((id) => id !== input.id);
     const tracks = current.tracks.filter((track) => track.id !== input.id);
@@ -504,32 +717,70 @@ export function reconcileLocalTrackStarIndex(
   confirmedUnstarredIds: readonly string[] = [],
 ): LocalFavoriteCollection {
   const unstarredIds = new Set(confirmedUnstarredIds);
-  const songIds = current.songIds.filter((id) => !unstarredIds.has(id));
-  const tracks = current.tracks.filter((track) => !unstarredIds.has(track.id));
-  let next: LocalFavoriteCollection =
-    songIds.length === current.songIds.length &&
-      tracks.length === current.tracks.length
-      ? current
-      : { ...current, songIds, tracks };
+  const remainingSongIds: string[] = [];
+  for (const id of current.songIds) {
+    if (!unstarredIds.has(id)) remainingSongIds.push(id);
+  }
+  const remainingTracks: Track[] = [];
+  const tracksById = new Map<string, Track>();
+  for (const track of current.tracks) {
+    if (unstarredIds.has(track.id)) continue;
+    remainingTracks.push(track);
+    tracksById.set(track.id, track);
+  }
+  const indexedIds = new Set(remainingSongIds);
+  const updatedIds: string[] = [];
+  const updatedTracks: Track[] = [];
+  const updatedIdSet = new Set<string>();
+  let changed =
+    remainingSongIds.length !== current.songIds.length ||
+    remainingTracks.length !== current.tracks.length;
+
   for (const candidate of confirmedStarred) {
     if (candidate.starredAt === undefined) continue;
     const track = sanitizeTrack(candidate);
     if (!track) continue;
-    const existing = next.tracks.find((item) => item.id === track.id);
+    const existing = tracksById.get(track.id);
     if (
-      next.songIds.includes(track.id) &&
+      indexedIds.has(track.id) &&
       existing !== undefined &&
-      JSON.stringify(existing) === JSON.stringify(track)
+      sameFavoriteTrack(existing, track)
     ) {
       continue;
     }
-    next = updateLocalFavorites(
-      next,
-      { id: track.id, kind: "song", favorite: true, albumId: track.albumId },
-      track,
-    );
+    if (!indexedIds.has(track.id) && indexedIds.size >= MAX_FAVORITE_TRACKS) {
+      throw new Error(localTrackStarBoundMessage());
+    }
+    changed = true;
+    if (updatedIdSet.has(track.id)) {
+      const updatedIndex = updatedIds.indexOf(track.id);
+      if (updatedIndex >= 0) {
+        updatedIds.splice(updatedIndex, 1);
+        updatedTracks.splice(updatedIndex, 1);
+      }
+    }
+    updatedIds.push(track.id);
+    updatedTracks.push(track);
+    updatedIdSet.add(track.id);
+    indexedIds.add(track.id);
+    tracksById.set(track.id, track);
   }
-  return next;
+
+  if (!changed) return current;
+
+  updatedIds.reverse();
+  updatedTracks.reverse();
+  const songIds = updatedIds.length === 0
+    ? remainingSongIds
+    : updatedIds.concat(
+      remainingSongIds.filter((id) => !updatedIdSet.has(id)),
+    );
+  const tracks = updatedTracks.length === 0
+    ? remainingTracks
+    : updatedTracks.concat(
+      remainingTracks.filter((track) => !updatedIdSet.has(track.id)),
+    );
+  return { ...current, songIds, tracks };
 }
 
 export function updateLocalRadioFavorite(
@@ -560,38 +811,56 @@ export function updateLocalRadioFavorite(
 
 export function repairLocalFavoriteMetadata(
   current: LocalFavoriteCollection,
-  albumCandidates: readonly Album[],
-  trackCandidates: readonly Track[],
+  albumCandidates: readonly OwnDataValue[],
+  trackCandidates: readonly OwnDataValue[],
 ): LocalFavoriteCollection {
   const existingAlbums = new Map(current.albums.map((album) => [album.id, album]));
   const existingTrackIds = new Set(current.tracks.map((track) => track.id));
   const wantedAlbumIds = new Set(current.albumIds);
   const wantedTrackIds = new Set(current.songIds);
-  const repairedAlbums = albumCandidates
-    .filter((album) => wantedAlbumIds.has(album.id))
-    .map(sanitizeAlbum)
-    .filter((album): album is Album => Boolean(album))
-    .map((album) => {
-      const existing = existingAlbums.get(album.id);
-      return existing ? preserveAlbumDates(album, existing) : album;
-    })
-    .filter((album) => {
-      const existing = existingAlbums.get(album.id);
-      return !existing || !sameAlbumMetadata(existing, album);
-    });
-  const repairedTracks = trackCandidates
-    .filter((track) => wantedTrackIds.has(track.id) && !existingTrackIds.has(track.id))
-    .map(sanitizeTrack)
-    .filter((track): track is Track => Boolean(track));
+  const repairedAlbums: Album[] = [];
+  for (const candidate of albumCandidates) {
+    const album = sanitizeAlbum(candidate);
+    if (!album || !wantedAlbumIds.has(album.id)) continue;
+    const existing = existingAlbums.get(album.id);
+    const repaired = existing ? preserveAlbumDates(album, existing) : album;
+    if (!existing || !sameAlbumMetadata(existing, repaired)) {
+      repairedAlbums.push(repaired);
+    }
+  }
+  const repairedTracks: Track[] = [];
+  for (const candidate of trackCandidates) {
+    const track = sanitizeTrack(candidate);
+    if (
+      track &&
+      wantedTrackIds.has(track.id) &&
+      !existingTrackIds.has(track.id)
+    ) {
+      repairedTracks.push(track);
+    }
+  }
 
   if (!repairedAlbums.length && !repairedTracks.length) return current;
   const repairedAlbumMap = new Map(repairedAlbums.map((album) => [album.id, album]));
+  const albums = current.albums.map(
+    (album) => repairedAlbumMap.get(album.id) ?? album,
+  );
+  const albumIds = new Set(albums.map((album) => album.id));
+  for (const album of repairedAlbums) {
+    if (albumIds.has(album.id)) continue;
+    albumIds.add(album.id);
+    albums.push(album);
+  }
+  const tracks = [...current.tracks];
+  const trackIds = new Set(tracks.map((track) => track.id));
+  for (const track of repairedTracks) {
+    if (trackIds.has(track.id)) continue;
+    trackIds.add(track.id);
+    tracks.push(track);
+  }
   return {
     ...current,
-    albums: uniqueById([
-      ...current.albums.map((album) => repairedAlbumMap.get(album.id) ?? album),
-      ...repairedAlbums,
-    ]),
-    tracks: uniqueById([...current.tracks, ...repairedTracks]),
+    albums,
+    tracks,
   };
 }

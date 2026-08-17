@@ -33,6 +33,7 @@ import {
   type MiniPlayerSnapshot,
   type MiniPlayerTrack,
 } from "./miniPlayer";
+import type { OwnDataValue } from "./ownData";
 
 const EMPTY_SNAPSHOT: MiniPlayerSnapshot = {
   playing: false,
@@ -42,6 +43,25 @@ const EMPTY_SNAPSHOT: MiniPlayerSnapshot = {
   canPrevious: false,
   canNext: false,
 };
+
+type MiniPlayerWindowStateBridge = {
+  listenForSnapshot: (
+    handler: (payload: OwnDataValue) => void,
+  ) => Promise<() => void>;
+  requestSnapshot: () => Promise<void>;
+};
+
+function nativeStateBridge(): Promise<MiniPlayerWindowStateBridge> {
+  return import("@tauri-apps/api/event").then(({ emitTo, listen }) => ({
+    listenForSnapshot: (handler: (payload: OwnDataValue) => void) =>
+      listen<OwnDataValue>(
+        MINI_PLAYER_STATE_EVENT,
+        ({ payload }) => handler(payload),
+      ),
+    requestSnapshot: () =>
+      emitTo("main", MINI_PLAYER_REQUEST_STATE_EVENT),
+  }));
+}
 
 function formatTime(value: number): string {
   if (!Number.isFinite(value) || value < 0) return "0:00";
@@ -65,6 +85,11 @@ type MiniIconButtonProps = Omit<
   children: ReactNode;
   label: string;
   tooltip?: string;
+};
+
+type MiniArtworkStyle = CSSProperties & {
+  "--mini-cover-accent": string;
+  "--mini-cover-base": string;
 };
 
 function MiniIconButton({
@@ -102,15 +127,14 @@ function MiniArtwork({ track }: { track: MiniPlayerTrack }) {
   const artworkAvailable = Boolean(
     track.artworkUrl && failedUrl !== track.artworkUrl,
   );
+  const artworkStyle: MiniArtworkStyle = {
+    "--mini-cover-accent": track.palette[0],
+    "--mini-cover-base": track.palette[1],
+  };
   return (
     <div
       className="relative grid size-16 shrink-0 place-items-center overflow-hidden rounded-lg shadow-[0_7px_18px_rgba(0,0,0,0.28)] [background:linear-gradient(145deg,var(--mini-cover-accent),var(--mini-cover-base))]"
-      style={
-        {
-          "--mini-cover-accent": track.palette[0],
-          "--mini-cover-base": track.palette[1],
-        } as CSSProperties
-      }
+      style={artworkStyle}
     >
       {artworkAvailable ? (
         <img
@@ -135,7 +159,7 @@ function MiniArtwork({ track }: { track: MiniPlayerTrack }) {
   );
 }
 
-export function MiniPlayerView({
+function MiniPlayerView({
   snapshot,
   onCommand,
   onDismiss,
@@ -325,21 +349,18 @@ export default function MiniPlayerWindow() {
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let disposed = false;
-    void import("@tauri-apps/api/event")
-      .then(async ({ emitTo, listen }) => {
-        const dispose = await listen<unknown>(
-          MINI_PLAYER_STATE_EVENT,
-          ({ payload }) => {
-            const nextSnapshot = parseMiniPlayerSnapshot(payload);
-            if (nextSnapshot) setSnapshot(nextSnapshot);
-          },
-        );
+    void nativeStateBridge()
+      .then(async (bridge) => {
+        const dispose = await bridge.listenForSnapshot((payload) => {
+          const nextSnapshot = parseMiniPlayerSnapshot(payload);
+          if (nextSnapshot) setSnapshot(nextSnapshot);
+        });
         if (disposed) {
           dispose();
           return;
         }
         unlisten = dispose;
-        await emitTo("main", MINI_PLAYER_REQUEST_STATE_EVENT);
+        await bridge.requestSnapshot();
       })
       .catch(() => {
         // The native bridge is optional; keep the empty state usable.

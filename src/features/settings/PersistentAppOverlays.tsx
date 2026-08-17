@@ -11,7 +11,7 @@ import { ConnectionDialog } from "./ConnectionDialog";
 import type { PersistentOverlaysController } from "./usePersistentOverlaysController";
 
 const AddToPlaylistDialog = lazy(() =>
-  import("@/SavedLibraryView").then((module) => ({
+  import("@/features/saved-library/AddToPlaylistDialog").then((module) => ({
     default: module.AddToPlaylistDialog,
   })),
 );

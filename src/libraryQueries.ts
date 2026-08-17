@@ -1,7 +1,4 @@
-import {
-  queryOptions,
-  type QueryClient,
-} from "@tanstack/react-query";
+import { queryOptions, type QueryClient } from "@tanstack/react-query";
 import type { SetStateAction } from "react";
 import {
   fetchAlbum,
@@ -17,10 +14,20 @@ export const LIBRARY_AUTO_REVALIDATE_INTERVAL_MS = 15 * 60 * 1_000;
 const ALBUM_QUERY_STALE_TIME_MS = 10 * 60 * 1_000;
 const ALBUM_QUERY_GC_TIME_MS = 30 * 60 * 1_000;
 
+export type LibraryQueryBridge = Readonly<{
+  fetchAlbum: typeof fetchAlbum;
+  loadLibraryCache: typeof loadLibraryCache;
+}>;
+
+const nativeLibraryQueryBridge = Object.freeze({
+  fetchAlbum,
+  loadLibraryCache,
+} satisfies LibraryQueryBridge);
+
 export const libraryStateQueryOptions = queryOptions({
   queryKey: libraryQueryKey,
   queryFn: async (): Promise<Album[]> => [],
-  initialData: [] as Album[],
+  initialData: [],
   enabled: false,
   gcTime: Infinity,
   staleTime: Infinity,
@@ -34,10 +41,13 @@ function albumRefreshQueryKey(albumId: string) {
   return [...albumQueryKey(albumId), "refresh"] as const;
 }
 
-export function albumQueryOptions(album: Album) {
+export function albumQueryOptions(
+  album: Album,
+  bridge: LibraryQueryBridge = nativeLibraryQueryBridge,
+) {
   return queryOptions({
     queryKey: albumQueryKey(album.id),
-    queryFn: (): Promise<Track[]> => fetchAlbum(album),
+    queryFn: (): Promise<Track[]> => bridge.fetchAlbum(album),
     gcTime: ALBUM_QUERY_GC_TIME_MS,
     staleTime: ALBUM_QUERY_STALE_TIME_MS,
   });
@@ -68,12 +78,13 @@ function seedLocalAlbumTracks(queryClient: QueryClient, album: Album): boolean {
 export function ensureAlbumQueryData(
   queryClient: QueryClient,
   album: Album,
+  bridge: LibraryQueryBridge = nativeLibraryQueryBridge,
 ): Promise<Track[]> {
   if (seedLocalAlbumTracks(queryClient, album)) {
     return Promise.resolve(album.tracks!);
   }
   return queryClient.ensureQueryData({
-    ...albumQueryOptions(album),
+    ...albumQueryOptions(album, bridge),
     revalidateIfStale: true,
   });
 }
@@ -81,9 +92,10 @@ export function ensureAlbumQueryData(
 export async function prefetchAlbumQueryData(
   queryClient: QueryClient,
   album: Album,
+  bridge: LibraryQueryBridge = nativeLibraryQueryBridge,
 ): Promise<void> {
   if (seedLocalAlbumTracks(queryClient, album)) return;
-  await queryClient.prefetchQuery(albumQueryOptions(album));
+  await queryClient.prefetchQuery(albumQueryOptions(album, bridge));
 }
 
 async function invalidateAlbumQuery(
@@ -100,21 +112,23 @@ async function invalidateAlbumQuery(
 export async function revalidateAlbumQueryData(
   queryClient: QueryClient,
   album: Album,
+  bridge: LibraryQueryBridge = nativeLibraryQueryBridge,
 ): Promise<Track[]> {
   seedLocalAlbumTracks(queryClient, album);
   await invalidateAlbumQuery(queryClient, album);
-  return queryClient.fetchQuery(albumQueryOptions(album));
+  return queryClient.fetchQuery(albumQueryOptions(album, bridge));
 }
 
 export async function refreshAlbumQueryData(
   queryClient: QueryClient,
   album: Album,
+  bridge: LibraryQueryBridge = nativeLibraryQueryBridge,
 ): Promise<Track[]> {
   const refreshKey = albumRefreshQueryKey(album.id);
   try {
     const tracks = await queryClient.fetchQuery({
       queryKey: refreshKey,
-      queryFn: () => fetchAlbum(album, { forceRefresh: true }),
+      queryFn: () => bridge.fetchAlbum(album, { forceRefresh: true }),
       gcTime: 0,
       staleTime: Infinity,
     });
@@ -135,7 +149,7 @@ export function updateLibraryData(
 ): Album[] {
   let next: Album[] = [];
   queryClient.setQueryData<Album[]>(libraryQueryKey, (current = []) => {
-    const updated = typeof update === "function" ? update(current) : update;
+    const updated = update instanceof Function ? update(current) : update;
     next = toLibrarySummaries(updated);
     return next;
   });
@@ -151,8 +165,9 @@ export function toLibrarySummaries(albums: readonly Album[]): Album[] {
 }
 
 export async function hydrateLibraryQuery(
+  bridge: LibraryQueryBridge = nativeLibraryQueryBridge,
 ): Promise<LibraryCacheSnapshot | undefined> {
-  return loadLibraryCache();
+  return bridge.loadLibraryCache();
 }
 
 export function shouldAutoRevalidateLibrary(
@@ -165,10 +180,10 @@ export function shouldAutoRevalidateLibrary(
 }
 
 export function mergeLibraryProgress(
-  current: readonly Album[],
+  current: Album[],
   progress: LibrarySyncProgress,
 ): Album[] {
-  if (!progress.albums.length) return current as Album[];
+  if (!progress.albums.length) return current;
   const incoming = new Map(progress.albums.map((album) => [album.id, album]));
   const merged = current.map((album) => incoming.get(album.id) ?? album);
   const known = new Set(current.map((album) => album.id));

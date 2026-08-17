@@ -2,12 +2,10 @@ import {
   Airplay,
   ArrowLeft,
   Clock3,
-  Dices,
   ExternalLink,
   Heart,
   ListMusic,
   ListPlus,
-  Play,
   Repeat,
   Repeat1,
   SkipBack,
@@ -15,17 +13,15 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
-import { AnimatePresence, usePresence } from "motion/react";
-import * as m from "motion/react-m";
 import { Link } from "@tanstack/react-router";
 import {
   memo,
+  startTransition,
   type CSSProperties,
   type ReactNode,
   type RefObject,
   useCallback,
   useEffect,
-  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -41,27 +37,19 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useMotionExitWatchdog } from "@/components/ui/useMotionExitWatchdog";
 import {
-  LibraryAlbumLink,
-  LibraryArtistLink,
   TrackAlbumLink,
   TrackArtistLink,
 } from "@/features/player/TrackRouteLinks";
+import { useActivateDetailDestination } from "@/features/navigation/useActivateDetailDestination";
 import { cn } from "@/lib/utils";
 import { countLabel } from "@/countLabel";
 import { formatTime, openBandcampUrl } from "@/lib";
-import { useCodaMotion } from "@/motion";
 import { normalizedReleaseTitle } from "@/playerState";
-import {
-  RadioChapterArtwork,
-  RadioChapterCopy,
-  type RadioChapterLocalLinks,
-} from "@/RadioChapterMetadata";
+import type { RadioChapterLocalLinks } from "@/RadioChapterMetadata";
 import {
   nextRadioChapterTimeInTimeline,
   previousRadioChapterTimeInTimeline,
-  radioAiringIndexesAt,
   radioShowIdFromTrackId,
 } from "@/radioPlayback";
 import { BANDCAMP_RADIO_PROVIDER } from "@/radioIdentity";
@@ -76,6 +64,12 @@ import {
   stringifyRadioShowIdParam,
 } from "@/routing/routeContracts";
 import type { Album, RadioChapter, RepeatMode, Track } from "@/types";
+
+import {
+  NowPlayingRadioSummary,
+  NowPlayingRadioTimeline,
+} from "./NowPlayingRadioTimeline";
+import { NowPlayingUpNext } from "./NowPlayingUpNext";
 
 export type NowPlayingViewProps = {
   track: Track;
@@ -124,117 +118,13 @@ export type NowPlayingViewProps = {
   favorite?: boolean;
   onToggleFavorite?: () => void;
   onAddToPlaylist?: () => void;
+  openExternal?: (url: string) => Promise<void>;
 };
 
-function PresencePanel({
-  children,
-  className,
-}: {
-  children: ReactNode;
-  className: string;
-}) {
-  const codaMotion = useCodaMotion();
-  const [isPresent, safeToRemove] = usePresence();
-  const completeExit = useMotionExitWatchdog({
-    open: isPresent,
-    onExitComplete: () => safeToRemove?.(),
-  });
-  return (
-    <m.div
-      aria-hidden={!isPresent || undefined}
-      className={className}
-      inert={!isPresent || undefined}
-      initial={{
-        opacity: codaMotion.profile.component.opacityFrom,
-        transform: `translateY(${codaMotion.profile.component.translationPx}px) scale(${codaMotion.profile.component.scaleFrom})`,
-      }}
-      animate={{
-        opacity: 1,
-        transform: "translateY(0px) scale(1)",
-        transition: codaMotion.componentEnter,
-      }}
-      exit={{
-        opacity: codaMotion.profile.component.opacityFrom,
-        transform: `translateY(${codaMotion.profile.component.translationPx * 0.6}px) scale(${codaMotion.profile.component.scaleFrom})`,
-        transition: codaMotion.componentExit,
-      }}
-      onAnimationComplete={completeExit}
-      style={{ pointerEvents: isPresent ? "auto" : "none" }}
-    >
-      {children}
-    </m.div>
-  );
-}
-
-const UPCOMING_PREVIEW_LIMIT = 4;
-
-function useCurrentRadioIndex(
-  playbackClock: PlaybackClock,
-  timeline: readonly RadioChapter[],
-): number {
-  const getCurrentIndex = useCallback(
-    () =>
-      radioAiringIndexesAt(timeline, playbackClock.getSnapshot()).currentIndex,
-    [playbackClock, timeline],
-  );
-  return useSyncExternalStore(
-    playbackClock.subscribe,
-    getCurrentIndex,
-    getCurrentIndex,
-  );
-}
-
-const NowPlayingRadioSummary = memo(function NowPlayingRadioSummary({
-  playbackClock,
-  timeline,
-  onOpen,
-  getLocalLinks,
-}: {
-  playbackClock: PlaybackClock;
-  timeline: readonly RadioChapter[];
-  onOpen: (url: string) => void;
-  getLocalLinks?: (chapter: RadioChapter) => RadioChapterLocalLinks;
-}) {
-  const currentIndex = useCurrentRadioIndex(playbackClock, timeline);
-  const current = currentIndex >= 0 ? timeline[currentIndex] : undefined;
-  const next =
-    currentIndex + 1 < timeline.length ? timeline[currentIndex + 1] : undefined;
-
-  if (current) {
-    return (
-      <section
-        className="my-4 grid max-w-lg gap-1 rounded-lg border border-primary/25 bg-primary/10 p-4"
-        aria-label={`Currently airing on ${BANDCAMP_RADIO_PROVIDER}`}
-        aria-live="polite"
-        aria-atomic="true"
-      >
-        <Badge
-          variant="artwork"
-          className="mb-0.5 h-auto border-0 bg-transparent p-0 text-xs tracking-widest text-[#d47761] uppercase"
-        >
-          On air now
-        </Badge>
-        <RadioChapterCopy
-          chapter={current}
-          className="min-w-0 gap-1 [&>button:first-child]:text-base [&>span:last-child]:text-sm [&>span:last-child]:text-[#a9aaa5] [&>strong:first-child]:text-base"
-          onOpen={onOpen}
-          localLinks={getLocalLinks?.(current)}
-        />
-        {next ? (
-          <small className="mt-2 truncate border-t border-white/7 pt-2 text-xs text-[#777c77]">
-            Up next: {next.title} by {next.artist}
-          </small>
-        ) : null}
-      </section>
-    );
-  }
-
-  return next ? (
-    <p className="mt-4 mb-0 text-sm text-[#989b96]" aria-live="polite">
-      Up next: {next.title} by {next.artist}
-    </p>
-  ) : null;
-});
+type NowPlayingArtworkStyle = CSSProperties & {
+  "--now-playing-accent": string;
+  "--now-playing-base": string;
+};
 
 const NowPlayingPlaybackControls = memo(function NowPlayingPlaybackControls({
   playbackClock,
@@ -410,132 +300,6 @@ const NowPlayingPlaybackControls = memo(function NowPlayingPlaybackControls({
   );
 });
 
-const NowPlayingRadioTimeline = memo(function NowPlayingRadioTimeline({
-  playbackClock,
-  timeline,
-  playing,
-  radioLinkError,
-  onSeek,
-  onOpen,
-  getLocalLinks,
-}: {
-  playbackClock: PlaybackClock;
-  timeline: readonly RadioChapter[];
-  playing: boolean;
-  radioLinkError: string;
-  onSeek: (value: number) => void;
-  onOpen: (url: string) => void;
-  getLocalLinks?: (chapter: RadioChapter) => RadioChapterLocalLinks;
-}) {
-  const currentIndex = useCurrentRadioIndex(playbackClock, timeline);
-  const nextIndex = currentIndex + 1 < timeline.length ? currentIndex + 1 : -1;
-
-  if (!timeline.length) return null;
-
-  return (
-    <section
-      className="now-playing__radio-timeline relative mx-auto mt-10 w-full max-w-5xl max-xl:max-w-xl"
-      aria-labelledby="radio-timeline-heading"
-    >
-      <div className="mb-4 flex items-end justify-between gap-5 px-1">
-        <div>
-          <Badge
-            variant="artwork"
-            className="mb-1.5 h-auto border-0 bg-transparent p-0 text-xs tracking-widest uppercase"
-          >
-            Broadcast tracklist
-          </Badge>
-          <h2
-            id="radio-timeline-heading"
-            className="m-0 font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-lg/tight font-semibold text-[#deddd7]"
-          >
-            Songs in this show
-          </h2>
-        </div>
-        <span className="text-xs text-coda-subtle-foreground">
-          {countLabel(timeline.length, "chapter")}
-        </span>
-      </div>
-      <ol
-        className="relative m-0 grid max-h-[min(42vh,24rem)] scrollbar-thin [scrollbar-color:#3e4142_transparent] scrollbar-gutter-stable list-none gap-1 overflow-y-auto overscroll-contain rounded-lg bg-[rgba(13,15,17,0.66)] py-1.5 pr-2.5 pl-1.5"
-        aria-label="Radio chapter timeline"
-      >
-        {timeline.map((chapter, index) => {
-          const isCurrent = index === currentIndex;
-          const isNext = index === nextIndex;
-          return (
-            <li
-              className={cn(
-                "relative grid min-h-16 grid-cols-[6.5rem_minmax(0,1fr)_5rem] items-center gap-3.5 rounded-lg px-3.5 py-2 transition-[background-color,box-shadow] duration-(--duration-coda-fast) [contain-intrinsic-size:4rem] [content-visibility:auto] hover:bg-white/3 motion-reduce:transition-none max-lg:grid-cols-[6rem_minmax(0,1fr)_3rem] max-lg:pr-2",
-                isCurrent &&
-                  "bg-[color-mix(in_srgb,var(--now-playing-accent)_11%,rgba(24,26,28,0.94))] shadow-[0_8px_24px_color-mix(in_srgb,var(--now-playing-accent)_7%,transparent)]",
-                isNext && "bg-white/2",
-              )}
-              key={`${chapter.timecode}-${chapter.artist}-${chapter.title}-${index}`}
-              aria-current={isCurrent ? "true" : undefined}
-            >
-              <Button
-                variant="text"
-                size="compact"
-                className="grid h-auto min-h-9 grid-cols-[2.5rem_1fr] items-center gap-2 rounded-lg py-0 pr-2.5 pl-0 text-[#7c807b] hover:bg-white/4 hover:text-[#dddcd6]"
-                onClick={() => onSeek(chapter.timecode)}
-                aria-label={`Seek to ${chapter.title} at ${formatTime(chapter.timecode)}`}
-                title={`Play from ${formatTime(chapter.timecode)}`}
-              >
-                <RadioChapterArtwork
-                  chapter={chapter}
-                  index={index}
-                  active={isCurrent}
-                />
-                <time className="text-xs tabular-nums">
-                  {formatTime(chapter.timecode)}
-                </time>
-              </Button>
-              <RadioChapterCopy
-                chapter={chapter}
-                className="min-w-0"
-                onOpen={onOpen}
-                localLinks={getLocalLinks?.(chapter)}
-              />
-              {isCurrent ? (
-                <Badge
-                  variant="artwork"
-                  className="justify-self-end border-0 bg-[color-mix(in_srgb,var(--now-playing-accent)_17%,transparent)] px-2 py-1 text-xs tracking-widest text-[color-mix(in_srgb,var(--now-playing-accent)_72%,#f4eee8)] uppercase"
-                >
-                  <i
-                    className={cn(
-                      "inline-flex size-2.5 items-end gap-px [&>i]:h-[9px] [&>i]:w-0.5 [&>i]:origin-bottom [&>i]:animate-[radio-equalizer_850ms_ease-in-out_infinite_alternate] [&>i]:rounded-sm [&>i]:bg-current [&>i]:[transform:scaleY(0.444444)] [&>i]:motion-reduce:animate-none [&>i:nth-child(2)]:[animation-delay:-410ms] [&>i:nth-child(2)]:[transform:scaleY(0.888889)] [&>i:nth-child(3)]:[animation-delay:-210ms] [&>i:nth-child(3)]:[transform:scaleY(0.666667)]",
-                      !playing && "[&>i]:paused",
-                    )}
-                    aria-hidden="true"
-                  >
-                    <i />
-                    <i />
-                    <i />
-                  </i>
-                  On air
-                </Badge>
-              ) : isNext ? (
-                <Badge
-                  variant="secondary"
-                  className="justify-self-end px-2 py-1 text-xs tracking-widest uppercase"
-                >
-                  Up next
-                </Badge>
-              ) : null}
-            </li>
-          );
-        })}
-      </ol>
-      {radioLinkError ? (
-        <p className="mt-2.5 text-xs text-[#d28070]" role="status">
-          {radioLinkError}
-        </p>
-      ) : null}
-    </section>
-  );
-});
-
 function NowPlayingViewComponent({
   track,
   radioTimeline,
@@ -578,18 +342,14 @@ function NowPlayingViewComponent({
   favorite = false,
   onToggleFavorite,
   onAddToPlaylist,
+  openExternal = openBandcampUrl,
 }: NowPlayingViewProps) {
-  const headingRef = useRef<HTMLHeadingElement>(null);
   const [radioLinkError, setRadioLinkError] = useState("");
+  const [supplementalReady, setSupplementalReady] = useState(
+    () =>
+      !document.documentElement.classList.contains("coda-view-transitioning"),
+  );
   const safeDuration = Math.max(0, duration);
-  const upcoming = queue.slice(
-    currentIndex + 1,
-    currentIndex + 1 + UPCOMING_PREVIEW_LIMIT,
-  );
-  const moreUpcoming = Math.max(
-    0,
-    queue.length - currentIndex - 1 - upcoming.length,
-  );
   const radioShowId = radioShowIdFromTrackId(track.id);
   const radioShowRouteId =
     radioShowId === undefined ? undefined : parseRadioShowIdParam(radioShowId);
@@ -606,24 +366,47 @@ function NowPlayingViewComponent({
 
   const openRadioChapter = useCallback((url: string) => {
     setRadioLinkError("");
-    void openBandcampUrl(url).catch((cause) => {
+    void openExternal(url).catch((cause) => {
       setRadioLinkError(String(cause).replace(/^Error:\s*/, ""));
     });
-  }, []);
+  }, [openExternal]);
+  useActivateDetailDestination("now-playing", "now-playing");
   useEffect(() => {
-    headingRef.current?.focus({ preventScroll: true });
-  }, []);
+    if (supplementalReady) return;
+    let frame = 0;
+    const reveal = () => {
+      if (
+        document.documentElement.classList.contains("coda-view-transitioning")
+      ) {
+        return;
+      }
+      observer.disconnect();
+      frame = requestAnimationFrame(() => {
+        startTransition(() => setSupplementalReady(true));
+      });
+    };
+    const observer = new MutationObserver(reveal);
+    observer.observe(document.documentElement, {
+      attributeFilter: ["class"],
+      attributes: true,
+    });
+    reveal();
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [supplementalReady]);
+
+  const artworkStyle: NowPlayingArtworkStyle = {
+    "--now-playing-accent": track.palette[0],
+    "--now-playing-base": track.palette[1],
+  };
 
   return (
     <article
       className="relative isolate min-h-full overflow-hidden bg-[linear-gradient(155deg,color-mix(in_srgb,var(--now-playing-base)_34%,#17191b),#111315_62%)] px-16 pt-6 pb-10 max-xl:px-6 max-lg:px-4 max-lg:pt-5 max-lg:pb-8"
       aria-labelledby="now-playing-heading"
-      style={
-        {
-          "--now-playing-accent": track.palette[0],
-          "--now-playing-base": track.palette[1],
-        } as CSSProperties
-      }
+      style={artworkStyle}
     >
       <div
         className="now-playing__wash pointer-events-none absolute inset-0 -z-1 bg-[radial-gradient(circle_at_20%_26%,color-mix(in_srgb,var(--now-playing-accent)_28%,transparent),transparent_37%),radial-gradient(circle_at_82%_8%,color-mix(in_srgb,var(--now-playing-base)_58%,transparent),transparent_35%)] opacity-80 saturate-75 after:absolute after:inset-0 after:bg-[linear-gradient(to_bottom,rgba(17,19,21,0.08),#111315_90%)] after:content-['']"
@@ -659,7 +442,10 @@ function NowPlayingViewComponent({
         </Badge>
       </header>
 
-      <div className="relative mx-auto grid w-full max-w-5xl grid-cols-[minmax(15rem,24rem)_minmax(17rem,1fr)] items-center gap-16 max-xl:max-w-xl max-xl:grid-cols-1 max-xl:gap-6">
+      <div
+        className="relative mx-auto grid w-full max-w-5xl grid-cols-[minmax(15rem,24rem)_minmax(17rem,1fr)] items-center gap-16 max-xl:max-w-xl max-xl:grid-cols-1 max-xl:gap-6"
+        data-coda-now-playing-detail-surface=""
+      >
         <div
           className="now-playing__artwork aspect-square w-full drop-shadow-[0_32px_44px_rgba(0,0,0,0.42)] **:data-[cover-size=large]:size-full **:data-[cover-size=large]:rounded-xl **:data-[cover-size=large]:border **:data-[cover-size=large]:border-white/10 **:data-[cover-size=large]:shadow-none max-xl:mx-auto max-xl:w-64 max-lg:w-52"
           data-coda-track-id={track.id}
@@ -672,7 +458,6 @@ function NowPlayingViewComponent({
         >
           <h1
             id="now-playing-heading"
-            ref={headingRef}
             className={cn(
               "m-0 max-w-3xl wrap-anywhere font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-6xl/tight font-bold tracking-tighter text-balance text-[#f5f2eb] outline-none max-xl:text-5xl max-lg:text-3xl",
               track.title.length > 32 &&
@@ -926,220 +711,38 @@ function NowPlayingViewComponent({
         </section>
       </div>
 
-      <NowPlayingRadioTimeline
-        playbackClock={playbackClock}
-        timeline={radioTimeline}
-        playing={playing}
-        radioLinkError={radioLinkError}
-        onSeek={onSeek}
-        onOpen={openRadioChapter}
-        getLocalLinks={getRadioChapterLocalLinks}
-      />
+      {supplementalReady ? (
+        <>
+          <NowPlayingRadioTimeline
+            key={`${track.id}:${radioTimeline.length}`}
+            playbackClock={playbackClock}
+            timeline={radioTimeline}
+            playing={playing}
+            radioLinkError={radioLinkError}
+            onSeek={onSeek}
+            onOpen={openRadioChapter}
+            getLocalLinks={getRadioChapterLocalLinks}
+          />
 
-      <section
-        className="now-playing__up-next relative mx-auto mt-16 w-full max-w-5xl border-t border-white/8 pt-5 max-xl:max-w-xl max-lg:mt-8"
-        aria-labelledby="up-next-heading"
-      >
-        <div className="mb-3 flex items-end justify-between gap-5 max-lg:flex-col max-lg:items-start max-lg:gap-2">
-          <div>
-            <Badge
-              variant="artwork"
-              className="mb-1 h-auto border-0 bg-transparent p-0 text-xs tracking-widest uppercase"
-            >
-              {upcoming.length
-                ? "In this session"
-                : hasDeferredTracks
-                  ? "Shuffle loading"
-                  : "Queue complete"}
-            </Badge>
-            <h2
-              id="up-next-heading"
-              className="m-0 text-base/tight font-semibold tracking-tight text-[#dfddd7]"
-            >
-              {upcoming.length
-                ? "Up next"
-                : hasDeferredTracks
-                  ? "Filling your queue"
-                  : "Keep listening"}
-            </h2>
-          </div>
-        </div>
-        <div className="grid [&>*]:col-start-1 [&>*]:row-start-1">
-          <AnimatePresence initial={false}>
-            {upcoming.length ? (
-              <PresencePanel
-                key="upcoming"
-                className="grid grid-cols-2 gap-x-3 gap-y-0.5 max-xl:grid-cols-1"
-              >
-                {upcoming.map((item, index) => {
-                  const queueIndex = currentIndex + index + 1;
-                  return (
-                    <div
-                      className="grid h-auto min-w-0 grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-2.5 rounded-md px-2.5 py-2 text-left hover:bg-white/4"
-                      key={`${item.id}-${queueIndex}`}
-                    >
-                      <span className="text-xs font-normal text-[#686c67] tabular-nums">
-                        {String(queueIndex + 1).padStart(2, "0")}
-                      </span>
-                      <span className="flex min-w-0 flex-col gap-0.5 overflow-hidden">
-                        <Button
-                          aria-label={`Play ${item.title}`}
-                          className="h-auto min-w-0 justify-start overflow-hidden p-0 text-left hover:bg-transparent"
-                          onClick={() => onPlayQueueIndex(queueIndex)}
-                          size="compact"
-                          variant="text"
-                        >
-                          <OverflowMarquee
-                            className="text-xs/snug text-[#d4d3cd]"
-                            text={item.title}
-                          />
-                        </Button>
-                        <small className="flex min-w-0 items-center gap-1 truncate text-xs font-normal text-[#737772]">
-                          <TrackArtistLink
-                            className="min-w-0 truncate hover:text-primary"
-                            onNavigate={onArtist}
-                            onRadioSeries={onRadioSeries}
-                            track={item}
-                          >
-                            {item.artist}
-                          </TrackArtistLink>
-                          <span aria-hidden="true">·</span>
-                          <TrackAlbumLink
-                            className="min-w-0 truncate hover:text-primary"
-                            onNavigate={onAlbum}
-                            track={item}
-                          >
-                            {item.album}
-                          </TrackAlbumLink>
-                        </small>
-                      </span>
-                      <span className="text-xs font-normal text-[#686c67] tabular-nums">
-                        {formatTime(item.duration)}
-                      </span>
-                    </div>
-                  );
-                })}
-              </PresencePanel>
-            ) : hasDeferredTracks ? (
-              <PresencePanel
-                key="deferred"
-                className="flex min-h-20 items-center gap-3 rounded-lg border border-white/7 bg-white/2.5 p-4 text-xs text-[#747873]"
-              >
-                <Spinner aria-hidden="true" className="size-4" />
-                <span>Coda is loading the next part of this shuffle.</span>
-              </PresencePanel>
-            ) : recommendation ? (
-              <PresencePanel
-                key={`recommendation:${recommendation.album.id}`}
-                className="grid min-h-20 grid-cols-[3.5rem_minmax(0,1fr)_auto] items-center gap-3.5 rounded-lg border border-white/7 bg-[radial-gradient(circle_at_0_0,rgba(221,101,73,0.1),transparent_42%),rgba(255,255,255,0.025)] p-3 max-lg:grid-cols-[3rem_minmax(0,1fr)]"
-              >
-                <LibraryAlbumLink
-                  album={recommendation.album}
-                  ariaLabel={`Open ${recommendation.album.title}`}
-                  className="size-14 overflow-hidden rounded-lg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring **:data-[slot=cover]:size-full max-lg:size-12"
-                  onNavigate={onRecommendationAlbum}
-                >
-                  {recommendationArtwork}
-                </LibraryAlbumLink>
-                <div className="flex min-w-0 flex-col overflow-hidden">
-                  <span className="text-xs font-bold tracking-widest text-[#d37e68] uppercase">
-                    Picked from your collection
-                  </span>
-                  <LibraryAlbumLink
-                    album={recommendation.album}
-                    className="mt-1 min-w-0 overflow-hidden text-sm text-[#e2e0da] hover:text-primary"
-                    onNavigate={onRecommendationAlbum}
-                  >
-                    <OverflowMarquee text={recommendation.album.title} />
-                  </LibraryAlbumLink>
-                  <small className="mt-1 truncate text-xs text-coda-subtle-foreground">
-                    <LibraryArtistLink
-                      artist={recommendation.album.artist}
-                      className="font-semibold hover:text-primary"
-                      onNavigate={onArtist}
-                    >
-                      {recommendation.album.artist}
-                    </LibraryArtistLink>
-                    {" · "}
-                    {recommendation.reason}
-                  </small>
-                </div>
-                <div className="flex items-center gap-2 max-lg:col-span-full">
-                  {onQueueRecommendation ? (
-                    <Button
-                      variant="primary"
-                      size="compact"
-                      className="h-8 px-2.5"
-                      onClick={onQueueRecommendation}
-                      disabled={
-                        recommendationLoading || recommendationQueueLoading
-                      }
-                      aria-label={`Add ${recommendation.album.title} to queue`}
-                    >
-                      {recommendationQueueLoading ? (
-                        <Spinner
-                          aria-hidden="true"
-                          className="size-4 text-current motion-reduce:animate-none"
-                        />
-                      ) : (
-                        <ListPlus size={15} />
-                      )}
-                      {recommendationQueueLoading ? "Adding…" : "Add to queue"}
-                    </Button>
-                  ) : null}
-                  <Button
-                    size="compact"
-                    className="h-8 px-2.5"
-                    onClick={onPlayRecommendation}
-                    disabled={
-                      recommendationLoading || recommendationQueueLoading
-                    }
-                    aria-label={`Play something from ${recommendation.album.title}`}
-                  >
-                    {recommendationLoading ? (
-                      <Spinner
-                        aria-hidden="true"
-                        className="size-4 text-current motion-reduce:animate-none"
-                      />
-                    ) : (
-                      <Play size={15} fill="currentColor" />
-                    )}
-                    {recommendationLoading ? "Picking…" : "Play something"}
-                  </Button>
-                  <Button
-                    size="compact"
-                    className="h-8 px-2.5"
-                    onClick={onAnotherRecommendation}
-                    disabled={
-                      recommendationLoading || recommendationQueueLoading
-                    }
-                  >
-                    <Dices size={15} />
-                    Another pick
-                  </Button>
-                </div>
-              </PresencePanel>
-            ) : (
-              <PresencePanel
-                key="empty"
-                className="flex flex-col items-start gap-1 rounded-lg bg-white/2.5 p-4 text-xs text-[#747873]"
-              >
-                <strong className="text-xs text-[#c9c8c2]">
-                  You reached the end.
-                </strong>
-                <span className="text-xs text-[#717570]">
-                  Open the queue or browse your collection to keep listening.
-                </span>
-              </PresencePanel>
-            )}
-          </AnimatePresence>
-        </div>
-        {moreUpcoming ? (
-          <span className="mt-2 block text-right text-xs text-[#747873]">
-            {moreUpcoming} more in the full queue
-          </span>
-        ) : null}
-      </section>
+          <NowPlayingUpNext
+            queue={queue}
+            currentIndex={currentIndex}
+            hasDeferredTracks={hasDeferredTracks}
+            recommendation={recommendation}
+            recommendationArtwork={recommendationArtwork}
+            recommendationLoading={recommendationLoading}
+            recommendationQueueLoading={recommendationQueueLoading}
+            onQueueRecommendation={onQueueRecommendation}
+            onPlayRecommendation={onPlayRecommendation}
+            onAnotherRecommendation={onAnotherRecommendation}
+            onRecommendationAlbum={onRecommendationAlbum}
+            onPlayQueueIndex={onPlayQueueIndex}
+            onArtist={onArtist}
+            onAlbum={onAlbum}
+            onRadioSeries={onRadioSeries}
+          />
+        </>
+      ) : null}
     </article>
   );
 }

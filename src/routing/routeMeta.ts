@@ -39,10 +39,9 @@ export function codaRouteMeta(
   screen: CodaScreen,
   primaryView?: CodaPrimaryView,
 ): Readonly<{ coda: CodaRouteMeta }> {
+  const coda: CodaRouteMeta =
+    primaryView === undefined ? { screen } : { primaryView, screen };
   return Object.freeze({
-    coda: Object.freeze({
-      screen,
-      ...(primaryView === undefined ? {} : { primaryView }),
-    }),
+    coda: Object.freeze(coda),
   });
 }

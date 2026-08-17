@@ -2,13 +2,26 @@
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 
+interface ImageTransformOptions {
+  width?: number;
+}
+
+interface ImageOutputOptions {
+  format: string;
+  quality: number;
+}
+
+interface ImageOutputResult {
+  response(): Response;
+}
+
 interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
   IMAGES: {
     input(stream: ReadableStream): {
-      transform(options: Record<string, unknown>): {
-        output(options: { format: string; quality: number }): Promise<{ response(): Response }>;
+      transform(options: ImageTransformOptions): {
+        output(options: ImageOutputOptions): Promise<ImageOutputResult>;
       };
     };
   };

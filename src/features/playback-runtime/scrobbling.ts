@@ -43,17 +43,22 @@ const emptyPlaybackSession = (positionSeconds = 0): PlaybackSession => ({
 });
 
 function lastFmTrackInput(track: Track): LastFmTrackInput {
-  return {
+  const input: LastFmTrackInput = {
     artist: track.artist,
     title: track.title,
     album: normalizedReleaseTitle(track.album),
-    ...(track.albumArtist ? { albumArtist: track.albumArtist } : {}),
-    ...(track.musicBrainzId ? { musicBrainzId: track.musicBrainzId } : {}),
     duration: Math.max(0, Math.floor(track.duration)),
     trackNumber: Math.max(0, Math.floor(track.track)),
     chosenByUser: true,
   };
+  if (track.albumArtist) input.albumArtist = track.albumArtist;
+  if (track.musicBrainzId) input.musicBrainzId = track.musicBrainzId;
+  return input;
 }
+
+export type PlaybackEndResult = {
+  checkpointRecommended: boolean;
+};
 
 export type PlaybackScrobbleController = {
   restore: (state: PlayerStateSnapshot) => void;
@@ -74,7 +79,7 @@ export type PlaybackScrobbleController = {
     track: Track,
     timeline: readonly RadioChapter[],
     positionSeconds: number,
-  ) => { checkpointRecommended: boolean };
+  ) => PlaybackEndResult;
   persistedLastFmProgress: (
     track: Track | undefined,
   ) => LastFmPlaybackProgress | undefined;
@@ -281,7 +286,7 @@ export function createPlaybackScrobbleController({
     track: Track,
     timeline: readonly RadioChapter[],
     positionSeconds: number,
-  ): { checkpointRecommended: boolean } => {
+  ): PlaybackEndResult => {
     if (!track.id.startsWith("radio:")) {
       return { checkpointRecommended: false };
     }

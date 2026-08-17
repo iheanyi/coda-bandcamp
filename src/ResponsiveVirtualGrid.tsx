@@ -98,7 +98,7 @@ function responsiveGridMetrics(
     (safeWidth - columnGap * (columns - 1)) / columns,
   );
   const configuredRowHeight =
-    typeof layout.rowHeight === "function"
+    layout.rowHeight instanceof Function
       ? layout.rowHeight(columnWidth)
       : layout.rowHeight;
   const rowHeight = Math.max(1, finiteNonNegative(configuredRowHeight, 1));
@@ -167,12 +167,12 @@ export function ResponsiveVirtualGrid<Item>({
     const root = rootRef.current;
     if (!root) return;
     syncMeasurements();
-    if (typeof ResizeObserver === "undefined") {
+    if (!globalThis.ResizeObserver) {
       const resize = () => syncMeasurements();
       window.addEventListener("resize", resize);
       return () => window.removeEventListener("resize", resize);
     }
-    const observer = new ResizeObserver(([entry]) => {
+    const observer = new globalThis.ResizeObserver(([entry]) => {
       if (entry) syncMeasurements(elementWidth(entry));
     });
     observer.observe(root);
@@ -240,7 +240,9 @@ export function ResponsiveVirtualGrid<Item>({
         data-grid-item-key={String(key)}
         key={key}
         onBlurCapture={(event) => {
-          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          const nextFocusedNode =
+            event.relatedTarget instanceof Node ? event.relatedTarget : null;
+          if (!event.currentTarget.contains(nextFocusedNode)) {
             setFocusedIndex((current) => current === index ? undefined : current);
           }
         }}

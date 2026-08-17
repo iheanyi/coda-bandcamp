@@ -1,8 +1,20 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, configure } from "@testing-library/react";
-import { afterEach, vi } from "vitest";
+import { afterAll, afterEach, vi } from "vitest";
 
 afterEach(() => cleanup());
+
+// @tanstack/virtual-core debounces its "scrolling stopped" notification for
+// 150ms (isScrollingResetDelay) with window.setTimeout, and its scroll
+// observer cleanup removes event listeners without clearing that pending
+// timer. A scroll near the end of a file's last test would otherwise fire the
+// timer after Vitest tears down the jsdom window, crashing the run with an
+// unhandled "window is not defined" ReferenceError. Components are already
+// unmounted here, so waiting out the debounce lets it fire as a no-op while
+// the window still exists.
+afterAll(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 175));
+});
 
 // Coverage instrumentation can push otherwise immediate React effects beyond
 // Testing Library's one-second default on the 25,000-item stress fixtures.
@@ -95,7 +107,7 @@ if (!HTMLElement.prototype.releasePointerCapture) {
 }
 
 if (!window.ResizeObserver) {
-  class ResizeObserverShim {
+  class ResizeObserverShim implements ResizeObserver {
     private readonly callback: ResizeObserverCallback;
 
     constructor(callback: ResizeObserverCallback) {
@@ -104,20 +116,16 @@ if (!window.ResizeObserver) {
 
     observe(target: Element) {
       const contentRect = target.getBoundingClientRect();
-      this.callback(
-        [
-          {
-            target,
-            contentRect,
-            borderBoxSize: [],
-            contentBoxSize: [],
-            devicePixelContentBoxSize: [],
-          } as ResizeObserverEntry,
-        ],
-        this as unknown as ResizeObserver,
-      );
+      const entry: ResizeObserverEntry = {
+        target,
+        contentRect,
+        borderBoxSize: [],
+        contentBoxSize: [],
+        devicePixelContentBoxSize: [],
+      };
+      this.callback([entry], this);
     }
-    unobserve() {}
+    unobserve(_target: Element) {}
     disconnect() {}
   }
 

@@ -1,6 +1,7 @@
 import { useMatch, useRouterState } from "@tanstack/react-router";
 import { useMemo } from "react";
 
+import type { OwnDataValue } from "@/ownData";
 import {
   deriveLibraryRouteInput,
   type LibraryRouteInput,
@@ -54,10 +55,50 @@ export type CodaRouteDestination = Readonly<{
   screen?: CodaScreen;
 }>;
 
+type MutableCodaRouteDestination = {
+  collectionSearch: CollectionRouteSearch;
+  detail?: CodaDetailDestination;
+  discoverSearch: DiscoverRouteSearch;
+  libraryRouteInput: LibraryRouteInput;
+  locationKey: string;
+  meta?: CodaRouteMeta;
+  nowPlayingOpen: boolean;
+  primaryView: CodaPrimaryView;
+  screen?: CodaScreen;
+};
+
+export type CodaRouteDestinationSnapshot<Search extends OwnDataValue = OwnDataValue> = Readonly<{
+  albumMatch?: Readonly<{ params: Readonly<{ albumId: AlbumId }> }>;
+  artistMatch?: Readonly<{
+    params: Readonly<{ artistKey: ArtistKey }>;
+    search: Readonly<{ albumId?: AlbumId }>;
+  }>;
+  discoverReleaseMatch?: Readonly<{
+    params: Readonly<{ releaseId: DiscoverReleaseId }>;
+  }>;
+  meta?: CodaRouteMeta;
+  playlistMatch?: Readonly<{
+    params: Readonly<{ playlistId: PlaylistId }>;
+  }>;
+  radioSeriesMatch?: Readonly<{
+    params: Readonly<{ seriesId: string }>;
+  }>;
+  radioShowMatch?: Readonly<{
+    params: Readonly<{ showId: string }>;
+  }>;
+  routeLocation: Readonly<{
+    key: string;
+    search: Search;
+  }>;
+}>;
+
+type RouteIdParser<Value> = (value: string | number) => Value;
+
 function tryParse<Value>(
-  value: unknown,
-  parse: (candidate: unknown) => Value,
+  value: string | number | undefined,
+  parse: RouteIdParser<Value>,
 ): Value | undefined {
+  if (value === undefined) return undefined;
   try {
     return parse(value);
   } catch {
@@ -125,89 +166,19 @@ export function useRouteDestination(): CodaRouteDestination {
     shouldThrow: false,
   });
 
-  return useMemo(() => {
-    const libraryRouteInput = deriveLibraryRouteInput({
-      albumId: albumMatch?.params.albumId,
-      artistKey: artistMatch?.params.artistKey,
-      screen: meta?.screen,
-      search: routeLocation.search,
-      sourceAlbumId: artistMatch?.search.albumId,
-    });
-    const collectionSearch =
-      libraryRouteInput.kind === "inactive"
-        ? validateCollectionSearch(routeLocation.search)
-        : libraryRouteInput.collectionSearch;
-    const discoverSearch = validateDiscoverSearch(routeLocation.search);
-    let detail: CodaDetailDestination | undefined;
-
-    switch (meta?.screen) {
-      case "album":
-        if (libraryRouteInput.kind === "album") {
-          detail = { kind: "album", albumId: libraryRouteInput.albumId };
-        }
-        break;
-      case "artist":
-        if (libraryRouteInput.kind === "artist") {
-          detail = {
-            kind: "artist",
-            artistKey: libraryRouteInput.artistKey,
-            ...(libraryRouteInput.sourceAlbumId
-              ? { sourceAlbumId: libraryRouteInput.sourceAlbumId }
-              : {}),
-          };
-        }
-        break;
-      case "discover-release":
-        if (discoverReleaseMatch) {
-          detail = {
-            kind: "discover-release",
-            releaseId: discoverReleaseMatch.params.releaseId,
-          };
-        }
-        break;
-      case "playlist":
-        if (playlistMatch) {
-          detail = {
-            kind: "playlist",
-            playlistId: playlistMatch.params.playlistId,
-          };
-        }
-        break;
-      case "radio-series": {
-        const seriesId = tryParse(
-          radioSeriesMatch?.params.seriesId,
-          parseRadioSeriesIdParam,
-        );
-        if (seriesId !== undefined) {
-          detail = { kind: "radio-series", seriesId };
-        }
-        break;
-      }
-      case "radio-show": {
-        const showId = tryParse(
-          radioShowMatch?.params.showId,
-          parseRadioShowIdParam,
-        );
-        if (showId !== undefined) detail = { kind: "radio-show", showId };
-        break;
-      }
-      case "now-playing":
-        detail = { kind: "now-playing" };
-        break;
-    }
-
-    return {
-      collectionSearch,
-      ...(detail ? { detail } : {}),
-      discoverSearch,
-      libraryRouteInput,
-      locationKey: routeLocation.key,
-      ...(meta ? { meta } : {}),
-      nowPlayingOpen: meta?.screen === "now-playing",
-      primaryView: meta?.primaryView ?? "library",
-      screen: meta?.screen,
-    };
-  }, [
+  return useMemo(
+    () =>
+      projectRouteDestination({
+        albumMatch,
+        artistMatch,
+        discoverReleaseMatch,
+        meta,
+        playlistMatch,
+        radioSeriesMatch,
+        radioShowMatch,
+        routeLocation,
+      }),
+    [
     albumMatch,
     artistMatch,
     discoverReleaseMatch,
@@ -216,5 +187,101 @@ export function useRouteDestination(): CodaRouteDestination {
     radioSeriesMatch,
     radioShowMatch,
     routeLocation,
-  ]);
+    ],
+  );
+}
+
+export function projectRouteDestination<Search extends OwnDataValue>({
+  albumMatch,
+  artistMatch,
+  discoverReleaseMatch,
+  meta,
+  playlistMatch,
+  radioSeriesMatch,
+  radioShowMatch,
+  routeLocation,
+}: CodaRouteDestinationSnapshot<Search>): CodaRouteDestination {
+  const libraryRouteInput = deriveLibraryRouteInput({
+    albumId: albumMatch?.params.albumId,
+    artistKey: artistMatch?.params.artistKey,
+    screen: meta?.screen,
+    search: routeLocation.search,
+    sourceAlbumId: artistMatch?.search.albumId,
+  });
+  const collectionSearch =
+    libraryRouteInput.kind === "inactive"
+      ? validateCollectionSearch(routeLocation.search)
+      : libraryRouteInput.collectionSearch;
+  const discoverSearch = validateDiscoverSearch(routeLocation.search);
+  let detail: CodaDetailDestination | undefined;
+
+  switch (meta?.screen) {
+    case "album":
+      if (libraryRouteInput.kind === "album") {
+        detail = { kind: "album", albumId: libraryRouteInput.albumId };
+      }
+      break;
+    case "artist":
+      if (libraryRouteInput.kind === "artist") {
+        detail = libraryRouteInput.sourceAlbumId
+          ? {
+              kind: "artist",
+              artistKey: libraryRouteInput.artistKey,
+              sourceAlbumId: libraryRouteInput.sourceAlbumId,
+            }
+          : {
+              kind: "artist",
+              artistKey: libraryRouteInput.artistKey,
+            };
+      }
+      break;
+    case "discover-release":
+      if (discoverReleaseMatch) {
+        detail = {
+          kind: "discover-release",
+          releaseId: discoverReleaseMatch.params.releaseId,
+        };
+      }
+      break;
+    case "playlist":
+      if (playlistMatch) {
+        detail = {
+          kind: "playlist",
+          playlistId: playlistMatch.params.playlistId,
+        };
+      }
+      break;
+    case "radio-series": {
+      const seriesId = tryParse(
+        radioSeriesMatch?.params.seriesId,
+        parseRadioSeriesIdParam,
+      );
+      if (seriesId !== undefined) detail = { kind: "radio-series", seriesId };
+      break;
+    }
+    case "radio-show": {
+      const showId = tryParse(
+        radioShowMatch?.params.showId,
+        parseRadioShowIdParam,
+      );
+      if (showId !== undefined) detail = { kind: "radio-show", showId };
+      break;
+    }
+    case "now-playing":
+      detail = { kind: "now-playing" };
+      break;
+  }
+
+  const routeDestination: MutableCodaRouteDestination = {
+    collectionSearch,
+    discoverSearch,
+    libraryRouteInput,
+    locationKey: routeLocation.key,
+    nowPlayingOpen: meta?.screen === "now-playing",
+    primaryView: meta?.primaryView ?? "library",
+    screen: meta?.screen,
+  };
+  if (detail) routeDestination.detail = detail;
+  if (meta) routeDestination.meta = meta;
+  return routeDestination;
 }

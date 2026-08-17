@@ -2,11 +2,13 @@ import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-const transitionMock = vi.hoisted(() => vi.fn());
-
-vi.mock("@/viewTransitions", () => ({
-  transitionCodaView: transitionMock,
-}));
+import { getMotionDiagnostic } from "@/motionDiagnostics";
+import type { RouteCommitOutcome } from "@/features/navigation/routeCommit";
+import {
+  installDocumentViewTransitionHarness,
+  type TestDocumentViewTransition,
+  type TestDocumentViewTransitionCapture,
+} from "@/test/documentViewTransitionHarness";
 
 import { DailyRouteNavigationProvider } from "./DailyRouteNavigationContext";
 import {
@@ -14,24 +16,38 @@ import {
   useDailyRouteNavigation,
 } from "./DailyRouteNavigationState";
 
-const adapter: DailyRouteNavigationAdapter = {
-  goBack: vi.fn(async () => undefined),
-  goToArticle: vi.fn(async () => undefined),
-  goToIndex: vi.fn(async () => undefined),
+const RENDERED_COMMIT = {
+  locationKey: "rendered",
+  outcome: "rendered" as const,
 };
+
+const adapter: DailyRouteNavigationAdapter = {
+  goBack: vi.fn(async () => RENDERED_COMMIT),
+  goToArticle: vi.fn(async () => RENDERED_COMMIT),
+  goToIndex: vi.fn(async () => RENDERED_COMMIT),
+};
+
+let captureTransition = (_capture: TestDocumentViewTransitionCapture) => {};
+let finishTransition = (_transition: TestDocumentViewTransition) => {};
+let transitionHarness: ReturnType<
+  typeof installDocumentViewTransitionHarness
+>;
 
 beforeEach(() => {
   vi.mocked(adapter.goBack).mockClear();
   vi.mocked(adapter.goToArticle).mockClear();
   vi.mocked(adapter.goToIndex).mockClear();
-  transitionMock
-    .mockReset()
-    .mockImplementation(async (update: () => void | Promise<void>) => {
-      await update();
-    });
+  captureTransition = () => {};
+  finishTransition = () => {};
+  transitionHarness = installDocumentViewTransitionHarness({
+    autoFinish: true,
+    onCapture: (capture) => captureTransition(capture),
+    onUpdated: (transition) => finishTransition(transition),
+  });
 });
 
 afterEach(() => {
+  transitionHarness.restore();
   document.body.replaceChildren();
 });
 
@@ -43,34 +59,31 @@ it("keeps Daily artwork and title identity through forward and focused Back navi
     beforeArtworkSource?: string;
     beforeTitleSource?: string;
   }> = [];
-  transitionMock.mockImplementation(
-    async (
-      update: () => void | Promise<void>,
-      _kind: "daily-detail" | "daily-detail-close",
-    ) => {
-      const snapshot = {
-        beforeArtworkDetail: document.querySelector<HTMLElement>(
-          "[data-coda-daily-artwork-detail]",
-        )?.dataset.codaDailyArtworkDetail,
-        beforeArtworkSource: document.querySelector<HTMLElement>(
-          "[data-coda-daily-artwork-source]",
-        )?.dataset.codaDailyArtworkSource,
-        beforeTitleSource: document.querySelector<HTMLElement>(
-          "[data-coda-daily-title-source]",
-        )?.dataset.codaDailyTitleSource,
-      };
-      await update();
-      snapshots.push({
-        ...snapshot,
-        afterArtworkReturn: document.querySelector<HTMLElement>(
-          "[data-coda-daily-artwork-return]",
-        )?.dataset.codaDailyArtworkReturn,
-        afterTitleReturn: document.querySelector<HTMLElement>(
-          "[data-coda-daily-title-return]",
-        )?.dataset.codaDailyTitleReturn,
-      });
-    },
-  );
+  let pendingSnapshot: (typeof snapshots)[number] = {};
+  captureTransition = () => {
+    pendingSnapshot = {
+      beforeArtworkDetail: document.querySelector<HTMLElement>(
+        "[data-coda-daily-artwork-detail]",
+      )?.dataset.codaDailyArtworkDetail,
+      beforeArtworkSource: document.querySelector<HTMLElement>(
+        "[data-coda-daily-artwork-source]",
+      )?.dataset.codaDailyArtworkSource,
+      beforeTitleSource: document.querySelector<HTMLElement>(
+        "[data-coda-daily-title-source]",
+      )?.dataset.codaDailyTitleSource,
+    };
+  };
+  finishTransition = () => {
+    snapshots.push({
+      ...pendingSnapshot,
+      afterArtworkReturn: document.querySelector<HTMLElement>(
+        "[data-coda-daily-artwork-return]",
+      )?.dataset.codaDailyArtworkReturn,
+      afterTitleReturn: document.querySelector<HTMLElement>(
+        "[data-coda-daily-title-return]",
+      )?.dataset.codaDailyTitleReturn,
+    });
+  };
 
   const slug = "essential-releases-august-7-2026";
   const scrollRoot = document.createElement("div");
@@ -102,9 +115,8 @@ it("keeps Daily artwork and title identity through forward and focused Back navi
       articleSection: "essential-releases",
       category: "genre-jazz",
       returnScrollTop: 173,
+      sharedIdentityAvailable: true,
       slug,
-      sourceArtwork: artwork,
-      sourceTitle: title,
       sourceTrigger: trigger,
     }),
   );
@@ -124,7 +136,7 @@ it("keeps Daily artwork and title identity through forward and focused Back navi
     slug,
   });
   expect(adapter.goBack).toHaveBeenCalledWith("genre-jazz");
-  expect(transitionMock.mock.calls.map((call) => call[1])).toEqual([
+  expect(transitionHarness.transitions.map(({ kind }) => kind)).toEqual([
     "daily-detail",
     "daily-detail-close",
   ]);
@@ -143,4 +155,64 @@ it("keeps Daily artwork and title identity through forward and focused Back navi
   expect(trigger).toHaveFocus();
   expect(artwork).not.toHaveAttribute("data-coda-daily-artwork-return");
   expect(title).not.toHaveAttribute("data-coda-daily-title-return");
+});
+
+it("uses page motion when Daily has a title but no shared artwork", async () => {
+  const trigger = document.createElement("a");
+  trigger.dataset.dailyArticleOpen = "title-only";
+  const title = document.createElement("span");
+  trigger.append(title);
+  document.body.append(trigger);
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <DailyRouteNavigationProvider adapter={adapter}>
+      {children}
+    </DailyRouteNavigationProvider>
+  );
+  const { result } = renderHook(() => useDailyRouteNavigation(), { wrapper });
+
+  await act(() =>
+    result.current.openArticle({
+      articleSection: "features",
+      category: "features",
+      returnScrollTop: 0,
+      sharedIdentityAvailable: false,
+      slug: "title-only",
+      sourceTrigger: trigger,
+    }),
+  );
+  expect(getMotionDiagnostic()?.kind).toBe("page-forward");
+  await act(() => result.current.closeArticle("title-only", "features"));
+  expect(getMotionDiagnostic()?.kind).toBe("page-back");
+
+  expect(title).not.toHaveAttribute("data-coda-daily-title-source");
+});
+
+it("coalesces repeated Daily Back requests", async () => {
+  let releaseBack = () => {};
+  vi.mocked(adapter.goBack).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        releaseBack = () => resolve(RENDERED_COMMIT);
+      }),
+  );
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <DailyRouteNavigationProvider adapter={adapter}>
+      {children}
+    </DailyRouteNavigationProvider>
+  );
+  const { result } = renderHook(() => useDailyRouteNavigation(), { wrapper });
+
+  let first!: Promise<RouteCommitOutcome>;
+  let second!: Promise<RouteCommitOutcome>;
+  act(() => {
+    first = result.current.closeArticle("same-story", "features");
+    second = result.current.closeArticle("same-story", "features");
+  });
+
+  expect(second).toBe(first);
+  expect(adapter.goBack).toHaveBeenCalledOnce();
+  expect(getMotionDiagnostic()?.kind).toBe("page-back");
+
+  releaseBack();
+  await act(() => first);
 });

@@ -1,11 +1,20 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Radio, RefreshCw } from "lucide-react";
-import { useCallback, useLayoutEffect, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import type { RouteCommitOutcome } from "@/features/navigation/routeCommit";
+import { useActivateDetailDestination } from "@/features/navigation/useActivateDetailDestination";
 import { openBandcampUrl } from "@/lib";
-import { radioShowQueryOptions } from "@/queries/radioQueries";
+import {
+  type RadioArchiveScope,
+  radioShowSummaryCandidatesInCache,
+  radioShowSummaryObserverOptions,
+  radioShowQueryOptions,
+  selectRadioShowSummary,
+  type RadioQueryRepository,
+} from "@/queries/radioQueries";
 import type { RadioSeriesId, RadioShowId } from "@/routing/routeContracts";
 
 import { RadioDetail } from "./RadioPresentation";
@@ -14,8 +23,11 @@ import type { RadioPlaybackProps } from "./radioScreenTypes";
 export type RadioShowScreenProps = RadioPlaybackProps &
   Readonly<{
     showId: RadioShowId;
-    onBack: () => void;
+    onBack: () => Promise<RouteCommitOutcome>;
     onBrowseSeries: (seriesId?: RadioSeriesId) => void;
+    openExternal?: (url: string) => Promise<void>;
+    preferredSummaryScope?: RadioArchiveScope;
+    repository?: RadioQueryRepository;
   }>;
 
 export function RadioShowScreen({
@@ -31,25 +43,57 @@ export function RadioShowScreen({
   onTogglePlayback,
   favoriteShowIds,
   onToggleFavorite,
+  openExternal = openBandcampUrl,
+  preferredSummaryScope,
+  repository,
 }: RadioShowScreenProps) {
-  const showQuery = useQuery(radioShowQueryOptions(showId));
+  const queryClient = useQueryClient();
+  const summaryScopes = useMemo(
+    () =>
+      radioShowSummaryCandidatesInCache(queryClient, showId).map(
+        (candidate) => candidate.scope,
+      ),
+    [queryClient, showId],
+  );
+  const summaryQueries = useQueries({
+    queries: summaryScopes.map((scope) =>
+      radioShowSummaryObserverOptions(scope, showId),
+    ),
+  });
+  const cachedSummary = selectRadioShowSummary(
+    summaryQueries.flatMap((query, index) => {
+      const summary = query.data;
+      const scope = summaryScopes[index];
+      return summary && scope !== undefined
+        ? [{ dataUpdatedAt: query.dataUpdatedAt, scope, summary }]
+        : [];
+    }),
+    preferredSummaryScope,
+  );
+  const showQuery = useQuery(radioShowQueryOptions(showId, repository));
+  const details = useMemo(() => {
+    if (!showQuery.data || showQuery.data.series || !cachedSummary?.series) {
+      return showQuery.data;
+    }
+    return { ...showQuery.data, series: cachedSummary.series };
+  }, [cachedSummary?.series, showQuery.data]);
+  const summary = details ?? cachedSummary;
   const [actionError, setActionError] = useState("");
 
-  useLayoutEffect(() => {
-    if (!showQuery.data) return;
-    document
-      .getElementById("radio-detail-title")
-      ?.focus({ preventScroll: true });
-  }, [showQuery.data]);
+  useActivateDetailDestination(
+    "radio",
+    `radio:${String(showId)}`,
+    Boolean(summary),
+  );
 
   const openItem = useCallback((url: string) => {
     setActionError("");
-    void openBandcampUrl(url).catch((cause) => {
+    void openExternal(url).catch((cause) => {
       setActionError(String(cause).replace(/^Error:\s*/, ""));
     });
-  }, []);
+  }, [openExternal]);
 
-  if (showQuery.isPending) {
+  if (!summary && showQuery.isPending) {
     return (
       <section
         className="min-h-full pb-2.5"
@@ -81,7 +125,7 @@ export function RadioShowScreen({
     );
   }
 
-  if (showQuery.isError) {
+  if (!summary) {
     return (
       <section className="min-h-full pb-2.5">
         <Button
@@ -102,7 +146,9 @@ export function RadioShowScreen({
             This Radio show is off the air
           </strong>
           <span className="mt-1.5 max-w-md text-xs/normal text-coda-subtle-foreground">
-            {String(showQuery.error).replace(/^Error:\s*/, "")}
+            {showQuery.isError
+              ? String(showQuery.error).replace(/^Error:\s*/, "")
+              : "Bandcamp did not return this Radio show."}
           </span>
           <Button
             variant="secondary"
@@ -128,9 +174,18 @@ export function RadioShowScreen({
 
   return (
     <RadioDetail
-      show={showQuery.data}
+      show={summary}
+      details={details}
+      loading={!details && showQuery.isPending}
+      loadError={
+        !details && showQuery.isError
+          ? String(showQuery.error).replace(/^Error:\s*/, "")
+          : undefined
+      }
+      retrying={!details && showQuery.isFetching}
       actionError={actionError}
       onBack={onBack}
+      onRetry={() => void showQuery.refetch()}
       onPlay={onPlay}
       onQueue={onQueue}
       onPlayAt={onPlayAt}
@@ -139,7 +194,7 @@ export function RadioShowScreen({
       playing={playing}
       onTogglePlayback={onTogglePlayback}
       onOpenItem={openItem}
-      favorite={favoriteShowIds.has(showQuery.data.id)}
+      favorite={favoriteShowIds.has(summary.id)}
       onToggleFavorite={onToggleFavorite}
       onBrowseSeries={onBrowseSeries}
     />

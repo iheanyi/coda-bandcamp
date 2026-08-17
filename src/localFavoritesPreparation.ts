@@ -1,18 +1,36 @@
 import {
   createLocalFavoritesSnapshot,
+  localTrackStarIndexAndRadio,
   LOCAL_FAVORITES_VERSION,
   MAX_FAVORITE_ALBUMS,
   MAX_FAVORITE_RADIO_SHOWS,
   MAX_FAVORITE_TRACKS,
   MAX_LOCAL_FAVORITES_BYTES,
-  parseLocalFavoritesSnapshot,
+  parseLocalFavoritesSerialized,
   sanitizeLocalFavorites,
+  type LocalFavoritesSnapshot,
 } from "./localFavorites";
+import { parseLibraryDate } from "./libraryDates";
+import {
+  copyOwnDataArray,
+  hasControlCharacter,
+  isDataArray,
+  isNumberValue,
+  isStringValue,
+  projectOwnDataRecord,
+  type OwnDataRecord,
+  type OwnDataValue,
+} from "./ownData";
 import type { LocalFavoriteCollection } from "./types";
 
 export type PreparedLocalFavorites = {
   favorites: LocalFavoriteCollection;
   serialized: string;
+};
+
+export type LocalFavoritesWorkerPreparedResult = {
+  serialized: string;
+  favorites?: LocalFavoriteCollection;
 };
 
 export type LocalFavoritesPreparationRequest =
@@ -27,6 +45,32 @@ export type LocalFavoritesPreparationRequest =
       favorites: LocalFavoriteCollection;
     };
 
+export class ValidatedLocalFavorites {
+  private constructor(
+    readonly collection: LocalFavoriteCollection,
+  ) {}
+
+  static parse(
+    value: OwnDataValue,
+  ): ValidatedLocalFavorites | undefined {
+    const collection = sanitizeLocalFavorites(value);
+    return collection ? new ValidatedLocalFavorites(collection) : undefined;
+  }
+}
+
+export type ParsedLocalFavoritesPreparationRequest =
+  | {
+      kind: "parse-local-favorites";
+      requestId: number;
+      serialized: string;
+    }
+  | {
+      kind: "serialize-local-favorites";
+      requestId: number;
+      favorites: ValidatedLocalFavorites;
+      sourceFavorites: OwnDataValue;
+    };
+
 export type LocalFavoritesPreparationResponse =
   | {
       kind: "local-favorites-parsed";
@@ -36,10 +80,7 @@ export type LocalFavoritesPreparationResponse =
   | {
       kind: "local-favorites-serialized";
       requestId: number;
-      prepared: {
-        favorites?: LocalFavoriteCollection;
-        serialized: string;
-      };
+      prepared: LocalFavoritesWorkerPreparedResult;
     }
   | {
       kind: "local-favorites-error";
@@ -48,11 +89,11 @@ export type LocalFavoritesPreparationResponse =
       errorMessage: string;
     };
 
-export type LocalFavoritesWorkerMessageEvent = MessageEvent<unknown>;
+export type LocalFavoritesWorkerMessageEvent = MessageEvent<OwnDataValue>;
 
 export type LocalFavoritesWorkerErrorEvent = ErrorEvent;
 
-export type LocalFavoritesWorkerMessageErrorEvent = MessageEvent<unknown>;
+export type LocalFavoritesWorkerMessageErrorEvent = MessageEvent<OwnDataValue>;
 
 export type LocalFavoritesWorkerPort = {
   onmessage: ((event: LocalFavoritesWorkerMessageEvent) => void) | null;
@@ -92,22 +133,266 @@ type PendingPreparation =
       reject: (error: Error) => void;
     };
 
-function errorFromUnknown(error: unknown, fallback: string): Error {
-  return error instanceof Error ? error : new Error(fallback);
+function errorFromCause(cause: unknown, fallback: string): Error {
+  return cause instanceof Error ? cause : new Error(fallback);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isPreparedText(
+  value: OwnDataValue,
+  required = true,
+): value is string {
+  return (
+    typeof value === "string" &&
+    value.length <= 1_024 &&
+    (!required || value.length > 0) &&
+    !hasControlCharacter(value)
+  );
 }
 
-function requestIdFrom(value: Record<string, unknown>): number | undefined {
-  return Number.isSafeInteger(value.requestId) && Number(value.requestId) > 0
-    ? Number(value.requestId)
+function isPreparedCount(
+  value: OwnDataValue,
+  maximum: number,
+): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 0 &&
+    value <= maximum
+  );
+}
+
+function isPreparedDuration(value: OwnDataValue): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= 7 * 24 * 60 * 60
+  );
+}
+
+function hasPreparedPalette(value: OwnDataValue): boolean {
+  const colors = copyOwnDataArray(value, 2);
+  if (colors === undefined || colors.length !== 2) return false;
+  const [first, second] = colors;
+  return (
+    isPreparedText(first) &&
+    first.length <= 64 &&
+    isPreparedText(second) &&
+    second.length <= 64
+  );
+}
+
+function isCalendarDate(year: number, month: number, day: number): boolean {
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  date.setUTCHours(0, 0, 0, 0);
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
+function isPreparedItemDate(value: OwnDataValue): boolean {
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return false;
+  const year = record.year;
+  const month = record.month;
+  const day = record.day;
+  return (
+    isPreparedCount(year, 9_999) &&
+    year > 0 &&
+    (month === undefined ||
+      (isPreparedCount(month, 12) && month > 0)) &&
+    (day === undefined ||
+      (isPreparedCount(day, 31) &&
+        day > 0 &&
+        isNumberValue(month) &&
+        isCalendarDate(year, month, day)))
+  );
+}
+
+function isPreparedOptionalText(
+  value: OwnDataValue,
+  required = false,
+): boolean {
+  return value === undefined || isPreparedText(value, required);
+}
+
+function isPreparedOptionalDateText(value: OwnDataValue): boolean {
+  return (
+    value === undefined ||
+    (isPreparedText(value, false) &&
+      parseLibraryDate(value) !== undefined)
+  );
+}
+
+function isPreparedTrack(value: OwnDataValue): boolean {
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return false;
+  const disc = record.disc;
+  const musicBrainzId = record.musicBrainzId;
+  return (
+    isPreparedText(record.id) &&
+    isPreparedText(record.title) &&
+    isPreparedText(record.artist) &&
+    isPreparedText(record.album) &&
+    isPreparedText(record.albumId) &&
+    isPreparedDuration(record.duration) &&
+    isPreparedCount(record.track, 100_000) &&
+    (disc === undefined ||
+      isPreparedCount(disc, 100_000)) &&
+    isPreparedOptionalText(record.albumArtist) &&
+    (musicBrainzId === undefined ||
+      (isStringValue(musicBrainzId) &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu
+          .test(musicBrainzId))) &&
+    isPreparedOptionalText(record.coverArt) &&
+    isPreparedOptionalDateText(record.starredAt) &&
+    hasPreparedPalette(record.palette) &&
+    record.artworkUrl === undefined &&
+    record.streamUrl === undefined &&
+    record.radioChapters === undefined &&
+    record.discoverRelease === undefined &&
+    record.dailySource === undefined
+  );
+}
+
+function isPreparedOptionalItemDate(value: OwnDataValue): boolean {
+  return value === undefined || isPreparedItemDate(value);
+}
+
+function isPreparedAlbum(value: OwnDataValue): boolean {
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return false;
+  const year = record.year;
+  return (
+    isPreparedText(record.id) &&
+    isPreparedText(record.title) &&
+    isPreparedText(record.artist) &&
+    isPreparedCount(record.songCount, MAX_FAVORITE_TRACKS) &&
+    isPreparedDuration(record.duration) &&
+    (year === undefined ||
+      (isPreparedCount(year, 9_999) && year > 0)) &&
+    isPreparedOptionalText(record.coverArt) &&
+    isPreparedOptionalText(record.genre) &&
+    isPreparedOptionalDateText(record.addedAt) &&
+    isPreparedOptionalDateText(record.starredAt) &&
+    isPreparedOptionalDateText(record.playedAt) &&
+    isPreparedOptionalItemDate(record.originalReleaseDate) &&
+    isPreparedOptionalItemDate(record.releaseDate) &&
+    hasPreparedPalette(record.palette) &&
+    record.artworkUrl === undefined &&
+    record.tracks === undefined
+  );
+}
+
+function isPreparedRadioSeries(value: OwnDataValue): boolean {
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return false;
+  const id = record.id;
+  return (
+    isPreparedCount(id, Number.MAX_SAFE_INTEGER) &&
+    id > 0 &&
+    isPreparedText(record.title) &&
+    isPreparedText(record.slug)
+  );
+}
+
+function isPreparedRadioShow(value: OwnDataValue): boolean {
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return false;
+  const id = record.id;
+  const series = record.series;
+  return (
+    isPreparedCount(id, Number.MAX_SAFE_INTEGER) &&
+    id > 0 &&
+    isPreparedText(record.subtitle) &&
+    isPreparedText(record.description, false) &&
+    isPreparedText(record.publishedAt, false) &&
+    (series === undefined || isPreparedRadioSeries(series)) &&
+    record.artworkUrl === undefined
+  );
+}
+
+function hasBoundedItems(
+  value: OwnDataValue,
+  maximum: number,
+  validate: (item: OwnDataValue) => boolean,
+): boolean {
+  const items = copyOwnDataArray(value, maximum);
+  if (items === undefined) return false;
+  for (const item of items) {
+    if (!validate(item)) return false;
+  }
+  return true;
+}
+
+function isPreparedRadioId(value: OwnDataValue): boolean {
+  return (
+    isPreparedCount(value, Number.MAX_SAFE_INTEGER) &&
+    value > 0
+  );
+}
+
+function isPreparedLocalFavorites<Value>(
+  value: Value,
+): value is Value & LocalFavoriteCollection {
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return false;
+  return (
+    hasBoundedItems(
+      record.albumIds,
+      MAX_FAVORITE_ALBUMS,
+      isPreparedText,
+    ) &&
+    hasBoundedItems(
+      record.songIds,
+      MAX_FAVORITE_TRACKS,
+      isPreparedText,
+    ) &&
+    hasBoundedItems(
+      record.radioShowIds,
+      MAX_FAVORITE_RADIO_SHOWS,
+      isPreparedRadioId,
+    ) &&
+    hasBoundedItems(
+      record.albums,
+      MAX_FAVORITE_ALBUMS,
+      isPreparedAlbum,
+    ) &&
+    hasBoundedItems(
+      record.tracks,
+      MAX_FAVORITE_TRACKS,
+      isPreparedTrack,
+    ) &&
+    hasBoundedItems(
+      record.radioShows,
+      MAX_FAVORITE_RADIO_SHOWS,
+      isPreparedRadioShow,
+    )
+  );
+}
+
+function parsePreparedLocalFavorites(
+  value: OwnDataValue,
+): LocalFavoriteCollection | undefined {
+  return isPreparedLocalFavorites(value) ? value : undefined;
+}
+
+function requestIdFrom(value: OwnDataRecord): number | undefined {
+  const requestId = value.requestId;
+  return (
+      isNumberValue(requestId) &&
+      Number.isSafeInteger(requestId) &&
+      requestId > 0
+    )
+    ? requestId
     : undefined;
 }
 
 function defaultIdleScheduler(callback: () => void): void {
-  if (typeof globalThis.requestIdleCallback === "function") {
+  if ("requestIdleCallback" in globalThis) {
     globalThis.requestIdleCallback(() => callback(), {
       timeout: LOCAL_FAVORITES_IDLE_TIMEOUT_MS,
     });
@@ -116,133 +401,123 @@ function defaultIdleScheduler(callback: () => void): void {
   setTimeout(callback, 0);
 }
 
-/**
- * Validates only the dedicated worker protocol envelope. The module worker is
- * created by this client, cannot receive window messages, and deep-sanitizes
- * each request before replying. Repeating that O(n) validation here would move
- * the work back onto the renderer task that the worker exists to protect.
- */
-function hasBoundedTrustedWorkerFavoritesEnvelope(
-  value: unknown,
-): value is LocalFavoriteCollection {
-  if (!isRecord(value)) return false;
-  return (
-    Array.isArray(value.albumIds) &&
-    value.albumIds.length <= MAX_FAVORITE_ALBUMS &&
-    Array.isArray(value.songIds) &&
-    value.songIds.length <= MAX_FAVORITE_TRACKS &&
-    Array.isArray(value.radioShowIds) &&
-    value.radioShowIds.length <= MAX_FAVORITE_RADIO_SHOWS &&
-    Array.isArray(value.albums) &&
-    value.albums.length <= MAX_FAVORITE_ALBUMS &&
-    Array.isArray(value.tracks) &&
-    value.tracks.length <= MAX_FAVORITE_TRACKS &&
-    Array.isArray(value.radioShows) &&
-    value.radioShows.length <= MAX_FAVORITE_RADIO_SHOWS
-  );
-}
-
-export function parseLocalFavoritesPreparationRequest(
-  value: unknown,
-): LocalFavoritesPreparationRequest | undefined {
-  if (!isRecord(value)) return undefined;
-  const requestId = requestIdFrom(value);
+export function parseLocalFavoritesPreparationRequest<Value>(
+  value: Value,
+): ParsedLocalFavoritesPreparationRequest | undefined {
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return undefined;
+  const requestId = requestIdFrom(record);
   if (requestId === undefined) return undefined;
-  if (value.kind === "parse-local-favorites") {
+  const kind = record.kind;
+  if (kind === "parse-local-favorites") {
+    const serialized = record.serialized;
     if (
-      typeof value.serialized !== "string" ||
-      value.serialized.length > MAX_LOCAL_FAVORITES_BYTES
+      !isStringValue(serialized) ||
+      serialized.length > MAX_LOCAL_FAVORITES_BYTES
     ) {
       return undefined;
     }
     return {
-      kind: value.kind,
+      kind,
       requestId,
-      serialized: value.serialized,
+      serialized,
     };
   }
-  if (value.kind !== "serialize-local-favorites") return undefined;
-  const favorites = sanitizeLocalFavorites(value.favorites);
+  if (kind !== "serialize-local-favorites") return undefined;
+  const sourceFavorites = record.favorites;
+  if (sourceFavorites === undefined) return undefined;
+  const favorites = ValidatedLocalFavorites.parse(sourceFavorites);
   if (!favorites) return undefined;
   return {
-    kind: value.kind,
+    kind,
     requestId,
     favorites,
+    sourceFavorites,
   };
 }
 
 export function parseLocalFavoritesPreparationResponse(
-  value: unknown,
+  value: OwnDataValue,
 ): LocalFavoritesPreparationResponse | undefined {
-  if (!isRecord(value)) return undefined;
-  const requestId = requestIdFrom(value);
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return undefined;
+  const requestId = requestIdFrom(record);
   if (requestId === undefined) return undefined;
-  if (value.kind === "local-favorites-parsed") {
-    if (value.favorites === undefined) {
-      return { kind: value.kind, requestId };
+  const kind = record.kind;
+  if (kind === "local-favorites-parsed") {
+    const favoritesValue = record.favorites;
+    if (favoritesValue === undefined) {
+      return { kind, requestId };
     }
-    return hasBoundedTrustedWorkerFavoritesEnvelope(value.favorites)
-      ? { kind: value.kind, requestId, favorites: value.favorites }
-      : undefined;
+    const favorites = parsePreparedLocalFavorites(favoritesValue);
+    return favorites ? { kind, requestId, favorites } : undefined;
   }
-  if (value.kind === "local-favorites-serialized") {
-    if (!isRecord(value.prepared)) return undefined;
+  if (kind === "local-favorites-serialized") {
+    const preparedRecord = projectOwnDataRecord(record.prepared);
+    if (preparedRecord === undefined) return undefined;
+    const serialized = preparedRecord.serialized;
+    const favoritesValue = preparedRecord.favorites;
     if (
-      typeof value.prepared.serialized !== "string" ||
-      value.prepared.serialized.length === 0 ||
-      value.prepared.serialized.length > MAX_LOCAL_FAVORITES_BYTES ||
-      (value.prepared.favorites !== undefined &&
-        !hasBoundedTrustedWorkerFavoritesEnvelope(value.prepared.favorites))
+      !isStringValue(serialized) ||
+      serialized.length === 0 ||
+      serialized.length > MAX_LOCAL_FAVORITES_BYTES
     ) {
       return undefined;
     }
-    return {
-      kind: value.kind,
+    const favorites = favoritesValue === undefined
+      ? undefined
+      : parsePreparedLocalFavorites(favoritesValue);
+    if (favoritesValue !== undefined && !favorites) return undefined;
+    const prepared: LocalFavoritesPreparationResponse = {
+      kind,
       requestId,
       prepared: {
-        serialized: value.prepared.serialized,
-        ...(value.prepared.favorites === undefined
-          ? {}
-          : { favorites: value.prepared.favorites }),
+        serialized,
       },
     };
+    if (favorites) prepared.prepared.favorites = favorites;
+    return prepared;
   }
+  const errorName = record.errorName;
+  const errorMessage = record.errorMessage;
   if (
-    value.kind !== "local-favorites-error" ||
-    typeof value.errorName !== "string" ||
-    value.errorName.length === 0 ||
-    value.errorName.length > 1_024 ||
-    typeof value.errorMessage !== "string" ||
-    value.errorMessage.length === 0 ||
-    value.errorMessage.length > 1_024
+    kind !== "local-favorites-error" ||
+    !isStringValue(errorName) ||
+    errorName.length === 0 ||
+    errorName.length > 1_024 ||
+    !isStringValue(errorMessage) ||
+    errorMessage.length === 0 ||
+    errorMessage.length > 1_024
   ) {
     return undefined;
   }
   return {
-    kind: value.kind,
+    kind,
     requestId,
-    errorName: value.errorName,
-    errorMessage: value.errorMessage,
+    errorName,
+    errorMessage,
   };
 }
 
-export function parseLocalFavoritesSerialized(
-  serialized: string,
-): LocalFavoriteCollection | undefined {
-  if (serialized.length > MAX_LOCAL_FAVORITES_BYTES) return undefined;
-  try {
-    const value: unknown = JSON.parse(serialized);
-    return parseLocalFavoritesSnapshot(value);
-  } catch {
-    return undefined;
-  }
+function localFavoritesSnapshot(
+  favorites: LocalFavoriteCollection,
+): LocalFavoritesSnapshot {
+  return {
+    version: LOCAL_FAVORITES_VERSION,
+    ...localTrackStarIndexAndRadio(favorites),
+  };
 }
 
-export function serializeLocalFavorites(
-  favorites: LocalFavoriteCollection,
+function serializeLocalFavoritesSnapshot(
+  snapshot: LocalFavoritesSnapshot,
+): string {
+  return JSON.stringify(snapshot);
+}
+
+function prepareLocalFavoritesSnapshot(
+  snapshot: LocalFavoritesSnapshot,
 ): PreparedLocalFavorites {
-  const snapshot = createLocalFavoritesSnapshot(favorites);
-  const serialized = JSON.stringify(snapshot);
+  const serialized = serializeLocalFavoritesSnapshot(snapshot);
   if (serialized.length > MAX_LOCAL_FAVORITES_BYTES) {
     throw new Error("Local favorites are too large to save safely.");
   }
@@ -250,28 +525,86 @@ export function serializeLocalFavorites(
   return { favorites: sanitized, serialized };
 }
 
+function isLocalFavoriteCollectionFields(
+  fields: {
+    albumIds: OwnDataValue;
+    songIds: OwnDataValue;
+    albums: OwnDataValue;
+    tracks: OwnDataValue;
+    radioShowIds: OwnDataValue;
+    radioShows: OwnDataValue;
+  },
+): fields is LocalFavoriteCollection {
+  return (
+    isDataArray(fields.albumIds) &&
+    isDataArray(fields.songIds) &&
+    isDataArray(fields.albums) &&
+    isDataArray(fields.tracks) &&
+    isDataArray(fields.radioShowIds) &&
+    isDataArray(fields.radioShows)
+  );
+}
+
+export function serializeValidatedLocalFavorites(
+  validated: ValidatedLocalFavorites,
+): PreparedLocalFavorites {
+  return prepareLocalFavoritesSnapshot(
+    localFavoritesSnapshot(validated.collection),
+  );
+}
+
+export function serializeLocalFavorites(
+  favorites: LocalFavoriteCollection,
+): PreparedLocalFavorites {
+  return prepareLocalFavoritesSnapshot(
+    localFavoritesSnapshot(createLocalFavoritesSnapshot(favorites)),
+  );
+}
+
 export function localFavoritesInputMatchesPrepared(
-  value: unknown,
+  value: OwnDataValue,
   prepared: PreparedLocalFavorites,
 ): boolean {
-  if (!isRecord(value)) return false;
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return false;
+  const albumIds = record.albumIds;
+  const songIds = record.songIds;
+  const radioShowIds = record.radioShowIds;
+  const albums = record.albums;
+  const tracks = record.tracks;
+  const radioShows = record.radioShows;
+  const fields = {
+    albumIds,
+    songIds,
+    albums,
+    tracks,
+    radioShowIds,
+    radioShows,
+  };
+  if (!isLocalFavoriteCollectionFields(fields)) return false;
   try {
-    return JSON.stringify({
-      version: LOCAL_FAVORITES_VERSION,
-      albumIds: value.albumIds,
-      songIds: value.songIds,
-      radioShowIds: value.radioShowIds,
-      albums: value.albums,
-      tracks: value.tracks,
-      radioShows: value.radioShows,
-    }) === prepared.serialized;
+    return serializeLocalFavoritesSnapshot(localFavoritesSnapshot(fields)) ===
+      prepared.serialized;
   } catch {
     return false;
   }
 }
 
+export function localFavoritesWorkerPrepared(
+  prepared: PreparedLocalFavorites,
+  sourceFavorites: OwnDataValue,
+): LocalFavoritesWorkerPreparedResult {
+  if (localFavoritesInputMatchesPrepared(sourceFavorites, prepared)) {
+    return { serialized: prepared.serialized };
+  }
+  return {
+    serialized: prepared.serialized,
+    favorites: prepared.favorites,
+  };
+}
+
 function defaultWorkerFactory(): LocalFavoritesWorkerPort | undefined {
-  if (typeof Worker === "undefined") return undefined;
+  if (!("Worker" in globalThis)) return undefined;
   return new Worker(
     new URL("./localFavoritesPreparation.worker.ts", import.meta.url),
     { name: "coda-local-favorites", type: "module" },
@@ -280,7 +613,7 @@ function defaultWorkerFactory(): LocalFavoritesWorkerPort | undefined {
 
 function deferFallback<Value>(operation: () => Value): Promise<Value> {
   return new Promise((resolve, reject) => {
-    const schedule = typeof window === "undefined"
+    const schedule = !("window" in globalThis)
       ? (callback: () => void) => globalThis.setTimeout(callback, 0)
       : window.setTimeout.bind(window);
     schedule(() => {
@@ -335,7 +668,7 @@ export class LocalFavoritesPreparationClient implements LocalFavoritesPreparatio
     } catch (cause) {
       const pending = this.pending.get(requestId);
       this.pending.delete(requestId);
-      const error = errorFromUnknown(
+      const error = errorFromCause(
         cause,
         "Coda could not send local Favorites to its worker.",
       );
@@ -407,7 +740,7 @@ export class LocalFavoritesPreparationClient implements LocalFavoritesPreparatio
     worker.onerror = (event) => {
       if (this.worker !== worker) return;
       event.preventDefault?.();
-      this.failWorker(errorFromUnknown(
+      this.failWorker(errorFromCause(
         event.error,
         event.message || "Coda's local Favorites worker failed.",
       ), true);
@@ -423,7 +756,7 @@ export class LocalFavoritesPreparationClient implements LocalFavoritesPreparatio
     return worker;
   }
 
-  private handleMessage(value: unknown): void {
+  private handleMessage(value: OwnDataValue): void {
     const response = parseLocalFavoritesPreparationResponse(value);
     if (!response) {
       this.failWorker(new Error(
@@ -471,7 +804,7 @@ export class LocalFavoritesPreparationClient implements LocalFavoritesPreparatio
   private handlePostFailure(requestId: number, cause: unknown): void {
     const pending = this.pending.get(requestId);
     this.pending.delete(requestId);
-    const error = errorFromUnknown(
+    const error = errorFromCause(
       cause,
       "Coda could not send local Favorites to its worker.",
     );

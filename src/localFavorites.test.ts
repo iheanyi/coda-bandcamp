@@ -2,13 +2,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   emptyLocalFavorites,
   LOCAL_FAVORITES_KEY,
+  LOCAL_FAVORITES_VERSION,
+  localTrackStarIndexCanAccept,
+  MAX_FAVORITE_TRACKS,
+  MAX_LOCAL_FAVORITES_BYTES,
+  parseLocalFavoritesSerialized,
   readLocalFavorites,
+  reconcileLocalTrackStarIndex,
   repairLocalFavoriteMetadata,
   sanitizeLocalFavorites,
   updateLocalFavorites,
   updateLocalRadioFavorite,
   writeLocalFavorites,
 } from "./localFavorites";
+import { isStringValue, type OwnDataValue } from "./ownData";
 import type { Album, RadioShowSummary, Track } from "./types";
 
 const track: Track = {
@@ -119,6 +126,64 @@ describe("local favorites", () => {
     expect(window.localStorage.getItem(LOCAL_FAVORITES_KEY)).toBeNull();
   });
 
+  it("decodes storage directly into a validated Favorites owner", () => {
+    const snapshot = {
+      version: LOCAL_FAVORITES_VERSION,
+      ...emptyLocalFavorites(),
+      songIds: [track.id],
+      tracks: [track],
+    };
+
+    expect(
+      parseLocalFavoritesSerialized(JSON.stringify(snapshot))?.songIds,
+    ).toEqual([track.id]);
+    expect(parseLocalFavoritesSerialized("{")).toBeUndefined();
+    expect(
+      parseLocalFavoritesSerialized("x".repeat(MAX_LOCAL_FAVORITES_BYTES + 1)),
+    ).toBeUndefined();
+    expect(parseLocalFavoritesSerialized(JSON.stringify({
+      ...snapshot,
+      tracks: [{ ...track, title: "invalid\u009f" }],
+    }))).toBeUndefined();
+  });
+
+  it("rejects inherited, accessor, and coercion-spoofed fields", () => {
+    const validCollection = {
+      ...emptyLocalFavorites(),
+      songIds: [track.id],
+      tracks: [track],
+    };
+    const inheritedCollection = Object.create(validCollection);
+    let titleReads = 0;
+    const accessorTrack = { ...track };
+    Object.defineProperty(accessorTrack, "title", {
+      enumerable: true,
+      get() {
+        titleReads += 1;
+        return track.title;
+      },
+    });
+    let coercions = 0;
+    const spoofedTitle = {
+      [Symbol.toPrimitive]() {
+        coercions += 1;
+        return track.title;
+      },
+    };
+
+    expect(sanitizeLocalFavorites(inheritedCollection)).toBeUndefined();
+    expect(sanitizeLocalFavorites({
+      ...validCollection,
+      tracks: [accessorTrack],
+    })).toBeUndefined();
+    expect(titleReads).toBe(0);
+    expect(sanitizeLocalFavorites({
+      ...validCollection,
+      tracks: [{ ...track, title: spoofedTitle }],
+    })).toBeUndefined();
+    expect(coercions).toBe(0);
+  });
+
   it("normalizes nullable native fields and repairs prior ID-only favorites", () => {
     const nativeAlbum = {
       ...album,
@@ -130,12 +195,12 @@ describe("local favorites", () => {
       playedAt: null,
       originalReleaseDate: null,
       releaseDate: null,
-    } as unknown as Album;
+    };
     const nativeTrack = {
       ...track,
       coverArt: null,
       disc: null,
-    } as unknown as Track;
+    };
     const repaired = repairLocalFavoriteMetadata(
       {
         albumIds: ["album-1"],
@@ -174,6 +239,31 @@ describe("local favorites", () => {
     for (const candidate of malformed) {
       expect(sanitizeLocalFavorites(collectionFor(candidate))).toBeUndefined();
     }
+  });
+
+  it("scans full-length UTF-16 text and rejects every control range", () => {
+    const collectionForTitle = (title: string) => ({
+      ...emptyLocalFavorites(),
+      songIds: [track.id],
+      tracks: [{ ...track, title }],
+    });
+    const fullLengthTitle = "🎵".repeat(512);
+
+    expect(fullLengthTitle).toHaveLength(1_024);
+    expect(
+      sanitizeLocalFavorites(collectionForTitle(fullLengthTitle))
+        ?.tracks[0]?.title,
+    ).toBe(fullLengthTitle);
+    for (const control of ["\u0000", "\u001f", "\u007f", "\u009f"]) {
+      expect(
+        sanitizeLocalFavorites(
+          collectionForTitle(`${"a".repeat(1_023)}${control}`),
+        ),
+      ).toBeUndefined();
+    }
+    expect(
+      sanitizeLocalFavorites(collectionForTitle("a".repeat(1_025))),
+    ).toBeUndefined();
   });
 
   it("repairs every preserved album date field and recognizes equal precision", () => {
@@ -289,8 +379,8 @@ describe("local favorites", () => {
       .toEqual([]);
   });
 
-  it("filters large favorite metadata with indexed ID membership", () => {
-    const favoriteCount = 2_000;
+  it("filters the 25,000-track maximum with indexed ID membership", () => {
+    const favoriteCount = 25_000;
     const songIds = Array.from(
       { length: favoriteCount },
       (_value, index) => `song-linear-${index}`,
@@ -303,10 +393,14 @@ describe("local favorites", () => {
     const originalIncludes = Array.prototype.includes;
     let linearCollectionIncludes = 0;
     const includesSpy = vi.spyOn(Array.prototype, "includes").mockImplementation(
-      function (this: unknown[], searchElement: unknown, fromIndex?: number) {
+      function (
+        this: unknown[],
+        searchElement: OwnDataValue,
+        fromIndex?: number,
+      ) {
         if (
           this.length === favoriteCount &&
-          typeof searchElement === "string" &&
+          isStringValue(searchElement) &&
           searchElement.startsWith("song-linear-")
         ) {
           linearCollectionIncludes += 1;
@@ -331,5 +425,189 @@ describe("local favorites", () => {
 
     expect(sanitized?.tracks).toHaveLength(favoriteCount);
     expect(linearCollectionIncludes).toBe(0);
+  });
+
+  it("returns the same collection when confirmed track stars already match", () => {
+    const current = updateLocalFavorites(
+      emptyLocalFavorites(),
+      { id: track.id, kind: "song", favorite: true },
+      track,
+    );
+
+    expect(reconcileLocalTrackStarIndex(current, current.tracks)).toBe(current);
+  });
+
+  it("drops confirmed unstars and prepends newly confirmed stars in one pass", () => {
+    const kept = updateLocalFavorites(
+      emptyLocalFavorites(),
+      { id: track.id, kind: "song", favorite: true },
+      track,
+    );
+    const removed = updateLocalFavorites(
+      kept,
+      { id: "song-2", kind: "song", favorite: true },
+      { ...track, id: "song-2", title: "Lanterns", track: 2 },
+    );
+    const incoming: Track = {
+      ...track,
+      id: "song-3",
+      title: "Afterimage",
+      track: 3,
+      starredAt: "2025-07-02T12:00:00Z",
+      artworkUrl: undefined,
+      streamUrl: undefined,
+    };
+
+    const reconciled = reconcileLocalTrackStarIndex(
+      removed,
+      [incoming],
+      ["song-2"],
+    );
+
+    expect(reconciled).not.toBe(removed);
+    expect(reconciled.songIds).toEqual(["song-3", "song-1"]);
+    expect(reconciled.tracks.map((item) => item.id)).toEqual([
+      "song-3",
+      "song-1",
+    ]);
+    expect(reconciled.tracks[0]).toEqual({
+      id: "song-3",
+      title: "Afterimage",
+      artist: "Sweeps",
+      album: "Mirage",
+      albumId: "album-1",
+      duration: 188,
+      track: 3,
+      albumArtist: "Sweeps",
+      musicBrainzId: "189002e7-3285-4e2e-92a3-7f6c30d407a2",
+      coverArt: "cover-1",
+      starredAt: "2025-07-02T12:00:00Z",
+      palette: ["#a66", "#222"],
+    });
+  });
+
+  it("rejects a new confirmed star at the 25,000-track bound and updates existing ids", () => {
+    const songIds = Array.from(
+      { length: MAX_FAVORITE_TRACKS },
+      (_value, index) => `song-bound-${index}`,
+    );
+    const current = {
+      ...emptyLocalFavorites(),
+      songIds,
+    };
+    const overflow: Track = {
+      ...track,
+      id: "song-overflow",
+      starredAt: "2025-07-02T12:00:00Z",
+    };
+
+    expect(localTrackStarIndexCanAccept(emptyLocalFavorites(), overflow.id)).toBe(true);
+    expect(localTrackStarIndexCanAccept(current, "song-bound-0")).toBe(true);
+    expect(localTrackStarIndexCanAccept(current, overflow.id)).toBe(false);
+    expect(() => updateLocalFavorites(
+      current,
+      { id: overflow.id, kind: "song", favorite: true },
+      overflow,
+    )).toThrow("Coda can save at most 25,000 favorite tracks.");
+    expect(() => reconcileLocalTrackStarIndex(current, [overflow])).toThrow(
+      "Coda can save at most 25,000 favorite tracks.",
+    );
+
+    const updated = reconcileLocalTrackStarIndex(current, [{
+      ...track,
+      id: "song-bound-0",
+      starredAt: "2025-07-03T12:00:00Z",
+    }]);
+    expect(updated.songIds[0]).toBe("song-bound-0");
+    expect(updated.tracks[0]).toMatchObject({
+      id: "song-bound-0",
+      starredAt: "2025-07-03T12:00:00Z",
+    });
+  });
+
+  it("reconciles the 25,000-track bound without per-track linear scans", () => {
+    const favoriteCount = MAX_FAVORITE_TRACKS;
+    const songIds = Array.from(
+      { length: favoriteCount },
+      (_value, index) => `song-linear-${index}`,
+    );
+    const tracks = songIds.map((id, index): Track => ({
+      id,
+      title: track.title,
+      artist: track.artist,
+      album: track.album,
+      albumId: track.albumId,
+      duration: track.duration,
+      track: index + 1,
+      albumArtist: track.albumArtist,
+      musicBrainzId: track.musicBrainzId,
+      coverArt: track.coverArt,
+      starredAt: track.starredAt,
+      palette: track.palette,
+    }));
+    const current = {
+      ...emptyLocalFavorites(),
+      songIds,
+      tracks,
+    };
+    const originalFind = Array.prototype.find;
+    const originalIncludes = Array.prototype.includes;
+    const originalFilter = Array.prototype.filter;
+    let linearCollectionFinds = 0;
+    let linearCollectionIncludes = 0;
+    let linearCollectionFilters = 0;
+    const findSpy = vi.spyOn(Array.prototype, "find").mockImplementation(
+      function (this: OwnDataValue[], predicate, thisArg) {
+        if (this.length === favoriteCount) linearCollectionFinds += 1;
+        return originalFind.call(this, predicate, thisArg);
+      },
+    );
+    const includesSpy = vi.spyOn(Array.prototype, "includes").mockImplementation(
+      function (
+        this: OwnDataValue[],
+        searchElement: OwnDataValue,
+        fromIndex?: number,
+      ) {
+        if (
+          this.length === favoriteCount &&
+          isStringValue(searchElement) &&
+          searchElement.startsWith("song-linear-")
+        ) {
+          linearCollectionIncludes += 1;
+        }
+        return originalIncludes.call(this, searchElement, fromIndex);
+      },
+    );
+    const filterSpy = vi.spyOn(Array.prototype, "filter").mockImplementation(
+      function (this: OwnDataValue[], predicate, thisArg) {
+        if (this.length === favoriteCount) linearCollectionFilters += 1;
+        return originalFilter.call(this, predicate, thisArg);
+      },
+    );
+    const stringifySpy = vi.spyOn(JSON, "stringify");
+
+    try {
+      expect(reconcileLocalTrackStarIndex(current, tracks)).toBe(current);
+
+      const refreshed = tracks.map((item) => ({
+        ...item,
+        starredAt: "2025-08-01T12:00:00Z",
+      }));
+      const reconciled = reconcileLocalTrackStarIndex(current, refreshed);
+      expect(reconciled.tracks).toHaveLength(favoriteCount);
+      expect(reconciled.tracks[0]?.starredAt).toBe("2025-08-01T12:00:00Z");
+      expect(reconciled.songIds[0]).toBe(`song-linear-${favoriteCount - 1}`);
+      expect(stringifySpy).not.toHaveBeenCalled();
+    } finally {
+      findSpy.mockRestore();
+      includesSpy.mockRestore();
+      filterSpy.mockRestore();
+      stringifySpy.mockRestore();
+    }
+
+    expect(linearCollectionFinds).toBe(0);
+    expect(linearCollectionIncludes).toBe(0);
+    expect(linearCollectionFilters).toBeLessThan(8);
+    expect(stringifySpy).not.toHaveBeenCalled();
   });
 });

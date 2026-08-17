@@ -113,9 +113,10 @@ describe("Coda sidebar", () => {
       value: vi.fn(),
     });
     const onNavigate = vi.fn((request: AppSidebarNavigationRequest) => {
-      const transition = transitionCodaView(request.navigate, "page-forward", {
-        routerOwnedPage: true,
-      });
+      const transition = transitionCodaView(async (token) => {
+        if (!token.isCurrent()) return;
+        await request.navigate(false);
+      }, "page-forward");
       capturedClassName = document.documentElement.className;
       return transition;
     });
@@ -154,8 +155,50 @@ describe("Coda sidebar", () => {
       expect.objectContaining({
         destination: "/recent",
         navigate: expect.any(Function),
+        search: expect.objectContaining({
+          genre: "All",
+          mode: "releases",
+          q: "",
+          sort: "recent",
+        }),
         trigger: screen.getByRole("link", { name: "Recently added" }),
       }),
     );
+  });
+
+  it("hands Daily sidebar activation the default category from a non-default Daily search", async () => {
+    const user = userEvent.setup();
+    const router = createCodaMemoryRouter(new QueryClient(), [
+      "/daily?category=lists",
+    ]);
+    await router.load();
+    const onNavigate = vi.fn(async (request: AppSidebarNavigationRequest) => {
+      await request.navigate(false);
+    });
+
+    render(
+      <RouterContextProvider router={router}>
+        <AppSidebar connected onConnect={vi.fn()} onNavigate={onNavigate} />
+      </RouterContextProvider>,
+    );
+
+    expect(router.state.location.search).toEqual(
+      expect.objectContaining({ category: "lists" }),
+    );
+
+    await user.click(screen.getByRole("link", { name: "Bandcamp Daily" }));
+
+    expect(onNavigate).toHaveBeenCalledOnce();
+    expect(onNavigate.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        destination: "/daily",
+        search: { category: "album-of-the-day" },
+      }),
+    );
+    await waitFor(() => {
+      expect(router.state.location.search).toEqual(
+        expect.objectContaining({ category: "album-of-the-day" }),
+      );
+    });
   });
 });

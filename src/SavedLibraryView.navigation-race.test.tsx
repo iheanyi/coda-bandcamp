@@ -1,15 +1,12 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { RouterContextProvider } from "@tanstack/react-router";
-import { act, fireEvent, render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { CodaMotionProvider } from "@/MotionProvider";
 import {
   PLAYLISTS_QUERY_KEY,
   playlistQueryKey,
 } from "@/queries/savedLibraryQueries";
-import { createCodaMemoryRouter } from "@/router";
 import type { PlaylistDetail, PlaylistSummary, Track } from "@/types";
+import { renderSavedLibraryRoute } from "@/test/savedLibraryViewTestHarness";
 
 type PendingTransition = Readonly<{
   kind: string;
@@ -17,40 +14,38 @@ type PendingTransition = Readonly<{
   resolve: () => void;
 }>;
 
-const mocks = vi.hoisted(() => ({
-  fetchPlaylist: vi.fn(),
-  fetchPlaylists: vi.fn(),
-  pendingTransitions: [] as PendingTransition[],
-}));
+type PendingTransitions = {
+  pending: PendingTransition[];
+};
 
-vi.mock("@/lib", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib")>();
+const transitions: PendingTransitions = { pending: [] };
+const originalStartViewTransition = Object.getOwnPropertyDescriptor(
+  document,
+  "startViewTransition",
+);
+const startViewTransition = vi.fn((update: () => void | Promise<void>) => {
+  let resolveCompletion!: () => void;
+  const completion = new Promise<void>((resolve) => {
+    resolveCompletion = resolve;
+  });
+  const updateCallbackDone = Promise.resolve(update());
+  const promise = updateCallbackDone.then(() => completion);
+  const kind = document.documentElement.classList.contains(
+    "coda-transition--playlist-detail-close",
+  )
+    ? "playlist-detail-close"
+    : "playlist-detail";
+  transitions.pending.push({
+    kind,
+    promise,
+    resolve: resolveCompletion,
+  });
   return {
-    ...actual,
-    fetchPlaylist: mocks.fetchPlaylist,
-    fetchPlaylists: mocks.fetchPlaylists,
+    finished: promise,
+    skipTransition: resolveCompletion,
+    updateCallbackDone,
   };
 });
-
-vi.mock("@/viewTransitions", () => ({
-  transitionCodaView: vi.fn(
-    (update: () => void | Promise<void>, kind: string) => {
-      let resolveCompletion!: () => void;
-      const completion = new Promise<void>((resolve) => {
-        resolveCompletion = resolve;
-      });
-      const promise = Promise.resolve(update()).then(() => completion);
-      mocks.pendingTransitions.push({
-        kind,
-        promise,
-        resolve: resolveCompletion,
-      });
-      return promise;
-    },
-  ),
-}));
-
-import SavedLibraryView from "@/SavedLibraryView";
 
 const track: Track = {
   album: "Mirage",
@@ -87,62 +82,33 @@ const secondDetail: PlaylistDetail = {
   tracks: [track],
 };
 
-const props = {
-  connected: true,
-  favoritesLoading: false,
-  onAddToPlaylist: vi.fn(),
-  onNotify: vi.fn(),
-  onOpenAlbum: vi.fn(),
-  onOpenArtist: vi.fn(),
-  onOpenRadioSeries: vi.fn(),
-  onOpenRadioShow: vi.fn(),
-  onOpenTrackAlbum: vi.fn(),
-  onPlayTrack: vi.fn(),
-  onPlayTracks: vi.fn(),
-  onQueueTrack: vi.fn(),
-  onQueueTracks: vi.fn(),
-  onRefreshFavorites: vi.fn(),
-  onToggleFavorite: vi.fn(),
-  onTogglePlayback: vi.fn(),
-  onToggleRadioFavorite: vi.fn(),
-  playing: false,
-} as const;
-
 function renderSavedLibrary(includeSecondPlaylist = false) {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      mutations: { retry: false },
-      queries: { retry: false },
+  return renderSavedLibraryRoute({
+    initialEntry: "/playlists",
+    seedQueryClient: (queryClient) => {
+      queryClient.setQueryData(
+        PLAYLISTS_QUERY_KEY,
+        includeSecondPlaylist ? [summary, secondSummary] : [summary],
+      );
+      queryClient.setQueryData(playlistQueryKey(summary.id), detail);
+      if (includeSecondPlaylist) {
+        queryClient.setQueryData(
+          playlistQueryKey(secondSummary.id),
+          secondDetail,
+        );
+      }
     },
   });
-  queryClient.setQueryData(
-    PLAYLISTS_QUERY_KEY,
-    includeSecondPlaylist ? [summary, secondSummary] : [summary],
-  );
-  queryClient.setQueryData(playlistQueryKey(summary.id), detail);
-  if (includeSecondPlaylist) {
-    queryClient.setQueryData(playlistQueryKey(secondSummary.id), secondDetail);
-  }
-  const router = createCodaMemoryRouter(queryClient, ["/playlists"]);
-  render(
-    <CodaMotionProvider>
-      <QueryClientProvider client={queryClient}>
-        <RouterContextProvider router={router}>
-          <div data-coda-library-scroll>
-            <SavedLibraryView mode="playlists" {...props} />
-          </div>
-        </RouterContextProvider>
-      </QueryClientProvider>
-    </CodaMotionProvider>,
-  );
 }
 
 async function settleTransition(index: number) {
-  const transition = mocks.pendingTransitions[index];
-  expect(transition).toBeDefined();
+  const pendingTransition = transitions.pending[index];
+  if (!pendingTransition) {
+    throw new Error(`Expected pending playlist transition ${index}`);
+  }
   await act(async () => {
-    transition!.resolve();
-    await transition!.promise;
+    pendingTransition.resolve();
+    await pendingTransition.promise;
   });
 }
 
@@ -156,9 +122,28 @@ function expectReturnMarkers() {
 }
 
 beforeEach(() => {
-  mocks.pendingTransitions.length = 0;
-  mocks.fetchPlaylist.mockReset().mockResolvedValue(detail);
-  mocks.fetchPlaylists.mockReset().mockResolvedValue([summary]);
+  transitions.pending.length = 0;
+  startViewTransition.mockClear();
+  Object.defineProperty(document, "startViewTransition", {
+    configurable: true,
+    value: startViewTransition,
+  });
+});
+
+afterEach(() => {
+  document.documentElement.classList.remove(
+    "coda-transition--playlist-detail",
+    "coda-transition--playlist-detail-close",
+  );
+  if (originalStartViewTransition) {
+    Object.defineProperty(
+      document,
+      "startViewTransition",
+      originalStartViewTransition,
+    );
+  } else {
+    Reflect.deleteProperty(document, "startViewTransition");
+  }
 });
 
 describe("Saved Library playlist transition race cleanup", () => {
@@ -185,7 +170,7 @@ describe("Saved Library playlist transition race cleanup", () => {
       second.click();
     });
 
-    expect(mocks.pendingTransitions).toHaveLength(2);
+    expect(transitions.pending).toHaveLength(2);
     expect(firstIdentity).not.toHaveAttribute(
       "data-coda-playlist-identity-source",
     );
@@ -221,12 +206,12 @@ describe("Saved Library playlist transition race cleanup", () => {
 
     fireEvent.click(await screen.findByRole("link", { name: /Night drive/u }));
     await screen.findByRole("heading", { name: summary.name });
-    expect(mocks.pendingTransitions[0]?.kind).toBe("playlist-detail");
+    expect(transitions.pending[0]?.kind).toBe("playlist-detail");
     await settleTransition(0);
 
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     await screen.findByRole("link", { name: /Night drive/u });
-    expect(mocks.pendingTransitions[1]?.kind).toBe("playlist-detail-close");
+    expect(transitions.pending[1]?.kind).toBe("playlist-detail-close");
     expectReturnMarkers();
 
     fireEvent.click(screen.getByRole("link", { name: /Night drive/u }));
@@ -234,7 +219,7 @@ describe("Saved Library playlist transition race cleanup", () => {
     await settleTransition(2);
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     await screen.findByRole("link", { name: /Night drive/u });
-    expect(mocks.pendingTransitions[3]?.kind).toBe("playlist-detail-close");
+    expect(transitions.pending[3]?.kind).toBe("playlist-detail-close");
     expectReturnMarkers();
 
     await settleTransition(1);

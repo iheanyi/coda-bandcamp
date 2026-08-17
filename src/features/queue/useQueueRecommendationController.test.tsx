@@ -28,13 +28,22 @@ const seedTrack: Track = {
   track: 1,
 };
 
+type RecommendationHookProps = {
+  currentTrack?: Track;
+  open: boolean;
+};
+
 describe("useQueueRecommendationController", () => {
   it("derives recommendations only while open and retains the last playback seed", () => {
     const albums = [album("seed"), album("next")];
     const onPlayRandomTrack = vi.fn();
     const onQueueAlbum = vi.fn().mockResolvedValue(true);
+    const initialProps: RecommendationHookProps = {
+      currentTrack: seedTrack,
+      open: false,
+    };
     const { result, rerender } = renderHook(
-      ({ currentTrack, open }: { currentTrack?: Track; open: boolean }) =>
+      ({ currentTrack, open }: RecommendationHookProps) =>
         useQueueRecommendationController({
           albums,
           currentTrack,
@@ -44,10 +53,7 @@ describe("useQueueRecommendationController", () => {
           open,
         }),
       {
-        initialProps: {
-          currentTrack: seedTrack as Track | undefined,
-          open: false,
-        },
+        initialProps,
       },
     );
 

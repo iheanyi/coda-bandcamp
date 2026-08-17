@@ -4,11 +4,12 @@ import {
   MapPin,
   Plus,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { type CSSProperties, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PlaybackIcon } from "@/components/ui/playback-icon";
 import { discoverPreviewTrack } from "@/discover";
+import { useActivateDetailDestination } from "@/features/navigation/useActivateDetailDestination";
 import { formatTime, initials, paletteFor } from "@/lib";
 import { cn } from "@/lib/utils";
 import type { DiscoverRelease, Track } from "@/types";
@@ -26,6 +27,11 @@ export type DiscoverReleaseScreenProps = {
   onOpenBandcamp: (url: string) => void;
 };
 
+type DiscoverReleaseArtworkStyle = CSSProperties & {
+  "--cover-accent": string;
+  "--cover-base": string;
+};
+
 export function DiscoverReleaseScreen({
   className,
   release,
@@ -41,7 +47,6 @@ export function DiscoverReleaseScreen({
   const track = discoverPreviewTrack(release);
   const active = Boolean(track && currentTrackId === track.id);
   const palette = paletteFor(release.id);
-  const headingRef = useRef<HTMLHeadingElement>(null);
   const artworkUrl = release.artworkUrl;
   const [failedArtworkUrl, setFailedArtworkUrl] = useState<string>();
   const [loadedArtworkUrl, setLoadedArtworkUrl] = useState<string>();
@@ -51,16 +56,19 @@ export function DiscoverReleaseScreen({
   const artworkLoaded = Boolean(
     artworkEligible && loadedArtworkUrl === artworkUrl,
   );
-
-  useEffect(() => {
-    headingRef.current?.focus({ preventScroll: true });
-  }, []);
+  const artworkStyle: DiscoverReleaseArtworkStyle = {
+    "--cover-accent": palette[0],
+    "--cover-base": palette[1],
+  };
+  useActivateDetailDestination(
+    "discover-release",
+    `discover-release:${release.id}`,
+  );
 
   return (
     <article
       className={cn("mx-auto -mt-2 mb-8 w-full max-w-4xl", className)}
       aria-labelledby="discover-release-heading"
-      data-coda-discover-detail-surface=""
     >
       <Button
         className="mb-4 -ml-1 h-auto gap-1.5 p-1 text-xs text-muted-foreground hover:bg-transparent hover:text-foreground"
@@ -71,16 +79,12 @@ export function DiscoverReleaseScreen({
         <ArrowLeft size={15} />
         Back
       </Button>
+      <div data-coda-discover-detail-surface="">
       <header className="flex items-end gap-8 overflow-hidden rounded-t-xl border border-border bg-[radial-gradient(circle_at_82%_20%,rgba(221,101,73,0.13),transparent_37%),linear-gradient(135deg,#24282a,#191c1e_70%)] p-8 max-xl:items-center max-xl:gap-6 max-xl:p-6">
         <div
           className="grid size-56 shrink-0 place-items-center overflow-hidden rounded-xl bg-[linear-gradient(145deg,var(--cover-accent),transparent_72%),var(--cover-base)] text-4xl font-bold text-white/80 shadow-2xl max-xl:size-48"
           data-coda-discover-artwork-detail={release.id}
-          style={
-            {
-              "--cover-accent": palette[0],
-              "--cover-base": palette[1],
-            } as React.CSSProperties
-          }
+          style={artworkStyle}
         >
           {artworkEligible && artworkUrl ? (
             <img
@@ -114,7 +118,6 @@ export function DiscoverReleaseScreen({
         <div className="min-w-0 pb-1">
           <Badge variant="artwork" className="mb-3">Discover release</Badge>
           <h1
-            ref={headingRef}
             id="discover-release-heading"
             className="m-0 max-w-xl font-['Segoe_UI_Variable_Display','Segoe_UI',sans-serif] text-4xl leading-none font-semibold tracking-tighter wrap-anywhere text-foreground outline-none max-xl:text-3xl"
             tabIndex={-1}
@@ -207,6 +210,7 @@ export function DiscoverReleaseScreen({
           </p>
         )}
       </section>
+      </div>
     </article>
   );
 }

@@ -21,7 +21,6 @@ export type {
   PlaybackQueueRadioChapter,
   PlaybackQueueStatus,
   PlaybackQueueTrack,
-  PlaybackRuntimeAdapters,
   PlaybackRuntimeController,
   PlaybackRuntimeOptions,
   PlaybackScrobbleAdapters,

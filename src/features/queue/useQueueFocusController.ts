@@ -10,7 +10,7 @@ export type QueueFocusScheduler = (
 ) => () => void;
 
 function scheduleQueueFocus(focus: () => void): () => void {
-  if (typeof window.requestAnimationFrame === "function") {
+  if (window.requestAnimationFrame) {
     const frame = window.requestAnimationFrame(focus);
     return () => window.cancelAnimationFrame(frame);
   }

@@ -1,16 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const mocks = vi.hoisted(() => ({
-  fetchAlbum: vi.fn(),
-  loadLibraryCache: vi.fn(),
-}));
-
-vi.mock("./lib", () => ({
-  fetchAlbum: mocks.fetchAlbum,
-  loadLibraryCache: mocks.loadLibraryCache,
-}));
-
+import * as libraryQueryModule from "./libraryQueries";
 import {
   LIBRARY_AUTO_REVALIDATE_INTERVAL_MS,
   albumQueryKey,
@@ -24,8 +14,21 @@ import {
   shouldAutoRevalidateLibrary,
   toLibrarySummaries,
   updateLibraryData,
+  type LibraryQueryBridge,
 } from "./libraryQueries";
 import type { Album, Track } from "./types";
+
+const mocks = {
+  fetchAlbum:
+    vi.fn<
+      (album: Album, options?: { forceRefresh?: boolean }) => Promise<Track[]>
+    >(),
+  loadLibraryCache: vi.fn<LibraryQueryBridge["loadLibraryCache"]>(),
+};
+const bridge = {
+  fetchAlbum: mocks.fetchAlbum,
+  loadLibraryCache: mocks.loadLibraryCache,
+} satisfies LibraryQueryBridge;
 
 const album = (id: string, title = id): Album => ({
   id,
@@ -63,6 +66,10 @@ describe("library query helpers", () => {
     mocks.loadLibraryCache.mockReset();
   });
 
+  it("does not expose the production query bridge for mutation", () => {
+    expect(libraryQueryModule).not.toHaveProperty("nativeLibraryQueryBridge");
+  });
+
   it("keeps value and functional library updates summary-only while album queries own tracks", () => {
     const client = new QueryClient();
     const release = {
@@ -74,10 +81,12 @@ describe("library query helpers", () => {
     updateLibraryData(client, (current) => [...current, album("two")]);
     client.setQueryData(albumQueryKey(release.id), release.tracks);
 
-    expect(client.getQueryData<Album[]>(libraryQueryKey)?.[0].tracks)
-      .toBeUndefined();
-    expect(client.getQueryData<Album[]>(libraryQueryKey)?.map(({ id }) => id))
-      .toEqual(["one", "two"]);
+    expect(
+      client.getQueryData<Album[]>(libraryQueryKey)?.[0].tracks,
+    ).toBeUndefined();
+    expect(
+      client.getQueryData<Album[]>(libraryQueryKey)?.map(({ id }) => id),
+    ).toEqual(["one", "two"]);
     expect(client.getQueryData(albumQueryKey(release.id))).toEqual(
       release.tracks,
     );
@@ -128,9 +137,9 @@ describe("library query helpers", () => {
     };
 
     expect(shouldAutoRevalidateLibrary(undefined, now)).toBe(true);
-    expect(
-      shouldAutoRevalidateLibrary({ ...snapshot, albums: [] }, now),
-    ).toBe(true);
+    expect(shouldAutoRevalidateLibrary({ ...snapshot, albums: [] }, now)).toBe(
+      true,
+    );
     expect(
       shouldAutoRevalidateLibrary(
         {
@@ -141,10 +150,7 @@ describe("library query helpers", () => {
       ),
     ).toBe(true);
     expect(
-      shouldAutoRevalidateLibrary(
-        { ...snapshot, savedAt: now + 1 },
-        now,
-      ),
+      shouldAutoRevalidateLibrary({ ...snapshot, savedAt: now + 1 }, now),
     ).toBe(true);
   });
 
@@ -153,13 +159,15 @@ describe("library query helpers", () => {
       defaultOptions: { queries: { retry: false } },
     });
     let resolveAlbum!: (tracks: Track[]) => void;
-    mocks.fetchAlbum.mockReturnValueOnce(new Promise((resolve) => {
-      resolveAlbum = resolve;
-    }));
+    mocks.fetchAlbum.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveAlbum = resolve;
+      }),
+    );
     const release = album("one");
 
-    const first = ensureAlbumQueryData(client, release);
-    const second = ensureAlbumQueryData(client, release);
+    const first = ensureAlbumQueryData(client, release, bridge);
+    const second = ensureAlbumQueryData(client, release, bridge);
 
     expect(mocks.fetchAlbum).toHaveBeenCalledTimes(1);
     resolveAlbum([track("track-1")]);
@@ -185,7 +193,7 @@ describe("library query helpers", () => {
 
     const coldRelease = album("two");
     mocks.fetchAlbum.mockResolvedValueOnce([track("prefetched", "Prefetched")]);
-    await prefetchAlbumQueryData(client, coldRelease);
+    await prefetchAlbumQueryData(client, coldRelease, bridge);
 
     expect(mocks.fetchAlbum).toHaveBeenCalledOnce();
     expect(client.getQueryData(albumQueryKey(coldRelease.id))).toEqual([
@@ -200,12 +208,14 @@ describe("library query helpers", () => {
     const release = album("one");
     client.setQueryData(albumQueryKey(release.id), [track("old", "Old")]);
     let resolveRefresh!: (tracks: Track[]) => void;
-    mocks.fetchAlbum.mockReturnValueOnce(new Promise((resolve) => {
-      resolveRefresh = resolve;
-    }));
+    mocks.fetchAlbum.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveRefresh = resolve;
+      }),
+    );
 
-    const first = refreshAlbumQueryData(client, release);
-    const second = refreshAlbumQueryData(client, release);
+    const first = refreshAlbumQueryData(client, release, bridge);
+    const second = refreshAlbumQueryData(client, release, bridge);
 
     await vi.waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledTimes(1));
     expect(mocks.fetchAlbum).toHaveBeenCalledWith(release, {
@@ -232,8 +242,8 @@ describe("library query helpers", () => {
       .mockReturnValueOnce(normalRequest.promise)
       .mockReturnValueOnce(forcedRequest.promise);
 
-    const normal = ensureAlbumQueryData(client, release);
-    const forced = refreshAlbumQueryData(client, release);
+    const normal = ensureAlbumQueryData(client, release, bridge);
+    const forced = refreshAlbumQueryData(client, release, bridge);
 
     await vi.waitFor(() => expect(mocks.fetchAlbum).toHaveBeenCalledTimes(2));
     expect(mocks.fetchAlbum).toHaveBeenNthCalledWith(1, release);
@@ -260,8 +270,9 @@ describe("library query helpers", () => {
     client.setQueryData(albumQueryKey(release.id), lastGood);
     mocks.fetchAlbum.mockRejectedValueOnce(new Error("Bandcamp unavailable"));
 
-    await expect(refreshAlbumQueryData(client, release))
-      .rejects.toThrow("Bandcamp unavailable");
+    await expect(
+      refreshAlbumQueryData(client, release, bridge),
+    ).rejects.toThrow("Bandcamp unavailable");
     expect(client.getQueryData(albumQueryKey(release.id))).toEqual(lastGood);
   });
 

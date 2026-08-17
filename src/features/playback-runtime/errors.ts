@@ -8,12 +8,22 @@ const UNIX_PATH_PATTERN =
   /(^|\s)\/(?:Users|home|private|tmp|var|opt|etc)\/[^\s,;]+/gu;
 const WINDOWS_PATH_PATTERN = /\b[A-Za-z]:\\[^\s,;]+/gu;
 
+function replaceControlCharacters(value: string): string {
+  let sanitized = "";
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    sanitized += code <= 0x1f || (code >= 0x7f && code <= 0x9f)
+      ? " "
+      : character;
+  }
+  return sanitized;
+}
+
 /** Keeps diagnostics useful without surfacing URLs, credentials, or paths. */
 export function safePlaybackErrorDetail(cause: unknown): string {
   const raw = cause instanceof Error ? cause.message : String(cause ?? "");
-  const sanitized = raw
+  const sanitized = replaceControlCharacters(raw)
     .replace(/^Error:\s*/iu, "")
-    .replace(/[\u0000-\u001f\u007f-\u009f]+/gu, " ")
     .replace(AUTHORIZATION_PATTERN, "[redacted authorization]")
     .replace(URL_PATTERN, "[redacted URL]")
     .replace(SENSITIVE_VALUE_PATTERN, "$1=[redacted]")

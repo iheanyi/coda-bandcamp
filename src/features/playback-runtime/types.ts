@@ -78,13 +78,6 @@ export type PlaybackSystemMediaAdapters = {
   ) => Promise<() => void>;
 };
 
-export type PlaybackRuntimeAdapters = {
-  persistence?: Partial<PlaybackPersistenceAdapters>;
-  audio?: Partial<PlaybackAudioAdapters>;
-  scrobbling?: Partial<PlaybackScrobbleAdapters>;
-  systemMedia?: Partial<PlaybackSystemMediaAdapters>;
-};
-
 export type ProgressivePlaybackShuffleOptions = {
   connected: boolean;
   getConnectionGeneration: () => number;
@@ -100,7 +93,6 @@ export type PlaybackRuntimeOptions = {
   notify: PlaybackNotify;
   progressiveShuffle?: ProgressivePlaybackShuffleOptions;
   onShuffleEntireLibrary?: () => void | Promise<void>;
-  adapters?: PlaybackRuntimeAdapters;
   persistenceTiming?: {
     structuralSaveDebounceMs?: number;
     checkpointIntervalMs?: number;

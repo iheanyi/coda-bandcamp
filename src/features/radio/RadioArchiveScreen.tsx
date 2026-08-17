@@ -30,6 +30,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { countLabel } from "@/countLabel";
+import type { RouteCommitOutcome } from "@/features/navigation/routeCommit";
 import { openBandcampUrl } from "@/lib";
 import { cn } from "@/lib/utils";
 import {
@@ -57,7 +58,6 @@ import { showDate } from "./radioPresentationFormatting";
 import { radioShowId } from "./radioRouteIds";
 import type {
   RadioArchiveScreenProps,
-  RadioOpenShowRequest,
 } from "./radioScreenTypes";
 
 const RADIO_ARCHIVE_GRID_LAYOUTS = [
@@ -76,6 +76,26 @@ const RADIO_ARCHIVE_GRID_LAYOUTS = [
   },
 ] as const;
 const radioShowKey = (show: RadioShowSummary) => show.id;
+
+function assertNever(value: never): never {
+  throw new TypeError(`Unsupported exhaustive variant: ${String(value)}`);
+}
+
+function radioShowNavigationFailureCopy(
+  outcome: RouteCommitOutcome,
+): string | undefined {
+  switch (outcome) {
+    case "rendered":
+    case "same-location":
+      return undefined;
+    case "failed":
+      return "Radio show navigation failed. Try again.";
+    case "timeout":
+      return "Radio show navigation took too long. Try again.";
+    default:
+      return assertNever(outcome);
+  }
+}
 function RadioArchiveScreen({
   onPlay,
   onQueue,
@@ -87,7 +107,8 @@ function RadioArchiveScreen({
   seriesId,
   onSelectSeries,
   onOpenShow,
-  returningArtworkId,
+  openExternal = openBandcampUrl,
+  repository,
   seriesTravelSteps,
 }: RadioArchiveScreenProps) {
   const queryClient = useQueryClient();
@@ -100,10 +121,12 @@ function RadioArchiveScreen({
       element?.parentElement ??
       null;
   }, []);
-  const showsQuery = useInfiniteQuery(radioShowsInfiniteQueryOptions(seriesId));
+  const showsQuery = useInfiniteQuery(
+    radioShowsInfiniteQueryOptions(seriesId, repository),
+  );
   const [busy, setBusy] = useState<{
     id: number;
-    action: "play" | "queue" | "detail";
+    action: "play" | "queue";
   }>();
   const [actionError, setActionError] = useState("");
   const selectedSeries = BANDCAMP_RADIO_SERIES.find(
@@ -127,7 +150,7 @@ function RadioArchiveScreen({
 
   const loadShow = useCallback(
     async (summary: RadioShowSummary) => {
-      const options = radioShowQueryOptions(summary.id);
+      const options = radioShowQueryOptions(summary.id, repository);
       const loaded = await queryClient.fetchQuery(options);
       const details =
         loaded.series || !summary.series
@@ -138,7 +161,7 @@ function RadioArchiveScreen({
       }
       return details;
     },
-    [queryClient],
+    [queryClient, repository],
   );
 
   const actOnShow = useCallback(
@@ -162,7 +185,6 @@ function RadioArchiveScreen({
 
   const viewShow = useCallback(
     async (show: RadioShowSummary, sourceTrigger?: HTMLElement) => {
-      if (busy) return;
       const parsedShowId = radioShowId(show.id);
       if (!parsedShowId) {
         setActionError("Bandcamp returned an invalid Radio show ID");
@@ -171,48 +193,29 @@ function RadioArchiveScreen({
       const returnScrollTop =
         document.querySelector<HTMLElement>("[data-coda-library-scroll]")
           ?.scrollTop ?? 0;
-      const sourceArticle = sourceTrigger?.closest<HTMLElement>("article");
-      const sourceArtwork =
-        sourceArticle?.querySelector<HTMLElement>(
-          `[data-radio-show-artwork="${show.id}"]`,
-        ) ?? undefined;
-      const sourceTitleRoot = sourceArtwork
-        ? sourceArticle?.querySelector<HTMLElement>(
-            `[data-radio-show-title="${show.id}"]`,
-          )
-        : undefined;
-      const sourceTitle =
-        sourceTitleRoot?.querySelector<HTMLElement>(
-          ':is([data-slot="overflow-marquee-text"], [data-coda-radio-title-text])',
-        ) ??
-        sourceTitleRoot ??
-        undefined;
-      setBusy({ id: show.id, action: "detail" });
       setActionError("");
       try {
-        await loadShow(show);
-        await onOpenShow({
+        const outcome = await onOpenShow({
+          returnScrollTop,
+          sharedIdentityAvailable: true,
           showId: parsedShowId,
           sourceTrigger,
-          sourceArtwork,
-          sourceTitle,
-          returnScrollTop,
         });
+        const failureCopy = radioShowNavigationFailureCopy(outcome);
+        if (failureCopy) setActionError(failureCopy);
       } catch (cause) {
         setActionError(String(cause).replace(/^Error:\s*/, ""));
-      } finally {
-        setBusy(undefined);
       }
     },
-    [busy, loadShow, onOpenShow],
+    [onOpenShow],
   );
 
   const openItem = useCallback((url: string) => {
     setActionError("");
-    void openBandcampUrl(url).catch((cause) => {
+    void openExternal(url).catch((cause) => {
       setActionError(String(cause).replace(/^Error:\s*/, ""));
     });
-  }, []);
+  }, [openExternal]);
 
   const actionFor = (show: RadioShowSummary) =>
     busy?.id === show.id ? busy.action : undefined;
@@ -254,15 +257,16 @@ function RadioArchiveScreen({
 
   useEffect(() => {
     const target = paginationRef.current;
+    const Observer = globalThis.IntersectionObserver;
     if (
       !target ||
       !showsQuery.hasNextPage ||
       showsQuery.isFetchingNextPage ||
-      typeof IntersectionObserver === "undefined"
+      !Observer
     ) {
       return;
     }
-    const observer = new IntersectionObserver(
+    const observer = new Observer(
       ([entry]) => {
         if (entry?.isIntersecting) void showsQuery.fetchNextPage();
       },
@@ -359,11 +363,7 @@ function RadioArchiveScreen({
       {seriesNavigation}
       <article className="relative mb-9 grid grid-cols-[minmax(13rem,20rem)_minmax(0,1fr)] items-center gap-16 overflow-hidden rounded-xl border border-(--line) bg-[radial-gradient(circle_at_88%_7%,rgba(221,101,73,0.2),transparent_34%),radial-gradient(circle_at_5%_100%,rgba(115,77,151,0.11),transparent_38%),linear-gradient(135deg,#202325_0%,#17191b_72%)] p-12 shadow-[0_22px_58px_rgba(0,0,0,0.16)] before:pointer-events-none before:absolute before:-top-36 before:-right-24 before:size-90 before:rounded-full before:border before:border-white/4 before:shadow-[0_0_0_46px_rgba(255,255,255,0.012),0_0_0_92px_rgba(255,255,255,0.008)] before:content-[''] max-xl:grid-cols-[12rem_minmax(0,1fr)] max-xl:gap-6 max-xl:p-6 max-lg:grid-cols-[8rem_minmax(0,1fr)] max-lg:items-start max-lg:gap-4 max-lg:p-5">
         <div className="relative z-1 min-w-0 drop-shadow-[0_24px_32px_rgba(0,0,0,0.33)]">
-          <RadioArtwork
-            show={featured}
-            eager
-            returning={returningArtworkId === featured.id}
-          />
+          <RadioArtwork show={featured} eager />
           {featuredShowIdParam ? (
             <Link
               aria-label={`Open ${featured.subtitle}`}
@@ -396,9 +396,6 @@ function RadioArchiveScreen({
               <Link
                 className="inline-block max-w-full align-top outline-none hover:text-[#f09a83] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                 data-coda-radio-title-text={featured.id}
-                data-coda-radio-title-return={
-                  returningArtworkId === featured.id ? featured.id : undefined
-                }
                 data-radio-show-navigation-slot="title"
                 data-radio-show-open={featured.id}
                 onClick={(event) =>
@@ -523,17 +520,8 @@ function RadioArchiveScreen({
                 params={{ showId: featuredShowIdParam }}
                 to="/radio/shows/$showId"
               >
-                {actionFor(featured) === "detail" ? (
-                  <Spinner
-                    aria-hidden="true"
-                    className="size-4 text-current motion-reduce:animate-none"
-                  />
-                ) : (
-                  <ListMusic size={17} />
-                )}
-                {actionFor(featured) === "detail"
-                  ? "Loading tracklist…"
-                  : "View tracklist"}
+                <ListMusic size={17} />
+                View tracklist
               </Link>
             ) : null}
             <Tooltip>
@@ -599,7 +587,6 @@ function RadioArchiveScreen({
               onToggleFavorite={onToggleFavorite}
               onOpenItem={openItem}
               onBrowseSeries={selectSeries}
-              returningArtwork={returningArtworkId === show.id}
             />
           );
         }}

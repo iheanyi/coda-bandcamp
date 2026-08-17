@@ -31,14 +31,21 @@ class ResizeObserverMock implements ResizeObserver {
   observe(target: Element) {
     this.targets.add(target);
     const bounds = target.getBoundingClientRect();
-    this.callback([{
+    const size = {
+      blockSize: bounds.height,
+      inlineSize: bounds.width,
+    };
+    const entry: ResizeObserverEntry = {
       borderBoxSize: [{
-        blockSize: bounds.height,
-        inlineSize: bounds.width,
+        blockSize: size.blockSize,
+        inlineSize: size.inlineSize,
       }],
+      contentBoxSize: [size],
       contentRect: bounds,
+      devicePixelContentBoxSize: [size],
       target,
-    } as unknown as ResizeObserverEntry], this);
+    };
+    this.callback([entry], this);
   }
 
   unobserve(target: Element) {

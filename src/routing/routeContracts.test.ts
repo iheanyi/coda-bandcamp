@@ -20,6 +20,7 @@ import {
   parsePlaylistIdParam,
   parseRadioSeriesIdParam,
   parseRadioShowIdParam,
+  parseRouteSearchAlbumId,
   type RadioSeriesId,
   type RadioShowId,
   stringifyAlbumIdParam,
@@ -73,6 +74,20 @@ describe("collection route search", () => {
     expect(
       validateCollectionSearch({ sort: "newest", mode: "tracks" }),
     ).toMatchObject({ sort: "recent", mode: "releases" });
+  });
+
+  it("does not coerce nested route fields into primitive owner values", () => {
+    expect(
+      validateCollectionSearch({
+        q: { value: "drone" },
+        genre: ["Ambient"],
+        sort: { value: "year" },
+        mode: ["artists"],
+      }),
+    ).toEqual(DEFAULT_COLLECTION_ROUTE_SEARCH);
+    expect(
+      parseRouteSearchAlbumId({ albumId: { value: "album-1" } }),
+    ).toBeUndefined();
   });
 
   it("rejects controls and text beyond the native metadata byte bound", () => {
@@ -161,18 +176,20 @@ describe("Radio route parameters", () => {
     "rejects unsupported positive series ID %i",
     (value) => {
       expect(() => parseRadioSeriesIdParam(value)).toThrow(TypeError);
-      expect(() =>
-        Reflect.apply(stringifyRadioSeriesIdParam, undefined, [value]),
-      ).toThrow(TypeError);
+      expect(() => {
+        // @ts-expect-error Verify runtime hardening against an unbranded ID.
+        stringifyRadioSeriesIdParam(value);
+      }).toThrow(TypeError);
     },
   );
 
   it("rejects a show ID beyond the native maximum", () => {
     const value = MAX_RADIO_SHOW_ID + 1;
     expect(() => parseRadioShowIdParam(value)).toThrow(TypeError);
-    expect(() =>
-      Reflect.apply(stringifyRadioShowIdParam, undefined, [value]),
-    ).toThrow(TypeError);
+    expect(() => {
+      // @ts-expect-error Verify runtime hardening against an unbranded ID.
+      stringifyRadioShowIdParam(value);
+    }).toThrow(TypeError);
   });
 
   it.each([
@@ -190,12 +207,22 @@ describe("Radio route parameters", () => {
     " 1",
     String(MAX_RADIO_SHOW_ID + 1),
     "https://bandcamp.com/radio/979",
-    [979],
-    { id: 979 },
   ])("rejects an invalid numeric ID (%j)", (value) => {
     expect(() => parseRadioSeriesIdParam(value)).toThrow(TypeError);
     expect(() => parseRadioShowIdParam(value)).toThrow(TypeError);
   });
+
+  it.each([[979], { id: 979 }])(
+    "rejects a non-scalar numeric ID (%j)",
+    (value) => {
+      expect(() => {
+        parseRadioSeriesIdParam(value);
+      }).toThrow(TypeError);
+      expect(() => {
+        parseRadioShowIdParam(value);
+      }).toThrow(TypeError);
+    },
+  );
 });
 
 describe("domain route parameters", () => {
@@ -237,13 +264,22 @@ describe("domain route parameters", () => {
     "//bandcamp.com/album/one",
     "x".repeat(MAX_SUBSONIC_ROUTE_ID_BYTES + 1),
     "😀".repeat(MAX_SUBSONIC_ROUTE_ID_BYTES / 4 + 1),
-    42,
-    ["album-1"],
-    { id: "album-1" },
-  ])("rejects an invalid Subsonic ID (%j)", (value) => {
+  ])("rejects an invalid Subsonic ID string (%j)", (value) => {
     expect(() => parseAlbumIdParam(value)).toThrow(TypeError);
     expect(() => parsePlaylistIdParam(value)).toThrow(TypeError);
   });
+
+  it.each([42, ["album-1"], { id: "album-1" }])(
+    "rejects a non-string Subsonic ID (%j)",
+    (value) => {
+      expect(() => {
+        parseAlbumIdParam(value);
+      }).toThrow(TypeError);
+      expect(() => {
+        parsePlaylistIdParam(value);
+      }).toThrow(TypeError);
+    },
+  );
 
   it("requires the Discover namespace and includes it in the byte bound", () => {
     const boundary = parseDiscoverReleaseIdParam(
@@ -270,9 +306,10 @@ describe("domain route parameters", () => {
     `discover:${"x".repeat(MAX_DISCOVER_RELEASE_ID_BYTES - "discover:".length + 1)}`,
   ])("rejects an invalid Discover release ID (%s)", (value) => {
     expect(() => parseDiscoverReleaseIdParam(value)).toThrow(TypeError);
-    expect(() =>
-      Reflect.apply(stringifyDiscoverReleaseIdParam, undefined, [value]),
-    ).toThrow(TypeError);
+    expect(() => {
+      // @ts-expect-error Verify runtime hardening against an unbranded ID.
+      stringifyDiscoverReleaseIdParam(value);
+    }).toThrow(TypeError);
   });
 
   it("round-trips canonical, bounded artist keys", () => {
@@ -299,8 +336,9 @@ describe("domain route parameters", () => {
     "😀".repeat(MAX_ARTIST_KEY_BYTES / 4 + 1),
   ])("rejects a noncanonical artist key (%s)", (value) => {
     expect(() => parseArtistKeyParam(value)).toThrow(TypeError);
-    expect(() =>
-      Reflect.apply(stringifyArtistKeyParam, undefined, [value]),
-    ).toThrow(TypeError);
+    expect(() => {
+      // @ts-expect-error Verify runtime hardening against an unbranded key.
+      stringifyArtistKeyParam(value);
+    }).toThrow(TypeError);
   });
 });

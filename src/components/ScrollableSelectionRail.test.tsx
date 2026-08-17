@@ -1,5 +1,6 @@
-import { useState, type HTMLAttributes } from "react";
+import { forwardRef, useState, type ComponentProps } from "react";
 import { MotionConfig } from "motion/react";
+import * as m from "motion/react-m";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,25 +10,24 @@ import { ScrollableSelectionRail } from "./ScrollableSelectionRail";
 
 type CapturedIndicator = Readonly<{
   layoutId?: string;
-  transition?: unknown;
+  transition?: ComponentProps<typeof m.div>["transition"];
 }>;
 
-const capturedIndicators = vi.hoisted<CapturedIndicator[]>(() => []);
+const capturedIndicators: CapturedIndicator[] = [];
 
-vi.mock("motion/react-m", async () => {
-  const { forwardRef } = await import("react");
-  return {
-    div: forwardRef<
-      HTMLDivElement,
-      HTMLAttributes<HTMLDivElement> & {
-        layoutId?: string;
-        transition?: unknown;
-      }
-    >(function MotionDiv({ layoutId, transition, ...props }, ref) {
-      capturedIndicators.push({ layoutId, transition });
-      return <div ref={ref} {...props} />;
-    }),
-  };
+const CapturingIndicator = forwardRef<
+  HTMLDivElement,
+  ComponentProps<typeof m.div>
+>(function CapturingIndicator({ layoutId, transition, ...props }, ref) {
+  capturedIndicators.push({ layoutId, transition });
+  return (
+    <m.div
+      {...props}
+      ref={ref}
+      layoutId={layoutId}
+      transition={transition}
+    />
+  );
 });
 
 const items = [
@@ -132,6 +132,7 @@ describe("ScrollableSelectionRail", () => {
         <ScrollableSelectionRail
           aria-label="Primary genres"
           edges={{ end: false, start: false }}
+          indicatorComponent={CapturingIndicator}
           items={items}
           onScroll={vi.fn()}
           onScrollByDirection={vi.fn()}
@@ -141,6 +142,7 @@ describe("ScrollableSelectionRail", () => {
         <ScrollableSelectionRail
           aria-label="Secondary genres"
           edges={{ end: false, start: false }}
+          indicatorComponent={CapturingIndicator}
           items={items}
           onScroll={vi.fn()}
           onScrollByDirection={vi.fn()}
@@ -164,6 +166,7 @@ describe("ScrollableSelectionRail", () => {
         <ScrollableSelectionRail
           aria-label="Primary genres"
           edges={{ end: false, start: false }}
+          indicatorComponent={CapturingIndicator}
           items={items}
           onScroll={vi.fn()}
           onScrollByDirection={vi.fn()}
@@ -173,6 +176,7 @@ describe("ScrollableSelectionRail", () => {
         <ScrollableSelectionRail
           aria-label="Secondary genres"
           edges={{ end: false, start: false }}
+          indicatorComponent={CapturingIndicator}
           items={items}
           onScroll={vi.fn()}
           onScrollByDirection={vi.fn()}

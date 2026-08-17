@@ -1,16 +1,27 @@
 import { createContext, useContext } from "react";
 
+import type {
+  RouteCommitOutcome,
+  RouteCommitResult,
+} from "@/features/navigation/routeCommit";
 import type { PlaylistId } from "@/routing/routeContracts";
 
+export type PlaylistOpenRequest = Readonly<{
+  playlistId: PlaylistId;
+  sharedIdentityAvailable: boolean;
+  sourceTrigger?: HTMLElement;
+}>;
+
 export type PlaylistRouteNavigationAdapter = Readonly<{
-  goBack: () => Promise<void>;
-  goToIndex: (replace?: boolean) => Promise<void>;
-  goToPlaylist: (playlistId: PlaylistId) => Promise<void>;
+  goBack: () => Promise<RouteCommitResult>;
+  goToIndex: (replace?: boolean) => Promise<RouteCommitResult>;
+  goToPlaylist: (playlistId: PlaylistId) => Promise<RouteCommitResult>;
 }>;
 
 export type PlaylistRouteNavigationValue = Readonly<{
-  closePlaylist: (playlistId: PlaylistId) => Promise<void>;
-  openPlaylist: (playlistId: PlaylistId) => Promise<void>;
+  closePlaylist: (playlistId: PlaylistId) => Promise<RouteCommitOutcome>;
+  openPlaylist: (request: PlaylistOpenRequest) => Promise<RouteCommitOutcome>;
+  replaceWithIndex: () => Promise<RouteCommitOutcome>;
   restoreListContext: () => void;
 }>;
 

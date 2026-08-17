@@ -2,20 +2,24 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   emptyLocalFavorites,
   LOCAL_FAVORITES_VERSION,
+  parseLocalFavoritesSerialized,
+  sanitizeLocalFavorites,
 } from "./localFavorites";
 import {
   LocalFavoritesPreparationClient,
   localFavoritesInputMatchesPrepared,
+  localFavoritesWorkerPrepared,
   parseLocalFavoritesPreparationRequest,
   parseLocalFavoritesPreparationResponse,
-  parseLocalFavoritesSerialized,
   serializeLocalFavorites,
+  serializeValidatedLocalFavorites,
   type LocalFavoritesPreparationRequest,
   type LocalFavoritesWorkerErrorEvent,
   type LocalFavoritesWorkerMessageEvent,
   type LocalFavoritesWorkerMessageErrorEvent,
   type LocalFavoritesWorkerPort,
 } from "./localFavoritesPreparation";
+import type { OwnDataValue } from "./ownData";
 import type { LocalFavoriteCollection, Track } from "./types";
 
 const track: Track = {
@@ -39,6 +43,18 @@ const favorites: LocalFavoriteCollection = {
 
 const runImmediately = (callback: () => void): void => callback();
 
+function parseSerializeRequest(source: LocalFavoriteCollection) {
+  const request = parseLocalFavoritesPreparationRequest({
+    kind: "serialize-local-favorites",
+    requestId: 1,
+    favorites: source,
+  });
+  if (!request || request.kind !== "serialize-local-favorites") {
+    throw new Error("Expected a validated serialization request.");
+  }
+  return request;
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -56,8 +72,10 @@ class FakeLocalFavoritesWorker implements LocalFavoritesWorkerPort {
     this.requests.push(request);
   }
 
-  respond(response: unknown): void {
-    this.onmessage?.(new MessageEvent("message", { data: response }));
+  respond(response: OwnDataValue): void {
+    this.onmessage?.(
+      new MessageEvent<OwnDataValue>("message", { data: response }),
+    );
   }
 }
 
@@ -102,17 +120,80 @@ describe("local Favorites preparation", () => {
 
   it("keeps signed runtime URLs out of the prepared durable snapshot", () => {
     const prepared = serializeLocalFavorites(favorites);
-    const stored = JSON.parse(prepared.serialized) as Record<string, unknown>;
-    const storedTrack = (stored.tracks as Array<Record<string, unknown>>)[0];
 
-    expect(storedTrack.artworkUrl).toBeUndefined();
-    expect(storedTrack.streamUrl).toBeUndefined();
+    expect(prepared.serialized).not.toContain("signed-artwork");
+    expect(prepared.serialized).not.toContain("signed-stream");
     expect(prepared.favorites.tracks[0].artworkUrl).toBeUndefined();
     expect(prepared.favorites.tracks[0].streamUrl).toBeUndefined();
     expect(localFavoritesInputMatchesPrepared(favorites, prepared)).toBe(false);
     expect(
       localFavoritesInputMatchesPrepared(prepared.favorites, prepared),
     ).toBe(true);
+  });
+
+  it("takes the worker fast path for a canonical already-sanitized collection", () => {
+    const canonical = serializeLocalFavorites(favorites).favorites;
+    const request = parseSerializeRequest(canonical);
+    const prepared = serializeValidatedLocalFavorites(request.favorites);
+    const workerPrepared = localFavoritesWorkerPrepared(
+      prepared,
+      request.sourceFavorites,
+    );
+
+    expect(
+      localFavoritesInputMatchesPrepared(request.sourceFavorites, prepared),
+    ).toBe(true);
+    expect(workerPrepared).toEqual({ serialized: prepared.serialized });
+    expect(workerPrepared).not.toHaveProperty("favorites");
+  });
+
+  it("returns the sanitized clone when the worker collection actually changed", () => {
+    const canonical = serializeLocalFavorites(favorites).favorites;
+    const prepared = serializeValidatedLocalFavorites(
+      parseSerializeRequest(canonical).favorites,
+    );
+    const changed: LocalFavoriteCollection = {
+      ...canonical,
+      songIds: ["track-2"],
+      tracks: [{ ...canonical.tracks[0], id: "track-2", title: "Elsewhere" }],
+    };
+    const workerPrepared = localFavoritesWorkerPrepared(prepared, changed);
+
+    expect(localFavoritesInputMatchesPrepared(changed, prepared)).toBe(false);
+    expect(workerPrepared.favorites).toBe(prepared.favorites);
+    expect(workerPrepared.serialized).toBe(prepared.serialized);
+  });
+
+  it("matches a key-order-only difference against the worker snapshot", () => {
+    const canonical = serializeLocalFavorites(favorites).favorites;
+    const prepared = serializeValidatedLocalFavorites(
+      parseSerializeRequest(canonical).favorites,
+    );
+    const reordered = {
+      radioShows: canonical.radioShows,
+      radioShowIds: canonical.radioShowIds,
+      tracks: canonical.tracks,
+      albums: canonical.albums,
+      songIds: canonical.songIds,
+      albumIds: canonical.albumIds,
+    };
+
+    expect(localFavoritesInputMatchesPrepared(reordered, prepared)).toBe(true);
+    expect(localFavoritesWorkerPrepared(prepared, reordered)).not.toHaveProperty(
+      "favorites",
+    );
+    expect(
+      localFavoritesInputMatchesPrepared(
+        {
+          songIds: canonical.songIds,
+          albums: canonical.albums,
+          tracks: canonical.tracks,
+          radioShowIds: canonical.radioShowIds,
+          radioShows: canonical.radioShows,
+        },
+        prepared,
+      ),
+    ).toBe(false);
   });
 
   it("validates unknown worker requests and responses before using them", () => {
@@ -139,6 +220,161 @@ describe("local Favorites preparation", () => {
       requestId: 1,
       errorName: "Error",
       errorMessage: "",
+    })).toBeUndefined();
+  });
+
+  it("rejects inherited, accessor, spoofed, null, and oversize messages", () => {
+    const inheritedRequest = Object.create({
+      kind: "parse-local-favorites",
+      requestId: 1,
+      serialized: "{}",
+    });
+    let serializedReads = 0;
+    const accessorRequest = {
+      kind: "parse-local-favorites",
+      requestId: 1,
+      get serialized() {
+        serializedReads += 1;
+        return "{}";
+      },
+    };
+    let coercions = 0;
+    const spoofedKind = {
+      [Symbol.toPrimitive]() {
+        coercions += 1;
+        return "parse-local-favorites";
+      },
+    };
+
+    expect(parseLocalFavoritesPreparationRequest(null)).toBeUndefined();
+    expect(parseLocalFavoritesPreparationRequest(inheritedRequest))
+      .toBeUndefined();
+    expect(parseLocalFavoritesPreparationRequest(accessorRequest))
+      .toBeUndefined();
+    expect(serializedReads).toBe(0);
+    expect(parseLocalFavoritesPreparationRequest({
+      kind: spoofedKind,
+      requestId: 1,
+      serialized: "{}",
+    })).toBeUndefined();
+    expect(coercions).toBe(0);
+    expect(parseLocalFavoritesPreparationRequest({
+      kind: "parse-local-favorites",
+      requestId: 1,
+      serialized: "x".repeat(4 * 1024 * 1024 + 1),
+    })).toBeUndefined();
+  });
+
+  it("deep-validates worker Favorites before exposing them", () => {
+    const inheritedResponse = Object.create({
+      kind: "local-favorites-parsed",
+      requestId: 1,
+      favorites,
+    });
+    let titleReads = 0;
+    const accessorTrack = { ...track };
+    Object.defineProperty(accessorTrack, "title", {
+      get() {
+        titleReads += 1;
+        return track.title;
+      },
+    });
+
+    expect(parseLocalFavoritesPreparationResponse(inheritedResponse))
+      .toBeUndefined();
+    expect(parseLocalFavoritesPreparationResponse({
+      kind: "local-favorites-parsed",
+      requestId: 1,
+      favorites: {
+        ...favorites,
+        tracks: [{ ...track, title: null }],
+      },
+    })).toBeUndefined();
+    expect(parseLocalFavoritesPreparationResponse({
+      kind: "local-favorites-parsed",
+      requestId: 1,
+      favorites: {
+        ...favorites,
+        tracks: [accessorTrack],
+      },
+    })).toBeUndefined();
+    expect(titleReads).toBe(0);
+    expect(parseLocalFavoritesPreparationResponse({
+      kind: "local-favorites-serialized",
+      requestId: 1,
+      prepared: {
+        serialized: "{}",
+        favorites: {
+          ...favorites,
+          tracks: [{ ...track, palette: ["#000000"] }],
+        },
+      },
+    })).toBeUndefined();
+    expect(parseLocalFavoritesPreparationResponse({
+      kind: "local-favorites-parsed",
+      requestId: 1,
+      favorites: {
+        ...emptyLocalFavorites(),
+        songIds: Array.from(
+          { length: 25_001 },
+          (_value, index) => `track-${index}`,
+        ),
+      },
+    })).toBeUndefined();
+  });
+
+  it("rejects explicit-null optional fields that lenient storage parsing absorbs", () => {
+    const canonical = serializeLocalFavorites(favorites).favorites;
+    const canonicalTrack = canonical.tracks[0];
+    const responseFor = (candidate: OwnDataValue) =>
+      parseLocalFavoritesPreparationResponse({
+        kind: "local-favorites-parsed",
+        requestId: 1,
+        favorites: { ...canonical, tracks: [candidate] },
+      });
+
+    expect(responseFor(canonicalTrack)).toMatchObject({
+      kind: "local-favorites-parsed",
+      requestId: 1,
+    });
+    // Worker output never contains null: JSON.stringify drops undefined and
+    // the sanitizers omit absent fields. A null here is corruption, so the
+    // prepared-shape checks stay strictly `=== undefined` even though the
+    // lenient storage/native parse path treats the same null as absent.
+    for (const field of ["disc", "coverArt", "starredAt", "artworkUrl"]) {
+      const trackWithNullField: OwnDataValue = {
+        ...canonicalTrack,
+        [field]: null,
+      };
+      expect(responseFor(trackWithNullField)).toBeUndefined();
+      expect(sanitizeLocalFavorites({
+        ...canonical,
+        tracks: [trackWithNullField],
+      })).toBeDefined();
+    }
+  });
+
+  it("serializes a boundary-validated worker request without a second parse", () => {
+    const request = parseLocalFavoritesPreparationRequest({
+      kind: "serialize-local-favorites",
+      requestId: 1,
+      favorites,
+    });
+    if (!request || request.kind !== "serialize-local-favorites") {
+      throw new Error("Expected a validated serialization request.");
+    }
+
+    const prepared = serializeValidatedLocalFavorites(request.favorites);
+
+    expect(prepared.favorites.songIds).toEqual(["track-1"]);
+    expect(prepared.serialized).not.toContain("signed-artwork");
+    expect(parseLocalFavoritesPreparationRequest({
+      kind: "serialize-local-favorites",
+      requestId: 2,
+      favorites: {
+        ...favorites,
+        tracks: [{ ...track, albumArtist: "invalid\u009f" }],
+      },
     })).toBeUndefined();
   });
 
@@ -197,6 +433,7 @@ describe("local Favorites preparation", () => {
       requestId: request.requestId,
       prepared: {
         serialized,
+        favorites: maximumFavorites,
       },
     });
 

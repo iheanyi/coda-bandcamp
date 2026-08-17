@@ -4,8 +4,14 @@ import { cn } from "@/lib/utils"
 
 type SliderProps = SliderPrimitive.Root.Props<readonly number[]>
 
+function isNumberArray(
+  value: number | readonly number[],
+): value is readonly number[] {
+  return Array.isArray(value)
+}
+
 function asArray(value: number | readonly number[]): readonly number[] {
-  return typeof value === "number" ? [value] : value
+  return isNumberArray(value) ? value : [value]
 }
 
 function Slider({

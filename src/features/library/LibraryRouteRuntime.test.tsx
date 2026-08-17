@@ -1,7 +1,11 @@
+import { QueryClient } from "@tanstack/react-query";
+import { RouterContextProvider } from "@tanstack/react-router";
 import { createRef, type ReactNode } from "react";
 import { render, renderHook, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { ArtistGroup } from "@/libraryBrowse";
+import { CodaMotionProvider } from "@/MotionProvider";
+import { createCodaMemoryRouter } from "@/router";
 import {
   parseAlbumIdParam,
   parseArtistKeyParam,
@@ -36,38 +40,6 @@ import type {
 } from "./LibraryResults";
 import { RecentRouteScreen } from "./RecentRouteScreen";
 import type { RecentScreenProps } from "./RecentScreen";
-
-vi.mock("./AlbumScreen", () => ({
-  AlbumScreen: ({ className, model }: AlbumScreenProps) => (
-    <div className={className} data-testid="album-screen">
-      {model.detail.album.id}
-    </div>
-  ),
-}));
-
-vi.mock("./ArtistScreen", () => ({
-  ArtistScreen: ({ className, model }: ArtistScreenProps) => (
-    <div className={className} data-testid="artist-screen">
-      {model.artist.group?.key}
-    </div>
-  ),
-}));
-
-vi.mock("./CollectionScreen", () => ({
-  CollectionScreen: ({ className, model }: CollectionScreenProps) => (
-    <div className={className} data-testid="collection-screen">
-      {model.content.kind}
-    </div>
-  ),
-}));
-
-vi.mock("./RecentScreen", () => ({
-  RecentScreen: ({ className, model }: RecentScreenProps) => (
-    <div className={className} data-testid="recent-screen">
-      {model.results.title}
-    </div>
-  ),
-}));
 
 const track: Track = {
   id: "track-1",
@@ -241,6 +213,17 @@ function runtimeWrapper(runtime: LibraryRouteRuntime) {
   };
 }
 
+function screenWrapper({ children }: Readonly<{ children: ReactNode }>) {
+  const router = createCodaMemoryRouter(new QueryClient(), ["/collection"]);
+  return (
+    <CodaMotionProvider>
+      <RouterContextProvider router={router}>
+        {children}
+      </RouterContextProvider>
+    </CodaMotionProvider>
+  );
+}
+
 describe("LibraryRouteRuntimeProvider", () => {
   it("provides the collection and Recent screen prop factories", () => {
     const { result } = renderHook(
@@ -311,7 +294,7 @@ describe("library route screen adapters", () => {
       </LibraryRouteRuntimeProvider>,
     );
 
-    expect(screen.getByTestId("collection-screen")).toHaveClass(
+    expect(document.querySelector(".route-collection")).toHaveClass(
       "runtime-collection",
       "route-collection",
     );
@@ -321,7 +304,7 @@ describe("library route screen adapters", () => {
         <RecentRouteScreen className="route-recent" />
       </LibraryRouteRuntimeProvider>,
     );
-    expect(screen.getByTestId("recent-screen")).toHaveClass(
+    expect(document.querySelector(".route-recent")).toHaveClass(
       "runtime-recent",
       "route-recent",
     );
@@ -339,20 +322,25 @@ describe("library route screen adapters", () => {
 
     render(
       <>
-        <AlbumRouteScreen className="route-album" resource={albumResource} />
-        <ArtistRouteScreen className="route-artist" resource={artistResource} />
+        <AlbumRouteScreen
+          className="route-album"
+          resource={albumResource}
+        />
+        <ArtistRouteScreen
+          className="route-artist"
+          resource={artistResource}
+        />
       </>,
+      { wrapper: screenWrapper },
     );
 
-    expect(screen.getByTestId("album-screen")).toHaveTextContent("album-1");
-    expect(screen.getByTestId("album-screen")).toHaveClass(
+    expect(screen.getByText("Blue Hours")).toBeInTheDocument();
+    expect(document.querySelector(".route-album")).toHaveClass(
       "runtime-album",
       "route-album",
     );
-    expect(screen.getByTestId("artist-screen")).toHaveTextContent(
-      "signal garden",
-    );
-    expect(screen.getByTestId("artist-screen")).toHaveClass(
+    expect(screen.getAllByText("Signal Garden")).not.toHaveLength(0);
+    expect(document.querySelector(".route-artist")).toHaveClass(
       "runtime-artist",
       "route-artist",
     );

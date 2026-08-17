@@ -11,6 +11,7 @@ import {
   yieldPlayerStateValidation,
 } from "./playerState";
 import radioContract from "../test/fixtures/player-state-radio-contract.json";
+import type { OwnDataValue } from "./ownData";
 import type {
   PlayerStateCheckpoint,
   PlayerStateInput,
@@ -48,6 +49,15 @@ const input: PlayerStateInput = {
   },
 };
 
+const radioCheckpoint: PlayerStateCheckpoint = {
+  ...radioContract.checkpoint,
+  radioScrobbleProgress: {
+    ...radioContract.checkpoint.radioScrobbleProgress,
+    chapterScrobbleState: "pending",
+    showScrobbleState: "idle",
+  },
+};
+
 describe("player state persistence", () => {
   it("maps the active queue item to its persisted index once ephemeral previews are omitted", () => {
     const laterTrack = { ...track, id: "track-2" };
@@ -73,9 +83,7 @@ describe("player state persistence", () => {
       },
     });
     expect(
-      createPlayerStateCheckpoint(
-        radioContract.checkpoint as unknown as PlayerStateCheckpoint,
-      ),
+      createPlayerStateCheckpoint(radioCheckpoint),
     ).toMatchObject({
       currentTrackId: "radio:979",
       radioScrobbleProgress: { showTrackId: "radio:979" },
@@ -114,15 +122,14 @@ describe("player state persistence", () => {
   });
 
   it("normalizes nullable optional fields from native Subsonic payloads", () => {
+    const nullableOptionalTrack: Track = { ...track };
+    Object.defineProperties(nullableOptionalTrack, {
+      disc: { configurable: true, enumerable: true, value: null },
+      coverArt: { configurable: true, enumerable: true, value: null },
+    });
     const state = createPlayerState({
       ...input,
-      queue: [
-        {
-          ...track,
-          disc: null,
-          coverArt: null,
-        } as unknown as Track,
-      ],
+      queue: [nullableOptionalTrack],
     });
 
     expect(state.queue[0]).not.toHaveProperty("disc");
@@ -238,6 +245,85 @@ describe("player state persistence", () => {
     ).toBeUndefined();
   });
 
+  it("parses saved JSON as unknown and rejects null or spoofed records", async () => {
+    const valid = createPlayerState(input, 1_700_000_000_000);
+    const jsonPayload: OwnDataValue = JSON.parse(JSON.stringify(valid));
+    const spoofedState = Object.assign(new Date(), valid, {
+      [Symbol.toStringTag]: "Object",
+    });
+    const spoofedTrack = Object.assign(new Date(), valid.queue[0], {
+      [Symbol.toStringTag]: "Object",
+    });
+
+    expect(parsePlayerState(jsonPayload)).toEqual(valid);
+    await expect(parsePlayerStateAsync(jsonPayload)).resolves.toEqual(valid);
+    expect(parsePlayerState(null)).toBeUndefined();
+    expect(parsePlayerState([])).toBeUndefined();
+    expect(parsePlayerState(
+      spoofedState,
+    )).toBeUndefined();
+    expect(parsePlayerState({
+      ...valid,
+      queue: [spoofedTrack],
+    })).toBeUndefined();
+    expect(parsePlayerState({ ...valid, queue: null })).toBeUndefined();
+    expect(parsePlayerState({ ...valid, queue: [null] })).toBeUndefined();
+    expect(parsePlayerState(
+      Object("boxed"),
+    )).toBeUndefined();
+  });
+
+  it("ignores inherited snapshot fields and does not invoke accessors", () => {
+    const valid = createPlayerState(
+      { ...input, lastFmProgress: undefined },
+      1_700_000_000_000,
+    );
+    let getterCalls = 0;
+    const accessorSnapshot = { ...valid };
+    Object.defineProperty(accessorSnapshot, "version", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        throw new Error("snapshot getter must not run");
+      },
+    });
+    const accessorTrack = { ...valid.queue[0] };
+    Object.defineProperty(accessorTrack, "id", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        throw new Error("track getter must not run");
+      },
+    });
+    Object.defineProperty(Object.prototype, "version", {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: 1,
+    });
+    Object.defineProperty(Object.prototype, "lastFmProgress", {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: { trackId: "polluted-track" },
+    });
+    try {
+      const withoutVersion = { ...valid };
+      Reflect.deleteProperty(withoutVersion, "version");
+      expect(parsePlayerState(withoutVersion)).toBeUndefined();
+      expect(parsePlayerState(valid)).toEqual(valid);
+      expect(parsePlayerState(accessorSnapshot)).toBeUndefined();
+      expect(parsePlayerState({ ...valid, queue: [accessorTrack] }))
+        .toBeUndefined();
+      expect(getterCalls).toBe(0);
+    } finally {
+      Reflect.deleteProperty(Object.prototype, "version");
+      Reflect.deleteProperty(Object.prototype, "lastFmProgress");
+    }
+  });
+
   it("accepts an empty, paused queue only at position zero", () => {
     const empty = createPlayerState({
       queue: [],
@@ -302,9 +388,119 @@ describe("player state persistence", () => {
     const yieldControl = vi.fn(async () => undefined);
 
     await expect(parsePlayerStateAsync(snapshot, yieldControl)).resolves.toEqual(snapshot);
+    expect(parsePlayerState(snapshot)).toEqual(snapshot);
     expect(yieldControl).toHaveBeenCalledTimes(
       Math.floor((MAX_PERSISTED_QUEUE_LENGTH - 1) / 256),
     );
+  });
+
+  it("copies restored queue slots inside cooperative chunks", async () => {
+    const queue = Array.from({ length: 513 }, (_, index) => ({
+      ...track,
+      id: `track-${index}`,
+      albumId: `album-${index}`,
+    }));
+    const snapshot = createPlayerState({
+      ...input,
+      queue,
+      lastFmProgress: undefined,
+    }, 1_700_000_000_000);
+    let copiesThisTick = 0;
+    const copiesPerTick: number[] = [];
+    const countedQueue = new Proxy(snapshot.queue, {
+      getOwnPropertyDescriptor(target, property) {
+        if (property !== "length") copiesThisTick += 1;
+        return Reflect.getOwnPropertyDescriptor(target, property);
+      },
+    });
+    const yieldControl = async () => {
+      copiesPerTick.push(copiesThisTick);
+      copiesThisTick = 0;
+    };
+
+    await expect(
+      parsePlayerStateAsync({ ...snapshot, queue: countedQueue }, yieldControl),
+    ).resolves.toEqual(snapshot);
+    copiesPerTick.push(copiesThisTick);
+    expect(copiesPerTick).toEqual([256, 256, 1]);
+  });
+
+  it("aborts a restored queue at the first malformed slot without copying the rest", async () => {
+    const queue = Array.from({ length: 513 }, (_, index) => ({
+      ...track,
+      id: `track-${index}`,
+      albumId: `album-${index}`,
+    }));
+    queue[300] = { ...track, id: "" };
+    const valid = createPlayerState(
+      { ...input, lastFmProgress: undefined },
+      1_700_000_000_000,
+    );
+    let totalCopies = 0;
+    const copiesPerTick: number[] = [];
+    let copiesThisTick = 0;
+    const countedQueue = new Proxy(queue, {
+      getOwnPropertyDescriptor(target, property) {
+        if (property !== "length") {
+          copiesThisTick += 1;
+          totalCopies += 1;
+        }
+        return Reflect.getOwnPropertyDescriptor(target, property);
+      },
+    });
+    const yieldControl = async () => {
+      copiesPerTick.push(copiesThisTick);
+      copiesThisTick = 0;
+    };
+
+    expect(parsePlayerState({ ...valid, queue })).toBeUndefined();
+    await expect(
+      parsePlayerStateAsync({ ...valid, queue: countedQueue }, yieldControl),
+    ).resolves.toBeUndefined();
+    expect(copiesPerTick).toEqual([256]);
+    expect(copiesThisTick).toBe(45);
+    expect(totalCopies).toBe(301);
+  });
+
+  it("rejects sparse, inherited, and accessor restored queue slots", async () => {
+    const valid = createPlayerState(
+      { ...input, lastFmProgress: undefined },
+      1_700_000_000_000,
+    );
+    let getterCalls = 0;
+    const accessorEntries = [{ ...track }];
+    Object.defineProperty(accessorEntries, "0", {
+      configurable: true,
+      get() {
+        getterCalls += 1;
+        throw new Error("queue getter must not run");
+      },
+    });
+    const inheritedEntries: typeof valid.queue = [];
+    inheritedEntries.length = 1;
+    const inheritedPrototype = Object.create(Array.prototype);
+    Object.defineProperty(inheritedPrototype, "0", {
+      configurable: true,
+      value: valid.queue[0],
+    });
+    Object.setPrototypeOf(inheritedEntries, inheritedPrototype);
+    const sparseEntries: typeof valid.queue = [];
+    sparseEntries.length = 1;
+
+    expect(parsePlayerState({ ...valid, queue: accessorEntries })).toBeUndefined();
+    expect(parsePlayerState({ ...valid, queue: inheritedEntries })).toBeUndefined();
+    expect(parsePlayerState({ ...valid, queue: sparseEntries })).toBeUndefined();
+    expect(parsePlayerState({
+      ...valid,
+      queue: Array.from({ length: MAX_PERSISTED_QUEUE_LENGTH + 1 }, () => track),
+    })).toBeUndefined();
+    await expect(
+      parsePlayerStateAsync({ ...valid, queue: accessorEntries }),
+    ).resolves.toBeUndefined();
+    await expect(
+      parsePlayerStateAsync({ ...valid, queue: inheritedEntries }),
+    ).resolves.toBeUndefined();
+    expect(getterCalls).toBe(0);
   });
 
   it("keeps the active persisted index stable around randomized ephemeral previews", () => {

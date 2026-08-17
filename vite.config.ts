@@ -1,6 +1,7 @@
 import { configDefaults, defineConfig } from "vitest/config";
 import { fileURLToPath, URL } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
+import { devtools } from "@tanstack/devtools-vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 
@@ -26,6 +27,7 @@ export default defineConfig(({ mode }) => {
       "import.meta.env.VITE_CODA_UPDATER_ENABLED": JSON.stringify(updaterEnabled),
     },
     plugins: [
+      devtools(),
       tanstackRouter({
         target: "react",
         autoCodeSplitting: true,
@@ -50,6 +52,11 @@ export default defineConfig(({ mode }) => {
     test: {
       environment: "jsdom",
       exclude: [...configDefaults.exclude, "**/.worktrees/**"],
+      // Windows CI runners execute the coverage suite ~2-3x slower than
+      // Ubuntu/macOS, so full-App integration tests that need ~4s there can
+      // exceed 10s on Windows. Size the per-test ceiling for the slowest
+      // runner; it is a hang detector, not a performance budget.
+      testTimeout: 20_000,
       // Node 25+ enables its own Web Storage globals by default. Disable them in
       // test workers so jsdom remains the single browser-storage implementation.
       execArgv: nodeMajorVersion >= 25 ? ["--no-experimental-webstorage"] : [],

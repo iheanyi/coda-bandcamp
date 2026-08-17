@@ -26,6 +26,10 @@ type NavigationLinkProps = Readonly<{
   title?: string;
 }>;
 
+type ArtistRouteLinkSearch = ReturnType<typeof validateCollectionSearch> & {
+  albumId?: ReturnType<typeof parseAlbumIdParam>;
+};
+
 type TrackAlbumLinkProps = NavigationLinkProps &
   Readonly<{
     track: Track;
@@ -186,15 +190,18 @@ export function TrackArtistLink({
           );
         }}
         params={{ artistKey: destination.artistKey }}
-        search={(previous) => ({
-          ...validateCollectionSearch(previous),
-          genre: "All",
-          mode: "artists",
-          q: "",
-          ...(destination.sourceAlbumId
-            ? { albumId: destination.sourceAlbumId }
-            : {}),
-        })}
+        search={(previous) => {
+          const search: ArtistRouteLinkSearch = {
+            ...validateCollectionSearch(previous),
+            genre: "All",
+            mode: "artists",
+            q: "",
+          };
+          if (destination.sourceAlbumId) {
+            search.albumId = destination.sourceAlbumId;
+          }
+          return search;
+        }}
         title={title}
         to="/collection/artists/$artistKey"
       >
@@ -323,13 +330,16 @@ export function LibraryArtistLink({
         );
       }}
       params={{ artistKey: artistRouteKey }}
-      search={(previous) => ({
-        ...validateCollectionSearch(previous),
-        genre: "All",
-        mode: "artists",
-        q: "",
-        ...(parsedSourceAlbumId ? { albumId: parsedSourceAlbumId } : {}),
-      })}
+      search={(previous) => {
+        const search: ArtistRouteLinkSearch = {
+          ...validateCollectionSearch(previous),
+          genre: "All",
+          mode: "artists",
+          q: "",
+        };
+        if (parsedSourceAlbumId) search.albumId = parsedSourceAlbumId;
+        return search;
+      }}
       title={title}
       to="/collection/artists/$artistKey"
     >

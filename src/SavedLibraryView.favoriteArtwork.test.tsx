@@ -1,5 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { RouterContextProvider } from "@tanstack/react-router";
+import type { InvokeArgs } from "@tauri-apps/api/core";
 import {
   act,
   fireEvent,
@@ -7,61 +6,92 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, expect, it, vi } from "vitest";
 
-import { CodaMotionProvider } from "@/MotionProvider";
-import { createCodaMemoryRouter } from "@/router";
-import type { LocalFavoriteCollection } from "@/types";
+import {
+  installTauriEventPluginTestInternals,
+  readTauriInvokeArguments,
+  tauriString,
+} from "@/test/tauriInvoke";
+import {
+  commonProps,
+  renderSavedLibraryRoute,
+} from "@/test/savedLibraryViewTestHarness";
+import type { Album, LocalFavoriteCollection } from "@/types";
 
-const mocks = vi.hoisted(() => ({
+type CoverArtOrderingReceipt = Readonly<{ sequence: string }>;
+
+const artworkBridge = {
   convertFileSrc: vi.fn(
     (path: string, protocol: string) => `${protocol}:${path}`,
   ),
-  invoke: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
-  listen: vi.fn(() => Promise.resolve(() => undefined)),
-}));
-
-vi.mock("@tauri-apps/api/core", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@tauri-apps/api/core")>();
-  return {
-    ...actual,
-    convertFileSrc: mocks.convertFileSrc,
-    invoke: mocks.invoke,
-  };
-});
-
-vi.mock("@tauri-apps/api/event", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@tauri-apps/api/event")>();
-  return { ...actual, listen: mocks.listen };
-});
+  invalidate: vi.fn<(coverArtId: string) => Promise<CoverArtOrderingReceipt>>(),
+  listen: vi.fn<() => Promise<number>>(),
+};
 
 import { clearCoverArtRendererState } from "@/coverArtSource";
 import { CoverArt } from "@/features/artwork/CoverArt";
-import { FavoritesScreen } from "@/features/saved-library";
+
+let nextOrderingSequence = 1n;
+
+function takeOrderingReceipt() {
+  const sequence = nextOrderingSequence;
+  nextOrderingSequence += 1n;
+  return { sequence: sequence.toString() };
+}
 
 const directArtworkUrl = "https://bandcamp.com/direct-expired.jpg";
 const laterArtworkUrl = "https://bandcamp.com/later-direct-cover.jpg";
 
 function favoriteCollection(artworkUrl?: string): LocalFavoriteCollection {
+  const favoriteAlbum: Album = {
+    artist: "Sweeps",
+    coverArt: "album-cover-id",
+    duration: 188,
+    id: "album-1",
+    palette: ["#a66", "#222"],
+    songCount: 1,
+    title: "Mirage",
+  };
+  if (artworkUrl) favoriteAlbum.artworkUrl = artworkUrl;
   return {
     albumIds: ["album-1"],
-    albums: [
-      {
-        artist: "Sweeps",
-        ...(artworkUrl ? { artworkUrl } : {}),
-        coverArt: "album-cover-id",
-        duration: 188,
-        id: "album-1",
-        palette: ["#a66", "#222"],
-        songCount: 1,
-        title: "Mirage",
-      },
-    ],
+    albums: [favoriteAlbum],
     radioShowIds: [],
     radioShows: [],
     songIds: [],
     tracks: [],
   };
+}
+
+function installArtworkBridge(): void {
+  let nextCallbackId = 1;
+  installTauriEventPluginTestInternals();
+  Object.defineProperty(window, "__TAURI_INTERNALS__", {
+    configurable: true,
+    value: {
+      convertFileSrc: artworkBridge.convertFileSrc,
+      invoke: async (command: string, args?: InvokeArgs) => {
+        switch (command) {
+          case "invalidate_cover_art":
+            return artworkBridge.invalidate(
+              tauriString(
+                readTauriInvokeArguments(args).coverArtId,
+                "coverArtId",
+              ),
+            );
+          case "plugin:event|listen":
+            return artworkBridge.listen();
+          case "plugin:event|unlisten":
+            return undefined;
+          default:
+            throw new Error(`Unexpected Favorite artwork command: ${command}`);
+        }
+      },
+      transformCallback: () => nextCallbackId++,
+      unregisterCallback: () => undefined,
+    },
+  });
 }
 
 const actions = {
@@ -81,56 +111,42 @@ const actions = {
   onToggleRadioFavorite: vi.fn(),
 };
 
-function screenFor(favorites: LocalFavoriteCollection) {
-  return (
-    <FavoritesScreen
-      {...actions}
-      favorites={favorites}
-      favoritesLoading={false}
-      favoritesLocal
-      onNotify={vi.fn()}
-      playing={false}
-    />
-  );
+function favoriteRuntime(favorites: LocalFavoriteCollection) {
+  return {
+    ...commonProps,
+    ...actions,
+    favorites,
+    favoritesLocal: true,
+    onNotify: vi.fn(),
+  };
 }
 
-function testTree(
-  queryClient: QueryClient,
-  favorites: LocalFavoriteCollection,
-) {
-  const router = createCodaMemoryRouter(queryClient, ["/favorites"]);
-  return (
-    <CodaMotionProvider>
-      <QueryClientProvider client={queryClient}>
-        <RouterContextProvider router={router}>
-          {screenFor(favorites)}
-        </RouterContextProvider>
-      </QueryClientProvider>
-    </CodaMotionProvider>
-  );
+function renderFavoriteRoute(favorites: LocalFavoriteCollection) {
+  return renderSavedLibraryRoute({ runtime: favoriteRuntime(favorites) });
 }
 
 beforeEach(() => {
-  Object.defineProperty(window, "__TAURI_INTERNALS__", {
-    configurable: true,
-    value: {},
-  });
+  installArtworkBridge();
   act(() => clearCoverArtRendererState());
-  mocks.convertFileSrc.mockClear();
-  mocks.invoke.mockClear().mockResolvedValue(undefined);
+  artworkBridge.convertFileSrc.mockClear();
+  artworkBridge.invalidate
+    .mockReset()
+    .mockImplementation(() => Promise.resolve(takeOrderingReceipt()));
+  artworkBridge.listen.mockReset().mockResolvedValue(1);
   Object.values(actions).forEach((action) => action.mockReset());
 });
 
-it("reveals cold authenticated Favorite artwork over its base color", () => {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+afterAll(() => {
+  Reflect.deleteProperty(window, "__TAURI_EVENT_PLUGIN_INTERNALS__");
+  Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+});
 
-  render(testTree(queryClient, favoriteCollection()));
+it("reveals cold authenticated Favorite artwork over its base color", async () => {
+  renderFavoriteRoute(favoriteCollection());
 
-  const artwork = screen
-    .getByRole("link", { name: "Open Mirage" })
-    .querySelector<HTMLElement>("[data-slot=cover]");
+  const artwork = (
+    await screen.findByRole("link", { name: "Open Mirage" })
+  ).querySelector<HTMLElement>("[data-slot=cover]");
   const image = artwork?.querySelector("img");
   expect(image?.getAttribute("src")).toMatch(
     /^coda-cover:\/v1\/600\/album-cover-id\?v=0&s=[a-f0-9]{32}$/,
@@ -151,21 +167,18 @@ it("reveals cold authenticated Favorite artwork over its base color", () => {
   expect(image).not.toHaveAttribute("data-cover-art-reveal");
 });
 
-it("shares painted local sources across collection and Favorite remounts", () => {
+it("shares painted local sources across collection and Favorite remounts", async () => {
   const sourceAlbum = favoriteCollection().albums[0];
   const primer = render(<CoverArt album={sourceAlbum} size="small" />);
   const primerImage = screen.getByRole("img", { name: "Mirage cover" });
   fireEvent.load(primerImage);
   primer.unmount();
 
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  render(testTree(queryClient, favoriteCollection()));
+  renderFavoriteRoute(favoriteCollection());
 
-  const image = screen
-    .getByRole("link", { name: "Open Mirage" })
-    .querySelector("img");
+  const image = (
+    await screen.findByRole("link", { name: "Open Mirage" })
+  ).querySelector("img");
   expect(image).toHaveAttribute("loading", "eager");
   expect(image).toHaveAttribute("decoding", "sync");
   expect(image).not.toHaveAttribute("data-cover-art-pending");
@@ -173,13 +186,8 @@ it("shares painted local sources across collection and Favorite remounts", () =>
 });
 
 it("invalidates failed Favorite artwork once, then falls back without a loop", async () => {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  const view = render(
-    testTree(queryClient, favoriteCollection(directArtworkUrl)),
-  );
-  const releaseLink = screen.getByRole("link", { name: "Open Mirage" });
+  const view = renderFavoriteRoute(favoriteCollection(directArtworkUrl));
+  const releaseLink = await screen.findByRole("link", { name: "Open Mirage" });
   let artwork = releaseLink.querySelector<HTMLElement>("[data-slot=cover]");
   const directImage = artwork?.querySelector("img");
   const initialSource = directImage?.getAttribute("src");
@@ -190,10 +198,8 @@ it("invalidates failed Favorite artwork once, then falls back without a loop", a
 
   fireEvent.error(directImage);
 
-  await waitFor(() => expect(mocks.invoke).toHaveBeenCalledOnce());
-  expect(mocks.invoke).toHaveBeenCalledWith("invalidate_cover_art", {
-    coverArtId: "album-cover-id",
-  });
+  await waitFor(() => expect(artworkBridge.invalidate).toHaveBeenCalledOnce());
+  expect(artworkBridge.invalidate).toHaveBeenCalledWith("album-cover-id");
   artwork = screen
     .getByRole("link", { name: "Open Mirage" })
     .querySelector<HTMLElement>("[data-slot=cover]");
@@ -214,12 +220,13 @@ it("invalidates failed Favorite artwork once, then falls back without a loop", a
   fireEvent.error(retriedImage);
 
   expect(artwork?.querySelector("img")).not.toBeInTheDocument();
-  expect(mocks.invoke).toHaveBeenCalledOnce();
+  expect(artworkBridge.invalidate).toHaveBeenCalledOnce();
   expect(
     artwork?.querySelector("[data-favorite-artwork-fallback]"),
   ).toBeInTheDocument();
 
-  view.rerender(testTree(queryClient, favoriteCollection(laterArtworkUrl)));
+  view.rerenderRuntime(favoriteRuntime(favoriteCollection(laterArtworkUrl)));
+  await screen.findByRole("link", { name: "Open Mirage" });
   artwork = screen
     .getByRole("link", { name: "Open Mirage" })
     .querySelector<HTMLElement>("[data-slot=cover]");

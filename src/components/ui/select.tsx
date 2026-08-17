@@ -8,27 +8,49 @@ import { ChevronDownIcon, CheckIcon, ChevronUpIcon } from "lucide-react"
 
 const SelectPresenceContext = React.createContext(false)
 
+type SelectMotionElements = Readonly<{
+  div: React.JSXElementConstructor<React.ComponentProps<typeof m.div>>
+  span: React.JSXElementConstructor<React.ComponentProps<typeof m.span>>
+}>
+
+const DEFAULT_SELECT_MOTION_ELEMENTS = {
+  div: m.div,
+  span: m.span,
+} satisfies SelectMotionElements
+
+const SelectMotionElementsContext = React.createContext<SelectMotionElements>(
+  DEFAULT_SELECT_MOTION_ELEMENTS
+)
+
+type SelectProps<Value, Multiple extends boolean | undefined> =
+  SelectPrimitive.Root.Props<Value, Multiple> & {
+    motionElements?: SelectMotionElements
+  }
+
 function Select<Value, Multiple extends boolean | undefined = false>({
   open: openProp,
   defaultOpen = false,
+  motionElements = DEFAULT_SELECT_MOTION_ELEMENTS,
   onOpenChange,
   ...props
-}: SelectPrimitive.Root.Props<Value, Multiple>) {
+}: SelectProps<Value, Multiple>) {
   const [uncontrolledOpen, setUncontrolledOpen] =
     React.useState(defaultOpen)
   const open = openProp ?? uncontrolledOpen
 
   return (
-    <SelectPresenceContext.Provider value={open}>
-      <SelectPrimitive.Root
-        open={open}
-        onOpenChange={(nextOpen, details) => {
-          if (openProp === undefined) setUncontrolledOpen(nextOpen)
-          onOpenChange?.(nextOpen, details)
-        }}
-        {...props}
-      />
-    </SelectPresenceContext.Provider>
+    <SelectMotionElementsContext.Provider value={motionElements}>
+      <SelectPresenceContext.Provider value={open}>
+        <SelectPrimitive.Root
+          open={open}
+          onOpenChange={(nextOpen, details) => {
+            if (openProp === undefined) setUncontrolledOpen(nextOpen)
+            onOpenChange?.(nextOpen, details)
+          }}
+          {...props}
+        />
+      </SelectPresenceContext.Provider>
+    </SelectMotionElementsContext.Provider>
   )
 }
 
@@ -61,6 +83,7 @@ function SelectTrigger({
   size?: "sm" | "default"
 }) {
   const open = React.useContext(SelectPresenceContext)
+  const { span: MotionSpan } = React.useContext(SelectMotionElementsContext)
   const codaMotion = useCodaMotion()
 
   return (
@@ -78,7 +101,7 @@ function SelectTrigger({
         className="grid size-4 shrink-0 place-items-center self-center leading-none"
         data-slot="select-icon"
       >
-        <m.span
+        <MotionSpan
           aria-hidden="true"
           className="pointer-events-none grid size-full place-items-center text-muted-foreground"
           data-slot="select-chevron-motion"
@@ -89,7 +112,7 @@ function SelectTrigger({
           transition={codaMotion.feedback}
         >
           <ChevronDownIcon className="size-4" />
-        </m.span>
+        </MotionSpan>
       </SelectPrimitive.Icon>
     </SelectPrimitive.Trigger>
   )
@@ -110,6 +133,7 @@ function SelectContent({
     "align" | "alignOffset" | "side" | "sideOffset" | "alignItemWithTrigger"
   >) {
   const open = React.useContext(SelectPresenceContext)
+  const { div: MotionDiv } = React.useContext(SelectMotionElementsContext)
   const codaMotion = useCodaMotion()
   const animatePopup = !alignItemWithTrigger
 
@@ -132,7 +156,7 @@ function SelectContent({
           )}
           {...props}
           render={
-            <m.div
+            <MotionDiv
               initial={{
                 opacity: codaMotion.profile.component.opacityFrom,
                 transform: animatePopup
@@ -268,3 +292,5 @@ export {
   SelectTrigger,
   SelectValue,
 }
+
+export type { SelectMotionElements }

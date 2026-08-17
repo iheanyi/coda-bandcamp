@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import {
   DiscoverReleaseDetail,
@@ -22,9 +23,13 @@ const release: DiscoverRelease = {
   },
 };
 
+function renderDetail(ui: ReactNode) {
+  return render(ui);
+}
+
 describe("DiscoverReleaseDetail", () => {
   it("exposes a semantic route screen without changing detail focus", () => {
-    render(
+    renderDetail(
       <DiscoverReleaseScreen
         className="route-detail"
         release={release}
@@ -49,7 +54,7 @@ describe("DiscoverReleaseDetail", () => {
     const onArtist = vi.fn();
     const onOpenBandcamp = vi.fn();
     const onTogglePlayback = vi.fn();
-    const { rerender } = render(
+    const { rerender } = renderDetail(
       <DiscoverReleaseDetail
         release={release}
         playing={false}
@@ -65,7 +70,13 @@ describe("DiscoverReleaseDetail", () => {
     let detail = screen.getByRole("article", {
       name: "Blue Hours",
     });
-    expect(detail).toHaveAttribute("data-coda-discover-detail-surface");
+    const detailSurface = detail.querySelector(
+      "[data-coda-discover-detail-surface]",
+    );
+    expect(detailSurface).toHaveAttribute("data-coda-discover-detail-surface");
+    expect(detailSurface).not.toContainElement(
+      within(detail).getByRole("button", { name: "Back" }),
+    );
     expect(
       detail.querySelector("[data-coda-discover-artwork-detail]"),
     ).toHaveAttribute(
@@ -136,7 +147,7 @@ describe("DiscoverReleaseDetail", () => {
       onOpenBandcamp: vi.fn(),
     };
     const nextArtworkUrl = "https://f4.bcbits.com/img/blue-hours-fixed.jpg";
-    const { container, rerender } = render(
+    const { container, rerender } = renderDetail(
       <DiscoverReleaseScreen {...props} release={release} />,
     );
     const artwork = container.querySelector(

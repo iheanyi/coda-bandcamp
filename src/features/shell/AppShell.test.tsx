@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import type { ReactNode } from "react";
+import { createRef, type ReactNode, type Ref } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { DrawerTrigger } from "@/components/ui/drawer";
@@ -9,8 +9,11 @@ import { AppShell } from "./AppShell";
 function shell(
   outlet: ReactNode,
   options: Readonly<{
+    libraryPaneRef?: Ref<HTMLElement>;
     nowPlayingOpen?: boolean;
     onQueueOpenChange?: (open: boolean) => void;
+    queueOpen?: boolean;
+    transitionKey?: string;
   }> = {},
 ) {
   return (
@@ -30,13 +33,15 @@ function shell(
       }}
       queue={{
         onOpenChange: options.onQueueOpenChange ?? vi.fn(),
-        open: false,
+        open: options.queueOpen ?? false,
         panel: <aside data-testid="queue-panel">Queue</aside>,
       }}
       route={{
         chrome: <header data-testid="route-chrome">Chrome</header>,
+        libraryPaneRef: options.libraryPaneRef,
         outlet,
         sidebar: <aside data-testid="sidebar">Sidebar</aside>,
+        transitionKey: options.transitionKey ?? "test-route",
       }}
     />
   );
@@ -82,6 +87,19 @@ describe("AppShell", () => {
     expect(onQueueOpenChange.mock.calls[0]?.[0]).toBe(true);
   });
 
+  it("publishes queue visibility for detail snapshot isolation", () => {
+    const { container, rerender } = render(
+      shell(<section>Album detail</section>, { queueOpen: false }),
+    );
+    const workspace = container.querySelector(
+      '[data-slot="app-shell-workspace"]',
+    );
+    expect(workspace).toHaveAttribute("data-queue-open", "false");
+
+    rerender(shell(<section>Album detail</section>, { queueOpen: true }));
+    expect(workspace).toHaveAttribute("data-queue-open", "true");
+  });
+
   it("uses the immersive one-row layout without padding the route pane", () => {
     render(
       shell(<section data-testid="route-outlet">Now playing</section>, {
@@ -95,5 +113,24 @@ describe("AppShell", () => {
     expect(
       screen.getByTestId("route-outlet").closest('[data-slot="app-shell"]'),
     ).toHaveClass("grid-rows-[minmax(0,1fr)]");
+  });
+
+  it("forwards the main element to callback and object refs", () => {
+    const callbackRef = vi.fn();
+    const { rerender } = render(
+      shell(<section>Collection</section>, {
+        libraryPaneRef: callbackRef,
+      }),
+    );
+    const main = screen.getByRole("main");
+    expect(callbackRef).toHaveBeenLastCalledWith(main);
+
+    const objectRef = createRef<HTMLElement>();
+    rerender(
+      shell(<section>Collection</section>, {
+        libraryPaneRef: objectRef,
+      }),
+    );
+    expect(objectRef.current).toBe(main);
   });
 });

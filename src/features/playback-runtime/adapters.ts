@@ -1,7 +1,6 @@
 import {
   checkpointPlayerState,
   clearPlayerState,
-  fetchRadioShow,
   fetchStreamUrl,
   invalidateStreamUrl,
   isDesktop,
@@ -13,7 +12,6 @@ import {
   updateSystemMediaMetadata,
   updateSystemMediaPlayback,
   updateSystemMediaTimeline,
-  type SystemMediaControlEvent,
 } from "@/lib";
 import { coverArtSource } from "@/coverArtSource";
 import { refreshDailyTrack } from "@/daily";
@@ -21,6 +19,11 @@ import {
   installMediaSessionTrackHandlers,
   syncMediaSessionPlayback,
 } from "@/media";
+import {
+  isNumberValue,
+  isStringValue,
+  projectOwnDataRecord,
+} from "@/ownData";
 import { createSystemArtworkDataUrl } from "@/systemArtwork";
 
 import type {
@@ -38,11 +41,13 @@ export const defaultPlaybackPersistenceAdapters: PlaybackPersistenceAdapters = {
   clear: clearPlayerState,
 };
 
-export const defaultPlaybackAudioAdapters: PlaybackAudioAdapters = {
+export const defaultPlaybackAudioAdapters: Omit<
+  PlaybackAudioAdapters,
+  "loadRadioShow"
+> = {
   fetchStreamUrl,
   invalidateStreamUrl,
   loadDailyTrack: refreshDailyTrack,
-  loadRadioShow: fetchRadioShow,
   recordDiagnostic: recordPlaybackDiagnostic,
 };
 
@@ -53,6 +58,80 @@ export const defaultPlaybackScrobbleAdapters: PlaybackScrobbleAdapters = {
 };
 
 type DesktopListenerDisposer = () => void | Promise<void>;
+
+type SystemMediaTransportControlEvent =
+  | { action: "play" }
+  | { action: "pause" }
+  | { action: "previous" }
+  | { action: "next" };
+
+type SystemMediaSeekControlEvent = {
+  action: "seek";
+  positionSeconds: number;
+};
+
+export type ParsedSystemMediaControlEvent =
+  | SystemMediaTransportControlEvent
+  | SystemMediaSeekControlEvent;
+
+export function parseSystemMediaControlEvent<Value>(
+  payload: Value,
+): ParsedSystemMediaControlEvent | undefined {
+  const record = projectOwnDataRecord(payload);
+  if (record === undefined) return undefined;
+
+  const action = record.action;
+  if (!isStringValue(action)) return undefined;
+
+  switch (action) {
+    case "play":
+      return { action: "play" };
+    case "pause":
+      return { action: "pause" };
+    case "previous":
+      return { action: "previous" };
+    case "next":
+      return { action: "next" };
+    case "seek": {
+      const positionSeconds = record.positionSeconds;
+      if (!isNumberValue(positionSeconds) || !Number.isFinite(positionSeconds)) {
+        return undefined;
+      }
+      return { action: "seek", positionSeconds };
+    }
+    default:
+      return undefined;
+  }
+}
+
+export function dispatchSystemMediaControlEvent<Value>(
+  handlers: DesktopPlaybackControlHandlers,
+  payload: Value,
+): void {
+  const event = parseSystemMediaControlEvent(payload);
+  if (!event) return;
+  switch (event.action) {
+    case "play":
+      handlers.onPlay();
+      return;
+    case "pause":
+      handlers.onPause();
+      return;
+    case "previous":
+      handlers.onPrevious();
+      return;
+    case "next":
+      handlers.onNext();
+      return;
+    case "seek":
+      handlers.onSeek(event.positionSeconds);
+      return;
+    default: {
+      const unhandledEvent: never = event;
+      return unhandledEvent;
+    }
+  }
+}
 
 function disposeDesktopListeners(
   disposers: readonly DesktopListenerDisposer[],
@@ -93,7 +172,7 @@ async function installDesktopControls(
   if (!isDesktop()) return () => undefined;
   const { listen } = await import("@tauri-apps/api/event");
   return collectDesktopListenerCleanup([
-    listen<string>("coda://tray-control", ({ payload }) => {
+    listen<unknown>("coda://tray-control", ({ payload }) => {
       if (payload === "play") handlers.onPlay();
       if (payload === "pause") handlers.onPause();
       if (payload === "play-pause") handlers.onTogglePlayback();
@@ -101,19 +180,10 @@ async function installDesktopControls(
       if (payload === "next") handlers.onNext();
       if (payload === "shuffle-library") void handlers.onShuffleLibrary();
     }),
-    listen<SystemMediaControlEvent>(
+    listen<unknown>(
       "coda://system-media-control",
       ({ payload }) => {
-        if (payload.action === "play") handlers.onPlay();
-        if (payload.action === "pause") handlers.onPause();
-        if (payload.action === "previous") handlers.onPrevious();
-        if (payload.action === "next") handlers.onNext();
-        if (
-          payload.action === "seek" &&
-          typeof payload.positionSeconds === "number"
-        ) {
-          handlers.onSeek(payload.positionSeconds);
-        }
+        dispatchSystemMediaControlEvent(handlers, payload);
       },
     ),
   ]);

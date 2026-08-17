@@ -10,6 +10,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import {
+  type CSSProperties,
   type FormEvent,
   type MouseEvent,
   memo,
@@ -50,7 +51,6 @@ import { discoverInfiniteQueryOptions } from "@/queries/discoverQueries";
 import { ResponsiveVirtualGrid } from "@/ResponsiveVirtualGrid";
 import {
   isDiscoverReleaseId,
-  parseDiscoverReleaseIdParam,
   type DiscoverRouteSearch,
   validateDiscoverSearch,
 } from "@/routing/routeContracts";
@@ -80,6 +80,11 @@ const DISCOVER_GRID_LAYOUTS = [
 ] as const;
 
 const discoverReleaseKey = (release: DiscoverRelease) => release.id;
+
+type DiscoverArtworkStyle = CSSProperties & {
+  "--cover-accent": string;
+  "--cover-base": string;
+};
 
 const DiscoverCard = memo(function DiscoverCard({
   release,
@@ -122,6 +127,10 @@ const DiscoverCard = memo(function DiscoverCard({
   const artworkLoaded = Boolean(
     artworkEligible && loadedArtworkUrl === artworkUrl,
   );
+  const artworkStyle: DiscoverArtworkStyle = {
+    "--cover-accent": palette[0],
+    "--cover-base": palette[1],
+  };
   const openRelease = (event: MouseEvent<HTMLAnchorElement>) => {
     handleCodaLinkActivation(event, (trigger) => {
       onOpenRelease(release, trigger);
@@ -160,12 +169,7 @@ const DiscoverCard = memo(function DiscoverCard({
       <div
         className="relative grid size-28 place-items-center overflow-hidden bg-[linear-gradient(145deg,var(--cover-accent),transparent_72%),var(--cover-base)] text-2xl font-bold text-white/78"
         data-coda-discover-artwork={release.id}
-        style={
-          {
-            "--cover-accent": palette[0],
-            "--cover-base": palette[1],
-          } as React.CSSProperties
-        }
+        style={artworkStyle}
       >
         {artworkEligible && artworkUrl ? (
           <img
@@ -438,17 +442,12 @@ export function DiscoverScreen({
       const left =
         rail.scrollLeft +
         direction * Math.max(160, Math.round(rail.clientWidth * 0.7));
-      if (typeof rail.scrollTo === "function") {
-        rail.scrollTo({
-          behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
-            ? "auto"
-            : "smooth",
-          left,
-        });
-      } else {
-        rail.scrollLeft = left;
-        updateGenreRailEdges(rail);
-      }
+      rail.scrollTo({
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "auto"
+          : "smooth",
+        left,
+      });
     },
     [updateGenreRailEdges],
   );
@@ -466,11 +465,7 @@ export function DiscoverScreen({
     if (selectedGenre) return;
     const rail = genreRailRef.current;
     if (!rail) return;
-    if (typeof rail.scrollTo === "function") {
-      rail.scrollTo({ behavior: "auto", left: 0 });
-    } else {
-      rail.scrollLeft = 0;
-    }
+    rail.scrollTo({ behavior: "auto", left: 0 });
     updateGenreRailEdges(rail);
   }, [selectedGenre, updateGenreRailEdges]);
 

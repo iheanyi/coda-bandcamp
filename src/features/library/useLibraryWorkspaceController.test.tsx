@@ -28,8 +28,8 @@ function album(
   };
 }
 
-function searchController(
-  searchValue: unknown,
+function searchController<Search>(
+  searchValue: Search,
   deferredQuery?: string,
 ): LibraryRouteSearchController {
   const search = validateCollectionSearch(searchValue);

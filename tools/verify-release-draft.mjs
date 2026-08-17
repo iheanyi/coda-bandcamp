@@ -77,7 +77,7 @@ function verifyDraft(release) {
     `<!-- coda-release-run:${runId} ` +
     `coda-release-commit:${commitSha} -->`;
   if (
-    typeof release.body !== "string" ||
+    !isString(release.body) ||
     release.body.length > maximumBodyLength ||
     !release.body.split(/\r?\n/).includes(marker)
   ) {
@@ -90,5 +90,16 @@ function verifyDraft(release) {
 }
 
 function isRecord(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  return (
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype
+  );
+}
+
+function isString(value) {
+  return (
+    Object.prototype.toString.call(value) === "[object String]" &&
+    value === String(value)
+  );
 }

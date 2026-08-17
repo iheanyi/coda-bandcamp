@@ -1,63 +1,94 @@
 import { useSyncExternalStore } from "react";
-import type { CodaViewTransitionKind } from "./viewTransitions";
+import { isNumberValue } from "./ownData";
+import {
+  createMotionDiagnosticsStore,
+  type MotionDiagnosticsStore,
+  type MotionPseudoLayers,
+  type MotionRect,
+  type MotionTransitionDiagnostic,
+} from "./motionDiagnosticsStore";
 
-export type MotionRect = Readonly<{
-  x: number;
-  y: number;
-  width: number;
-  height: number;
+export type {
+  MotionInputType,
+  MotionPhaseTimings,
+  MotionPseudoLayers,
+  MotionRect,
+  MotionTransitionDiagnostic,
+} from "./motionDiagnosticsStore";
+
+type MutableMotionPseudoLayers = {
+  group: string[];
+  old: string[];
+  new: string[];
+};
+
+type MotionPseudoEffect = Readonly<{
+  getComputedTiming: () => Readonly<{ endTime?: number | null }>;
+  pseudoElement: string | null;
 }>;
 
-export type MotionPseudoLayers = Readonly<{
-  group: readonly string[];
-  old: readonly string[];
-  new: readonly string[];
+export type MotionPseudoAnimation = Readonly<{
+  effect: AnimationEffect | MotionPseudoEffect | null;
+  playState: AnimationPlayState;
 }>;
 
-export type MotionTransitionDiagnostic = Readonly<{
-  id: number;
-  kind: CodaViewTransitionKind;
-  status: "active" | "finished" | "bypassed" | "fallback" | "superseded";
-  reason?: string;
-  startedAt: number;
-  configuredDurationMs: number;
-  actualDurationMs?: number;
-  elapsedMs?: number;
-  speed: number;
-  transitionClass: string;
-  transitionNames: readonly string[];
-  transitionClasses: readonly string[];
-  sourceRect?: MotionRect;
-  destinationRect?: MotionRect;
-  sourceCount: number;
-  destinationCount: number;
-  imageInsertionMs?: number;
-  imageDecodeMs?: number;
-  pseudoLayers: MotionPseudoLayers;
-  sharedExpected: boolean;
-  sharedPaired?: boolean;
-  missingEndpoints: readonly string[];
-  duplicateEndpoints: readonly string[];
-}>;
+type MotionDiagnosticsHotData = {
+  motionDiagnosticsStore?: MotionDiagnosticsStore;
+};
 
-const EMPTY_LAYERS: MotionPseudoLayers = { group: [], old: [], new: [] };
-const listeners = new Set<() => void>();
-let nextId = 1;
-let current: MotionTransitionDiagnostic | null = null;
+type MotionDiagnosticsImportMeta = ImportMeta & {
+  hot?: { data: MotionDiagnosticsHotData };
+};
 
-function publish(value: MotionTransitionDiagnostic | null) {
-  current = value;
-  listeners.forEach((listener) => listener());
+function rounded(value: number | undefined) {
+  return value === undefined ? undefined : Math.round(value * 10) / 10;
 }
 
-export function subscribeMotionDiagnostics(listener: () => void) {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
+function logCompletedDiagnostic(diagnostic: MotionTransitionDiagnostic) {
+  if (import.meta.env.MODE !== "development") return;
+  console.info("[coda:motion]", {
+    id: diagnostic.id,
+    kind: diagnostic.kind,
+    status: diagnostic.status,
+    inputType: diagnostic.inputType ?? "programmatic",
+    inputToCoordinatorMs: rounded(diagnostic.inputToCoordinatorMs),
+    firstVisualMs: rounded(diagnostic.firstVisualMs),
+    phaseTimings: Object.fromEntries(
+      Object.entries(diagnostic.phaseTimings).map(([name, duration]) => [
+        name,
+        rounded(duration),
+      ]),
+    ),
+    configuredDurationMs: rounded(diagnostic.configuredDurationMs),
+    actualDurationMs: rounded(diagnostic.actualDurationMs),
+    totalFromInputMs: rounded(diagnostic.totalFromInputMs),
+    reason: diagnostic.reason,
+  });
 }
 
-export function getMotionDiagnostic() {
-  return current;
+// SAFETY: Vite adds this optional shape in development; production omits it.
+const hotData = (import.meta as MotionDiagnosticsImportMeta).hot?.data;
+const productionMotionDiagnosticsStore =
+  hotData?.motionDiagnosticsStore ??
+  createMotionDiagnosticsStore({ onCompleted: logCompletedDiagnostic });
+if (hotData) {
+  hotData.motionDiagnosticsStore = productionMotionDiagnosticsStore;
 }
+
+export const subscribeMotionDiagnostics =
+  productionMotionDiagnosticsStore.subscribe;
+export const getMotionDiagnostic =
+  productionMotionDiagnosticsStore.getCurrent;
+export const getMotionDiagnosticHistory =
+  productionMotionDiagnosticsStore.getHistory;
+export const beginMotionDiagnostic = productionMotionDiagnosticsStore.begin;
+export const updateMotionDiagnostic = productionMotionDiagnosticsStore.update;
+export const recordActiveMotionRender =
+  productionMotionDiagnosticsStore.recordActiveRender;
+export const finishMotionDiagnostic = productionMotionDiagnosticsStore.finish;
+export const recordMotionInput = productionMotionDiagnosticsStore.recordInput;
+export const installMotionInputDiagnostics =
+  productionMotionDiagnosticsStore.installInputDiagnostics;
 
 export function useMotionDiagnostic() {
   return useSyncExternalStore(
@@ -65,60 +96,6 @@ export function useMotionDiagnostic() {
     getMotionDiagnostic,
     getMotionDiagnostic,
   );
-}
-
-export function beginMotionDiagnostic(
-  input: Omit<
-    MotionTransitionDiagnostic,
-    | "id"
-    | "status"
-    | "startedAt"
-    | "pseudoLayers"
-    | "missingEndpoints"
-    | "duplicateEndpoints"
-  >,
-) {
-  if (current?.status === "active") {
-    publish({
-      ...current,
-      status: "superseded",
-      reason: "latest-wins",
-      elapsedMs: performance.now() - current.startedAt,
-    });
-  }
-  const diagnostic: MotionTransitionDiagnostic = {
-    ...input,
-    id: nextId++,
-    status: "active",
-    startedAt: performance.now(),
-    pseudoLayers: EMPTY_LAYERS,
-    missingEndpoints: [],
-    duplicateEndpoints: [],
-  };
-  publish(diagnostic);
-  return diagnostic.id;
-}
-
-export function updateMotionDiagnostic(
-  id: number,
-  update: Partial<MotionTransitionDiagnostic>,
-) {
-  if (!current || current.id !== id) return;
-  publish({ ...current, ...update });
-}
-
-export function finishMotionDiagnostic(
-  id: number,
-  status: MotionTransitionDiagnostic["status"],
-  reason?: string,
-) {
-  if (!current || current.id !== id) return;
-  publish({
-    ...current,
-    status,
-    ...(reason ? { reason } : {}),
-    elapsedMs: performance.now() - current.startedAt,
-  });
 }
 
 export function rectSnapshot(rect: DOMRect): MotionRect {
@@ -135,34 +112,69 @@ function pseudoName(value: string) {
   return match?.[1];
 }
 
+function isComputedTimingReader<Value>(
+  value: Value,
+): value is Value & (() => Readonly<{ endTime?: number | null }>) {
+  return typeof value === "function";
+}
+
+function isDocumentAnimationsReader<Value>(
+  value: Value,
+): value is Value & (() => Animation[]) {
+  return typeof value === "function";
+}
+
+function isMotionPseudoEffect(
+  effect: AnimationEffect | MotionPseudoEffect | null,
+): effect is MotionPseudoEffect {
+  if (
+    !effect ||
+    !("pseudoElement" in effect) ||
+    !("getComputedTiming" in effect)
+  ) {
+    return false;
+  }
+  const pseudoElement = effect.pseudoElement;
+  return (
+    (pseudoElement === null || typeof pseudoElement === "string") &&
+    isComputedTimingReader(effect.getComputedTiming)
+  );
+}
+
 export function inspectMotionPseudoLayers(
   expectedTransitionNames: readonly string[] = [],
 ) {
-  const layers: { group: string[]; old: string[]; new: string[] } = {
+  const layers: MutableMotionPseudoLayers = {
     group: [],
     old: [],
     new: [],
   };
   const expectedNames = new Set(expectedTransitionNames);
   let actualDurationMs = 0;
-  if (typeof document.getAnimations !== "function") {
+  const getAnimations = document.getAnimations;
+  if (!isDocumentAnimationsReader(getAnimations)) {
     return { layers, actualDurationMs };
   }
-  for (const animation of document.getAnimations()) {
+  for (const animation of getAnimations.call(document)) {
     if (animation.playState === "finished" || animation.playState === "idle") {
       continue;
     }
-    const effect = animation.effect as KeyframeEffect | null;
-    const pseudo = effect?.pseudoElement;
+    const effect = animation.effect;
+    if (!isMotionPseudoEffect(effect)) continue;
+    const pseudo = effect.pseudoElement;
     if (!pseudo?.startsWith("::view-transition")) continue;
     const name = pseudoName(pseudo) ?? pseudo;
     if (pseudo.startsWith("::view-transition-group")) layers.group.push(name);
     if (pseudo.startsWith("::view-transition-old")) layers.old.push(name);
     if (pseudo.startsWith("::view-transition-new")) layers.new.push(name);
-    const endTime = effect?.getComputedTiming().endTime;
+    const endTime = effect.getComputedTiming().endTime;
     const tracksConfiguredLayer =
       expectedNames.size === 0 || expectedNames.has(name);
-    if (tracksConfiguredLayer && typeof endTime === "number") {
+    if (
+      tracksConfiguredLayer &&
+      isNumberValue(endTime) &&
+      !Number.isNaN(endTime)
+    ) {
       actualDurationMs = Math.max(actualDurationMs, endTime);
     }
   }
@@ -204,10 +216,4 @@ export function pseudoLayersPair(
       old.has(name) &&
       newest.has(name),
   );
-}
-
-export function resetMotionDiagnosticsForTests() {
-  current = null;
-  nextId = 1;
-  listeners.forEach((listener) => listener());
 }

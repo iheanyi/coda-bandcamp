@@ -30,7 +30,6 @@ export function RadioArchiveRoute({
     onToggleFavorite: runtime.onToggleFavorite,
     onTogglePlayback: runtime.onTogglePlayback,
     playing: runtime.playing,
-    returningArtworkId: navigation.returningArtworkId,
     seriesTravelSteps: navigation.seriesTravelSteps,
   };
 

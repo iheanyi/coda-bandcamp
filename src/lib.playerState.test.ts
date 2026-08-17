@@ -1,18 +1,55 @@
+import type { InvokeArgs } from "@tauri-apps/api/core";
+import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPlayerState } from "./playerState";
 import type { PlayerStateInput } from "./types";
 
-const invokeMock = vi.hoisted(() => vi.fn());
+type NativeInvocation = {
+  command: string;
+  payload: InvokeArgs | undefined;
+};
 
-vi.mock("@tauri-apps/api/core", () => ({
-  Channel: class {
-    onmessage: (value: unknown) => void;
-    constructor(onmessage = () => undefined) {
-      this.onmessage = onmessage;
-    }
-  },
-  invoke: invokeMock,
-}));
+type PlayerStateIpcValue =
+  | boolean
+  | number
+  | string
+  | null
+  | undefined
+  | PlayerStateIpcValue[]
+  | PlayerStateIpcRecord;
+
+type PlayerStateIpcRecord = {
+  [key: string]: PlayerStateIpcValue;
+};
+
+let nativeInvocations: NativeInvocation[] = [];
+
+function recordInvocation(
+  command: string,
+  payload: InvokeArgs | undefined,
+): void {
+  nativeInvocations.push({ command, payload });
+}
+
+function invocationFor(command: string): NativeInvocation | undefined {
+  return nativeInvocations.find((invocation) => invocation.command === command);
+}
+
+function isIpcRecord<Value>(
+  value: Value,
+): value is Value & PlayerStateIpcRecord {
+  return Object.prototype.toString.call(value) === "[object Object]";
+}
+
+function savedQueueLength(
+  invocation: NativeInvocation | undefined,
+): number | undefined {
+  const payload = invocation?.payload;
+  if (!isIpcRecord(payload) || !isIpcRecord(payload.state)) return undefined;
+  return Array.isArray(payload.state.queue)
+    ? payload.state.queue.length
+    : undefined;
+}
 
 const radioInput: PlayerStateInput = {
   queue: [{
@@ -47,27 +84,30 @@ const radioInput: PlayerStateInput = {
 
 describe("native player-state contract negotiation", () => {
   beforeEach(() => {
+    clearMocks();
     vi.resetModules();
-    invokeMock.mockReset();
+    nativeInvocations = [];
   });
 
   afterEach(() => {
+    clearMocks();
     vi.unstubAllGlobals();
   });
 
   it("keeps queue and playhead writes compatible during an older native dev process", async () => {
-    invokeMock.mockImplementation((command: string, payload?: unknown) => {
+    mockIPC((command, payload) => {
+      recordInvocation(command, payload);
       if (command === "player_state_contract_version") {
         return Promise.reject(new Error("Command not found"));
       }
-      if (command === "save_player_state") return Promise.resolve(payload);
+      if (command === "save_player_state") return Promise.resolve();
       if (command === "checkpoint_player_state") return Promise.resolve(true);
       return Promise.reject(new Error(`Unexpected command: ${command}`));
     });
     const { checkpointPlayerState, savePlayerState } = await import("./lib");
 
     const saving = savePlayerState(radioInput);
-    expect(invokeMock).not.toHaveBeenCalledWith("save_player_state", expect.anything());
+    expect(invocationFor("save_player_state")).toBeUndefined();
     await saving;
     await checkpointPlayerState({
       currentIndex: 0,
@@ -79,14 +119,12 @@ describe("native player-state contract negotiation", () => {
       },
     });
 
-    expect(invokeMock).toHaveBeenCalledWith(
-      "save_player_state",
+    expect(invocationFor("save_player_state")?.payload).toEqual(
       expect.objectContaining({
         state: expect.not.objectContaining({ radioScrobbleProgress: expect.anything() }),
       }),
     );
-    expect(invokeMock).toHaveBeenCalledWith(
-      "checkpoint_player_state",
+    expect(invocationFor("checkpoint_player_state")?.payload).toEqual(
       expect.objectContaining({
         checkpoint: expect.not.objectContaining({
           radioScrobbleProgress: expect.anything(),
@@ -96,17 +134,17 @@ describe("native player-state contract negotiation", () => {
   });
 
   it("sends Radio progress when Rust advertises the matching contract", async () => {
-    invokeMock.mockImplementation((command: string, payload?: unknown) => {
+    mockIPC((command, payload) => {
+      recordInvocation(command, payload);
       if (command === "player_state_contract_version") return Promise.resolve(2);
-      if (command === "save_player_state") return Promise.resolve(payload);
+      if (command === "save_player_state") return Promise.resolve();
       return Promise.reject(new Error(`Unexpected command: ${command}`));
     });
     const { savePlayerState } = await import("./lib");
 
     await savePlayerState(radioInput);
 
-    expect(invokeMock).toHaveBeenCalledWith(
-      "save_player_state",
+    expect(invocationFor("save_player_state")?.payload).toEqual(
       expect.objectContaining({
         state: expect.objectContaining({
           radioScrobbleProgress: expect.objectContaining({
@@ -123,9 +161,10 @@ describe("native player-state contract negotiation", () => {
       idleCallbacks.push(callback);
       return idleCallbacks.length;
     }));
-    invokeMock.mockImplementation((command: string, payload?: unknown) => {
+    mockIPC((command, payload) => {
+      recordInvocation(command, payload);
       if (command === "player_state_contract_version") return Promise.resolve(2);
-      if (command === "save_player_state") return Promise.resolve(payload);
+      if (command === "save_player_state") return Promise.resolve();
       return Promise.reject(new Error(`Unexpected command: ${command}`));
     });
     const { savePlayerState } = await import("./lib");
@@ -142,14 +181,14 @@ describe("native player-state contract negotiation", () => {
 
     const saving = savePlayerState(maximumInput);
     expect(idleCallbacks).toHaveLength(1);
-    expect(invokeMock).not.toHaveBeenCalledWith("save_player_state", expect.anything());
+    expect(invocationFor("save_player_state")).toBeUndefined();
 
     idleCallbacks[0]({
       didTimeout: false,
       timeRemaining: () => 12,
     });
     await vi.waitFor(() => expect(idleCallbacks).toHaveLength(2));
-    expect(invokeMock).not.toHaveBeenCalledWith("save_player_state", expect.anything());
+    expect(invocationFor("save_player_state")).toBeUndefined();
 
     idleCallbacks[1]({
       didTimeout: false,
@@ -157,9 +196,7 @@ describe("native player-state contract negotiation", () => {
     });
 
     await saving;
-    const saveCall = invokeMock.mock.calls.find(([command]) => command === "save_player_state");
-    const payload = saveCall?.[1] as { state?: { queue?: unknown[] } } | undefined;
-    expect(payload?.state?.queue).toHaveLength(25_000);
+    expect(savedQueueLength(invocationFor("save_player_state"))).toBe(25_000);
   });
 
   it("does not synchronously validate a maximum-size state after native IPC", async () => {
@@ -174,7 +211,8 @@ describe("native player-state contract negotiation", () => {
       queue,
       radioScrobbleProgress: undefined,
     }, 1_700_000_000_000);
-    invokeMock.mockImplementation((command: string) => {
+    mockIPC((command, payload) => {
+      recordInvocation(command, payload);
       if (command === "load_player_state") return Promise.resolve(snapshot);
       if (command === "record_player_state_diagnostic") return Promise.resolve();
       return Promise.reject(new Error(`Unexpected command: ${command}`));

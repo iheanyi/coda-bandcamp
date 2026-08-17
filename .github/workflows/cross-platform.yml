@@ -63,6 +63,8 @@ jobs:
             patchelf
 
       - run: npm ci
+      - run: npm run lint
+      - run: npm run lint:anti-slop
       - run: npm run test:automation-build
       - run: npm run test:coverage
       - run: npm run build

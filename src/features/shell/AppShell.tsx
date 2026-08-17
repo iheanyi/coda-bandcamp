@@ -1,13 +1,24 @@
-import type { ReactNode, Ref } from "react";
+import {
+  Profiler,
+  type ReactNode,
+  type Ref,
+  type RefCallback,
+  useCallback,
+  useLayoutEffect,
+  useRef,
+} from "react";
 
 import { Drawer } from "@/components/ui/drawer";
 import { cn } from "@/lib/utils";
+import { recordActiveMotionRender } from "@/motionDiagnostics";
+import { consumePendingPageEntrance } from "@/viewTransitions";
 
 export type AppShellRoute = Readonly<{
   sidebar: ReactNode;
   chrome?: ReactNode;
   outlet: ReactNode;
   libraryPaneRef?: Ref<HTMLElement>;
+  transitionKey: string;
 }>;
 
 export type AppShellQueue = Readonly<{
@@ -30,6 +41,21 @@ export type AppShellProps = Readonly<{
   className?: string;
 }>;
 
+function isLibraryPaneRefCallback(
+  ref: Ref<HTMLElement> | undefined,
+): ref is RefCallback<HTMLElement> {
+  return typeof ref === "function";
+}
+
+function recordRouteRender(
+  id: string,
+  _phase: "mount" | "update" | "nested-update",
+  actualDuration: number,
+  baseDuration: number,
+) {
+  recordActiveMotionRender(id, actualDuration, baseDuration);
+}
+
 /**
  * Owns Coda's persistent desktop layout while feature controllers retain their
  * state and behavior. Route changes replace only the main-pane outlet; the
@@ -44,6 +70,25 @@ export function AppShell({
   overlays,
   className,
 }: AppShellProps) {
+  const mainRef = useRef<HTMLElement | null>(null);
+  const setMainRef = useCallback(
+    (element: HTMLElement | null) => {
+      mainRef.current = element;
+      const libraryPaneRef = route.libraryPaneRef;
+      if (isLibraryPaneRefCallback(libraryPaneRef)) {
+        libraryPaneRef(element);
+      } else if (libraryPaneRef) {
+        libraryPaneRef.current = element;
+      }
+    },
+    [route.libraryPaneRef],
+  );
+  useLayoutEffect(() => {
+    if (mainRef.current) {
+      consumePendingPageEntrance(mainRef.current, route.transitionKey);
+    }
+  }, [route.transitionKey]);
+
   return (
     <Drawer
       disablePointerDismissal
@@ -76,11 +121,18 @@ export function AppShell({
                 : "px-4 pt-6 pb-10 lg:px-6 lg:pt-8 lg:pb-12 xl:px-8",
             )}
             data-coda-library-scroll
+            data-coda-transition-key={route.transitionKey}
             data-slot="app-shell-main"
-            ref={route.libraryPaneRef}
+            ref={setMainRef}
           >
-            {route.chrome}
-            {route.outlet}
+            <Profiler id="coda-route" onRender={recordRouteRender}>
+              <Profiler id="coda-route-chrome" onRender={recordRouteRender}>
+                {route.chrome}
+              </Profiler>
+              <Profiler id="coda-route-outlet" onRender={recordRouteRender}>
+                {route.outlet}
+              </Profiler>
+            </Profiler>
           </main>
           {queue.panel}
         </div>

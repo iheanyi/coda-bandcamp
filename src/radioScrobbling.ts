@@ -37,6 +37,16 @@ export type RadioShowScrobbleAction = {
   timestamp: number;
 };
 
+export type RadioScrobbleAdvance = {
+  progress: RadioScrobbleProgress;
+  actions: RadioScrobbleAction[];
+};
+
+export type RadioShowScrobbleCompletion = {
+  progress: RadioScrobbleProgress;
+  action?: RadioShowScrobbleAction;
+};
+
 function hashText(value: string): string {
   let hash = 2_166_136_261;
   for (let index = 0; index < value.length; index += 1) {
@@ -228,7 +238,7 @@ export function advanceRadioScrobblingWithTimeline(
   playing: boolean,
   enabled: boolean,
   nowSeconds = Math.floor(Date.now() / 1_000),
-): { progress: RadioScrobbleProgress; actions: RadioScrobbleAction[] } {
+): RadioScrobbleAdvance {
   const safePosition = Number.isFinite(position)
     ? Math.min(Math.max(0, position), Math.max(0, track.duration))
     : current.lastPosition;
@@ -307,24 +317,24 @@ export function markRadioChapterScrobble(
       -MAX_SCROBBLED_CHAPTER_KEYS,
     )
     : progress.scrobbledChapterKeys;
-  return {
+  const next: RadioScrobbleProgress = {
     ...progress,
-    ...(progress.activeChapterKey === chapterKeyValue &&
-    progress.chapterScrobbleState === "pending"
-      ? { chapterScrobbleState: state }
-      : {}),
     scrobbledChapterKeys,
   };
+  if (
+    progress.activeChapterKey === chapterKeyValue &&
+    progress.chapterScrobbleState === "pending"
+  ) {
+    next.chapterScrobbleState = state;
+  }
+  return next;
 }
 
 export function completeRadioShowScrobble(
   track: Track,
   progress: RadioScrobbleProgress,
   enabled: boolean,
-): {
-  progress: RadioScrobbleProgress;
-  action?: RadioShowScrobbleAction;
-} {
+): RadioShowScrobbleCompletion {
   const threshold = Math.min(track.duration / 2, 240);
   if (
     !enabled ||

@@ -87,14 +87,19 @@ releases as Albums/EPs. Do not infer a more specific type from names or artwork.
 - `src/App.tsx` — main renderer, library/player state, navigation, and queue UI.
 - `src/DiscoverView.tsx` — lazy-loaded anonymous Discover feed using TanStack
   Query.
-- `src/RadioView.tsx` — lazy-loaded Bandcamp Radio latest show and archive.
-- `src/SavedLibraryView.tsx` — lazy-loaded Favorites, playlists, playlist
-  details, and Add-to-playlist dialog using TanStack Query.
+- `src/features/radio/` — lazy-loaded Bandcamp Radio archive, series, show,
+  presentation, route-navigation, and playback-facing modules.
+- `src/features/saved-library/` — lazy-loaded Favorites, playlists, playlist
+  details, controllers, presentation, and Add-to-playlist dialog using TanStack
+  Query.
 - `src/radioPlayback.ts` — bounded Radio chapter ordering and playhead lookup.
 - `src/radioScrobbling.ts` — pure listened-time accounting, chapter/show
   eligibility, and bounded Radio scrobble deduplication.
-- `src/lib.ts` — typed renderer-to-Tauri bridge, URL validation, hydration, and
-  bounded runtime/local-storage caches.
+- `src/lib.ts` — thin public barrel over typed `src/data-bridge/` domain modules
+  for renderer-to-Tauri commands, validation, hydration, and bounded caches.
+- `src/detailNavigation.ts`, `src/features/navigation/routeCommit.ts`, and
+  `src/detailTransitionDescriptors.ts` — module-level detail authority, bounded
+  render-acknowledged route commits, and canonical transition contracts.
 - `src/types.ts` — shared TypeScript domain types.
 - `src/queue.ts` — pure queue operations.
 - `src/playerState.ts` — versioned player-session validation, sanitization, and
@@ -115,6 +120,9 @@ releases as Albums/EPs. Do not infer a more specific type from names or artwork.
 - `.github/workflows/cross-platform.yml` — Windows, macOS, and Linux CI/build
   coverage.
 
+Detail navigation state is module-level; HMR during an active transition is a
+development-only edge case and may require a full reload.
+
 Keep new domain logic in focused pure modules when practical. `App.tsx` is
 already large; do not make it the default home for independently testable
 sorting, grouping, queue, or classification logic. At the same time, avoid an
@@ -134,6 +142,16 @@ npm run dev
 changes and Rust rebuilds for native changes. Use `npm run web:dev` only for
 renderer work that does not require native commands; browser-only testing is not
 a substitute for checking the desktop app.
+
+Development builds include the unified TanStack Devtools with Router and Query
+inspectors. Open it from the middle-right hover target or with `Control+~`.
+Use the Router inspector to verify route matches, search state, loaders, and
+navigation timing. Use the Query inspector to verify cache keys, freshness,
+deduplication, invalidation, retries, and retained data. Inspect the real Tauri
+app when debugging product behavior. Devtools observations support diagnosis;
+they do not replace regression tests or desktop automation evidence. The Vite
+plugin strips Devtools from production builds, and the mini-player does not
+mount them.
 
 On Windows, PowerShell execution policy may block `npm.ps1`. Invoke `npm.cmd`
 instead, and quote executable or repository paths that contain spaces.
@@ -335,7 +353,8 @@ When adding a Tauri command:
 
 1. Implement and validate the Rust command.
 2. Register it in `tauri::generate_handler!`.
-3. Add a typed wrapper in `src/lib.ts`.
+3. Add a typed wrapper in the matching `src/data-bridge/` domain module and
+   re-export its public API from `src/lib.ts`.
 4. Add only the minimum capability permission required.
 5. Cover validation, failure, and success behavior with tests.
 
@@ -355,6 +374,14 @@ Do not absolutely center the window after first launch. Window state persists
 position, size, maximized state, and visibility; restore it safely, including
 when a saved monitor is disconnected. Startup and tray restore should
 unminimize, show, and focus the window. Quit should save state before exiting.
+
+The main window sets `backgroundThrottling: "disabled"` in `tauri.conf.json`
+because WebKit's default policy fully suspends a hidden or occluded view's
+tasks after roughly five minutes. A tray-parked or covered Coda window must
+keep its renderer event loop alive so session restore, playback controls, and
+tray restore stay responsive. macOS honors the policy; Windows and Linux do
+not support it and keep their current behavior. Do not remove it to save idle
+power without re-proving hidden-window liveness on the real app.
 
 Tray controls and window lifecycle require testing in the actual native app on
 the host operating system. A DOM test cannot validate title-bar dragging,

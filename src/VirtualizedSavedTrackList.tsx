@@ -103,12 +103,12 @@ export function VirtualizedSavedTrackList<Item>({
   useLayoutEffect(() => {
     syncScrollMargin();
     const root = rootRef.current;
-    if (!root || typeof ResizeObserver === "undefined") {
+    if (!root || !globalThis.ResizeObserver) {
       const resize = () => syncScrollMargin();
       window.addEventListener("resize", resize);
       return () => window.removeEventListener("resize", resize);
     }
-    const observer = new ResizeObserver(syncScrollMargin);
+    const observer = new globalThis.ResizeObserver(syncScrollMargin);
     observer.observe(root);
     if (scrollElement) observer.observe(scrollElement);
     return () => observer.disconnect();
@@ -168,7 +168,9 @@ export function VirtualizedSavedTrackList<Item>({
       "data-index": index,
       "data-saved-track-index": index,
       onBlurCapture: (event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+        const nextFocusedNode =
+          event.relatedTarget instanceof Node ? event.relatedTarget : null;
+        if (!event.currentTarget.contains(nextFocusedNode)) {
           setFocusedIndex((current) => current === index ? undefined : current);
         }
       },

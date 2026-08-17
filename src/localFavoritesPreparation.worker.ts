@@ -1,51 +1,50 @@
 import {
-  localFavoritesInputMatchesPrepared,
+  localFavoritesWorkerPrepared,
   parseLocalFavoritesPreparationRequest,
-  parseLocalFavoritesSerialized,
-  serializeLocalFavorites,
+  serializeValidatedLocalFavorites,
   type LocalFavoritesPreparationResponse,
 } from "./localFavoritesPreparation";
+import {
+  parseLocalFavoritesSerialized,
+} from "./localFavorites";
 
 function respond(response: LocalFavoritesPreparationResponse): void {
   globalThis.postMessage(response);
 }
 
-globalThis.addEventListener("message", ({ data }: MessageEvent<unknown>) => {
-  const request = parseLocalFavoritesPreparationRequest(data);
-  if (!request) return;
-  try {
-    if (request.kind === "parse-local-favorites") {
+globalThis.addEventListener(
+  "message",
+  ({ data }: MessageEvent<unknown>) => {
+    const request = parseLocalFavoritesPreparationRequest(data);
+    if (!request) return;
+    try {
+      if (request.kind === "parse-local-favorites") {
+        respond({
+          kind: "local-favorites-parsed",
+          requestId: request.requestId,
+          favorites: parseLocalFavoritesSerialized(request.serialized),
+        });
+        return;
+      }
+      const prepared = serializeValidatedLocalFavorites(request.favorites);
       respond({
-        kind: "local-favorites-parsed",
+        kind: "local-favorites-serialized",
         requestId: request.requestId,
-        favorites: parseLocalFavoritesSerialized(request.serialized),
+        prepared: localFavoritesWorkerPrepared(
+          prepared,
+          request.sourceFavorites,
+        ),
       });
-      return;
+    } catch (cause) {
+      const error = cause instanceof Error
+        ? cause
+        : new Error("Local Favorites are invalid and were not saved.");
+      respond({
+        kind: "local-favorites-error",
+        requestId: request.requestId,
+        errorName: error.name,
+        errorMessage: error.message,
+      });
     }
-    const prepared = serializeLocalFavorites(request.favorites);
-    const inputMatches = localFavoritesInputMatchesPrepared(
-      typeof data === "object" && data !== null && "favorites" in data
-        ? data.favorites
-        : undefined,
-      prepared,
-    );
-    respond({
-      kind: "local-favorites-serialized",
-      requestId: request.requestId,
-      prepared: {
-        serialized: prepared.serialized,
-        ...(inputMatches ? {} : { favorites: prepared.favorites }),
-      },
-    });
-  } catch (cause) {
-    const error = cause instanceof Error
-      ? cause
-      : new Error("Local Favorites are invalid and were not saved.");
-    respond({
-      kind: "local-favorites-error",
-      requestId: request.requestId,
-      errorName: error.name,
-      errorMessage: error.message,
-    });
-  }
-});
+  },
+);

@@ -51,17 +51,43 @@ const tauriCliPath = resolve(
   "node_modules/@tauri-apps/cli/tauri.js",
 );
 
+function isString(value) {
+  return (
+    Object.prototype.toString.call(value) === "[object String]" &&
+    value === String(value)
+  );
+}
+
+function isRecord(value) {
+  return (
+    value !== null &&
+    value !== undefined &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype
+  );
+}
+
+function containsControlCharacter(value) {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint !== undefined && (codePoint <= 0x1f || codePoint === 0x7f)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function validIdentityName(value) {
   return (
-    typeof value === "string" &&
+    isString(value) &&
     value.length > 0 &&
     value.length <= 256 &&
-    !/[\u0000-\u001f\u007f]/u.test(value)
+    !containsControlCharacter(value)
   );
 }
 
 export function parseCodeSigningIdentities(output) {
-  if (typeof output !== "string") return [];
+  if (!isString(output)) return [];
 
   const identities = [];
   for (const line of output.split(/\r?\n/u)) {
@@ -113,7 +139,7 @@ export function expectedDesignatedRequirement(
 
 export function redactCertificateHash(output, certificateHash) {
   if (
-    typeof output !== "string" ||
+    !isString(output) ||
     !CERTIFICATE_HASH_PATTERN.test(certificateHash)
   ) {
     throw new Error("Coda cannot safely redact the selected certificate.");
@@ -122,10 +148,11 @@ export function redactCertificateHash(output, certificateHash) {
 }
 
 function permissionIdentifier(permission) {
-  if (typeof permission === "string") return permission;
-  return typeof permission?.identifier === "string"
-    ? permission.identifier
-    : undefined;
+  if (isString(permission)) return permission;
+  if (!isRecord(permission) || !isString(permission.identifier)) {
+    return undefined;
+  }
+  return permission.identifier;
 }
 
 export function assertSafeAutomationConfig(config, devCapability) {

@@ -1,20 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { InvokeArgs } from "@tauri-apps/api/core";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlaylistDetail, PlaylistSummary } from "@/types";
-
-const mocks = vi.hoisted(() => ({
-  fetchPlaylist: vi.fn(),
-  fetchPlaylists: vi.fn(),
-}));
-
-vi.mock("@/lib", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib")>();
-  return {
-    ...actual,
-    fetchPlaylist: mocks.fetchPlaylist,
-    fetchPlaylists: mocks.fetchPlaylists,
-  };
-});
 
 import {
   PLAYLIST_STALE_TIME_MS,
@@ -30,9 +17,26 @@ const summary: PlaylistSummary = {
 };
 const detail: PlaylistDetail = { ...summary, tracks: [] };
 
+type SavedLibraryBridgeResult = PlaylistDetail | PlaylistSummary[];
+
+const nativeInvoke = vi.fn<
+  (command: string, args?: InvokeArgs) => Promise<SavedLibraryBridgeResult>
+>();
+
 beforeEach(() => {
-  mocks.fetchPlaylists.mockReset().mockResolvedValue([summary]);
-  mocks.fetchPlaylist.mockReset().mockResolvedValue(detail);
+  nativeInvoke.mockReset().mockImplementation(async (command) => {
+    if (command === "fetch_playlists") return [summary];
+    if (command === "fetch_playlist") return detail;
+    throw new Error(`Unexpected saved-library command: ${command}`);
+  });
+  Object.defineProperty(window, "__TAURI_INTERNALS__", {
+    configurable: true,
+    value: { invoke: nativeInvoke },
+  });
+});
+
+afterEach(() => {
+  Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
 });
 
 describe("saved-library query options", () => {
@@ -63,8 +67,18 @@ describe("saved-library query options", () => {
 
     expect(await queryClient.fetchQuery(listOptions)).toEqual([summary]);
     expect(await queryClient.fetchQuery(detailOptions)).toEqual(detail);
-    expect(mocks.fetchPlaylists).toHaveBeenCalledOnce();
-    expect(mocks.fetchPlaylist).toHaveBeenCalledWith("playlist-1");
+    expect(nativeInvoke).toHaveBeenNthCalledWith(
+      1,
+      "fetch_playlists",
+      {},
+      undefined,
+    );
+    expect(nativeInvoke).toHaveBeenNthCalledWith(
+      2,
+      "fetch_playlist",
+      { playlistId: "playlist-1" },
+      undefined,
+    );
 
     expect(queryClient.getQueryData(["bandcamp", "playlists"]))
       .toEqual([summary]);

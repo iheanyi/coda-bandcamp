@@ -8,7 +8,9 @@ import {
 } from "@/lib";
 import {
   emptyLocalFavorites,
+  localTrackStarBoundMessage,
   localTrackStarIndexAndRadio,
+  localTrackStarIndexCanAccept,
   reconcileLocalTrackStarIndex,
   updateLocalFavorites,
   updateLocalRadioFavorite,
@@ -130,14 +132,82 @@ function withLibraryAlbumMetadata(
     albums: music.albums.map((favorite) => {
       const libraryAlbum = libraryAlbums.get(favorite.id);
       if (!libraryAlbum) return favorite;
-      return {
+      const album = {
         ...favorite,
         ...libraryAlbum,
-        ...(favorite.starredAt === undefined && libraryAlbum.starredAt === undefined
-          ? {}
-          : { starredAt: favorite.starredAt ?? libraryAlbum.starredAt }),
       };
+      const starredAt = favorite.starredAt ?? libraryAlbum.starredAt;
+      if (starredAt !== undefined) album.starredAt = starredAt;
+      return album;
     }),
+  };
+}
+
+function currentTrackMutationRevision(
+  revisions: ReadonlyMap<string, number>,
+  trackId: string,
+): number {
+  return revisions.get(trackId) ?? 0;
+}
+
+function bumpTrackMutationRevision(
+  revisions: Map<string, number>,
+  trackId: string,
+): number {
+  const nextRevision = currentTrackMutationRevision(revisions, trackId) + 1;
+  revisions.set(trackId, nextRevision);
+  return nextRevision;
+}
+
+function trackMutationRevisionIsCurrent(
+  revisions: ReadonlyMap<string, number>,
+  capturedRevisions: ReadonlyMap<string, number>,
+  trackId: string,
+): boolean {
+  return currentTrackMutationRevision(revisions, trackId) ===
+    currentTrackMutationRevision(capturedRevisions, trackId);
+}
+
+function trackStarReconciliationForCurrentRevisions(
+  result: FavoriteTrackReconciliation,
+  revisions: ReadonlyMap<string, number>,
+  capturedRevisions: ReadonlyMap<string, number>,
+): FavoriteTrackReconciliation {
+  let stale = false;
+  for (const track of result.tracks) {
+    if (trackMutationRevisionIsCurrent(revisions, capturedRevisions, track.id)) {
+      continue;
+    }
+    stale = true;
+    break;
+  }
+  if (!stale) {
+    for (const trackId of result.unstarredIds) {
+      if (trackMutationRevisionIsCurrent(revisions, capturedRevisions, trackId)) {
+        continue;
+      }
+      stale = true;
+      break;
+    }
+  }
+  if (!stale) return result;
+
+  const tracks: Track[] = [];
+  for (const track of result.tracks) {
+    if (trackMutationRevisionIsCurrent(revisions, capturedRevisions, track.id)) {
+      tracks.push(track);
+    }
+  }
+  const unstarredIds: string[] = [];
+  for (const trackId of result.unstarredIds) {
+    if (trackMutationRevisionIsCurrent(revisions, capturedRevisions, trackId)) {
+      unstarredIds.push(trackId);
+    }
+  }
+  return {
+    tracks,
+    unstarredIds,
+    unavailableTrackCount: result.unavailableTrackCount,
   };
 }
 
@@ -180,31 +250,49 @@ export function useLocalFavoritesController({
   const [localReady, setLocalReady] = useState(false);
   const [localLoadError, setLocalLoadError] = useState<string>();
   const localGenerationRef = useRef(0);
+  const connectionEpochRef = useRef(0);
   const persistedLocalCollectionRef = useRef<LocalFavoriteCollection>(
     emptyLocalFavorites(),
   );
+  const committedLocalCollectionRef = useRef<LocalFavoriteCollection>(
+    emptyLocalFavorites(),
+  );
   const mergedEnumeratedTrackStarsRef = useRef("");
-  const reconciledHydratedTrackStarsRef = useRef("");
+  const reconciledHydratedTrackStarsRef = useRef({ epoch: 0, signature: "" });
+  const trackMutationRevisionRef = useRef(new Map<string, number>());
   const previousConnectedRef = useRef(connected);
 
   const refreshLocal = useCallback((): Promise<LocalFavoriteCollection | undefined> => {
     const generation = localGenerationRef.current + 1;
     localGenerationRef.current = generation;
+    const epoch = connectionEpochRef.current;
     setLocalReady(false);
     setLocalLoadError(undefined);
 
     return repository.read().then(
       (favorites) => {
-        if (localGenerationRef.current !== generation) return undefined;
+        if (
+          localGenerationRef.current !== generation ||
+          connectionEpochRef.current !== epoch
+        ) {
+          return undefined;
+        }
         const localFavorites = localTrackStarIndexAndRadio(favorites);
         persistedLocalCollectionRef.current = localFavorites;
+        committedLocalCollectionRef.current = localFavorites;
         setLocalCollection(localFavorites);
         setLocalReady(true);
         return localFavorites;
       },
       (cause) => {
-        if (localGenerationRef.current !== generation) return undefined;
+        if (
+          localGenerationRef.current !== generation ||
+          connectionEpochRef.current !== epoch
+        ) {
+          return undefined;
+        }
         const message = errorMessage(cause);
+        committedLocalCollectionRef.current = persistedLocalCollectionRef.current;
         setLocalCollection(persistedLocalCollectionRef.current);
         setLocalLoadError(message);
         setLocalReady(true);
@@ -222,25 +310,34 @@ export function useLocalFavoritesController({
     (
       favorites: LocalFavoriteCollection,
       reportFailure = true,
+      startedEpoch?: number,
     ): Promise<boolean> => {
+      const epoch = startedEpoch ?? connectionEpochRef.current;
+      if (connectionEpochRef.current !== epoch) return Promise.resolve(false);
       const localFavorites = localTrackStarIndexAndRadio(favorites);
       const generation = localGenerationRef.current + 1;
       localGenerationRef.current = generation;
+      committedLocalCollectionRef.current = localFavorites;
       setLocalCollection(localFavorites);
       setLocalReady(true);
       setLocalLoadError(undefined);
 
       return repository.write(localFavorites).then(
         (savedFavorites) => {
+          if (connectionEpochRef.current !== epoch) return false;
           const savedLocalFavorites = localTrackStarIndexAndRadio(savedFavorites);
           persistedLocalCollectionRef.current = savedLocalFavorites;
           if (localGenerationRef.current === generation) {
+            committedLocalCollectionRef.current = savedLocalFavorites;
             setLocalCollection(savedLocalFavorites);
           }
           return true;
         },
         (cause) => {
+          if (connectionEpochRef.current !== epoch) return false;
           if (localGenerationRef.current === generation) {
+            committedLocalCollectionRef.current =
+              persistedLocalCollectionRef.current;
             setLocalCollection(persistedLocalCollectionRef.current);
           }
           if (reportFailure) notify(errorMessage(cause), "bad");
@@ -255,12 +352,15 @@ export function useLocalFavoritesController({
     const wasConnected = previousConnectedRef.current;
     previousConnectedRef.current = connected;
     if (!wasConnected || connected) return;
+    connectionEpochRef.current += 1;
+    trackMutationRevisionRef.current.clear();
+    const epoch = connectionEpochRef.current;
     void persistLocal({
-      ...localCollection,
+      ...committedLocalCollectionRef.current,
       songIds: [],
       tracks: [],
-    }, false);
-  }, [connected, localCollection, persistLocal]);
+    }, false, epoch);
+  }, [connected, persistLocal]);
 
   const musicFavorites = useMemo(
     () => connected
@@ -283,20 +383,30 @@ export function useLocalFavoritesController({
     favorites: LocalFavoriteCollection,
     reportUnavailable: boolean,
   ) => {
+    const epoch = connectionEpochRef.current;
     if (!connected || !musicRepository.reconcile) return;
     const tracks = favorites.tracks.map((track) => ({
       id: track.id,
       albumId: track.albumId,
     }));
     if (!tracks.length) return;
+    const capturedRevisions = new Map(trackMutationRevisionRef.current);
     try {
       const result = await musicRepository.reconcile(tracks);
-      const next = reconcileLocalTrackStarIndex(
-        favorites,
-        result.tracks,
-        result.unstarredIds,
+      if (connectionEpochRef.current !== epoch) return;
+      const fresh = trackStarReconciliationForCurrentRevisions(
+        result,
+        trackMutationRevisionRef.current,
+        capturedRevisions,
       );
-      await persistLocal(next, false);
+      const current = committedLocalCollectionRef.current;
+      const next = reconcileLocalTrackStarIndex(
+        current,
+        fresh.tracks,
+        fresh.unstarredIds,
+      );
+      await persistLocal(next, false, epoch);
+      if (connectionEpochRef.current !== epoch) return;
       if (reportUnavailable && result.unavailableTrackCount > 0) {
         notify(
           `Bandcamp could not verify ${result.unavailableTrackCount.toLocaleString()} favorite ${result.unavailableTrackCount === 1 ? "track" : "tracks"}. Coda kept the last confirmed state.`,
@@ -304,12 +414,15 @@ export function useLocalFavoritesController({
         );
       }
     } catch (cause) {
+      if (connectionEpochRef.current !== epoch) return;
       if (reportUnavailable) notify(errorMessage(cause), "bad");
     }
   }, [connected, musicRepository, notify, persistLocal]);
 
   const refresh = useCallback(() => {
+    const epoch = connectionEpochRef.current;
     void refreshLocal().then((favorites) => {
+      if (connectionEpochRef.current !== epoch) return;
       if (favorites) void reconcileKnownTracks(favorites, true);
     });
     if (connected) {
@@ -334,19 +447,28 @@ export function useLocalFavoritesController({
     if (
       mergedEnumeratedTrackStarsRef.current === enumeratedTrackStarsSignature
     ) return;
-    mergedEnumeratedTrackStarsRef.current = enumeratedTrackStarsSignature;
-    if (!musicFavorites.tracks.length) return;
-    const next = reconcileLocalTrackStarIndex(
-      localCollection,
-      musicFavorites.tracks,
-    );
-    if (next === localCollection) return;
-    void persistLocal(next, false);
+    if (!musicFavorites.tracks.length) {
+      mergedEnumeratedTrackStarsRef.current = enumeratedTrackStarsSignature;
+      return;
+    }
+    try {
+      const current = committedLocalCollectionRef.current;
+      const next = reconcileLocalTrackStarIndex(
+        current,
+        musicFavorites.tracks,
+      );
+      mergedEnumeratedTrackStarsRef.current = enumeratedTrackStarsSignature;
+      if (next === current) return;
+      void persistLocal(next, false, connectionEpochRef.current);
+    } catch (cause) {
+      notify(errorMessage(cause), "bad");
+    }
   }, [
     enumeratedTrackStarsSignature,
     localCollection,
     localReady,
     musicFavorites.tracks,
+    notify,
     persistLocal,
   ]);
 
@@ -381,19 +503,40 @@ export function useLocalFavoritesController({
     const signature = hydratedTrackStarLocators
       .map((track) => `${track.albumId}\u0000${track.id}`)
       .join("\u0001");
-    if (reconciledHydratedTrackStarsRef.current === signature) return;
-    reconciledHydratedTrackStarsRef.current = signature;
+    const epoch = connectionEpochRef.current;
+    const hydratedDedup = reconciledHydratedTrackStarsRef.current;
+    if (hydratedDedup.epoch === epoch && hydratedDedup.signature === signature) {
+      return;
+    }
+    reconciledHydratedTrackStarsRef.current = { epoch, signature };
+    const capturedRevisions = new Map(trackMutationRevisionRef.current);
     void musicRepository.reconcile(hydratedTrackStarLocators).then(
       (result) => {
-        const next = reconcileLocalTrackStarIndex(
-          localCollection,
-          result.tracks,
-          result.unstarredIds,
-        );
-        if (next !== localCollection) void persistLocal(next, false);
+        if (connectionEpochRef.current !== epoch) return;
+        try {
+          const fresh = trackStarReconciliationForCurrentRevisions(
+            result,
+            trackMutationRevisionRef.current,
+            capturedRevisions,
+          );
+          if (fresh !== result) {
+            reconciledHydratedTrackStarsRef.current = { epoch, signature: "" };
+          }
+          const current = committedLocalCollectionRef.current;
+          const next = reconcileLocalTrackStarIndex(
+            current,
+            fresh.tracks,
+            fresh.unstarredIds,
+          );
+          if (next !== current) void persistLocal(next, false, epoch);
+        } catch (cause) {
+          reconciledHydratedTrackStarsRef.current = { epoch, signature: "" };
+          notify(errorMessage(cause), "bad");
+        }
       },
       () => {
-        reconciledHydratedTrackStarsRef.current = "";
+        if (connectionEpochRef.current !== epoch) return;
+        reconciledHydratedTrackStarsRef.current = { epoch, signature: "" };
       },
     );
   }, [
@@ -403,6 +546,7 @@ export function useLocalFavoritesController({
     localReady,
     musicFavorites.tracks,
     musicRepository,
+    notify,
     persistLocal,
   ]);
 
@@ -444,12 +588,24 @@ export function useLocalFavoritesController({
         id,
         kind,
         favorite: favorite ?? !active,
-        ...(kind === "song" && candidate && "albumId" in candidate
-          ? { albumId: candidate.albumId }
-          : {}),
       };
+      if (kind === "song" && candidate && "albumId" in candidate) {
+        input.albumId = candidate.albumId;
+      }
+      if (
+        kind === "song" &&
+        input.favorite &&
+        !localTrackStarIndexCanAccept(committedLocalCollectionRef.current, id)
+      ) {
+        notify(localTrackStarBoundMessage(), "bad");
+        return;
+      }
 
       try {
+        const epoch = connectionEpochRef.current;
+        const startedTrackRevision = kind === "song"
+          ? bumpTrackMutationRevision(trackMutationRevisionRef.current, id)
+          : 0;
         const previous = musicFavorites;
         const next = updateMusicFavorites(previous, input, candidate);
         const rollbackInput: FavoriteInput = { ...input, favorite: active };
@@ -465,21 +621,49 @@ export function useLocalFavoritesController({
           ),
         );
         queryClient.setQueryData(FAVORITES_QUERY_KEY, next);
-        const previousLocal = localCollection;
+        const persistAffectedSong = (
+          apply: (current: LocalFavoriteCollection) => LocalFavoriteCollection,
+        ): boolean => {
+          try {
+            void persistLocal(
+              apply(committedLocalCollectionRef.current),
+              false,
+              epoch,
+            );
+            return true;
+          } catch (cause) {
+            notify(errorMessage(cause), "bad");
+            return false;
+          }
+        };
         if (kind === "song") {
-          const nextLocal = updateLocalFavorites(
-            previousLocal,
-            input,
-            candidate,
+          const persisted = persistAffectedSong(
+            (current) => updateLocalFavorites(current, input, candidate),
           );
-          void persistLocal(nextLocal, false);
+          if (!persisted) return;
         }
         void musicRepository.write(input).then(
           (result) => {
+            if (connectionEpochRef.current !== epoch) return;
+            if (
+              kind === "song" &&
+              currentTrackMutationRevision(
+                trackMutationRevisionRef.current,
+                id,
+              ) !== startedTrackRevision
+            ) {
+              return;
+            }
             if (kind === "song") {
               if (result.verification === "unavailable" && !input.favorite) {
                 rollbackQueryFavorite();
-                void persistLocal(previousLocal, false);
+                persistAffectedSong(
+                  (current) => updateLocalFavorites(
+                    current,
+                    rollbackInput,
+                    rollbackCandidate,
+                  ),
+                );
                 notify(
                   "Bandcamp accepted the removal, but Coda could not verify it. The track will remain until Refresh confirms it.",
                   "bad",
@@ -491,15 +675,19 @@ export function useLocalFavoritesController({
                 ...input,
                 favorite: confirmedFavorite,
               };
-              const confirmedLocal = confirmedFavorite
-                ? reconcileLocalTrackStarIndex(
-                  previousLocal,
-                  result.track ? [result.track] : candidate && "albumId" in candidate
-                    ? [{ ...candidate, starredAt: new Date().toISOString() }]
-                    : [],
-                )
-                : updateLocalFavorites(previousLocal, confirmedInput);
-              void persistLocal(confirmedLocal, false);
+              const persisted = persistAffectedSong(
+                (current) => confirmedFavorite
+                  ? reconcileLocalTrackStarIndex(
+                    current,
+                    result.track
+                      ? [result.track]
+                      : candidate && "albumId" in candidate
+                      ? [{ ...candidate, starredAt: new Date().toISOString() }]
+                      : [],
+                  )
+                  : updateLocalFavorites(current, confirmedInput),
+              );
+              if (!persisted) return;
               if (result.verification === "mismatch") {
                 queryClient.setQueryData<FavoriteCollection>(
                   FAVORITES_QUERY_KEY,
@@ -530,8 +718,26 @@ export function useLocalFavoritesController({
             });
           },
           (cause) => {
+            if (connectionEpochRef.current !== epoch) return;
+            if (
+              kind === "song" &&
+              currentTrackMutationRevision(
+                trackMutationRevisionRef.current,
+                id,
+              ) !== startedTrackRevision
+            ) {
+              return;
+            }
             rollbackQueryFavorite();
-            if (kind === "song") void persistLocal(previousLocal, false);
+            if (kind === "song") {
+              persistAffectedSong(
+                (current) => updateLocalFavorites(
+                  current,
+                  rollbackInput,
+                  rollbackCandidate,
+                ),
+              );
+            }
             notify(errorMessage(cause), "bad");
           },
         );
@@ -545,7 +751,6 @@ export function useLocalFavoritesController({
       favoriteAlbumIds,
       favoriteTrackIds,
       favoritesAvailable,
-      localCollection,
       musicFavorites,
       musicRepository,
       notify,
@@ -561,13 +766,14 @@ export function useLocalFavoritesController({
       if (!favoritesAvailable()) return;
       const nextFavorite = favorite ?? !favoriteRadioShowIds.has(show.id);
       try {
+        const epoch = connectionEpochRef.current;
         const next = updateLocalRadioFavorite(
-          localCollection,
+          committedLocalCollectionRef.current,
           show,
           nextFavorite,
         );
-        void persistLocal(next).then((saved) => {
-          if (!saved) return;
+        void persistLocal(next, true, epoch).then((saved) => {
+          if (!saved || connectionEpochRef.current !== epoch) return;
           notify(
             nextFavorite
               ? "Radio show saved to Favorites on this device"
@@ -582,16 +788,14 @@ export function useLocalFavoritesController({
     [
       favoriteRadioShowIds,
       favoritesAvailable,
-      localCollection,
       notify,
       persistLocal,
     ],
   );
 
-  return {
+  const controller = {
     collection,
     ready,
-    ...(loadError === undefined ? {} : { loadError }),
     favoriteAlbumIds,
     favoriteRadioShowIds,
     favoriteTrackIds,
@@ -600,4 +804,6 @@ export function useLocalFavoritesController({
     toggleFavorite,
     toggleRadioFavorite,
   };
+  if (loadError === undefined) return controller;
+  return { ...controller, loadError };
 }

@@ -61,6 +61,8 @@ export function usePlaybackAudioController({
   const [streamRequestNonce, setStreamRequestNonce] = useState(0);
   const [airPlayAvailable, setAirPlayAvailable] = useState(false);
   const streamRefreshRef = useRef({ trackId: "", attempts: 0 });
+  const resolvedStreamRef = useRef(resolvedStream);
+  resolvedStreamRef.current = resolvedStream;
   const currentTrack = core.queueModel.currentTrack;
   const boundStreamTrackId = resolvedStream?.trackId;
   const activeStream =
@@ -83,7 +85,7 @@ export function usePlaybackAudioController({
       trackId: currentTrack?.id ?? "",
       attempts: 0,
     };
-  }, [currentTrack?.id]);
+  }, [activationGeneration, currentTrack?.id]);
 
   useEffect(() => {
     if (!currentTrack) {
@@ -95,6 +97,9 @@ export function usePlaybackAudioController({
         trackId: currentTrack.id,
         url: currentTrack.streamUrl,
       });
+      return;
+    }
+    if (resolvedStreamRef.current?.trackId === currentTrack.id) {
       return;
     }
 
@@ -185,6 +190,7 @@ export function usePlaybackAudioController({
     currentTrack,
     currentTrack?.id,
     currentTrack?.streamUrl,
+    activationGeneration,
     notify,
     pause,
     replaceCurrentTrack,
@@ -327,16 +333,24 @@ export function usePlaybackAudioController({
       const snapshot = getCoreSnapshot();
       const track = snapshot.queue[snapshot.currentIndex];
       if (!track || boundStreamTrackId !== track.id) return;
+      const expiredOrUnreachable =
+        mediaError?.code === 2 || mediaError?.code === 4;
       const canRefreshAuthenticatedStream =
         connected &&
         !track.streamUrl &&
-        !track.id.startsWith("radio:") &&
-        (mediaError?.code === 2 || mediaError?.code === 4);
+        radioShowIdFromTrackId(track.id) === undefined &&
+        expiredOrUnreachable;
       const canRefreshDailyStream =
         track.id.startsWith("daily:") &&
         Boolean(track.dailySource) &&
-        (mediaError?.code === 2 || mediaError?.code === 4);
-      if (canRefreshAuthenticatedStream || canRefreshDailyStream) {
+        expiredOrUnreachable;
+      const canRefreshRadioStream =
+        radioShowIdFromTrackId(track.id) !== undefined && expiredOrUnreachable;
+      if (
+        canRefreshAuthenticatedStream ||
+        canRefreshDailyStream ||
+        canRefreshRadioStream
+      ) {
         const refresh = streamRefreshRef.current;
         if (refresh.trackId !== track.id) {
           refresh.trackId = track.id;

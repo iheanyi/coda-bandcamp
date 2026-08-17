@@ -13,8 +13,8 @@ import { DailyArchiveScreen, DailyArticleScreen } from "./DailyScreens";
 import { DailyRouteNavigationContext } from "./DailyRouteNavigationState";
 
 const navigation = {
-  closeArticle: vi.fn(async () => undefined),
-  openArticle: vi.fn(async () => undefined),
+  closeArticle: vi.fn(async () => "rendered" as const),
+  openArticle: vi.fn(async () => "rendered" as const),
 };
 
 function DailyNavigationHarness({ children }: { children: ReactNode }) {
@@ -147,8 +147,8 @@ describe("Bandcamp Daily article music", () => {
       expect.objectContaining({
         articleSection: article.articleSection,
         category: "essential-releases",
+        sharedIdentityAvailable: false,
         slug: article.slug,
-        sourceTitle: card.querySelector("[data-daily-article-title]"),
         sourceTrigger: card,
       }),
     );
@@ -190,6 +190,11 @@ describe("Bandcamp Daily article music", () => {
     expect(
       document.querySelector("[data-coda-daily-artwork-detail]"),
     ).toHaveAttribute("data-coda-daily-artwork-detail", article.slug);
+    expect(
+      screen
+        .getByRole("heading", { name: article.title })
+        .closest("[data-coda-daily-detail-surface]"),
+    ).toHaveAttribute("data-coda-daily-detail-surface");
     expect(screen.getByRole("heading", { name: article.title })).toHaveFocus();
     expect(screen.getByText("2 playable tracks")).toHaveClass("text-left");
     expect(
