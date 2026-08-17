@@ -12,6 +12,7 @@ import { createCodaMemoryRouter } from "@/router";
 import { parseRadioShowIdParam } from "@/routing/routeContracts";
 import type { RadioShow, RadioShowSummary } from "@/types";
 
+import { RadioIndexScreen } from "./RadioArchiveScreen";
 import { RadioArtwork } from "./RadioPresentation";
 import { RadioShowScreen } from "./RadioShowScreen";
 
@@ -219,6 +220,59 @@ it("reacts to the newest matching archive summary while details fail", async () 
   ).toBeVisible();
   expect(await screen.findByText("Tracklist unavailable")).toBeVisible();
 });
+
+it.each([
+  ["failed", "Radio show navigation failed. Try again."],
+  ["timeout", "Radio show navigation took too long. Try again."],
+] as const)(
+  "surfaces an actionable error when opening a show commits %s",
+  async (outcome, expectedCopy) => {
+    vi.mocked(repository.fetchShows).mockReturnValue(new Promise(() => {}));
+    const summary: RadioShowSummary = {
+      id: show.id,
+      subtitle: show.subtitle,
+      description: show.description,
+      publishedAt: show.publishedAt,
+    };
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    client.setQueryData(radioShowsInfiniteQueryOptions().queryKey, {
+      pages: [{ results: [summary], hasMore: false }],
+      pageParams: [null],
+    });
+    const router = createCodaMemoryRouter(client, ["/radio"]);
+    const onOpenShow = vi.fn().mockResolvedValue(outcome);
+
+    render(
+      <QueryClientProvider client={client}>
+        <RouterContextProvider router={router}>
+          <RadioIndexScreen
+            onPlay={vi.fn()}
+            onQueue={vi.fn()}
+            playing={false}
+            onTogglePlayback={vi.fn()}
+            favoriteShowIds={new Set()}
+            onToggleFavorite={vi.fn()}
+            onSelectSeries={vi.fn()}
+            onOpenShow={onOpenShow}
+            openExternal={vi.fn()}
+            repository={repository}
+          />
+        </RouterContextProvider>
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(
+      await screen.findByRole("link", { name: summary.subtitle }),
+    );
+
+    expect(await screen.findByText(expectedCopy)).toBeVisible();
+    expect(onOpenShow).toHaveBeenCalledWith(
+      expect.objectContaining({ showId: show.id }),
+    );
+  },
+);
 
 it("recovers Radio artwork by URL while preserving transition identity", () => {
   const firstArtworkUrl = "https://f4.bcbits.com/img/deep-focus-broken.jpg";

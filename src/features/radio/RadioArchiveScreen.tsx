@@ -30,6 +30,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { countLabel } from "@/countLabel";
+import type { RouteCommitOutcome } from "@/features/navigation/routeCommit";
 import { openBandcampUrl } from "@/lib";
 import { cn } from "@/lib/utils";
 import {
@@ -75,6 +76,26 @@ const RADIO_ARCHIVE_GRID_LAYOUTS = [
   },
 ] as const;
 const radioShowKey = (show: RadioShowSummary) => show.id;
+
+function assertNever(value: never): never {
+  throw new TypeError(`Unsupported exhaustive variant: ${String(value)}`);
+}
+
+function radioShowNavigationFailureCopy(
+  outcome: RouteCommitOutcome,
+): string | undefined {
+  switch (outcome) {
+    case "rendered":
+    case "same-location":
+      return undefined;
+    case "failed":
+      return "Radio show navigation failed. Try again.";
+    case "timeout":
+      return "Radio show navigation took too long. Try again.";
+    default:
+      return assertNever(outcome);
+  }
+}
 function RadioArchiveScreen({
   onPlay,
   onQueue,
@@ -174,12 +195,14 @@ function RadioArchiveScreen({
           ?.scrollTop ?? 0;
       setActionError("");
       try {
-        await onOpenShow({
+        const outcome = await onOpenShow({
           returnScrollTop,
           sharedIdentityAvailable: true,
           showId: parsedShowId,
           sourceTrigger,
         });
+        const failureCopy = radioShowNavigationFailureCopy(outcome);
+        if (failureCopy) setActionError(failureCopy);
       } catch (cause) {
         setActionError(String(cause).replace(/^Error:\s*/, ""));
       }
