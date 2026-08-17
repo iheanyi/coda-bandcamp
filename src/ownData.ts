@@ -123,13 +123,13 @@ export function projectOwnDataRecord<Value>(
 }
 
 /**
- * Copies a dense own-data array without invoking index or length accessors.
- * Sparse entries, inherited indexes, and accessor indexes yield `undefined`.
+ * Reads a dense own-data array's length without walking indexes. Callers that
+ * copy cooperatively can bound the array here, then snapshot slots in chunks.
  */
-export function copyOwnDataArray<Value>(
+export function ownDataArrayLength<Value>(
   value: Value,
   maximum: number,
-): OwnDataValue[] | undefined {
+): number | undefined {
   if (!isDataArray(value)) return undefined;
   const length = ownDataProperty(value, "length");
   if (
@@ -142,6 +142,19 @@ export function copyOwnDataArray<Value>(
   ) {
     return undefined;
   }
+  return length;
+}
+
+/**
+ * Copies a dense own-data array without invoking index or length accessors.
+ * Sparse entries, inherited indexes, and accessor indexes yield `undefined`.
+ */
+export function copyOwnDataArray<Value>(
+  value: Value,
+  maximum: number,
+): OwnDataValue[] | undefined {
+  const length = ownDataArrayLength(value, maximum);
+  if (length === undefined) return undefined;
   const copied: OwnDataValue[] = [];
   copied.length = length;
   for (let index = 0; index < length; index += 1) {

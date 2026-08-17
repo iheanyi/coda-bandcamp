@@ -276,6 +276,24 @@ describe("native boundary primitives", () => {
         "itemUrl",
       )
     ).toThrow("verified Bandcamp HTTPS URL");
+    expect(
+      decodeNativeBandcampUrl(
+        "https://artist.bandcamp.com:443/album/release",
+        "itemUrl",
+      ),
+    ).toBe("https://artist.bandcamp.com:443/album/release");
+    expect(() =>
+      decodeNativeBandcampUrl(
+        "https://artist.bandcamp.com:8443/path",
+        "itemUrl",
+      )
+    ).toThrow("verified Bandcamp HTTPS URL");
+    expect(() =>
+      decodeNativeBandcampUrl(
+        "https://t4.bcbits.com:444/stream/example/mp3-128",
+        "streamUrl",
+      )
+    ).toThrow("verified Bandcamp HTTPS URL");
   });
 
   it("accepts only Tauri's void response values", () => {

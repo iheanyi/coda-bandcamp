@@ -4,6 +4,7 @@ import {
   hasControlCharacter,
   isDataArray,
   isOwnDataRecord,
+  ownDataArrayLength,
   projectOwnDataRecord,
 } from "./ownData";
 
@@ -93,6 +94,21 @@ describe("own data record projection", () => {
 });
 
 describe("own data array copy", () => {
+  it("reads a bounded length without walking indexes", () => {
+    let indexReads = 0;
+    const entries = new Proxy(["album-1", "album-2"], {
+      getOwnPropertyDescriptor(target, property) {
+        if (property !== "length") indexReads += 1;
+        return Reflect.getOwnPropertyDescriptor(target, property);
+      },
+    });
+
+    expect(ownDataArrayLength(entries, 4)).toBe(2);
+    expect(ownDataArrayLength(entries, 1)).toBeUndefined();
+    expect(ownDataArrayLength({ 0: "album-1", length: 1 }, 4)).toBeUndefined();
+    expect(indexReads).toBe(0);
+  });
+
   it("copies dense own data entries and rejects unsafe indexes", () => {
     let getterCalls = 0;
     const accessorEntries = ["safe"];

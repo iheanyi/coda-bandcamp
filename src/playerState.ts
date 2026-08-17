@@ -1,10 +1,14 @@
 import {
   copyOwnDataArray,
   hasControlCharacter,
+  INVALID_OWN_DATA_PROPERTY,
   isAbsent,
   isBooleanValue,
   isNumberValue,
   isStringValue,
+  MISSING_OWN_DATA_PROPERTY,
+  ownDataArrayLength,
+  ownDataProperty,
   projectOwnDataRecord,
   type OwnDataValue,
 } from "./ownData";
@@ -340,7 +344,8 @@ export function yieldPlayerStateValidation(): Promise<void> {
 
 type ParsedPlayerStateEnvelope = {
   savedAt: number;
-  queuePayload: readonly OwnDataValue[];
+  queueSource: OwnDataValue;
+  queueLength: number;
   currentIndex: number;
   positionSeconds: number;
   volume: number;
@@ -358,11 +363,14 @@ function parsePlayerStateEnvelope<Value>(
     return undefined;
   }
   const repeatMode = parseRepeatMode(record.repeatMode);
-  const queue = copyOwnDataArray(record.queue, MAX_PERSISTED_QUEUE_LENGTH);
+  const queueLength = ownDataArrayLength(
+    record.queue,
+    MAX_PERSISTED_QUEUE_LENGTH,
+  );
   if (
     !isNonNegativeInteger(record.savedAt) ||
     record.savedAt > MAX_TIMESTAMP_MS ||
-    queue === undefined ||
+    queueLength === undefined ||
     !isNonNegativeInteger(record.currentIndex) ||
     !isBoundedSeconds(record.positionSeconds) ||
     !isNumberValue(record.volume) ||
@@ -397,7 +405,8 @@ function parsePlayerStateEnvelope<Value>(
     volume: record.volume,
     repeatMode,
     queueOpen: record.queueOpen,
-    queuePayload: queue,
+    queueSource: record.queue,
+    queueLength,
   };
   if (lastFmProgress) parsed.lastFmProgress = lastFmProgress;
   if (radioScrobbleProgress) {
@@ -454,21 +463,63 @@ function finishPlayerState(
   return snapshot;
 }
 
+function parseQueueEntry(
+  queueSource: OwnDataValue,
+  index: number,
+): PlayerStateTrack | undefined {
+  const entry = ownDataProperty(queueSource, index);
+  if (
+    entry === INVALID_OWN_DATA_PROPERTY ||
+    entry === MISSING_OWN_DATA_PROPERTY
+  ) {
+    return undefined;
+  }
+  return parseTrack(entry);
+}
+
+function parseQueueChunk(
+  queueSource: OwnDataValue,
+  tracks: PlayerStateTrack[],
+  start: number,
+  end: number,
+): boolean {
+  for (let index = start; index < end; index += 1) {
+    const track = parseQueueEntry(queueSource, index);
+    if (!track) return false;
+    tracks[index] = track;
+  }
+  return true;
+}
+
+function parseQueue(
+  queueSource: OwnDataValue,
+  queueLength: number,
+): PlayerStateTrack[] | undefined {
+  const tracks: PlayerStateTrack[] = [];
+  tracks.length = queueLength;
+  return parseQueueChunk(queueSource, tracks, 0, queueLength)
+    ? tracks
+    : undefined;
+}
+
 async function parseQueueAsync(
-  queue: readonly OwnDataValue[],
+  queueSource: OwnDataValue,
+  queueLength: number,
   yieldControl: PlayerStateYield,
 ): Promise<PlayerStateTrack[] | undefined> {
   const tracks: PlayerStateTrack[] = [];
-  for (let index = 0; index < queue.length; index += 1) {
-    const track = parseTrack(queue[index]);
-    if (!track) return undefined;
-    tracks.push(track);
-    if (
-      (index + 1) % PLAYER_STATE_VALIDATION_CHUNK_SIZE === 0 &&
-      index + 1 < queue.length
-    ) {
-      await yieldControl();
-    }
+  tracks.length = queueLength;
+  for (
+    let start = 0;
+    start < queueLength;
+    start += PLAYER_STATE_VALIDATION_CHUNK_SIZE
+  ) {
+    const end = Math.min(
+      start + PLAYER_STATE_VALIDATION_CHUNK_SIZE,
+      queueLength,
+    );
+    if (!parseQueueChunk(queueSource, tracks, start, end)) return undefined;
+    if (end < queueLength) await yieldControl();
   }
   return tracks;
 }
@@ -588,13 +639,8 @@ export function parsePlayerState<Value>(
 ): PlayerStateSnapshot | undefined {
   const parsed = parsePlayerStateEnvelope(value);
   if (!parsed) return undefined;
-  const tracks: PlayerStateTrack[] = [];
-  for (const candidate of parsed.queuePayload) {
-    const track = parseTrack(candidate);
-    if (!track) return undefined;
-    tracks.push(track);
-  }
-  return finishPlayerState(parsed, tracks);
+  const tracks = parseQueue(parsed.queueSource, parsed.queueLength);
+  return tracks ? finishPlayerState(parsed, tracks) : undefined;
 }
 
 export async function parsePlayerStateAsync<Value>(
@@ -603,7 +649,11 @@ export async function parsePlayerStateAsync<Value>(
 ): Promise<PlayerStateSnapshot | undefined> {
   const parsed = parsePlayerStateEnvelope(value);
   if (!parsed) return undefined;
-  const tracks = await parseQueueAsync(parsed.queuePayload, yieldControl);
+  const tracks = await parseQueueAsync(
+    parsed.queueSource,
+    parsed.queueLength,
+    yieldControl,
+  );
   return tracks ? finishPlayerState(parsed, tracks) : undefined;
 }
 

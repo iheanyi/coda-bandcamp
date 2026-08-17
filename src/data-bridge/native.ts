@@ -242,11 +242,17 @@ export function decodeNativeBandcampUrl(
     host.endsWith(".bandcamp.com") ||
     host === "bcbits.com" ||
     host.endsWith(".bcbits.com");
+  // Mirror src-tauri/src/url_policy.rs: `port().is_some_and(|port| port != 443)`.
+  // WHATWG `URL.port` is "" for the HTTPS default, including explicit `:443`.
+  // Allow `"443"` as well so a runtime that preserves the explicit default still
+  // matches Rust, which accepts port 443.
+  const port = url.port;
   if (
     url.protocol !== "https:" ||
     !allowedHost ||
     url.username.length > 0 ||
-    url.password.length > 0
+    url.password.length > 0 ||
+    (port !== "" && port !== "443")
   ) {
     return invalidNativeResponse(context, "a verified Bandcamp HTTPS URL");
   }
