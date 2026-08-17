@@ -48,6 +48,23 @@ function nowPlayingArtworkLink(trackId: string) {
   return artwork;
 }
 
+function discoverReleaseCard(releaseId: string, title: string) {
+  const card = document.createElement("article");
+  card.dataset.discoverReleaseCard = releaseId;
+  const artworkLink = document.createElement("a");
+  artworkLink.href = `/discover/releases/${encodeURIComponent(releaseId)}`;
+  artworkLink.dataset.codaDiscoverArtwork = releaseId;
+  artworkLink.textContent = `${title} artwork`;
+  const titleLink = document.createElement("a");
+  titleLink.href = `/discover/releases/${encodeURIComponent(releaseId)}`;
+  const titleText = document.createElement("span");
+  titleText.dataset.codaDiscoverTitle = releaseId;
+  titleText.textContent = title;
+  titleLink.append(titleText);
+  card.append(artworkLink, titleLink);
+  return { artworkLink, card, titleLink, titleText };
+}
+
 afterEach(() => {
   resetDetailNavigation();
   document.body.replaceChildren();
@@ -304,6 +321,65 @@ describe("detailNavigation module", () => {
         update: () => "rendered",
       });
       expect(playerAlbumLink).toHaveFocus();
+    } finally {
+      harness.restore();
+    }
+  });
+
+  it("returns Discover title focus to the opened release, not the first stale title slot", async () => {
+    const harness = installDocumentViewTransitionHarness({ autoFinish: false });
+    const staleRelease = discoverReleaseCard(
+      "discover:amber-drift",
+      "Amber Drift",
+    );
+    const openedRelease = discoverReleaseCard(
+      "discover:blue-hours",
+      "Blue Hours",
+    );
+    // A previously visited card keeps its assigned slot attribute.
+    staleRelease.titleLink.dataset.navigationSlot = "discover-title";
+    document.body.append(staleRelease.card, openedRelease.card);
+    try {
+      const opening = openDetail({
+        kind: "discover-release",
+        source: prepareDetailSource(
+          "discover-release",
+          "discover:blue-hours",
+          true,
+          openedRelease.titleLink,
+        ),
+        targetKey: "discover-release:discover:blue-hours",
+        update: () => ({
+          locationKey: "discover-detail",
+          outcome: "rendered",
+        }),
+      });
+      expect(openedRelease.titleLink.dataset.navigationSlot).toBe(
+        "discover-title",
+      );
+      await vi.waitFor(() => expect(harness.transitions.length).toBe(1));
+      harness.transitions[0]?.resolve();
+      await opening;
+
+      const closing = closeDetail({
+        identity: "discover:blue-hours",
+        kind: "discover-release",
+        requestKey: "discover-detail",
+        targetKey: "discover-release:discover:blue-hours",
+        update: () => "rendered",
+      });
+      await vi.waitFor(() =>
+        expect(openedRelease.artworkLink).toHaveAttribute(
+          "data-coda-discover-artwork-return",
+          "discover:blue-hours",
+        ),
+      );
+      expect(staleRelease.artworkLink).not.toHaveAttribute(
+        "data-coda-discover-artwork-return",
+      );
+      harness.transitions[1]?.resolve();
+      await closing;
+      expect(openedRelease.titleLink).toHaveFocus();
     } finally {
       harness.restore();
     }

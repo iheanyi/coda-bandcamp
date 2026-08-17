@@ -9,6 +9,7 @@ import {
 } from "./features/navigation/domSnapshot";
 import {
   findDetailTransitionTrigger,
+  findSlottedDetailReturnTrigger,
   resolveDetailTransitionEndpointTargets,
 } from "./features/navigation/detailSourceIdentity";
 import type { RouteCommitOutcome, RouteCommitResult } from "./features/navigation/routeCommit";
@@ -358,6 +359,18 @@ function findReturnTrigger(state: DetailReturnState): HTMLElement | undefined {
     );
   }
   if (state.slot) {
+    const scoped = findSlottedDetailReturnTrigger(
+      state.kind,
+      state.identity,
+      state.slot,
+    );
+    if (scoped) return scoped;
+    if (sharedReturnSlots(state.kind)?.includes(state.slot)) {
+      // Shared slots reverse-morph release-identified artwork or titles; a
+      // wrong-identity slot match would focus and mark another card, so
+      // recover through the stored identity instead.
+      return findDetailTransitionTrigger(state.kind, state.identity);
+    }
     const slotAttribute =
       DETAIL_TRANSITION_DESCRIPTORS[state.kind].domIdentity.trigger.slotAttribute;
     if (slotAttribute) {

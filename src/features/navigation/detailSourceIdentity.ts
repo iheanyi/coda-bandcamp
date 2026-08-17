@@ -169,6 +169,37 @@ export function findDetailTransitionTrigger(
   });
 }
 
+/**
+ * Slot attributes persist on every previously clicked trigger, so a bare slot
+ * query can land on another release's card. Only accept a candidate whose
+ * identity is confirmed by the trigger attribute or the descriptor's owner
+ * identity attribute.
+ */
+export function findSlottedDetailReturnTrigger(
+  kind: DetailTransitionKey,
+  identity: string,
+  slot: string,
+): HTMLElement | undefined {
+  const definition = DETAIL_TRANSITION_DESCRIPTORS[kind].domIdentity;
+  const slotAttribute = definition.trigger.slotAttribute;
+  if (!slotAttribute) return undefined;
+  const ownerIdentityAttribute =
+    "ownerIdentityAttribute" in definition
+      ? definition.ownerIdentityAttribute
+      : undefined;
+  return Array.from(
+    document.querySelectorAll<HTMLElement>(`[${slotAttribute}="${slot}"]`),
+  ).find((candidate) => {
+    if (triggerMatchesIdentity(candidate, definition, identity)) return true;
+    if (ownerIdentityAttribute === undefined) return false;
+    return (
+      identityOwner(candidate, definition)?.getAttribute(
+        ownerIdentityAttribute,
+      ) === identity
+    );
+  });
+}
+
 function interactiveTrigger(
   trigger: HTMLElement | undefined,
 ): HTMLElement | undefined {
