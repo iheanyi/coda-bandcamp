@@ -72,6 +72,7 @@ type MutableDomIdentityTrigger<Attribute extends string> = {
 
 type DetailTransitionDefinition = Readonly<{
   closeKind: string;
+  closeOmitsSurfaceWhenQueueOpen?: true;
   destinationHeadingId: string;
   detailSelectors: readonly string[];
   domIdentity: DetailTransitionDomIdentity;
@@ -218,6 +219,7 @@ function defineDetailTransition<
 export const DETAIL_TRANSITION_DESCRIPTORS = {
   album: defineDetailTransition({
     closeKind: "album-detail-close",
+    closeOmitsSurfaceWhenQueueOpen: true,
     destinationHeadingId: "album-detail-heading",
     detailSelectors: ["[data-coda-album-artwork-detail]"],
     domIdentity: {
@@ -456,7 +458,7 @@ export type ResolvedDetailTransition = Readonly<{
   kind: DetailViewTransitionKind;
   sharedOwner: string;
   sourceSelectors: readonly string[];
-  transitionNames: readonly [string, "coda-detail-surface"];
+  transitionNames: readonly string[];
 }>;
 
 export function codaViewTransitionClass(
@@ -465,8 +467,35 @@ export function codaViewTransitionClass(
   return `coda-transition--${kind}`;
 }
 
+const APP_SHELL_QUEUE_OPEN_SELECTOR =
+  '[data-slot="app-shell-workspace"][data-queue-open="true"]';
+
+function isAppShellQueueOpen(snapshotRoot: ParentNode = document): boolean {
+  return Boolean(snapshotRoot.querySelector(APP_SHELL_QUEUE_OPEN_SELECTOR));
+}
+
+function expectedNativeTransitionNames(
+  descriptor: DetailTransitionDescriptorUnion,
+  direction: "open" | "close",
+  snapshotRoot: ParentNode = document,
+): readonly string[] {
+  // Album close CSS names the surface only when the queue is closed. Expect
+  // the artwork group alone while `[data-queue-open="true"]`, matching that
+  // snapshot so a missing surface group cannot skip the reverse morph.
+  if (
+    direction === "close" &&
+    "closeOmitsSurfaceWhenQueueOpen" in descriptor &&
+    descriptor.closeOmitsSurfaceWhenQueueOpen &&
+    isAppShellQueueOpen(snapshotRoot)
+  ) {
+    return Object.freeze([descriptor.sharedElementOwner]);
+  }
+  return descriptor.transitionNames;
+}
+
 export function resolveDetailTransition(
   kind: CodaViewTransitionKind,
+  snapshotRoot: ParentNode = document,
 ): ResolvedDetailTransition | undefined {
   for (const descriptor of Object.values(DETAIL_TRANSITION_DESCRIPTORS)) {
     if (kind === descriptor.openKind) {
@@ -477,7 +506,11 @@ export function resolveDetailTransition(
         kind: descriptor.openKind,
         sharedOwner: descriptor.sharedElementOwner,
         sourceSelectors: descriptor.sourceSelectors,
-        transitionNames: descriptor.transitionNames,
+        transitionNames: expectedNativeTransitionNames(
+          descriptor,
+          "open",
+          snapshotRoot,
+        ),
       };
     }
     if (kind === descriptor.closeKind) {
@@ -488,7 +521,11 @@ export function resolveDetailTransition(
         kind: descriptor.closeKind,
         sharedOwner: descriptor.sharedElementOwner,
         sourceSelectors: descriptor.detailSelectors,
-        transitionNames: descriptor.transitionNames,
+        transitionNames: expectedNativeTransitionNames(
+          descriptor,
+          "close",
+          snapshotRoot,
+        ),
       };
     }
   }

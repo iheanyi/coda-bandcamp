@@ -169,6 +169,28 @@ function mountLibraryPane() {
   return pane;
 }
 
+function mountAppShellWorkspace(queueOpen: boolean) {
+  const workspace = document.createElement("div");
+  workspace.dataset.slot = "app-shell-workspace";
+  workspace.dataset.queueOpen = String(queueOpen);
+  document.body.append(workspace);
+  return workspace;
+}
+
+function installCompositorGroups(names: readonly string[]) {
+  Object.defineProperty(document, "getAnimations", {
+    configurable: true,
+    value: () =>
+      names.map((name) => ({
+        effect: {
+          getComputedTiming: () => ({ endTime: 460 }),
+          getKeyframes: () => [{ opacity: 1 }, { opacity: 1 }],
+          pseudoElement: `::view-transition-group(${name})`,
+        },
+      })),
+  });
+}
+
 const DETAIL_CASES = Object.values(DETAIL_TRANSITION_DESCRIPTORS).flatMap(
   (descriptor) =>
     [
@@ -394,6 +416,56 @@ describe("detail view transitions", () => {
     expect(getMotionDiagnostic()).toMatchObject({
       reason: "unsafe-compositor",
       status: "bypassed",
+    });
+  });
+
+  it("keeps the album-close artwork morph when the queue drawer is open", async () => {
+    mountAppShellWorkspace(true);
+    const skipTransition = vi.fn();
+    installCompositorGroups(["coda-album-artwork"]);
+    installNativeTransition({ skipTransition });
+
+    await transitionCodaView(vi.fn(), "album-detail-close");
+
+    expect(skipTransition).not.toHaveBeenCalled();
+    expect(getMotionDiagnostic()).toMatchObject({
+      kind: "album-detail-close",
+      status: "finished",
+      transitionNames: ["coda-album-artwork"],
+    });
+    expect(getMotionDiagnostic()?.reason).not.toBe("unsafe-compositor");
+  });
+
+  it("keeps album-close artwork and surface groups when the queue is closed", async () => {
+    mountAppShellWorkspace(false);
+    const skipTransition = vi.fn();
+    installCompositorGroups(["coda-album-artwork", "coda-detail-surface"]);
+    installNativeTransition({ skipTransition });
+
+    await transitionCodaView(vi.fn(), "album-detail-close");
+
+    expect(skipTransition).not.toHaveBeenCalled();
+    expect(getMotionDiagnostic()).toMatchObject({
+      kind: "album-detail-close",
+      status: "finished",
+      transitionNames: ["coda-album-artwork", "coda-detail-surface"],
+    });
+    expect(getMotionDiagnostic()?.reason).not.toBe("unsafe-compositor");
+  });
+
+  it("still skips album-close when the queue is closed and the surface group is missing", async () => {
+    mountAppShellWorkspace(false);
+    const skipTransition = vi.fn();
+    installCompositorGroups(["coda-album-artwork"]);
+    installNativeTransition({ skipTransition });
+
+    await transitionCodaView(vi.fn(), "album-detail-close");
+
+    expect(skipTransition).toHaveBeenCalledOnce();
+    expect(getMotionDiagnostic()).toMatchObject({
+      reason: "unsafe-compositor",
+      status: "bypassed",
+      transitionNames: ["coda-album-artwork", "coda-detail-surface"],
     });
   });
 

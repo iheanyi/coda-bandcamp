@@ -33,6 +33,18 @@ describe("view transition CSS ownership", () => {
     expect(
       styles.match(/\[data-coda-album-detail-close-surface\]/g),
     ).toHaveLength(1);
+    expect(styles).not.toMatch(
+      /\[data-queue-open="true"\][\s\S]{0,240}view-transition-name:\s*coda-detail-surface/,
+    );
+  });
+
+  it("keeps the album-close artwork name independent of queue visibility", () => {
+    expect(styles).toMatch(
+      /html:is\(\.coda-transition--album-detail, \.coda-transition--album-detail-close\)\s+\.coda-album-artwork-source,[\s\S]*?html\.coda-transition--album-detail-close \[data-coda-album-artwork-return\] \{\s*view-transition-name:\s*coda-album-artwork;/,
+    );
+    expect(styles).not.toMatch(
+      /html\.coda-transition--album-detail-close[\s\S]{0,200}\[data-queue-open="true"\][\s\S]{0,200}view-transition-name:\s*coda-album-artwork/,
+    );
   });
 
   it("isolates every detail from the root snapshot and uses one surface group", () => {

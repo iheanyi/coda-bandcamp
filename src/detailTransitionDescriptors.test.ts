@@ -117,6 +117,41 @@ describe("detail transition descriptors", () => {
     },
   );
 
+  it("expects only album artwork on close while the queue drawer is open", () => {
+    const workspace = document.createElement("div");
+    workspace.dataset.slot = "app-shell-workspace";
+    workspace.dataset.queueOpen = "true";
+    document.body.append(workspace);
+
+    try {
+      const album = DETAIL_TRANSITION_DESCRIPTORS.album;
+      expect(resolveDetailTransition(album.closeKind)?.transitionNames).toEqual([
+        album.sharedElementOwner,
+      ]);
+      expect(resolveDetailTransition(album.openKind)?.transitionNames).toEqual(
+        album.transitionNames,
+      );
+      expect(
+        resolveDetailTransition(
+          DETAIL_TRANSITION_DESCRIPTORS.artist.closeKind,
+        )?.transitionNames,
+      ).toEqual(DETAIL_TRANSITION_DESCRIPTORS.artist.transitionNames);
+
+      workspace.dataset.queueOpen = "false";
+      expect(resolveDetailTransition(album.closeKind)?.transitionNames).toEqual(
+        album.transitionNames,
+      );
+      expect(
+        Object.entries(DETAIL_TRANSITION_DESCRIPTORS).flatMap(
+          ([kind, descriptor]) =>
+            "closeOmitsSurfaceWhenQueueOpen" in descriptor ? [kind] : [],
+        ),
+      ).toEqual(["album"]);
+    } finally {
+      workspace.remove();
+    }
+  });
+
   it("derives temporary endpoint selectors from canonical marker definitions", () => {
     for (const descriptor of Object.values(DETAIL_TRANSITION_DESCRIPTORS)) {
       const sourceSharedMarker =
