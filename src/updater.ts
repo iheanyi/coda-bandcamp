@@ -92,7 +92,7 @@ function decodeOptionalMetadataText(
   value: OwnDataPropertyResult,
   context: string,
   maxLength: number,
-  allowEmpty = false,
+  emptyIsAbsent = false,
   allowLayoutWhitespace = false,
 ): string | undefined {
   if (
@@ -102,18 +102,22 @@ function decodeOptionalMetadataText(
   ) {
     return undefined;
   }
+  const expected = `${emptyIsAbsent ? "" : "non-empty "}text up to ${maxLength} characters`;
   if (
     !isStringValue(value) ||
     value.length > maxLength ||
-    (!allowEmpty && value.trim().length === 0) ||
     hasControlCharacters(value, allowLayoutWhitespace)
   ) {
-    return invalidNativeResponse(
-      context,
-      `${allowEmpty ? "" : "non-empty "}text up to ${maxLength} characters`,
-    );
+    return invalidNativeResponse(context, expected);
   }
-  return value.trim();
+  const text = value.trim();
+  if (text.length === 0) {
+    // Generated manifests publish notes as "". Decoding that to undefined
+    // keeps the dialog's fallback description instead of blank copy.
+    if (emptyIsAbsent) return undefined;
+    return invalidNativeResponse(context, expected);
+  }
+  return text;
 }
 
 function decodeByteCount(value: OwnDataValue): number | undefined {

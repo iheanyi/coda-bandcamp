@@ -216,6 +216,20 @@ describe("updater boundary", () => {
   });
 
   it.each([
+    ["empty", ""],
+    ["whitespace-only", "  \t "],
+    ["layout-whitespace-only", " \n\r\n "],
+  ])(
+    "treats a %s generated-manifest body as absent so fallback copy renders",
+    (_label, body) => {
+      expect(normalizeAppUpdate(nativeUpdate({ body }))).toMatchObject({
+        version: "0.2.0",
+        body: undefined,
+      });
+    },
+  );
+
+  it.each([
     ["non-text body", { body: { release: "notes" } }, "body"],
     ["oversized body", { body: "b".repeat(16_001) }, "body"],
     ["non-text date", { date: 2_026_081_5 }, "date"],
