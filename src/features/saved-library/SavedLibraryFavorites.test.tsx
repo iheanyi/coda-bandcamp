@@ -268,7 +268,7 @@ describe("saved favorites", () => {
     fireEvent.click(await screen.findByRole("link", { name: /Night drive/ }));
     const playlistTracks = await screen.findByLabelText("Night drive tracks");
     const playlistAlbumButton = within(playlistTracks)
-      .getAllByRole("link", { name: "Open Mirage album" })
+      .getAllByRole("link", { name: "Open Mirage" })
       .find(
         (link) =>
           link.getAttribute("data-navigation-slot") === "playlist-track:song-1",

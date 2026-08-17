@@ -15,6 +15,7 @@ import {
   mocks,
   renderSavedLibraryRoute,
   resizeObserverEntry,
+  secondTrack,
   summary,
   track,
 } from "@/test/savedLibraryViewTestHarness";
@@ -75,7 +76,7 @@ describe("saved playlist surfaces", () => {
       expect.any(HTMLElement),
     );
     const playlistAlbumButton = within(playlistTracks)
-      .getAllByRole("link", { name: "Open Mirage album" })
+      .getAllByRole("link", { name: "Open Mirage" })
       .find(
         (link) =>
           link.getAttribute("data-navigation-slot") === "playlist-track:song-1",
@@ -104,6 +105,41 @@ describe("saved playlist surfaces", () => {
         songIndexesToRemove: [],
       }),
     );
+  });
+
+  it("names playlist album links uniquely when the album title is missing", async () => {
+    mocks.fetchPlaylist.mockResolvedValueOnce({
+      ...detail,
+      duration: track.duration + secondTrack.duration,
+      songCount: 2,
+      tracks: [
+        { ...track, album: "" },
+        { ...secondTrack, album: "   " },
+      ],
+    });
+    renderSavedLibraryRoute({ initialEntry: "/playlists" });
+
+    fireEvent.click(await screen.findByRole("link", { name: /Night drive/ }));
+    const playlistTracks = await screen.findByLabelText("Night drive tracks");
+
+    expect(
+      within(playlistTracks).queryByRole("link", { name: /^Open album$/ }),
+    ).not.toBeInTheDocument();
+    const mirageAlbumLinks = within(playlistTracks).getAllByRole("link", {
+      name: /^Open album for Mirage$/,
+    });
+    const lanternsAlbumLinks = within(playlistTracks).getAllByRole("link", {
+      name: /^Open album for Lanterns$/,
+    });
+    expect(mirageAlbumLinks).toHaveLength(2);
+    expect(lanternsAlbumLinks).toHaveLength(2);
+    expect(
+      new Set(
+        [...mirageAlbumLinks, ...lanternsAlbumLinks].map((link) =>
+          link.getAttribute("aria-label"),
+        ),
+      ),
+    ).toEqual(new Set(["Open album for Mirage", "Open album for Lanterns"]));
   });
 
   it("uses the first track artwork when Bandcamp omits a playlist cover", async () => {

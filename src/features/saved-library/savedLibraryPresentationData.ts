@@ -19,6 +19,28 @@ export const metadataTextClassName =
 export const savedPageClassName =
   "mx-auto min-h-full w-full max-w-5xl pt-2 pb-12";
 
+export function openAlbumAccessibleName(
+  albumTitle: string,
+  trackTitle: string,
+): string {
+  const album = albumTitle.trim();
+  if (album.length > 0) return `Open ${album}`;
+  const track = trackTitle.trim();
+  return track.length > 0 ? `Open album for ${track}` : "Open album details";
+}
+
+export function loadingAlbumAccessibleName(
+  albumTitle: string,
+  trackTitle: string,
+): string {
+  const album = albumTitle.trim();
+  if (album.length > 0) return `Loading ${album} album`;
+  const track = trackTitle.trim();
+  return track.length > 0
+    ? `Loading album for ${track}`
+    : "Loading album details";
+}
+
 export function albumRouteId(value: string): AlbumId | undefined {
   try {
     return parseAlbumIdParam(value);

@@ -46,8 +46,10 @@ import { FavoriteArtwork } from "./FavoriteArtwork";
 import {
   albumRouteId,
   artistRouteKey,
+  loadingAlbumAccessibleName,
   metadataLinkClassName,
   metadataTextClassName,
+  openAlbumAccessibleName,
 } from "./savedLibraryPresentationData";
 import { Eyebrow, SavedEmpty } from "./SavedLibraryPresentation";
 
@@ -334,7 +336,10 @@ export function PlaylistDetailView({
                     <Link
                       aria-busy={albumLoading || undefined}
                       aria-disabled={albumLoading || undefined}
-                      aria-label={`Open ${track.album} album`}
+                      aria-label={openAlbumAccessibleName(
+                        track.album,
+                        track.title,
+                      )}
                       className="block size-10 rounded-md outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring aria-disabled:cursor-default aria-disabled:opacity-60"
                       data-album-open={track.albumId}
                       data-navigation-slot={`playlist-track-artwork:${track.id}`}
@@ -409,7 +414,10 @@ export function PlaylistDetailView({
                         <Link
                           aria-busy={albumLoading || undefined}
                           aria-disabled={albumLoading || undefined}
-                          aria-label={`Open ${track.album} album`}
+                          aria-label={openAlbumAccessibleName(
+                            track.album,
+                            track.title,
+                          )}
                           className={cn(
                             metadataLinkClassName,
                             "gap-1 aria-disabled:cursor-default aria-disabled:opacity-100",
@@ -433,7 +441,10 @@ export function PlaylistDetailView({
                         >
                           {albumLoading ? (
                             <Spinner
-                              aria-label={`Loading ${track.album} album`}
+                              aria-label={loadingAlbumAccessibleName(
+                                track.album,
+                                track.title,
+                              )}
                               className="size-3 text-current"
                             />
                           ) : null}
