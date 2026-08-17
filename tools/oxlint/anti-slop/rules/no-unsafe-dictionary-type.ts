@@ -116,6 +116,7 @@ export const noUnsafeDictionaryTypeRule = defineRule({
 			TSTypeReference: reportIfUnsafe,
 			TSTypeLiteral: reportIfUnsafe,
 			TSMappedType: reportIfUnsafe,
+			TSIntersectionType: reportIfUnsafe,
 			TSIndexSignature(node) {
 				if (
 					environment === null ||

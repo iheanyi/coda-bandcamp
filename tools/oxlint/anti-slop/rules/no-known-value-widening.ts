@@ -86,6 +86,38 @@ function annotationTarget(
 		: classifyWideningTarget(annotation.typeAnnotation, environment);
 }
 
+function bindingNames(pattern: ESTree.BindingPattern): readonly string[] {
+	switch (pattern.type) {
+		case "Identifier":
+			return [pattern.name];
+		case "AssignmentPattern":
+			return bindingNames(pattern.left);
+		case "ObjectPattern":
+			return pattern.properties.flatMap((property) =>
+				property.type === "RestElement"
+					? bindingNames(property.argument)
+					: bindingNames(property.value),
+			);
+		case "ArrayPattern":
+			return pattern.elements.flatMap((element) => {
+				if (element === null) return [];
+				if (element.type === "RestElement") return bindingNames(element.argument);
+				return bindingNames(element);
+			});
+		default: {
+			const unexpected: never = pattern;
+			return unexpected;
+		}
+	}
+}
+
+function bindingSubject(pattern: ESTree.BindingPattern): string {
+	const names = bindingNames(pattern);
+	return names.length === 0
+		? "destructuring binding"
+		: `binding \`${names.join(", ")}\``;
+}
+
 function enclosingFunction(node: ESTree.Node): FunctionExpression | null {
 	let current: ESTree.Node | null = node.parent;
 	while (current !== null && current.type !== "Program") {
@@ -174,11 +206,11 @@ export const noKnownValueWideningRule = defineRule({
 				environment = createTypeEnvironment(node);
 			},
 			VariableDeclarator(node) {
-				if (node.init === null || node.id.type !== "Identifier") return;
+				if (node.init === null) return;
 				reportFlow(
 					node.init,
 					targetFromAnnotation(node.id.typeAnnotation),
-					`binding \`${node.id.name}\``,
+					bindingSubject(node.id),
 				);
 			},
 			PropertyDefinition(node) {

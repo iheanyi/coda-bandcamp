@@ -265,6 +265,12 @@ function dictionaryValueTypes(
 			: [{ type: unwrapped.typeAnnotation, substitutions }];
 	}
 
+	if (unwrapped.type === "TSIntersectionType") {
+		return unwrapped.types.flatMap((member) =>
+			dictionaryValueTypes(member, environment, substitutions, resolvingAliases),
+		);
+	}
+
 	if (unwrapped.type !== "TSTypeReference") return [];
 	const name = typeReferenceName(unwrapped);
 	if (name === null) return [];

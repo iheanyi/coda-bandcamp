@@ -7,9 +7,15 @@ function isTypeAssertionExpression(node: ESTree.Node): node is TypeAssertionExpr
   return node.type === "TSAsExpression" || node.type === "TSTypeAssertion";
 }
 
-function unwrapParenthesizedExpression(expression: ESTree.Expression): ESTree.Expression {
+function isTransparentAssertionWrapper(
+  node: ESTree.Node,
+): node is ESTree.ParenthesizedExpression | ESTree.TSSatisfiesExpression {
+  return node.type === "ParenthesizedExpression" || node.type === "TSSatisfiesExpression";
+}
+
+function unwrapTransparentExpression(expression: ESTree.Expression): ESTree.Expression {
   let current = expression;
-  while (current.type === "ParenthesizedExpression") {
+  while (isTransparentAssertionWrapper(current)) {
     current = current.expression;
   }
   return current;
@@ -28,7 +34,7 @@ function isOutermostAssertionInChain(node: TypeAssertionExpression): boolean {
   let current: ESTree.Expression = node;
   let parent = node.parent;
 
-  while (parent.type === "ParenthesizedExpression" && parent.expression === current) {
+  while (isTransparentAssertionWrapper(parent) && parent.expression === current) {
     current = parent;
     parent = parent.parent;
   }
@@ -44,7 +50,7 @@ function isForbiddenAssertionChain(node: TypeAssertionExpression): boolean {
   while (isTypeAssertionExpression(current)) {
     assertionCount += 1;
     hasNonConstAssertion ||= !isConstAssertion(current);
-    current = unwrapParenthesizedExpression(current.expression);
+    current = unwrapTransparentExpression(current.expression);
   }
 
   return assertionCount > 1 && hasNonConstAssertion;
@@ -56,7 +62,7 @@ export const noChainedTypeAssertionsRule = defineRule({
     type: "problem",
     docs: {
       description:
-        "Disallow chained TypeScript as and angle-bracket assertions, including parenthesized chains.",
+        "Disallow chained TypeScript as and angle-bracket assertions, including parenthesized or satisfies-interleaved chains.",
     },
     messages: {
       chained:

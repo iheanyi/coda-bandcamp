@@ -325,6 +325,8 @@ runRule("no-chained-type-assertions", noChainedTypeAssertionsRule, {
 		"const item = value as Item;",
 		"const item = { id: '1' } as const;",
 		"const item = ({ id: '1' } as const);",
+		"const item = value satisfies Item;",
+		"const item = (value as Item) satisfies Item;",
 	],
 	invalid: [
 		{
@@ -333,6 +335,10 @@ runRule("no-chained-type-assertions", noChainedTypeAssertionsRule, {
 		},
 		{
 			code: "const item = (<unknown>value) as Item;",
+			errors: [{ messageId: "chained" }],
+		},
+		{
+			code: "const item = ((value as unknown) satisfies unknown) as Item;",
 			errors: [{ messageId: "chained" }],
 		},
 	],
@@ -364,6 +370,8 @@ runRule("no-known-value-widening", noKnownValueWideningRule, {
 		"type Config = { enabled: boolean }; const config: Config = { enabled: true };",
 		"type Item = { id: string }; const byId: Record<string, Item> = {};",
 		"const parsed: unknown = JSON.parse(serialized);",
+		"const { config } = { config: { enabled: true } };",
+		"const [config] = [{ enabled: true }];",
 	],
 	invalid: [
 		{
@@ -402,6 +410,24 @@ runRule("no-known-value-widening", noKnownValueWideningRule, {
 				},
 			],
 		},
+		{
+			code: "const { config }: { config: unknown } = { config: { enabled: true } };",
+			errors: [
+				{
+					messageId: "widening",
+					data: { subject: "binding `config`", target: "anonymous object" },
+				},
+			],
+		},
+		{
+			code: "const [config]: unknown = [{ enabled: true }];",
+			errors: [
+				{
+					messageId: "widening",
+					data: { subject: "binding `config`", target: "unknown" },
+				},
+			],
+		},
 	],
 });
 
@@ -409,6 +435,7 @@ runRule("no-module-mocking", noModuleMockingRule, {
 	valid: [
 		"import { vi } from 'vitest'; vi.spyOn(console, 'log');",
 		"const vi = { mock(path: string) { return path; } }; vi.mock('./thing');",
+		"import * as test from 'vitest'; test.vi.spyOn(console, 'log');",
 	],
 	invalid: [
 		{
@@ -421,6 +448,18 @@ runRule("no-module-mocking", noModuleMockingRule, {
 		},
 		{
 			code: "import { vi } from 'vitest'; vi['mock']('./lib');",
+			errors: [{ messageId: "moduleMock" }],
+		},
+		{
+			code: "import * as test from 'vitest'; test.vi.mock('./lib');",
+			errors: [{ messageId: "moduleMock" }],
+		},
+		{
+			code: "import { vi as vitestVi } from 'vitest'; vitestVi.mock('./lib');",
+			errors: [{ messageId: "moduleMock" }],
+		},
+		{
+			code: "import vitest from 'vitest'; vitest.vi.mock('./lib');",
 			errors: [{ messageId: "moduleMock" }],
 		},
 	],
@@ -696,6 +735,8 @@ runRule("no-unsafe-dictionary-type", noUnsafeDictionaryTypeRule, {
 	valid: [
 		"type Item = { id: string }; type Items = Record<string, Item>;",
 		"type Wire = string | number | boolean | null | undefined | readonly Wire[] | WireRecord; type WireRecord = { readonly [key: string]: Wire };",
+		"type Item = { id: string }; type TaggedItems = Record<string, Item> & { readonly tag: string };",
+		"type Payload = { id: string } & { readonly tag: string };",
 	],
 	invalid: [
 		{
@@ -740,6 +781,15 @@ runRule("no-unsafe-dictionary-type", noUnsafeDictionaryTypeRule, {
 				{
 					messageId: "unsafeDictionary",
 					data: { value: "empty-object" },
+				},
+			],
+		},
+		{
+			code: "type Payload = Record<string, unknown> & { readonly tag: string };",
+			errors: [
+				{
+					messageId: "unsafeDictionary",
+					data: { value: "unknown" },
 				},
 			],
 		},
