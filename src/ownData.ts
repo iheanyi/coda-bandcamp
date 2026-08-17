@@ -176,9 +176,10 @@ export function copyOwnDataArray<Value>(
  * accepted owner comes from JSON-compatible boundaries; callers narrow it with
  * the guards above before use.
  *
- * Retained for modules that still read unprojected payloads (updater,
- * cover-art, mini-player, local favorites). Prefer `projectOwnDataRecord`
- * plus ordinary field reads at decode boundaries.
+ * Retained for the three intentional consumers that cannot project: updater
+ * class-instance metadata, playerState chunked queue restore, and native.ts
+ * per-index array contexts. Prefer `projectOwnDataRecord` plus ordinary field
+ * reads at decode boundaries.
  */
 export function ownDataProperty<Value>(
   value: Value,

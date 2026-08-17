@@ -12,14 +12,12 @@ import {
 } from "./localFavorites";
 import { parseLibraryDate } from "./libraryDates";
 import {
-  INVALID_OWN_DATA_PROPERTY as INVALID_PROPERTY,
+  copyOwnDataArray,
+  hasControlCharacter,
   isDataArray,
   isNumberValue,
-  isOwnDataRecord,
   isStringValue,
-  MISSING_OWN_DATA_PROPERTY as MISSING_PROPERTY,
-  ownDataProperty,
-  type OwnDataPropertyResult,
+  projectOwnDataRecord,
   type OwnDataRecord,
   type OwnDataValue,
 } from "./ownData";
@@ -139,49 +137,20 @@ function errorFromCause(cause: unknown, fallback: string): Error {
   return cause instanceof Error ? cause : new Error(fallback);
 }
 
-function objectProperty(
-  value: OwnDataPropertyResult,
-  key: string,
-): OwnDataPropertyResult {
-  if (!isOwnDataRecord(value)) return INVALID_PROPERTY;
-  return ownDataProperty(value, key);
-}
-
-function arrayElement(
-  values: readonly OwnDataValue[],
-  index: number,
-): OwnDataPropertyResult {
-  return ownDataProperty(values, String(index));
-}
-
-function isOmitted(value: OwnDataPropertyResult): boolean {
-  return value === MISSING_PROPERTY || value === undefined;
-}
-
-function hasControlCharacters(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const codeUnit = value.charCodeAt(index);
-    if (codeUnit <= 0x1f || (codeUnit >= 0x7f && codeUnit <= 0x9f)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function isPreparedText(
-  value: OwnDataPropertyResult,
+  value: OwnDataValue,
   required = true,
 ): value is string {
   return (
     typeof value === "string" &&
     value.length <= 1_024 &&
     (!required || value.length > 0) &&
-    !hasControlCharacters(value)
+    !hasControlCharacter(value)
   );
 }
 
 function isPreparedCount(
-  value: OwnDataPropertyResult,
+  value: OwnDataValue,
   maximum: number,
 ): value is number {
   return (
@@ -192,7 +161,7 @@ function isPreparedCount(
   );
 }
 
-function isPreparedDuration(value: OwnDataPropertyResult): value is number {
+function isPreparedDuration(value: OwnDataValue): value is number {
   return (
     typeof value === "number" &&
     Number.isFinite(value) &&
@@ -201,10 +170,10 @@ function isPreparedDuration(value: OwnDataPropertyResult): value is number {
   );
 }
 
-function hasPreparedPalette(value: OwnDataPropertyResult): boolean {
-  if (!isDataArray(value) || value.length !== 2) return false;
-  const first = arrayElement(value, 0);
-  const second = arrayElement(value, 1);
+function hasPreparedPalette(value: OwnDataValue): boolean {
+  const colors = copyOwnDataArray(value, 2);
+  if (colors === undefined || colors.length !== 2) return false;
+  const [first, second] = colors;
   return (
     isPreparedText(first) &&
     first.length <= 64 &&
@@ -224,16 +193,18 @@ function isCalendarDate(year: number, month: number, day: number): boolean {
   );
 }
 
-function isPreparedItemDate(value: OwnDataPropertyResult): boolean {
-  const year = objectProperty(value, "year");
-  const month = objectProperty(value, "month");
-  const day = objectProperty(value, "day");
+function isPreparedItemDate(value: OwnDataValue): boolean {
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return false;
+  const year = record.year;
+  const month = record.month;
+  const day = record.day;
   return (
     isPreparedCount(year, 9_999) &&
     year > 0 &&
-    (isOmitted(month) ||
+    (month === undefined ||
       (isPreparedCount(month, 12) && month > 0)) &&
-    (isOmitted(day) ||
+    (day === undefined ||
       (isPreparedCount(day, 31) &&
         day > 0 &&
         isNumberValue(month) &&
@@ -242,113 +213,122 @@ function isPreparedItemDate(value: OwnDataPropertyResult): boolean {
 }
 
 function isPreparedOptionalText(
-  value: OwnDataPropertyResult,
+  value: OwnDataValue,
   required = false,
 ): boolean {
-  return isOmitted(value) || isPreparedText(value, required);
+  return value === undefined || isPreparedText(value, required);
 }
 
-function isPreparedOptionalDateText(value: OwnDataPropertyResult): boolean {
+function isPreparedOptionalDateText(value: OwnDataValue): boolean {
   return (
-    isOmitted(value) ||
+    value === undefined ||
     (isPreparedText(value, false) &&
       parseLibraryDate(value) !== undefined)
   );
 }
 
-function isPreparedTrack(value: OwnDataPropertyResult): boolean {
-  const disc = objectProperty(value, "disc");
-  const musicBrainzId = objectProperty(value, "musicBrainzId");
+function isPreparedTrack(value: OwnDataValue): boolean {
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return false;
+  const disc = record.disc;
+  const musicBrainzId = record.musicBrainzId;
   return (
-    isPreparedText(objectProperty(value, "id")) &&
-    isPreparedText(objectProperty(value, "title")) &&
-    isPreparedText(objectProperty(value, "artist")) &&
-    isPreparedText(objectProperty(value, "album")) &&
-    isPreparedText(objectProperty(value, "albumId")) &&
-    isPreparedDuration(objectProperty(value, "duration")) &&
-    isPreparedCount(objectProperty(value, "track"), 100_000) &&
-    (isOmitted(disc) ||
+    isPreparedText(record.id) &&
+    isPreparedText(record.title) &&
+    isPreparedText(record.artist) &&
+    isPreparedText(record.album) &&
+    isPreparedText(record.albumId) &&
+    isPreparedDuration(record.duration) &&
+    isPreparedCount(record.track, 100_000) &&
+    (disc === undefined ||
       isPreparedCount(disc, 100_000)) &&
-    isPreparedOptionalText(objectProperty(value, "albumArtist")) &&
-    (isOmitted(musicBrainzId) ||
+    isPreparedOptionalText(record.albumArtist) &&
+    (musicBrainzId === undefined ||
       (isStringValue(musicBrainzId) &&
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu
           .test(musicBrainzId))) &&
-    isPreparedOptionalText(objectProperty(value, "coverArt")) &&
-    isPreparedOptionalDateText(objectProperty(value, "starredAt")) &&
-    hasPreparedPalette(objectProperty(value, "palette")) &&
-    isOmitted(objectProperty(value, "artworkUrl")) &&
-    isOmitted(objectProperty(value, "streamUrl")) &&
-    isOmitted(objectProperty(value, "radioChapters")) &&
-    isOmitted(objectProperty(value, "discoverRelease")) &&
-    isOmitted(objectProperty(value, "dailySource"))
+    isPreparedOptionalText(record.coverArt) &&
+    isPreparedOptionalDateText(record.starredAt) &&
+    hasPreparedPalette(record.palette) &&
+    record.artworkUrl === undefined &&
+    record.streamUrl === undefined &&
+    record.radioChapters === undefined &&
+    record.discoverRelease === undefined &&
+    record.dailySource === undefined
   );
 }
 
-function isPreparedOptionalItemDate(value: OwnDataPropertyResult): boolean {
-  return isOmitted(value) || isPreparedItemDate(value);
+function isPreparedOptionalItemDate(value: OwnDataValue): boolean {
+  return value === undefined || isPreparedItemDate(value);
 }
 
-function isPreparedAlbum(value: OwnDataPropertyResult): boolean {
-  const year = objectProperty(value, "year");
+function isPreparedAlbum(value: OwnDataValue): boolean {
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return false;
+  const year = record.year;
   return (
-    isPreparedText(objectProperty(value, "id")) &&
-    isPreparedText(objectProperty(value, "title")) &&
-    isPreparedText(objectProperty(value, "artist")) &&
-    isPreparedCount(objectProperty(value, "songCount"), MAX_FAVORITE_TRACKS) &&
-    isPreparedDuration(objectProperty(value, "duration")) &&
-    (isOmitted(year) ||
+    isPreparedText(record.id) &&
+    isPreparedText(record.title) &&
+    isPreparedText(record.artist) &&
+    isPreparedCount(record.songCount, MAX_FAVORITE_TRACKS) &&
+    isPreparedDuration(record.duration) &&
+    (year === undefined ||
       (isPreparedCount(year, 9_999) && year > 0)) &&
-    isPreparedOptionalText(objectProperty(value, "coverArt")) &&
-    isPreparedOptionalText(objectProperty(value, "genre")) &&
-    isPreparedOptionalDateText(objectProperty(value, "addedAt")) &&
-    isPreparedOptionalDateText(objectProperty(value, "starredAt")) &&
-    isPreparedOptionalDateText(objectProperty(value, "playedAt")) &&
-    isPreparedOptionalItemDate(objectProperty(value, "originalReleaseDate")) &&
-    isPreparedOptionalItemDate(objectProperty(value, "releaseDate")) &&
-    hasPreparedPalette(objectProperty(value, "palette")) &&
-    isOmitted(objectProperty(value, "artworkUrl")) &&
-    isOmitted(objectProperty(value, "tracks"))
+    isPreparedOptionalText(record.coverArt) &&
+    isPreparedOptionalText(record.genre) &&
+    isPreparedOptionalDateText(record.addedAt) &&
+    isPreparedOptionalDateText(record.starredAt) &&
+    isPreparedOptionalDateText(record.playedAt) &&
+    isPreparedOptionalItemDate(record.originalReleaseDate) &&
+    isPreparedOptionalItemDate(record.releaseDate) &&
+    hasPreparedPalette(record.palette) &&
+    record.artworkUrl === undefined &&
+    record.tracks === undefined
   );
 }
 
-function isPreparedRadioSeries(value: OwnDataPropertyResult): boolean {
-  const id = objectProperty(value, "id");
+function isPreparedRadioSeries(value: OwnDataValue): boolean {
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return false;
+  const id = record.id;
   return (
     isPreparedCount(id, Number.MAX_SAFE_INTEGER) &&
     id > 0 &&
-    isPreparedText(objectProperty(value, "title")) &&
-    isPreparedText(objectProperty(value, "slug"))
+    isPreparedText(record.title) &&
+    isPreparedText(record.slug)
   );
 }
 
-function isPreparedRadioShow(value: OwnDataPropertyResult): boolean {
-  const id = objectProperty(value, "id");
-  const series = objectProperty(value, "series");
+function isPreparedRadioShow(value: OwnDataValue): boolean {
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return false;
+  const id = record.id;
+  const series = record.series;
   return (
     isPreparedCount(id, Number.MAX_SAFE_INTEGER) &&
     id > 0 &&
-    isPreparedText(objectProperty(value, "subtitle")) &&
-    isPreparedText(objectProperty(value, "description"), false) &&
-    isPreparedText(objectProperty(value, "publishedAt"), false) &&
-    (isOmitted(series) || isPreparedRadioSeries(series)) &&
-    isOmitted(objectProperty(value, "artworkUrl"))
+    isPreparedText(record.subtitle) &&
+    isPreparedText(record.description, false) &&
+    isPreparedText(record.publishedAt, false) &&
+    (series === undefined || isPreparedRadioSeries(series)) &&
+    record.artworkUrl === undefined
   );
 }
 
 function hasBoundedItems(
-  value: OwnDataPropertyResult,
+  value: OwnDataValue,
   maximum: number,
-  validate: (item: OwnDataPropertyResult) => boolean,
+  validate: (item: OwnDataValue) => boolean,
 ): boolean {
-  if (!isDataArray(value) || value.length > maximum) return false;
-  for (let index = 0; index < value.length; index += 1) {
-    if (!validate(arrayElement(value, index))) return false;
+  const items = copyOwnDataArray(value, maximum);
+  if (items === undefined) return false;
+  for (const item of items) {
+    if (!validate(item)) return false;
   }
   return true;
 }
 
-function isPreparedRadioId(value: OwnDataPropertyResult): boolean {
+function isPreparedRadioId(value: OwnDataValue): boolean {
   return (
     isPreparedCount(value, Number.MAX_SAFE_INTEGER) &&
     value > 0
@@ -358,35 +338,36 @@ function isPreparedRadioId(value: OwnDataPropertyResult): boolean {
 function isPreparedLocalFavorites<Value>(
   value: Value,
 ): value is Value & LocalFavoriteCollection {
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return false;
   return (
-    isOwnDataRecord(value) &&
     hasBoundedItems(
-      objectProperty(value, "albumIds"),
+      record.albumIds,
       MAX_FAVORITE_ALBUMS,
       isPreparedText,
     ) &&
     hasBoundedItems(
-      objectProperty(value, "songIds"),
+      record.songIds,
       MAX_FAVORITE_TRACKS,
       isPreparedText,
     ) &&
     hasBoundedItems(
-      objectProperty(value, "radioShowIds"),
+      record.radioShowIds,
       MAX_FAVORITE_RADIO_SHOWS,
       isPreparedRadioId,
     ) &&
     hasBoundedItems(
-      objectProperty(value, "albums"),
+      record.albums,
       MAX_FAVORITE_ALBUMS,
       isPreparedAlbum,
     ) &&
     hasBoundedItems(
-      objectProperty(value, "tracks"),
+      record.tracks,
       MAX_FAVORITE_TRACKS,
       isPreparedTrack,
     ) &&
     hasBoundedItems(
-      objectProperty(value, "radioShows"),
+      record.radioShows,
       MAX_FAVORITE_RADIO_SHOWS,
       isPreparedRadioShow,
     )
@@ -394,13 +375,13 @@ function isPreparedLocalFavorites<Value>(
 }
 
 function parsePreparedLocalFavorites(
-  value: OwnDataPropertyResult,
+  value: OwnDataValue,
 ): LocalFavoriteCollection | undefined {
   return isPreparedLocalFavorites(value) ? value : undefined;
 }
 
 function requestIdFrom(value: OwnDataRecord): number | undefined {
-  const requestId = objectProperty(value, "requestId");
+  const requestId = value.requestId;
   return (
       isNumberValue(requestId) &&
       Number.isSafeInteger(requestId) &&
@@ -420,19 +401,16 @@ function defaultIdleScheduler(callback: () => void): void {
   setTimeout(callback, 0);
 }
 
-function isMissing(value: OwnDataPropertyResult): boolean {
-  return value === MISSING_PROPERTY || value === undefined;
-}
-
 export function parseLocalFavoritesPreparationRequest<Value>(
   value: Value,
 ): ParsedLocalFavoritesPreparationRequest | undefined {
-  if (!isOwnDataRecord(value)) return undefined;
-  const requestId = requestIdFrom(value);
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return undefined;
+  const requestId = requestIdFrom(record);
   if (requestId === undefined) return undefined;
-  const kind = objectProperty(value, "kind");
+  const kind = record.kind;
   if (kind === "parse-local-favorites") {
-    const serialized = objectProperty(value, "serialized");
+    const serialized = record.serialized;
     if (
       !isStringValue(serialized) ||
       serialized.length > MAX_LOCAL_FAVORITES_BYTES
@@ -446,13 +424,8 @@ export function parseLocalFavoritesPreparationRequest<Value>(
     };
   }
   if (kind !== "serialize-local-favorites") return undefined;
-  const sourceFavorites = objectProperty(value, "favorites");
-  if (
-    sourceFavorites === INVALID_PROPERTY ||
-    sourceFavorites === MISSING_PROPERTY
-  ) {
-    return undefined;
-  }
+  const sourceFavorites = record.favorites;
+  if (sourceFavorites === undefined) return undefined;
   const favorites = ValidatedLocalFavorites.parse(sourceFavorites);
   if (!favorites) return undefined;
   return {
@@ -466,23 +439,24 @@ export function parseLocalFavoritesPreparationRequest<Value>(
 export function parseLocalFavoritesPreparationResponse(
   value: OwnDataValue,
 ): LocalFavoritesPreparationResponse | undefined {
-  if (!isOwnDataRecord(value)) return undefined;
-  const requestId = requestIdFrom(value);
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return undefined;
+  const requestId = requestIdFrom(record);
   if (requestId === undefined) return undefined;
-  const kind = objectProperty(value, "kind");
+  const kind = record.kind;
   if (kind === "local-favorites-parsed") {
-    const favoritesValue = objectProperty(value, "favorites");
-    if (isMissing(favoritesValue)) {
+    const favoritesValue = record.favorites;
+    if (favoritesValue === undefined) {
       return { kind, requestId };
     }
     const favorites = parsePreparedLocalFavorites(favoritesValue);
     return favorites ? { kind, requestId, favorites } : undefined;
   }
   if (kind === "local-favorites-serialized") {
-    const preparedValue = objectProperty(value, "prepared");
-    if (!isOwnDataRecord(preparedValue)) return undefined;
-    const serialized = objectProperty(preparedValue, "serialized");
-    const favoritesValue = objectProperty(preparedValue, "favorites");
+    const preparedRecord = projectOwnDataRecord(record.prepared);
+    if (preparedRecord === undefined) return undefined;
+    const serialized = preparedRecord.serialized;
+    const favoritesValue = preparedRecord.favorites;
     if (
       !isStringValue(serialized) ||
       serialized.length === 0 ||
@@ -490,10 +464,10 @@ export function parseLocalFavoritesPreparationResponse(
     ) {
       return undefined;
     }
-    const favorites = isMissing(favoritesValue)
+    const favorites = favoritesValue === undefined
       ? undefined
       : parsePreparedLocalFavorites(favoritesValue);
-    if (!isMissing(favoritesValue) && !favorites) return undefined;
+    if (favoritesValue !== undefined && !favorites) return undefined;
     const prepared: LocalFavoritesPreparationResponse = {
       kind,
       requestId,
@@ -504,8 +478,8 @@ export function parseLocalFavoritesPreparationResponse(
     if (favorites) prepared.prepared.favorites = favorites;
     return prepared;
   }
-  const errorName = objectProperty(value, "errorName");
-  const errorMessage = objectProperty(value, "errorMessage");
+  const errorName = record.errorName;
+  const errorMessage = record.errorMessage;
   if (
     kind !== "local-favorites-error" ||
     !isStringValue(errorName) ||
@@ -551,12 +525,6 @@ function prepareLocalFavoritesSnapshot(
   return { favorites: sanitized, serialized };
 }
 
-function isOwnDataField(
-  value: OwnDataPropertyResult,
-): value is OwnDataValue {
-  return value !== MISSING_PROPERTY && value !== INVALID_PROPERTY;
-}
-
 function isLocalFavoriteCollectionFields(
   fields: {
     albumIds: OwnDataValue;
@@ -597,23 +565,14 @@ export function localFavoritesInputMatchesPrepared(
   value: OwnDataValue,
   prepared: PreparedLocalFavorites,
 ): boolean {
-  if (!isOwnDataRecord(value)) return false;
-  const albumIds = objectProperty(value, "albumIds");
-  const songIds = objectProperty(value, "songIds");
-  const radioShowIds = objectProperty(value, "radioShowIds");
-  const albums = objectProperty(value, "albums");
-  const tracks = objectProperty(value, "tracks");
-  const radioShows = objectProperty(value, "radioShows");
-  if (
-    !isOwnDataField(albumIds) ||
-    !isOwnDataField(songIds) ||
-    !isOwnDataField(radioShowIds) ||
-    !isOwnDataField(albums) ||
-    !isOwnDataField(tracks) ||
-    !isOwnDataField(radioShows)
-  ) {
-    return false;
-  }
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return false;
+  const albumIds = record.albumIds;
+  const songIds = record.songIds;
+  const radioShowIds = record.radioShowIds;
+  const albums = record.albums;
+  const tracks = record.tracks;
+  const radioShows = record.radioShows;
   const fields = {
     albumIds,
     songIds,

@@ -1,7 +1,5 @@
 import {
-  isDataArray,
-  ownDataProperty,
-  type OwnDataPropertyResult,
+  copyOwnDataArray,
   type OwnDataValue,
 } from "./ownData";
 
@@ -12,23 +10,18 @@ const paintedCoverSources = new Set<string>();
 const paintedLocalCoverKeys = loadPaintedLocalCoverKeys();
 let persistenceQueued = false;
 
-function isPaintedCoverKey(value: OwnDataPropertyResult): value is string {
+function isPaintedCoverKey(value: OwnDataValue): value is string {
   return typeof value === "string" && /^[a-f0-9]{8}$/.test(value);
 }
 
 export function parsePaintedLocalCoverKeys<Value>(
   value: Value,
 ): string[] | undefined {
-  if (
-    !isDataArray(value) ||
-    value.length > MAX_PAINTED_COVER_SOURCES
-  ) {
-    return undefined;
-  }
+  const copied = copyOwnDataArray(value, MAX_PAINTED_COVER_SOURCES);
+  if (copied === undefined) return undefined;
   const keys: string[] = [];
   const seen = new Set<string>();
-  for (let index = 0; index < value.length; index += 1) {
-    const key = ownDataProperty(value, String(index));
+  for (const key of copied) {
     if (!isPaintedCoverKey(key)) return undefined;
     if (seen.has(key)) continue;
     seen.add(key);

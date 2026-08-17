@@ -1,10 +1,8 @@
 import { isDesktop } from "./data-bridge/desktop";
 import {
   isDataArray,
-  isOwnDataRecord,
   isStringValue,
-  ownDataProperty,
-  type OwnDataPropertyResult,
+  projectOwnDataRecord,
   type OwnDataValue,
 } from "./ownData";
 
@@ -114,7 +112,7 @@ function validRevision(value: string): boolean {
 }
 
 function parseOrderingSequence(
-  value: OwnDataPropertyResult,
+  value: OwnDataValue,
   allowZero = false,
 ): bigint | undefined {
   if (
@@ -135,10 +133,11 @@ function parseOrderingSequence(
 function parseCoverArtUpdatedPayload(
   payload: OwnDataValue,
 ): CoverArtUpdatedPayload | undefined {
-  if (!isOwnDataRecord(payload)) return undefined;
-  const coverArtId = ownDataProperty(payload, "coverArtId");
-  const revision = ownDataProperty(payload, "revision");
-  const sequence = parseOrderingSequence(ownDataProperty(payload, "sequence"));
+  const record = projectOwnDataRecord(payload);
+  if (record === undefined) return undefined;
+  const coverArtId = record.coverArtId;
+  const revision = record.revision;
+  const sequence = parseOrderingSequence(record.sequence);
   if (
     !isStringValue(coverArtId) ||
     !isStringValue(revision) ||
@@ -152,12 +151,10 @@ function parseCoverArtUpdatedPayload(
 }
 
 function parseInvalidationSequence(payload: OwnDataValue): bigint {
-  if (!isOwnDataRecord(payload)) {
-    throw new TypeError(
-      "Invalid native response for invalidate_cover_art: expected an ordering receipt.",
-    );
-  }
-  const sequence = parseOrderingSequence(ownDataProperty(payload, "sequence"));
+  const record = projectOwnDataRecord(payload);
+  const sequence = record === undefined
+    ? undefined
+    : parseOrderingSequence(record.sequence);
   if (sequence === undefined) {
     throw new TypeError(
       "Invalid native response for invalidate_cover_art: expected an ordering receipt.",

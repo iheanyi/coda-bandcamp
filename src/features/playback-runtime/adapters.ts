@@ -21,9 +21,8 @@ import {
 } from "@/media";
 import {
   isNumberValue,
-  isOwnDataRecord,
   isStringValue,
-  ownDataProperty,
+  projectOwnDataRecord,
 } from "@/ownData";
 import { createSystemArtworkDataUrl } from "@/systemArtwork";
 
@@ -78,9 +77,10 @@ export type ParsedSystemMediaControlEvent =
 export function parseSystemMediaControlEvent<Value>(
   payload: Value,
 ): ParsedSystemMediaControlEvent | undefined {
-  if (!isOwnDataRecord(payload)) return undefined;
+  const record = projectOwnDataRecord(payload);
+  if (record === undefined) return undefined;
 
-  const action = ownDataProperty(payload, "action");
+  const action = record.action;
   if (!isStringValue(action)) return undefined;
 
   switch (action) {
@@ -93,7 +93,7 @@ export function parseSystemMediaControlEvent<Value>(
     case "next":
       return { action: "next" };
     case "seek": {
-      const positionSeconds = ownDataProperty(payload, "positionSeconds");
+      const positionSeconds = record.positionSeconds;
       if (!isNumberValue(positionSeconds) || !Number.isFinite(positionSeconds)) {
         return undefined;
       }

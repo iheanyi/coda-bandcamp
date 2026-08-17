@@ -8,15 +8,12 @@ import type {
 } from "./types";
 import { parseLibraryDate } from "./libraryDates";
 import {
+  copyOwnDataArray,
   hasControlCharacter,
-  INVALID_OWN_DATA_PROPERTY as INVALID_PROPERTY,
-  isDataArray,
+  isAbsent,
   isNumberValue,
-  isOwnDataRecord,
   isStringValue,
-  MISSING_OWN_DATA_PROPERTY as MISSING_PROPERTY,
-  ownDataProperty,
-  type OwnDataPropertyResult,
+  projectOwnDataRecord,
   type OwnDataValue,
 } from "./ownData";
 
@@ -61,26 +58,10 @@ export function parseLocalFavoritesSerialized(
   }
 }
 
-function recordProperty(
-  value: OwnDataPropertyResult,
-  key: string,
-): OwnDataPropertyResult {
-  return isOwnDataRecord(value)
-    ? ownDataProperty(value, key)
-    : INVALID_PROPERTY;
-}
-
-function arrayElement(
-  values: readonly OwnDataValue[],
-  index: number,
-): OwnDataPropertyResult {
-  return ownDataProperty(values, String(index));
-}
-
 // ownData has no bounded-text helper; isStringValue + hasControlCharacter
 // omit the 1,024-code-unit cap and required-nonempty policy used here.
 function isText(
-  value: OwnDataPropertyResult,
+  value: OwnDataValue,
   required = true,
 ): value is string {
   return (
@@ -92,7 +73,7 @@ function isText(
 }
 
 function isCount(
-  value: OwnDataPropertyResult,
+  value: OwnDataValue,
   maximum = Number.MAX_SAFE_INTEGER,
 ): value is number {
   return (
@@ -103,7 +84,7 @@ function isCount(
   );
 }
 
-function isDuration(value: OwnDataPropertyResult): value is number {
+function isDuration(value: OwnDataValue): value is number {
   return (
     typeof value === "number" &&
     Number.isFinite(value) &&
@@ -112,24 +93,14 @@ function isDuration(value: OwnDataPropertyResult): value is number {
   );
 }
 
-function isMusicBrainzId(value: OwnDataPropertyResult): value is string {
+function isMusicBrainzId(value: OwnDataValue): value is string {
   return (
     typeof value === "string" &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(value)
   );
 }
 
-// ownData.isAbsent is only null/undefined; ownDataProperty still yields
-// MISSING_OWN_DATA_PROPERTY for omitted fields, which must count as absent.
-function isAbsent(value: OwnDataPropertyResult): boolean {
-  return (
-    value === MISSING_PROPERTY ||
-    value === undefined ||
-    value === null
-  );
-}
-
-function sanitizeDateText(value: OwnDataPropertyResult): string | undefined {
+function sanitizeDateText(value: OwnDataValue): string | undefined {
   return isText(value, false) && parseLibraryDate(value) !== undefined
     ? value
     : undefined;
@@ -146,11 +117,12 @@ function isCalendarDate(year: number, month: number, day: number): boolean {
   );
 }
 
-function sanitizeItemDate(value: OwnDataPropertyResult): ItemDate | undefined {
-  if (!isOwnDataRecord(value)) return undefined;
-  const year = recordProperty(value, "year");
-  const month = recordProperty(value, "month");
-  const day = recordProperty(value, "day");
+function sanitizeItemDate(value: OwnDataValue): ItemDate | undefined {
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return undefined;
+  const year = record.year;
+  const month = record.month;
+  const day = record.day;
   if (
     !isCount(year, 9_999) ||
     year === 0 ||
@@ -187,12 +159,10 @@ function sameItemDate(
   );
 }
 
-function palette(value: OwnDataPropertyResult): [string, string] | undefined {
-  if (!isDataArray(value) || value.length !== 2) {
-    return undefined;
-  }
-  const first = arrayElement(value, 0);
-  const second = arrayElement(value, 1);
+function palette(value: OwnDataValue): [string, string] | undefined {
+  const colors = copyOwnDataArray(value, 2);
+  if (colors === undefined || colors.length !== 2) return undefined;
+  const [first, second] = colors;
   if (
     !isText(first) ||
     first.length > 64 ||
@@ -204,21 +174,22 @@ function palette(value: OwnDataPropertyResult): [string, string] | undefined {
   return [first, second];
 }
 
-function sanitizeTrack(value: OwnDataPropertyResult): Track | undefined {
-  if (!isOwnDataRecord(value)) return undefined;
-  const id = recordProperty(value, "id");
-  const title = recordProperty(value, "title");
-  const artist = recordProperty(value, "artist");
-  const albumTitle = recordProperty(value, "album");
-  const albumId = recordProperty(value, "albumId");
-  const duration = recordProperty(value, "duration");
-  const trackNumber = recordProperty(value, "track");
-  const paletteValue = recordProperty(value, "palette");
-  const discValue = recordProperty(value, "disc");
-  const albumArtistValue = recordProperty(value, "albumArtist");
-  const musicBrainzIdValue = recordProperty(value, "musicBrainzId");
-  const coverArtValue = recordProperty(value, "coverArt");
-  const starredAtValue = recordProperty(value, "starredAt");
+function sanitizeTrack(value: OwnDataValue): Track | undefined {
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return undefined;
+  const id = record.id;
+  const title = record.title;
+  const artist = record.artist;
+  const albumTitle = record.album;
+  const albumId = record.albumId;
+  const duration = record.duration;
+  const trackNumber = record.track;
+  const paletteValue = record.palette;
+  const discValue = record.disc;
+  const albumArtistValue = record.albumArtist;
+  const musicBrainzIdValue = record.musicBrainzId;
+  const coverArtValue = record.coverArt;
+  const starredAtValue = record.starredAt;
   const colors = palette(paletteValue);
   const disc = isCount(discValue, MAX_TRACK_NUMBER)
     ? discValue
@@ -287,26 +258,24 @@ export function localTrackStarIndexAndRadio(
   };
 }
 
-function sanitizeAlbum(value: OwnDataPropertyResult): Album | undefined {
-  if (!isOwnDataRecord(value)) return undefined;
-  const id = recordProperty(value, "id");
-  const title = recordProperty(value, "title");
-  const artist = recordProperty(value, "artist");
-  const songCount = recordProperty(value, "songCount");
-  const duration = recordProperty(value, "duration");
-  const paletteValue = recordProperty(value, "palette");
-  const coverArtValue = recordProperty(value, "coverArt");
-  const yearValue = recordProperty(value, "year");
-  const genreValue = recordProperty(value, "genre");
-  const addedAtValue = recordProperty(value, "addedAt");
-  const starredAtValue = recordProperty(value, "starredAt");
-  const playedAtValue = recordProperty(value, "playedAt");
-  const originalReleaseDateValue = recordProperty(
-    value,
-    "originalReleaseDate",
-  );
-  const releaseDateValue = recordProperty(value, "releaseDate");
-  const tracksValue = recordProperty(value, "tracks");
+function sanitizeAlbum(value: OwnDataValue): Album | undefined {
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return undefined;
+  const id = record.id;
+  const title = record.title;
+  const artist = record.artist;
+  const songCount = record.songCount;
+  const duration = record.duration;
+  const paletteValue = record.palette;
+  const coverArtValue = record.coverArt;
+  const yearValue = record.year;
+  const genreValue = record.genre;
+  const addedAtValue = record.addedAt;
+  const starredAtValue = record.starredAt;
+  const playedAtValue = record.playedAt;
+  const originalReleaseDateValue = record.originalReleaseDate;
+  const releaseDateValue = record.releaseDate;
+  const tracksValue = record.tracks;
   const colors = palette(paletteValue);
   const coverArt = isText(coverArtValue, false)
     ? coverArtValue
@@ -331,14 +300,10 @@ function sanitizeAlbum(value: OwnDataPropertyResult): Album | undefined {
     ? undefined
     : sanitizeItemDate(releaseDateValue);
   if (!isAbsent(tracksValue)) {
-    if (
-      !isDataArray(tracksValue) ||
-      tracksValue.length > MAX_TRACKS_PER_ALBUM
-    ) {
-      return undefined;
-    }
-    for (let index = 0; index < tracksValue.length; index += 1) {
-      const track = sanitizeTrack(arrayElement(tracksValue, index));
+    const albumTracks = copyOwnDataArray(tracksValue, MAX_TRACKS_PER_ALBUM);
+    if (albumTracks === undefined) return undefined;
+    for (const entry of albumTracks) {
+      const track = sanitizeTrack(entry);
       if (!track || !isText(id) || track.albumId !== id) return undefined;
     }
   }
@@ -383,17 +348,18 @@ function sanitizeAlbum(value: OwnDataPropertyResult): Album | undefined {
 }
 
 function sanitizeRadioShow(
-  value: OwnDataPropertyResult,
+  value: OwnDataValue,
 ): RadioShowSummary | undefined {
-  if (!isOwnDataRecord(value)) return undefined;
-  const id = recordProperty(value, "id");
-  const subtitle = recordProperty(value, "subtitle");
-  const description = recordProperty(value, "description");
-  const publishedAt = recordProperty(value, "publishedAt");
-  const seriesValue = recordProperty(value, "series");
-  const seriesId = recordProperty(seriesValue, "id");
-  const seriesTitle = recordProperty(seriesValue, "title");
-  const seriesSlug = recordProperty(seriesValue, "slug");
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return undefined;
+  const id = record.id;
+  const subtitle = record.subtitle;
+  const description = record.description;
+  const publishedAt = record.publishedAt;
+  const seriesRecord = projectOwnDataRecord(record.series);
+  const seriesId = seriesRecord?.id;
+  const seriesTitle = seriesRecord?.title;
+  const seriesSlug = seriesRecord?.slug;
   const series = isCount(seriesId) &&
       seriesId > 0 &&
       isText(seriesTitle) &&
@@ -424,14 +390,14 @@ function sanitizeRadioShow(
 }
 
 function uniqueText(
-  values: OwnDataPropertyResult,
+  values: OwnDataValue,
   maximum: number,
 ): string[] | undefined {
-  if (!isDataArray(values) || values.length > maximum) return undefined;
+  const copied = copyOwnDataArray(values, maximum);
+  if (copied === undefined) return undefined;
   const unique: string[] = [];
   const seen = new Set<string>();
-  for (let index = 0; index < values.length; index += 1) {
-    const id = arrayElement(values, index);
+  for (const id of copied) {
     if (!isText(id)) return undefined;
     if (seen.has(id)) continue;
     seen.add(id);
@@ -441,14 +407,14 @@ function uniqueText(
 }
 
 function uniqueNumbers(
-  values: OwnDataPropertyResult,
+  values: OwnDataValue,
   maximum: number,
 ): number[] | undefined {
-  if (!isDataArray(values) || values.length > maximum) return undefined;
+  const copied = copyOwnDataArray(values, maximum);
+  if (copied === undefined) return undefined;
   const unique: number[] = [];
   const seen = new Set<number>();
-  for (let index = 0; index < values.length; index += 1) {
-    const id = arrayElement(values, index);
+  for (const id of copied) {
     if (!isCount(id) || id <= 0) return undefined;
     if (seen.has(id)) continue;
     seen.add(id);
@@ -463,8 +429,8 @@ function sanitizeFavoriteAlbums(
 ): Album[] | undefined {
   const albums: Album[] = [];
   const seen = new Set<string>();
-  for (let index = 0; index < values.length; index += 1) {
-    const album = sanitizeAlbum(arrayElement(values, index));
+  for (const entry of values) {
+    const album = sanitizeAlbum(entry);
     if (!album) return undefined;
     if (!wantedIds.has(album.id) || seen.has(album.id)) continue;
     seen.add(album.id);
@@ -479,8 +445,8 @@ function sanitizeFavoriteTracks(
 ): Track[] | undefined {
   const tracks: Track[] = [];
   const seen = new Set<string>();
-  for (let index = 0; index < values.length; index += 1) {
-    const track = sanitizeTrack(arrayElement(values, index));
+  for (const entry of values) {
+    const track = sanitizeTrack(entry);
     if (!track) return undefined;
     if (!wantedIds.has(track.id) || seen.has(track.id)) continue;
     seen.add(track.id);
@@ -495,8 +461,8 @@ function sanitizeFavoriteRadioShows(
 ): RadioShowSummary[] | undefined {
   const radioShows: RadioShowSummary[] = [];
   const seen = new Set<number>();
-  for (let index = 0; index < values.length; index += 1) {
-    const show = sanitizeRadioShow(arrayElement(values, index));
+  for (const entry of values) {
+    const show = sanitizeRadioShow(entry);
     if (!show) return undefined;
     if (!wantedIds.has(show.id) || seen.has(show.id)) continue;
     seen.add(show.id);
@@ -589,30 +555,28 @@ export function emptyLocalFavorites(): LocalFavoriteCollection {
 export function sanitizeLocalFavorites(
   value: OwnDataValue,
 ): LocalFavoriteCollection | undefined {
-  if (!isOwnDataRecord(value)) return undefined;
-  const albumIdsValue = recordProperty(value, "albumIds");
-  const songIdsValue = recordProperty(value, "songIds");
-  const albumsValue = recordProperty(value, "albums");
-  const tracksValue = recordProperty(value, "tracks");
-  const radioShowIdsValue = recordProperty(value, "radioShowIds");
-  const radioShowsValue = recordProperty(value, "radioShows");
-  const albumIds = uniqueText(albumIdsValue, MAX_FAVORITE_ALBUMS);
-  const songIds = uniqueText(songIdsValue, MAX_FAVORITE_TRACKS);
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return undefined;
+  const albumIds = uniqueText(record.albumIds, MAX_FAVORITE_ALBUMS);
+  const songIds = uniqueText(record.songIds, MAX_FAVORITE_TRACKS);
   const radioShowIds = uniqueNumbers(
-    isAbsent(radioShowIdsValue) ? [] : radioShowIdsValue,
+    isAbsent(record.radioShowIds) ? [] : record.radioShowIds,
     MAX_FAVORITE_RADIO_SHOWS,
   );
-  const rawRadioShows = isAbsent(radioShowsValue) ? [] : radioShowsValue;
+  const rawRadioShows = isAbsent(record.radioShows) ? [] : record.radioShows;
+  const albumsValue = copyOwnDataArray(record.albums, MAX_FAVORITE_ALBUMS);
+  const tracksValue = copyOwnDataArray(record.tracks, MAX_FAVORITE_TRACKS);
+  const radioShowValues = copyOwnDataArray(
+    rawRadioShows,
+    MAX_FAVORITE_RADIO_SHOWS,
+  );
   if (
     !albumIds ||
     !songIds ||
     !radioShowIds ||
-    !isDataArray(albumsValue) ||
-    albumsValue.length > MAX_FAVORITE_ALBUMS ||
-    !isDataArray(tracksValue) ||
-    tracksValue.length > MAX_FAVORITE_TRACKS ||
-    !isDataArray(rawRadioShows) ||
-    rawRadioShows.length > MAX_FAVORITE_RADIO_SHOWS
+    albumsValue === undefined ||
+    tracksValue === undefined ||
+    radioShowValues === undefined
   ) {
     return undefined;
   }
@@ -622,7 +586,7 @@ export function sanitizeLocalFavorites(
   const albums = sanitizeFavoriteAlbums(albumsValue, wantedAlbumIds);
   const tracks = sanitizeFavoriteTracks(tracksValue, wantedSongIds);
   const radioShows = sanitizeFavoriteRadioShows(
-    rawRadioShows,
+    radioShowValues,
     wantedRadioShowIds,
   );
   if (!albums || !tracks || !radioShows) return undefined;
@@ -661,16 +625,17 @@ export function readLocalFavorites(): LocalFavoriteCollection {
 export function parseLocalFavoritesSnapshot(
   value: OwnDataValue,
 ): LocalFavoriteCollection | undefined {
-  const version = recordProperty(value, "version");
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return undefined;
+  const version = record.version;
   if (
-    !isOwnDataRecord(value) ||
     !isNumberValue(version) ||
     !Number.isSafeInteger(version) ||
     ![1, 2, LOCAL_FAVORITES_VERSION].includes(version)
   ) {
     return undefined;
   }
-  const sanitized = sanitizeLocalFavorites(value);
+  const sanitized = sanitizeLocalFavorites(record);
   if (!sanitized) return undefined;
   if (version === LOCAL_FAVORITES_VERSION) {
     return localTrackStarIndexAndRadio(sanitized);

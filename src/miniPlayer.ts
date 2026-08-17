@@ -1,14 +1,11 @@
 import { MAX_PLAYBACK_POSITION_SECONDS } from "./playbackClock";
 import { normalizedReleaseTitle } from "./playerState";
 import {
+  copyOwnDataArray,
   isBooleanValue,
-  isDataArray,
   isNumberValue,
-  isOwnDataRecord,
   isStringValue,
-  MISSING_OWN_DATA_PROPERTY,
-  ownDataProperty,
-  type OwnDataPropertyResult,
+  projectOwnDataRecord,
   type OwnDataValue,
 } from "./ownData";
 import type { Track } from "./types";
@@ -88,7 +85,7 @@ function replaceMiniPlayerControlCharacters(value: string): string {
 }
 
 function isBoundedText(
-  value: OwnDataPropertyResult,
+  value: OwnDataValue,
   allowEmpty = false,
 ): value is string {
   return (
@@ -113,7 +110,7 @@ function boundedText(
   );
 }
 
-function isArtworkUrl(value: OwnDataPropertyResult): value is string {
+function isArtworkUrl(value: OwnDataValue): value is string {
   if (typeof value !== "string" || value.length > MAX_ARTWORK_URL_LENGTH) {
     return false;
   }
@@ -212,23 +209,18 @@ export function createMiniPlayerSnapshot(
 }
 
 function parseMiniPlayerTrack(
-  value: OwnDataPropertyResult,
+  value: OwnDataValue,
 ): MiniPlayerTrack | undefined {
-  if (!isOwnDataRecord(value)) return undefined;
-  const id = ownDataProperty(value, "id");
-  const title = ownDataProperty(value, "title");
-  const artist = ownDataProperty(value, "artist");
-  const album = ownDataProperty(value, "album");
-  const artworkUrlValue = ownDataProperty(value, "artworkUrl");
-  const artworkUrl = artworkUrlValue === MISSING_OWN_DATA_PROPERTY
-    ? undefined
-    : artworkUrlValue;
-  const palette = ownDataProperty(value, "palette");
-  if (!isDataArray(palette)) return undefined;
-  const paletteLength = ownDataProperty(palette, "length");
-  if (paletteLength !== 2) return undefined;
-  const firstColor = ownDataProperty(palette, "0");
-  const secondColor = ownDataProperty(palette, "1");
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return undefined;
+  const id = record.id;
+  const title = record.title;
+  const artist = record.artist;
+  const album = record.album;
+  const artworkUrl = record.artworkUrl;
+  const colors = copyOwnDataArray(record.palette, 2);
+  if (colors === undefined || colors.length !== 2) return undefined;
+  const [firstColor, secondColor] = colors;
   if (
     !isBoundedText(id) ||
     !isBoundedText(title) ||
@@ -255,20 +247,18 @@ function parseMiniPlayerTrack(
 export function parseMiniPlayerSnapshot(
   value: OwnDataValue,
 ): MiniPlayerSnapshot | undefined {
-  if (!isOwnDataRecord(value)) return undefined;
-  const trackValue = ownDataProperty(value, "track");
-  const trackPayload = trackValue === MISSING_OWN_DATA_PROPERTY
-    ? undefined
-    : trackValue;
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return undefined;
+  const trackPayload = record.track;
   const track = trackPayload === undefined
     ? undefined
     : parseMiniPlayerTrack(trackPayload);
-  const playing = ownDataProperty(value, "playing");
-  const positionSeconds = ownDataProperty(value, "positionSeconds");
-  const durationSeconds = ownDataProperty(value, "durationSeconds");
-  const volume = ownDataProperty(value, "volume");
-  const canPrevious = ownDataProperty(value, "canPrevious");
-  const canNext = ownDataProperty(value, "canNext");
+  const playing = record.playing;
+  const positionSeconds = record.positionSeconds;
+  const durationSeconds = record.durationSeconds;
+  const volume = record.volume;
+  const canPrevious = record.canPrevious;
+  const canNext = record.canNext;
   if (
     (trackPayload !== undefined && !track) ||
     !isBooleanValue(playing) ||
@@ -309,14 +299,15 @@ export function parseMiniPlayerSnapshot(
 export function parseMiniPlayerCommand(
   value: OwnDataValue,
 ): MiniPlayerCommand | undefined {
-  if (!isOwnDataRecord(value)) return undefined;
-  const type = ownDataProperty(value, "type");
+  const record = projectOwnDataRecord(value);
+  if (record === undefined) return undefined;
+  const type = record.type;
   if (!isStringValue(type)) return undefined;
   if (type === "play-pause") return { type: "play-pause" };
   if (type === "previous") return { type: "previous" };
   if (type === "next") return { type: "next" };
   if (type === "show-main") return { type: "show-main" };
-  const positionSeconds = ownDataProperty(value, "positionSeconds");
+  const positionSeconds = record.positionSeconds;
   if (
     type === "seek" &&
     isNumberValue(positionSeconds) &&
@@ -326,7 +317,7 @@ export function parseMiniPlayerCommand(
   ) {
     return { type: "seek", positionSeconds };
   }
-  const volume = ownDataProperty(value, "volume");
+  const volume = record.volume;
   if (
     type === "volume" &&
     isNumberValue(volume) &&
