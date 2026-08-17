@@ -38,6 +38,16 @@ function playlistTrigger(playlistId: string) {
   return { identity, title, trigger };
 }
 
+function nowPlayingArtworkLink(trackId: string) {
+  const artwork = document.createElement("a");
+  artwork.className = "player__art-link";
+  artwork.dataset.codaTrackId = trackId;
+  artwork.href = "#/now-playing";
+  artwork.tabIndex = 0;
+  artwork.textContent = "Open Now Playing";
+  return artwork;
+}
+
 afterEach(() => {
   resetDetailNavigation();
   document.body.replaceChildren();
@@ -499,6 +509,137 @@ describe("detailNavigation module", () => {
       await cancelDetailNavigation();
       await closing;
       expect(detailReturnStateCount()).toBe(1);
+    } finally {
+      harness.restore();
+    }
+  });
+
+  it("restores Now Playing Back onto live compact artwork after the track advances", async () => {
+    const harness = installDocumentViewTransitionHarness({ autoFinish: true });
+    const artwork = nowPlayingArtworkLink("track-1");
+    const albumLink = document.createElement("a");
+    albumLink.dataset.playerAlbumLink = "";
+    albumLink.href = "#/album";
+    albumLink.tabIndex = 0;
+    albumLink.textContent = "Album";
+    const heading = document.createElement("h1");
+    heading.id = "now-playing-heading";
+    heading.tabIndex = -1;
+    heading.textContent = "Now Playing";
+    document.body.append(artwork, albumLink, heading);
+    try {
+      await openDetail({
+        kind: "now-playing",
+        source: prepareDetailSource("now-playing", "track-1", true),
+        targetKey: "now-playing",
+        update: () => ({
+          locationKey: "now-playing-open",
+          outcome: "rendered",
+        }),
+      });
+      artwork.dataset.codaTrackId = "track-2";
+
+      await closeDetail({
+        identity: "now-playing",
+        kind: "now-playing",
+        requestKey: "now-playing-open",
+        targetKey: "now-playing",
+        update: () => "rendered",
+      });
+
+      expect(artwork).toHaveFocus();
+      expect(heading).not.toHaveFocus();
+      expect(albumLink).not.toHaveFocus();
+    } finally {
+      harness.restore();
+    }
+  });
+
+  it("reasserts reverse focus after the view transition finishes", async () => {
+    const harness = installDocumentViewTransitionHarness({ autoFinish: false });
+    const playlistId = "playlist-reassert";
+    const source = playlistTrigger(playlistId);
+    document.body.append(source.trigger);
+    try {
+      const opening = openDetail({
+        kind: "playlist",
+        source: prepareDetailSource(
+          "playlist",
+          playlistId,
+          true,
+          source.trigger,
+        ),
+        targetKey: `playlist:${playlistId}`,
+        update: () => ({
+          locationKey: "reassert-open",
+          outcome: "rendered",
+        }),
+      });
+      await vi.waitFor(() => expect(harness.transitions[0]).toBeDefined());
+      harness.transitions[0]?.resolve();
+      await opening;
+
+      const closing = closeDetail({
+        identity: playlistId,
+        kind: "playlist",
+        requestKey: "reassert-open",
+        targetKey: `playlist:${playlistId}`,
+        update: () => "rendered",
+      });
+      await vi.waitFor(() => expect(source.trigger).toHaveFocus());
+      document.body.tabIndex = -1;
+      document.body.focus();
+      expect(document.body).toHaveFocus();
+      harness.transitions[1]?.resolve();
+      await closing;
+
+      expect(source.trigger).toHaveFocus();
+    } finally {
+      document.body.removeAttribute("tabindex");
+      harness.restore();
+    }
+  });
+
+  it("does not steal a user focus change during the view transition", async () => {
+    const harness = installDocumentViewTransitionHarness({ autoFinish: false });
+    const playlistId = "playlist-keep-focus";
+    const source = playlistTrigger(playlistId);
+    const sentinel = document.createElement("button");
+    sentinel.textContent = "Other";
+    document.body.append(source.trigger, sentinel);
+    try {
+      const opening = openDetail({
+        kind: "playlist",
+        source: prepareDetailSource(
+          "playlist",
+          playlistId,
+          true,
+          source.trigger,
+        ),
+        targetKey: `playlist:${playlistId}`,
+        update: () => ({
+          locationKey: "keep-focus-open",
+          outcome: "rendered",
+        }),
+      });
+      await vi.waitFor(() => expect(harness.transitions[0]).toBeDefined());
+      harness.transitions[0]?.resolve();
+      await opening;
+
+      const closing = closeDetail({
+        identity: playlistId,
+        kind: "playlist",
+        requestKey: "keep-focus-open",
+        targetKey: `playlist:${playlistId}`,
+        update: () => "rendered",
+      });
+      await vi.waitFor(() => expect(source.trigger).toHaveFocus());
+      sentinel.focus();
+      expect(sentinel).toHaveFocus();
+      harness.transitions[1]?.resolve();
+      await closing;
+
+      expect(sentinel).toHaveFocus();
     } finally {
       harness.restore();
     }

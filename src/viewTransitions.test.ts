@@ -46,6 +46,7 @@ function expectUpdateCalledWithToken(update: ReturnType<typeof vi.fn>) {
     expect.objectContaining({
       id: expect.any(Number),
       isCurrent: expect.any(Function),
+      settled: expect.any(Promise),
     }),
   );
 }
@@ -377,18 +378,23 @@ describe("detail view transitions", () => {
     const finished = deferred();
     installNativeTransition({ finished: finished.promise });
     let settled = false;
+    let tokenSettled = false;
 
-    const transition = transitionCodaView(vi.fn(), "now-playing-open").then(
-      () => {
-        settled = true;
-      },
-    );
+    const transition = transitionCodaView((token) => {
+      void token.settled.then(() => {
+        tokenSettled = true;
+      });
+    }, "now-playing-open").then(() => {
+      settled = true;
+    });
     await Promise.resolve();
 
     expect(settled).toBe(false);
+    expect(tokenSettled).toBe(false);
     finished.resolve();
     await transition;
     expect(settled).toBe(true);
+    expect(tokenSettled).toBe(true);
   });
 
   it("skips an owned snapshot when the host cannot make it compositor-only", async () => {
@@ -624,6 +630,22 @@ describe("detail view transitions", () => {
     await expect(
       transitionCodaView(() => Promise.reject(failure), "album-detail"),
     ).rejects.toBe(failure);
+  });
+
+  it("propagates a non-Error native route update rejection", async () => {
+    installNativeTransition();
+
+    await expect(
+      transitionCodaView(
+        () => Promise.reject("route commit failed"),
+        "album-detail",
+      ),
+    ).rejects.toEqual(
+      expect.objectContaining({
+        cause: "route commit failed",
+        message: "Route update rejected",
+      }),
+    );
   });
 
   it("awaits a fallback update when native startup throws", async () => {

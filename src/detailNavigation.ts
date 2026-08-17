@@ -327,6 +327,23 @@ function canReverseShared(state: DetailReturnState | undefined): boolean {
   return state.slot !== undefined && slots.includes(state.slot);
 }
 
+function liveCompactPlayerArtwork(): HTMLElement | undefined {
+  return (
+    document.querySelector<HTMLElement>(".player__art-link") ??
+    document.querySelector<HTMLElement>("[data-player-album-link]") ??
+    undefined
+  );
+}
+
+function activeElementNeedsFocusRestore(): boolean {
+  const active = document.activeElement;
+  if (!(active instanceof Node)) return true;
+  if (active === document.body || active === document.documentElement) {
+    return true;
+  }
+  return !active.isConnected;
+}
+
 function findReturnTrigger(state: DetailReturnState): HTMLElement | undefined {
   const slotted = findDetailTransitionTrigger(
     state.kind,
@@ -334,6 +351,7 @@ function findReturnTrigger(state: DetailReturnState): HTMLElement | undefined {
     state.slot,
   );
   if (slotted) return slotted;
+  if (state.kind === "now-playing") return liveCompactPlayerArtwork();
   if (state.slot === "player-album") {
     return (
       document.querySelector<HTMLElement>("[data-player-album-link]") ?? undefined
@@ -482,6 +500,7 @@ async function performClose(input: DetailCloseInput): Promise<RouteCommitOutcome
   pendingScrollTop = returnScrollTop;
   let focusApplied = false;
   let restoreReturn = () => {};
+  let returnFocusTarget: HTMLElement | undefined;
   let returnMarkersApplied = false;
   let returnPrepared = false;
   let outcome: RouteCommitOutcome = "failed";
@@ -512,9 +531,10 @@ async function performClose(input: DetailCloseInput): Promise<RouteCommitOutcome
     }
     let focusTarget: HTMLElement | undefined;
     if (stored?.headingFallbackId) {
+      const headingId = stored.headingFallbackId;
       focusTarget = await awaitVirtualReturnTrigger(
         token,
-        () => document.getElementById(stored.headingFallbackId ?? "") ?? undefined,
+        () => document.getElementById(headingId) ?? undefined,
         null,
         0,
       );
@@ -528,8 +548,18 @@ async function performClose(input: DetailCloseInput): Promise<RouteCommitOutcome
       if (trigger?.isConnected) focusTarget = trigger;
     }
     if (!closeStillCurrent(token)) return;
-    focusTarget?.focus({ preventScroll: true });
+    if (focusTarget?.isConnected) {
+      focusTarget.focus({ preventScroll: true });
+      returnFocusTarget = focusTarget;
+    }
     focusApplied = true;
+  };
+
+  const reassertReturnFocus = (token: TransitionToken) => {
+    if (input.restoreFocus === false || !closeStillCurrent(token)) return;
+    if (!returnFocusTarget?.isConnected) return;
+    if (!activeElementNeedsFocusRestore()) return;
+    returnFocusTarget.focus({ preventScroll: true });
   };
 
   const prepareCommittedReturn = async (token: TransitionToken) => {
@@ -569,7 +599,11 @@ async function performClose(input: DetailCloseInput): Promise<RouteCommitOutcome
           pendingScrollTop = undefined;
           return;
         }
-        if (closeCommitSucceeded(outcome)) await prepareCommittedReturn(token);
+        if (closeCommitSucceeded(outcome)) {
+          await prepareCommittedReturn(token);
+          // WebKit can clobber focus onto body during snapshot teardown.
+          void token.settled.then(() => reassertReturnFocus(token));
+        }
       },
       reversesShared ? descriptor.closeKind : "page-back",
       true,

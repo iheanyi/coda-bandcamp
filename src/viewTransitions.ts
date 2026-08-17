@@ -38,6 +38,7 @@ type CodaViewTransition = {
 export type TransitionToken = Readonly<{
   id: number;
   isCurrent: () => boolean;
+  settled: Promise<void>;
 }>;
 
 export type CodaViewTransitionUpdate = (
@@ -56,11 +57,20 @@ export function currentTransitionId(): number {
   return latestTransitionId;
 }
 
-function createTransitionToken(id: number): TransitionToken {
+function createTransitionToken(
+  id: number,
+  settled: Promise<void>,
+): TransitionToken {
   return {
     id,
     isCurrent: () => isCurrentTransition(id),
+    settled,
   };
+}
+
+function capturedUpdateFailure(cause: unknown): Error {
+  if (cause instanceof Error) return cause;
+  return new Error("Route update rejected", { cause });
 }
 
 function transitionFailureReason(cause: unknown, fallback: string): string {
@@ -640,7 +650,11 @@ export function transitionCodaView(
   userInitiated = false,
 ): Promise<void> {
   const transitionId = ++latestTransitionId;
-  const token = createTransitionToken(transitionId);
+  let settleToken = () => {};
+  const settled = new Promise<void>((resolve) => {
+    settleToken = resolve;
+  });
+  const token = createTransitionToken(transitionId, settled);
   const motionProfile = snapshotMotionProfile();
   activeTransition?.transition.skipTransition?.();
   activeTransition = undefined;
@@ -659,7 +673,12 @@ export function transitionCodaView(
   const prefersReducedMotion = reducedMotionRequested();
   const pageTransition = isPageTransition(kind);
   if (pageTransition && !prefersReducedMotion) {
-    return transitionRouterOwnedPage(commitUpdate, kind, motionProfile, token);
+    return transitionRouterOwnedPage(
+      commitUpdate,
+      kind,
+      motionProfile,
+      token,
+    ).finally(settleToken);
   }
   const startViewTransition = readStartViewTransition(document);
   if (!startViewTransition || prefersReducedMotion) {
@@ -669,7 +688,7 @@ export function transitionCodaView(
       motionProfile,
       prefersReducedMotion,
       pageTransition,
-    );
+    ).finally(settleToken);
   }
 
   const transitionClass = codaViewTransitionClass(kind);
@@ -717,8 +736,8 @@ export function transitionCodaView(
           updateMs: performance.now() - updateStartedAt,
         },
       });
-      if (cause instanceof Error) updateFailure = cause;
-      throw cause;
+      updateFailure = capturedUpdateFailure(cause);
+      throw updateFailure;
     }
     return Promise.resolve(result).then(
       () => {
@@ -735,8 +754,8 @@ export function transitionCodaView(
             updateMs: performance.now() - updateStartedAt,
           },
         });
-        if (cause instanceof Error) updateFailure = cause;
-        throw cause;
+        updateFailure = capturedUpdateFailure(cause);
+        throw updateFailure;
       },
     );
   };
@@ -863,7 +882,7 @@ export function transitionCodaView(
   const sourceFeedback = userInitiated
     ? beginSharedSourceFeedback(source)
     : undefined;
-  if (!sourceFeedback) return startNativeTransition();
+  if (!sourceFeedback) return startNativeTransition().finally(settleToken);
   updateMotionDiagnostic(diagnosticId, {
     phaseTimings: {
       sourceFeedbackMs: performance.now() - coordinatorStartedAt,
@@ -878,5 +897,6 @@ export function transitionCodaView(
   });
   return sourceFeedback.readyToCapture
     .then(startNativeTransition)
-    .finally(sourceFeedback.cancel);
+    .finally(sourceFeedback.cancel)
+    .finally(settleToken);
 }
