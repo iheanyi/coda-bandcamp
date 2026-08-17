@@ -7,6 +7,7 @@ import {
 import {
   LocalFavoritesPreparationClient,
   localFavoritesInputMatchesPrepared,
+  localFavoritesWorkerPrepared,
   parseLocalFavoritesPreparationRequest,
   parseLocalFavoritesPreparationResponse,
   serializeLocalFavorites,
@@ -40,6 +41,18 @@ const favorites: LocalFavoriteCollection = {
 };
 
 const runImmediately = (callback: () => void): void => callback();
+
+function parseSerializeRequest(source: LocalFavoriteCollection) {
+  const request = parseLocalFavoritesPreparationRequest({
+    kind: "serialize-local-favorites",
+    requestId: 1,
+    favorites: source,
+  });
+  if (!request || request.kind !== "serialize-local-favorites") {
+    throw new Error("Expected a validated serialization request.");
+  }
+  return request;
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -115,6 +128,71 @@ describe("local Favorites preparation", () => {
     expect(
       localFavoritesInputMatchesPrepared(prepared.favorites, prepared),
     ).toBe(true);
+  });
+
+  it("takes the worker fast path for a canonical already-sanitized collection", () => {
+    const canonical = serializeLocalFavorites(favorites).favorites;
+    const request = parseSerializeRequest(canonical);
+    const prepared = serializeValidatedLocalFavorites(request.favorites);
+    const workerPrepared = localFavoritesWorkerPrepared(
+      prepared,
+      request.sourceFavorites,
+    );
+
+    expect(
+      localFavoritesInputMatchesPrepared(request.sourceFavorites, prepared),
+    ).toBe(true);
+    expect(workerPrepared).toEqual({ serialized: prepared.serialized });
+    expect(workerPrepared).not.toHaveProperty("favorites");
+  });
+
+  it("returns the sanitized clone when the worker collection actually changed", () => {
+    const canonical = serializeLocalFavorites(favorites).favorites;
+    const prepared = serializeValidatedLocalFavorites(
+      parseSerializeRequest(canonical).favorites,
+    );
+    const changed: LocalFavoriteCollection = {
+      ...canonical,
+      songIds: ["track-2"],
+      tracks: [{ ...canonical.tracks[0], id: "track-2", title: "Elsewhere" }],
+    };
+    const workerPrepared = localFavoritesWorkerPrepared(prepared, changed);
+
+    expect(localFavoritesInputMatchesPrepared(changed, prepared)).toBe(false);
+    expect(workerPrepared.favorites).toBe(prepared.favorites);
+    expect(workerPrepared.serialized).toBe(prepared.serialized);
+  });
+
+  it("matches a key-order-only difference against the worker snapshot", () => {
+    const canonical = serializeLocalFavorites(favorites).favorites;
+    const prepared = serializeValidatedLocalFavorites(
+      parseSerializeRequest(canonical).favorites,
+    );
+    const reordered = {
+      radioShows: canonical.radioShows,
+      radioShowIds: canonical.radioShowIds,
+      tracks: canonical.tracks,
+      albums: canonical.albums,
+      songIds: canonical.songIds,
+      albumIds: canonical.albumIds,
+    };
+
+    expect(localFavoritesInputMatchesPrepared(reordered, prepared)).toBe(true);
+    expect(localFavoritesWorkerPrepared(prepared, reordered)).not.toHaveProperty(
+      "favorites",
+    );
+    expect(
+      localFavoritesInputMatchesPrepared(
+        {
+          songIds: canonical.songIds,
+          albums: canonical.albums,
+          tracks: canonical.tracks,
+          radioShowIds: canonical.radioShowIds,
+          radioShows: canonical.radioShows,
+        },
+        prepared,
+      ),
+    ).toBe(false);
   });
 
   it("validates unknown worker requests and responses before using them", () => {

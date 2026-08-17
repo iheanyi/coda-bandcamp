@@ -8,10 +8,12 @@ import type {
 } from "./types";
 import { parseLibraryDate } from "./libraryDates";
 import {
+  hasControlCharacter,
   INVALID_OWN_DATA_PROPERTY as INVALID_PROPERTY,
   isDataArray,
   isNumberValue,
   isOwnDataRecord,
+  isStringValue,
   MISSING_OWN_DATA_PROPERTY as MISSING_PROPERTY,
   ownDataProperty,
   type OwnDataPropertyResult,
@@ -75,25 +77,17 @@ function arrayElement(
   return ownDataProperty(values, String(index));
 }
 
-function hasControlCharacters(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const codeUnit = value.charCodeAt(index);
-    if (codeUnit <= 0x1f || (codeUnit >= 0x7f && codeUnit <= 0x9f)) {
-      return true;
-    }
-  }
-  return false;
-}
-
+// ownData has no bounded-text helper; isStringValue + hasControlCharacter
+// omit the 1,024-code-unit cap and required-nonempty policy used here.
 function isText(
   value: OwnDataPropertyResult,
   required = true,
 ): value is string {
   return (
-    typeof value === "string" &&
+    isStringValue(value) &&
     value.length <= MAX_TEXT_LENGTH &&
     (!required || value.length > 0) &&
-    !hasControlCharacters(value)
+    !hasControlCharacter(value)
   );
 }
 
@@ -125,6 +119,8 @@ function isMusicBrainzId(value: OwnDataPropertyResult): value is string {
   );
 }
 
+// ownData.isAbsent is only null/undefined; ownDataProperty still yields
+// MISSING_OWN_DATA_PROPERTY for omitted fields, which must count as absent.
 function isAbsent(value: OwnDataPropertyResult): boolean {
   return (
     value === MISSING_PROPERTY ||

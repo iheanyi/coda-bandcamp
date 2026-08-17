@@ -30,6 +30,11 @@ export type PreparedLocalFavorites = {
   serialized: string;
 };
 
+export type LocalFavoritesWorkerPreparedResult = {
+  serialized: string;
+  favorites?: LocalFavoriteCollection;
+};
+
 export type LocalFavoritesPreparationRequest =
   | {
       kind: "parse-local-favorites";
@@ -77,10 +82,7 @@ export type LocalFavoritesPreparationResponse =
   | {
       kind: "local-favorites-serialized";
       requestId: number;
-      prepared: {
-        favorites?: LocalFavoriteCollection;
-        serialized: string;
-      };
+      prepared: LocalFavoritesWorkerPreparedResult;
     }
   | {
       kind: "local-favorites-error";
@@ -523,10 +525,25 @@ export function parseLocalFavoritesPreparationResponse(
   };
 }
 
+function localFavoritesSnapshot(
+  favorites: LocalFavoriteCollection,
+): LocalFavoritesSnapshot {
+  return {
+    version: LOCAL_FAVORITES_VERSION,
+    ...localTrackStarIndexAndRadio(favorites),
+  };
+}
+
+function serializeLocalFavoritesSnapshot(
+  snapshot: LocalFavoritesSnapshot,
+): string {
+  return JSON.stringify(snapshot);
+}
+
 function prepareLocalFavoritesSnapshot(
   snapshot: LocalFavoritesSnapshot,
 ): PreparedLocalFavorites {
-  const serialized = JSON.stringify(snapshot);
+  const serialized = serializeLocalFavoritesSnapshot(snapshot);
   if (serialized.length > MAX_LOCAL_FAVORITES_BYTES) {
     throw new Error("Local favorites are too large to save safely.");
   }
@@ -534,20 +551,46 @@ function prepareLocalFavoritesSnapshot(
   return { favorites: sanitized, serialized };
 }
 
+function isOwnDataField(
+  value: OwnDataPropertyResult,
+): value is OwnDataValue {
+  return value !== MISSING_PROPERTY && value !== INVALID_PROPERTY;
+}
+
+function isLocalFavoriteCollectionFields(
+  fields: {
+    albumIds: OwnDataValue;
+    songIds: OwnDataValue;
+    albums: OwnDataValue;
+    tracks: OwnDataValue;
+    radioShowIds: OwnDataValue;
+    radioShows: OwnDataValue;
+  },
+): fields is LocalFavoriteCollection {
+  return (
+    isDataArray(fields.albumIds) &&
+    isDataArray(fields.songIds) &&
+    isDataArray(fields.albums) &&
+    isDataArray(fields.tracks) &&
+    isDataArray(fields.radioShowIds) &&
+    isDataArray(fields.radioShows)
+  );
+}
+
 export function serializeValidatedLocalFavorites(
   validated: ValidatedLocalFavorites,
 ): PreparedLocalFavorites {
-  const snapshot: LocalFavoritesSnapshot = {
-    version: LOCAL_FAVORITES_VERSION,
-    ...localTrackStarIndexAndRadio(validated.collection),
-  };
-  return prepareLocalFavoritesSnapshot(snapshot);
+  return prepareLocalFavoritesSnapshot(
+    localFavoritesSnapshot(validated.collection),
+  );
 }
 
 export function serializeLocalFavorites(
   favorites: LocalFavoriteCollection,
 ): PreparedLocalFavorites {
-  return prepareLocalFavoritesSnapshot(createLocalFavoritesSnapshot(favorites));
+  return prepareLocalFavoritesSnapshot(
+    localFavoritesSnapshot(createLocalFavoritesSnapshot(favorites)),
+  );
 }
 
 export function localFavoritesInputMatchesPrepared(
@@ -562,26 +605,43 @@ export function localFavoritesInputMatchesPrepared(
   const tracks = objectProperty(value, "tracks");
   const radioShows = objectProperty(value, "radioShows");
   if (
-    [albumIds, songIds, radioShowIds, albums, tracks, radioShows].some(
-      (field) =>
-        field === MISSING_PROPERTY || field === INVALID_PROPERTY,
-    )
+    !isOwnDataField(albumIds) ||
+    !isOwnDataField(songIds) ||
+    !isOwnDataField(radioShowIds) ||
+    !isOwnDataField(albums) ||
+    !isOwnDataField(tracks) ||
+    !isOwnDataField(radioShows)
   ) {
     return false;
   }
+  const fields = {
+    albumIds,
+    songIds,
+    albums,
+    tracks,
+    radioShowIds,
+    radioShows,
+  };
+  if (!isLocalFavoriteCollectionFields(fields)) return false;
   try {
-    return JSON.stringify({
-      version: LOCAL_FAVORITES_VERSION,
-      albumIds,
-      songIds,
-      radioShowIds,
-      albums,
-      tracks,
-      radioShows,
-    }) === prepared.serialized;
+    return serializeLocalFavoritesSnapshot(localFavoritesSnapshot(fields)) ===
+      prepared.serialized;
   } catch {
     return false;
   }
+}
+
+export function localFavoritesWorkerPrepared(
+  prepared: PreparedLocalFavorites,
+  sourceFavorites: OwnDataValue,
+): LocalFavoritesWorkerPreparedResult {
+  if (localFavoritesInputMatchesPrepared(sourceFavorites, prepared)) {
+    return { serialized: prepared.serialized };
+  }
+  return {
+    serialized: prepared.serialized,
+    favorites: prepared.favorites,
+  };
 }
 
 function defaultWorkerFactory(): LocalFavoritesWorkerPort | undefined {

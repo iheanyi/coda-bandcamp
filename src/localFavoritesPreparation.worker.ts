@@ -1,5 +1,5 @@
 import {
-  localFavoritesInputMatchesPrepared,
+  localFavoritesWorkerPrepared,
   parseLocalFavoritesPreparationRequest,
   serializeValidatedLocalFavorites,
   type LocalFavoritesPreparationResponse,
@@ -27,19 +27,14 @@ globalThis.addEventListener(
         return;
       }
       const prepared = serializeValidatedLocalFavorites(request.favorites);
-      const inputMatches = localFavoritesInputMatchesPrepared(
-        request.sourceFavorites,
-        prepared,
-      );
-      const response: LocalFavoritesPreparationResponse = {
+      respond({
         kind: "local-favorites-serialized",
         requestId: request.requestId,
-        prepared: {
-          serialized: prepared.serialized,
-        },
-      };
-      if (!inputMatches) response.prepared.favorites = prepared.favorites;
-      respond(response);
+        prepared: localFavoritesWorkerPrepared(
+          prepared,
+          request.sourceFavorites,
+        ),
+      });
     } catch (cause) {
       const error = cause instanceof Error
         ? cause
