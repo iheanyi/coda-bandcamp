@@ -3,6 +3,7 @@ import {
   emptyLocalFavorites,
   LOCAL_FAVORITES_VERSION,
   parseLocalFavoritesSerialized,
+  sanitizeLocalFavorites,
 } from "./localFavorites";
 import {
   LocalFavoritesPreparationClient,
@@ -320,6 +321,37 @@ describe("local Favorites preparation", () => {
         ),
       },
     })).toBeUndefined();
+  });
+
+  it("rejects explicit-null optional fields that lenient storage parsing absorbs", () => {
+    const canonical = serializeLocalFavorites(favorites).favorites;
+    const canonicalTrack = canonical.tracks[0];
+    const responseFor = (candidate: OwnDataValue) =>
+      parseLocalFavoritesPreparationResponse({
+        kind: "local-favorites-parsed",
+        requestId: 1,
+        favorites: { ...canonical, tracks: [candidate] },
+      });
+
+    expect(responseFor(canonicalTrack)).toMatchObject({
+      kind: "local-favorites-parsed",
+      requestId: 1,
+    });
+    // Worker output never contains null: JSON.stringify drops undefined and
+    // the sanitizers omit absent fields. A null here is corruption, so the
+    // prepared-shape checks stay strictly `=== undefined` even though the
+    // lenient storage/native parse path treats the same null as absent.
+    for (const field of ["disc", "coverArt", "starredAt", "artworkUrl"]) {
+      const trackWithNullField: OwnDataValue = {
+        ...canonicalTrack,
+        [field]: null,
+      };
+      expect(responseFor(trackWithNullField)).toBeUndefined();
+      expect(sanitizeLocalFavorites({
+        ...canonical,
+        tracks: [trackWithNullField],
+      })).toBeDefined();
+    }
   });
 
   it("serializes a boundary-validated worker request without a second parse", () => {
