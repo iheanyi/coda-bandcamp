@@ -8,6 +8,17 @@ on:
       - "**"
   pull_request:
 
+# A branch push and its open PR trigger two full matrix runs for the same
+# head commit. Key both by the branch-head SHA (a PR run's github.sha is the
+# synthetic merge commit, so it must use pull_request.head.sha) and let the
+# newer run supersede the older. Main runs take a run-unique group instead:
+# they save the release caches and produce the release gate's required
+# checks, so they must never be cancelled, queued behind, or joined by any
+# other run.
+concurrency:
+  group: cross-platform-${{ github.ref == 'refs/heads/main' && github.run_id || github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 permissions:
   contents: read
 

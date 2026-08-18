@@ -441,6 +441,38 @@ test("publish installs minisign from the baked index with a guarded fallback", (
   );
 });
 
+test("same-head push and PR runs deduplicate without ever touching main", () => {
+  const concurrency = workflow.match(/\nconcurrency:\n(?: {2}.+\n)+/)?.[0];
+  assert.ok(
+    concurrency,
+    "cross-platform workflow must declare a concurrency block",
+  );
+
+  const group = concurrency.match(/group: (.+)\n/)?.[1];
+  assert.ok(group, "concurrency must declare a group");
+  assert.match(
+    group,
+    /github\.event\.pull_request\.head\.sha \|\| github\.sha/,
+    "push and PR runs must share one group keyed by the branch-head SHA",
+  );
+  assert.match(
+    group,
+    /github\.ref == 'refs\/heads\/main' && github\.run_id/,
+    "main runs must take a run-unique group no other run can join",
+  );
+  assert.match(
+    concurrency,
+    /cancel-in-progress: \$\{\{ github\.ref != 'refs\/heads\/main' \}\}/,
+    "cancellation must be scoped so it can never affect main runs",
+  );
+
+  assert.match(
+    releaseWorkflow,
+    /concurrency:\n {2}group: release\n {2}cancel-in-progress: false\n/,
+    "the release workflow's dedicated concurrency group must stay untouched",
+  );
+});
+
 test("workflow probes survive CRLF checkouts", () => {
   // Replays the four probes that failed on the 2026-08-18 windows-latest run
   // against a simulated CRLF checkout: the raw text must reproduce that
