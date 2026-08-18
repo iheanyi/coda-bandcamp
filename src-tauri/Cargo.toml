@@ -93,6 +93,6 @@ tauri = { version = "2", default-features = false, features = ["test"] }
 [profile.release]
 panic = "abort"
 codegen-units = 1
-lto = true
+lto = "thin"
 opt-level = "s"
 strip = true

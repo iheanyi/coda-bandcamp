@@ -91,6 +91,92 @@ test("release builds retry transient packaging and asset-upload failures in plac
   assert.match(tauriActionStep, /retryAttempts: 2/);
 });
 
+test("release tagging and publishing are gated on green cross-platform CI", () => {
+  const prepareJob = releaseWorkflow.match(
+    /\n {2}prepare-release:[\s\S]*?(?=\n {2}[\w-]+:\n)/,
+  )?.[0];
+  assert.ok(prepareJob, "Release workflow is missing its prepare job");
+
+  const gateIndex = prepareJob.indexOf("check-runs?filter=latest");
+  const tagCreationIndex = prepareJob.indexOf("tools/prepare-release.mjs");
+  assert.ok(gateIndex > -1, "prepare job must assert CI check-run results");
+  assert.ok(
+    tagCreationIndex > gateIndex,
+    "the green-CI gate must run before the tag-creating prepare step",
+  );
+  assert.match(
+    prepareJob,
+    /permissions:\n {6}checks: read/,
+    "prepare job needs checks: read to query check runs",
+  );
+
+  assert.doesNotMatch(
+    releaseWorkflow,
+    /npm (run )?test/,
+    "releases must not re-run the test suite; ordinary CI owns tests",
+  );
+  assert.doesNotMatch(
+    prepareJob,
+    /npm ci/,
+    "the release gate must stay dependency-free and fast",
+  );
+
+  const requiredChecks = releaseWorkflow
+    .match(/required_checks=\(([^)]+)\)/)?.[1]
+    ?.split(/\s+/);
+  const ciPlatforms = [...workflow.matchAll(/platform: ([\w.-]+)/g)].map(
+    (match) => match[1],
+  );
+  assert.ok(requiredChecks?.length, "gate must declare required checks");
+  assert.ok(ciPlatforms.length, "branch CI must declare matrix platforms");
+  assert.deepEqual(
+    [...requiredChecks].sort(),
+    [...new Set(ciPlatforms)].sort(),
+    "gate's required checks must match cross-platform CI job names exactly",
+  );
+
+  for (const job of ["prepare-draft", "build-release", "publish-release"]) {
+    const jobBlock = releaseWorkflow.match(
+      new RegExp(`\\n {2}${job}:[\\s\\S]*?(?=\\n {2}[\\w-]+:\\n|$)`),
+    )?.[0];
+    assert.ok(jobBlock, `Release workflow is missing its ${job} job`);
+    const needsBlock = jobBlock.match(
+      /needs:(?: [\w-]+|(?:\n {6}- [\w-]+)+)/,
+    )?.[0];
+    assert.ok(needsBlock, `${job} must declare needs`);
+    assert.match(
+      needsBlock,
+      /prepare-release/,
+      `${job} must descend from the green-CI gate`,
+    );
+  }
+});
+
+test("release builds skip only the already-run typecheck", async () => {
+  assert.match(
+    releaseWorkflow,
+    /args: --config src-tauri\/tauri\.release\.conf\.json --target \$\{\{ matrix\.target \}\}/,
+  );
+  assert.match(
+    workflow,
+    /- run: npm run build\n/,
+    "branch CI must keep its own typecheck via npm run build",
+  );
+
+  const releaseOverlay = JSON.parse(
+    await readFile(
+      new URL("../src-tauri/tauri.release.conf.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  assert.equal(releaseOverlay.build.beforeBuildCommand, "npx vite build");
+  assert.equal(
+    releaseOverlay.bundle,
+    undefined,
+    "release overlay must not touch bundle settings such as updater artifacts",
+  );
+});
+
 test("release draft verification accepts only matching text metadata", async () => {
   await withTemporaryDirectory("coda-release-draft-", async (directory) => {
     const releasePath = join(directory, "release.json");
@@ -192,4 +278,59 @@ test("release preparation rejects incomplete automation input", () => {
   const result = runTool("tools/prepare-release.mjs", []);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Event must be push or workflow_dispatch/u);
+});
+
+test("every workflow job declares an execution timeout", () => {
+  for (const [name, contents] of [
+    ["cross-platform", workflow],
+    ["release", releaseWorkflow],
+  ]) {
+    const jobsStart = contents.indexOf("\njobs:\n");
+    assert.ok(jobsStart >= 0, `${name} workflow is missing a jobs section`);
+    const jobBlocks = contents
+      .slice(jobsStart + "\njobs:\n".length)
+      .split(/\n(?=  [\w-]+:\n)/);
+    assert.ok(jobBlocks.length > 0);
+    for (const block of jobBlocks) {
+      const jobName = block.match(/^ {2}([\w-]+):\n/)?.[1];
+      assert.ok(jobName, `${name} workflow has an unparseable job block`);
+      assert.match(
+        block,
+        /^ {4}timeout-minutes: \d+$/m,
+        `${name} job ${jobName} must declare timeout-minutes so a hung step cannot hold the release concurrency group for six hours`,
+      );
+    }
+  }
+});
+
+test("Linux apt cache stays shareable between branch CI and releases", () => {
+  const extractAptSetup = (name, contents) => {
+    const packageList = contents.match(
+      /sudo apt-get install -y \\\n([\s\S]*?patchelf)\n/,
+    )?.[1];
+    assert.ok(packageList, `${name} workflow is missing its apt package list`);
+    const cacheKey = contents.match(/key: (apt-archives-[^\n]+)/)?.[1];
+    assert.ok(cacheKey, `${name} workflow is missing the apt cache key`);
+    const restoreIndex = contents.indexOf("Restore apt package cache");
+    const installIndex = contents.indexOf("Install Linux system dependencies");
+    assert.ok(
+      restoreIndex >= 0 && restoreIndex < installIndex,
+      `${name} workflow must restore the apt cache before installing`,
+    );
+    return {
+      cacheKey,
+      packages: packageList
+        .split("\n")
+        .map((line) => line.replace(/[\s\\]+/g, ""))
+        .filter((line) => line !== "" && !line.startsWith("-o")),
+    };
+  };
+
+  const branch = extractAptSetup("cross-platform", workflow);
+  const release = extractAptSetup("release", releaseWorkflow);
+  // Tag-triggered release runs can only restore caches saved on the default
+  // branch, so both workflows must agree on the key and the package set.
+  assert.equal(release.cacheKey, branch.cacheKey);
+  assert.deepEqual(release.packages, branch.packages);
+  assert.ok(branch.packages.includes("libwebkit2gtk-4.1-dev"));
 });

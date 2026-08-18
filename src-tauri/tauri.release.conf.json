@@ -1,8 +1,5 @@
 {
   "build": {
     "beforeBuildCommand": "npx vite build"
-  },
-  "bundle": {
-    "createUpdaterArtifacts": false
   }
 }

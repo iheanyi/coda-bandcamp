@@ -2,6 +2,10 @@ name: Cross-platform
 
 on:
   push:
+    # All branches, but not tag pushes: release.yml owns tag builds, and an
+    # unfiltered push trigger double-built every release tag's commit.
+    branches:
+      - "**"
   pull_request:
 
 permissions:
@@ -24,6 +28,7 @@ jobs:
             target: aarch64-apple-darwin
             bundleArgs: ""
     runs-on: ${{ matrix.platform }}
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -45,11 +50,36 @@ jobs:
           shared-key: coda-${{ matrix.target }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      # Keeps NSIS/WiX warm on main so tag-triggered release builds can
+      # restore them; caches saved on one tag are unreachable from the next.
+      - name: Cache Tauri bundler tools (Windows)
+        if: matrix.platform == 'windows-latest'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/AppData/Local/tauri
+          key: tauri-bundler-tools-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: tauri-bundler-tools-${{ runner.os }}-
+
+      # First-party apt download cache in a runner-owned staging directory.
+      # apt hash-verifies every cached .deb against the live index, so a stale
+      # cache degrades to a re-download, never to a wrong package. Bump the
+      # coda-v1 suffix when the package list changes.
+      - name: Restore apt package cache
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/apt-archives
+          key: apt-archives-${{ env.ImageOS }}-${{ env.ImageVersion }}-coda-v1
+
       - name: Install Linux system dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
+          mkdir -p "$RUNNER_TEMP/apt-archives/partial"
+          sudo rm -f /var/lib/man-db/auto-update
           sudo apt-get update
           sudo apt-get install -y \
+            -o Dir::Cache::archives="$RUNNER_TEMP/apt-archives" \
+            -o APT::Keep-Downloaded-Packages=true \
             libwebkit2gtk-4.1-dev \
             build-essential \
             curl \
@@ -61,6 +91,7 @@ jobs:
             librsvg2-dev \
             libsecret-1-dev \
             patchelf
+          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/apt-archives"
 
       - run: npm ci
       - run: npm run lint

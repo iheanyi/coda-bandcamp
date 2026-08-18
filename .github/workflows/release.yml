@@ -27,7 +27,9 @@ jobs:
   prepare-release:
     name: Prepare release
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
     permissions:
+      checks: read
       contents: write
     outputs:
       version: ${{ steps.prepare.outputs.version }}
@@ -63,15 +65,65 @@ jobs:
             exit 1
           fi
 
+      # Releases do not re-run the test suite; ordinary CI already tested the
+      # commit. This gate asserts that instead, before any tag is created, so
+      # a SHA without green cross-platform CI can never release.
+      - name: Require green cross-platform CI
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          required_checks=(ubuntu-22.04 windows-latest macos-latest)
+
+          checks_green() {
+            local commit_sha="$1"
+            local check_runs
+            check_runs="$(gh api \
+              "repos/${GITHUB_REPOSITORY}/commits/${commit_sha}/check-runs?filter=latest&per_page=100" \
+              --jq '[.check_runs[] | {name, status, conclusion}]')"
+            for check_name in "${required_checks[@]}"; do
+              local state
+              state="$(jq -r --arg name "$check_name" \
+                'map(select(.name == $name)) | first |
+                 if . == null then "missing"
+                 elif .status != "completed" then "pending"
+                 else .conclusion end' <<<"$check_runs")"
+              if [[ "$state" != "success" ]]; then
+                echo "Required check '$check_name' is $state for $commit_sha." >&2
+                return 1
+              fi
+            done
+          }
+
+          if checks_green "$RELEASE_COMMIT"; then
+            echo "Cross-platform CI is green for $RELEASE_COMMIT."
+            exit 0
+          fi
+
+          # Release tags normally point at a version-bump commit whose own CI
+          # run is still in flight. Accept it only when the bump changes
+          # nothing but version metadata and its parent commit passed CI.
+          if git diff --name-only "${RELEASE_COMMIT}^" "$RELEASE_COMMIT" \
+            | grep -qvE '^(package\.json|package-lock\.json|src-tauri/(tauri\.conf\.json|Cargo\.(toml|lock)))$'; then
+            echo "Release blocked: $RELEASE_COMMIT has no green cross-platform CI and is not a version-only bump commit." >&2
+            exit 1
+          fi
+
+          parent_commit="$(git rev-parse "${RELEASE_COMMIT}^")"
+          if checks_green "$parent_commit"; then
+            echo "Version-bump commit accepted: parent $parent_commit passed cross-platform CI."
+            exit 0
+          fi
+
+          echo "Release blocked: required checks (${required_checks[*]}) are missing, pending, or failed for $RELEASE_COMMIT and its parent. Wait for the Cross-platform workflow to succeed on main, then retry the release." >&2
+          exit 1
+
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-          cache: npm
-
-      - run: npm ci
-
-      - name: Test application before releasing
-        run: npm test
 
       - name: Enable authenticated release push
         if: github.event_name == 'workflow_dispatch'
@@ -110,6 +162,7 @@ jobs:
     name: Prepare draft release
     needs: prepare-release
     runs-on: ubuntu-22.04
+    timeout-minutes: 10
     permissions:
       contents: write
     outputs:
@@ -176,6 +229,7 @@ jobs:
       - prepare-release
       - prepare-draft
     runs-on: ${{ matrix.platform }}
+    timeout-minutes: 30
     environment: release
     permissions:
       contents: write
@@ -215,13 +269,43 @@ jobs:
         with:
           workspaces: ./src-tauri -> target
           shared-key: coda-${{ matrix.target }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || github.ref_type == 'tag' }}
+
+      - name: Cache Tauri bundler tools (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/tauri
+          key: tauri-bundler-tools-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: tauri-bundler-tools-${{ runner.os }}-
+
+      - name: Cache Tauri bundler tools (Windows)
+        if: matrix.platform == 'windows-latest'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/AppData/Local/tauri
+          key: tauri-bundler-tools-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: tauri-bundler-tools-${{ runner.os }}-
+
+      # Same key as cross-platform.yml so tag-triggered releases restore the
+      # cache that main-branch CI keeps warm. apt hash-verifies cached .debs,
+      # so staleness degrades to a re-download, never to a wrong package.
+      - name: Restore apt package cache
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/apt-archives
+          key: apt-archives-${{ env.ImageOS }}-${{ env.ImageVersion }}-coda-v1
 
       - name: Install Linux system dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
+          mkdir -p "$RUNNER_TEMP/apt-archives/partial"
+          sudo rm -f /var/lib/man-db/auto-update
           sudo apt-get update
           sudo apt-get install -y \
+            -o Dir::Cache::archives="$RUNNER_TEMP/apt-archives" \
+            -o APT::Keep-Downloaded-Packages=true \
             libwebkit2gtk-4.1-dev \
             build-essential \
             curl \
@@ -233,6 +317,7 @@ jobs:
             librsvg2-dev \
             libsecret-1-dev \
             patchelf
+          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/apt-archives"
 
       - run: npm ci
 
@@ -256,7 +341,10 @@ jobs:
           uploadUpdaterSignatures: true
           updaterJsonPreferNsis: true
           retryAttempts: 2
-          args: --target ${{ matrix.target }}
+          # The release overlay skips the typecheck inside beforeBuildCommand;
+          # the green-CI gate proved cross-platform CI (whose npm run build
+          # typechecks every push) already covered this commit.
+          args: --config src-tauri/tauri.release.conf.json --target ${{ matrix.target }}
 
   publish-release:
     name: Verify and publish
@@ -265,6 +353,7 @@ jobs:
       - prepare-draft
       - build-release
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: write
 
@@ -358,9 +447,24 @@ jobs:
         run: |
           set -euo pipefail
 
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends minisign
+          # The v0.7.1 publish hang was apt-get update stuck mid-download of
+          # an index with no acquire timeout. Bounded fetch timeouts with
+          # retries are the load-bearing guards; the lock timeout and
+          # non-interactive frontend cover wedged-runner and prompt hangs.
+          apt_options=(
+            -o Acquire::https::Timeout=30
+            -o Acquire::http::Timeout=30
+            -o Acquire::Retries=3
+            -o DPkg::Lock::Timeout=60
+          )
+          echo "phase: apt install minisign"
+          sudo env DEBIAN_FRONTEND=noninteractive \
+            apt-get "${apt_options[@]}" update
+          sudo env DEBIAN_FRONTEND=noninteractive \
+            apt-get "${apt_options[@]}" \
+            install --yes --no-install-recommends minisign
 
+          echo "phase: write updater public key"
           node --input-type=module <<'NODE'
           import { readFileSync, writeFileSync } from "node:fs";
 
@@ -373,6 +477,7 @@ jobs:
           );
           NODE
 
+          echo "phase: verify updater signatures"
           verified_count=0
           for encoded_signature in "$SIGNED_ASSET_DIR"/*.sig; do
             artifact="${encoded_signature%.sig}"
