@@ -316,7 +316,7 @@ test("every workflow job declares an execution timeout", () => {
 test("Linux apt cache stays shareable between branch CI and releases", () => {
   const extractAptSetup = (name, contents) => {
     const packageList = contents.match(
-      /apt-get "\$\{apt_options\[@\]\}" install -y \\\n([\s\S]*?patchelf)\n/,
+      /apt_retry \d+ install -y \\\n([\s\S]*?patchelf)\n/,
     )?.[1];
     assert.ok(packageList, `${name} workflow is missing its apt package list`);
     const cacheKey = contents.match(/key: (apt-archives-[^\n]+)/)?.[1];
@@ -368,14 +368,16 @@ test("workflow probes survive CRLF checkouts", () => {
   assert.ok(normalizedWorkflow.indexOf("\njobs:\n") >= 0);
   assert.match(
     normalizedWorkflow,
-    /apt-get "\$\{apt_options\[@\]\}" install -y \\\n[\s\S]*?patchelf\n/,
+    /apt_retry \d+ install -y \\\n[\s\S]*?patchelf\n/,
   );
 });
 
 test("every apt invocation carries fail-fast hang guards", () => {
-  // The v0.7.1 publish hang and the 2026-08-18 ubuntu-22.04 CI hang were
-  // both apt fetches wedged on a mirror with no acquire timeout. Every
-  // apt-get call in every workflow must use the guarded noninteractive form.
+  // The v0.7.1 publish hang and both 2026-08-18 ubuntu-22.04 CI hangs were
+  // apt fetches wedged on a mirror. Acquire timeouts alone proved
+  // insufficient: a trickling connection never trips an inactivity timeout,
+  // so every apt-get call must also sit behind a hard wall-clock bound with
+  // retries (the apt_retry wrapper) in its guarded noninteractive form.
   const requiredGuards = [
     "-o Acquire::https::Timeout=30",
     "-o Acquire::http::Timeout=30",
@@ -398,6 +400,18 @@ test("every apt invocation carries fail-fast hang guards", () => {
       }
     }
 
+    const retryHelperCount = contents.match(/apt_retry\(\) \{/g)?.length ?? 0;
+    assert.equal(
+      retryHelperCount,
+      optionBlocks.length,
+      `${name} workflow must pair every apt_options block with apt_retry`,
+    );
+    assert.equal(
+      contents.match(/for attempt in 1 2 3/g)?.length ?? 0,
+      retryHelperCount,
+      `${name} workflow apt_retry must keep its three-attempt loop`,
+    );
+
     let invocationCount = 0;
     for (const line of contents.split("\n")) {
       if (!line.includes("apt-get") || line.trimStart().startsWith("#")) {
@@ -406,6 +420,11 @@ test("every apt invocation carries fail-fast hang guards", () => {
       assert.ok(
         line.includes('apt-get "${apt_options[@]}"'),
         `${name} workflow has an unguarded apt-get invocation: ${line.trim()}`,
+      );
+      const timeoutIndex = line.indexOf("timeout ");
+      assert.ok(
+        timeoutIndex !== -1 && timeoutIndex < line.indexOf("apt-get"),
+        `${name} workflow apt-get invocation lacks a wall-clock bound: ${line.trim()}`,
       );
       invocationCount += 1;
     }

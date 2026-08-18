@@ -74,20 +74,39 @@ jobs:
       - name: Install Linux system dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
-          # Same acquire/lock guards as the release publish step: a wedged
-          # mirror fetch must fail fast and retry, never hang the job.
+          # Two-layer hang defense. The acquire options fail over dead
+          # mirrors cheaply; the wall-clock timeout kills trickle stalls
+          # that dribble bytes without ever tripping apt's inactivity
+          # timeout (archive.ubuntu.com, 2026-08-18). Three attempts,
+          # then the step fails.
           apt_options=(
             -o Acquire::https::Timeout=30
             -o Acquire::http::Timeout=30
             -o Acquire::Retries=3
             -o DPkg::Lock::Timeout=60
           )
+          apt_retry() {
+            local wall_clock_seconds="$1"
+            shift
+            local attempt
+            for attempt in 1 2 3; do
+              if sudo env DEBIAN_FRONTEND=noninteractive \
+                timeout "$wall_clock_seconds" apt-get "${apt_options[@]}" "$@"; then
+                return 0
+              fi
+              echo "apt $1 attempt $attempt failed or hit the ${wall_clock_seconds}s wall clock" >&2
+              if [ "$attempt" = 3 ]; then
+                return 1
+              fi
+              sleep 10
+            done
+          }
           mkdir -p "$RUNNER_TEMP/apt-archives/partial"
           sudo rm -f /var/lib/man-db/auto-update
-          sudo env DEBIAN_FRONTEND=noninteractive \
-            apt-get "${apt_options[@]}" update
-          sudo env DEBIAN_FRONTEND=noninteractive \
-            apt-get "${apt_options[@]}" install -y \
+          # Index refresh moves ~25 MB cold; 180 s is >4x a healthy fetch.
+          apt_retry 180 update
+          # Dependency downloads reach ~56 MB plus dpkg configure time.
+          apt_retry 300 install -y \
             -o Dir::Cache::archives="$RUNNER_TEMP/apt-archives" \
             -o APT::Keep-Downloaded-Packages=true \
             libwebkit2gtk-4.1-dev \
