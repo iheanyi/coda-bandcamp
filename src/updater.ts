@@ -253,6 +253,25 @@ export async function checkForAppUpdate(): Promise<AppUpdate | undefined> {
   return update ? normalizeAppUpdate(update) : undefined;
 }
 
+function decodeInstalledAppVersion(value: NativeValue): string {
+  return decodeRequiredMetadataText(
+    value,
+    "installed app version",
+    MAX_VERSION_LENGTH,
+  );
+}
+
+export async function getInstalledAppVersion(): Promise<string | undefined> {
+  if (!isDesktopRuntime()) return undefined;
+
+  try {
+    const { getVersion } = await import("@tauri-apps/api/app");
+    return decodeInstalledAppVersion(await getVersion());
+  } catch {
+    return undefined;
+  }
+}
+
 export async function restartAfterUpdate(): Promise<void> {
   if (!isDesktopRuntime()) return;
 

@@ -37,6 +37,11 @@ export function AppUpdateSettings({
           <p className="mt-1 mb-0 text-xs/normal text-[#858984]">
             Check GitHub Releases for a signed update built for this computer.
           </p>
+          {updater.currentVersion ? (
+            <p className="mt-1 mb-0 text-xs/normal text-[#858984]">
+              Coda {updater.currentVersion}
+            </p>
+          ) : null}
         </div>
         <span
           className={`inline-flex items-center gap-1.5 text-xs font-bold whitespace-nowrap before:size-1.5 before:rounded-full before:content-[''] ${
@@ -82,10 +87,8 @@ export function AppUpdateSettings({
 
 export function AppUpdatePrompt({
   updater,
-  suppressed = false,
 }: {
   updater: AppUpdaterController;
-  suppressed?: boolean;
 }) {
   const primaryActionRef = useRef<HTMLButtonElement>(null);
   const update = updater.update;
@@ -97,7 +100,7 @@ export function AppUpdatePrompt({
 
   return (
     <Dialog
-      open={updater.promptVisible && !suppressed}
+      open={updater.promptVisible}
       onOpenChange={(open, details) => {
         if (open) return;
         if (busy) {

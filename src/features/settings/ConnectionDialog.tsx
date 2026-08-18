@@ -5,7 +5,7 @@ import {
   Radio,
   X,
 } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, type ReactNode, useState } from "react";
 import { AppUpdateSettings } from "@/AppUpdater";
 import type { AppUpdaterController } from "@/appUpdaterController";
 import { Alert } from "@/components/ui/alert";
@@ -39,6 +39,7 @@ import type {
 
 type ConnectionDialogProps = {
   appUpdater: AppUpdaterController;
+  children?: ReactNode;
   className?: string;
   connected: boolean;
   lastFmStatus: LastFmStatus;
@@ -51,6 +52,7 @@ type ConnectionDialogProps = {
 
 export function ConnectionDialog({
   appUpdater,
+  children,
   className,
   connected,
   lastFmStatus,
@@ -447,6 +449,7 @@ export function ConnectionDialog({
           </small>
         </div>
       </DialogContent>
+      {children}
     </Dialog>
   );
 }

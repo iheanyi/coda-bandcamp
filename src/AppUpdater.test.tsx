@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Channel, type InvokeArgs } from "@tauri-apps/api/core";
-import { StrictMode } from "react";
+import { StrictMode, useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -11,6 +11,8 @@ import {
 } from "./AppUpdater";
 import { useAppUpdater } from "./appUpdaterController";
 import type { NativeValue } from "./data-bridge/native";
+import { PersistentAppOverlays } from "./features/settings/PersistentAppOverlays";
+import { usePersistentOverlaysController } from "./features/settings/usePersistentOverlaysController";
 
 type TestUpdateMetadata = Readonly<{
   body?: string;
@@ -35,6 +37,7 @@ const updaterBridge = {
   close: vi.fn<() => Promise<void>>(),
   downloadAndInstall: vi.fn<DownloadImplementation>(),
   restart: vi.fn<() => Promise<void>>(),
+  version: vi.fn<() => Promise<string>>(),
 };
 
 const channelCallbacks = new Map<
@@ -97,6 +100,8 @@ function installDesktopUpdaterBridge(): void {
           case "plugin:process|restart":
             await updaterBridge.restart();
             return undefined;
+          case "plugin:app|version":
+            return updaterBridge.version();
           default:
             throw new Error(`Unexpected updater command: ${command}`);
         }
@@ -133,6 +138,28 @@ function UpdaterHarness() {
   );
 }
 
+function OverlaysUpdaterHarness({ openSettings }: { openSettings: boolean }) {
+  const updater = useAppUpdater();
+  const controller = usePersistentOverlaysController({
+    loadLastFmStatus: async () => ({ configured: false, connected: false }),
+  });
+
+  useEffect(() => {
+    if (openSettings) controller.commands.openConnection();
+  }, [controller.commands, openSettings]);
+
+  return (
+    <PersistentAppOverlays
+      connected={false}
+      controller={controller}
+      notify={() => undefined}
+      onConnected={() => undefined}
+      onDisconnected={async () => undefined}
+      updater={updater}
+    />
+  );
+}
+
 function renderUpdater(strict = false) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -147,6 +174,21 @@ function renderUpdater(strict = false) {
   );
 
   return render(strict ? <StrictMode>{content}</StrictMode> : content);
+}
+
+function renderOverlaysUpdater(openSettings = true) {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <OverlaysUpdaterHarness openSettings={openSettings} />
+    </QueryClientProvider>,
+  );
 }
 
 function createUpdate(
@@ -179,6 +221,7 @@ describe("app updater experience", () => {
     updaterBridge.close.mockReset().mockResolvedValue(undefined);
     updaterBridge.downloadAndInstall.mockReset().mockResolvedValue(undefined);
     updaterBridge.restart.mockReset().mockResolvedValue(undefined);
+    updaterBridge.version.mockReset().mockResolvedValue("0.1.0");
   });
 
   afterEach(() => {
@@ -437,9 +480,11 @@ describe("app updater experience", () => {
       await Promise.resolve();
     });
     expect(updaterBridge.check).not.toHaveBeenCalled();
+    expect(updaterBridge.version).not.toHaveBeenCalled();
     expect(
       screen.queryByRole("button", { name: "Check for updates" }),
     ).not.toBeInTheDocument();
+    expect(screen.queryByText("Coda 0.1.0")).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
@@ -453,9 +498,110 @@ describe("app updater experience", () => {
       await Promise.resolve();
     });
     expect(updaterBridge.check).not.toHaveBeenCalled();
+    expect(updaterBridge.version).not.toHaveBeenCalled();
     expect(
       screen.queryByRole("button", { name: "Check for updates" }),
     ).not.toBeInTheDocument();
+    expect(screen.queryByText("Coda 0.1.0")).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("shows the installed version in the settings updater section", async () => {
+    updaterBridge.check.mockResolvedValue(null);
+
+    renderUpdater();
+
+    expect(await screen.findByText("Coda 0.1.0")).toBeInTheDocument();
+    expect(updaterBridge.version).toHaveBeenCalledOnce();
+  });
+
+  it("shows an update prompt above an open settings dialog after a manual check", async () => {
+    const user = userEvent.setup();
+    updaterBridge.check
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(createUpdate());
+
+    renderOverlaysUpdater();
+
+    const settings = await screen.findByRole("dialog", {
+      name: "Bring in your collection",
+    });
+    expect(
+      screen.queryByRole("dialog", { name: "Coda 0.2.0 is ready" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Check for updates" }),
+    );
+
+    const prompt = await screen.findByRole("dialog", {
+      name: "Coda 0.2.0 is ready",
+    });
+    expect(settings).toBeInTheDocument();
+    expect(prompt).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Update now" })).toHaveFocus();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Later" }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("dialog", { name: "Coda 0.2.0 is ready" }),
+      ).not.toBeInTheDocument();
+    });
+    expect(
+      screen.getByRole("dialog", { name: "Bring in your collection" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the startup update prompt while settings are closed", async () => {
+    updaterBridge.check.mockResolvedValue(createUpdate());
+
+    renderOverlaysUpdater(false);
+
+    const prompt = await screen.findByRole("dialog", {
+      name: "Coda 0.2.0 is ready",
+    });
+    expect(prompt).toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: "Bring in your collection" }),
+    ).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Update now" })).toHaveFocus();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Later" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+  });
+
+  it("closes only the update prompt when Escape is pressed above settings", async () => {
+    const user = userEvent.setup();
+    updaterBridge.check
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(createUpdate());
+
+    renderOverlaysUpdater();
+    await user.click(
+      await screen.findByRole("button", { name: "Check for updates" }),
+    );
+    await screen.findByRole("dialog", { name: "Coda 0.2.0 is ready" });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Update now" })).toHaveFocus();
+    });
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("dialog", { name: "Coda 0.2.0 is ready" }),
+      ).not.toBeInTheDocument();
+    });
+    expect(
+      screen.getByRole("dialog", { name: "Bring in your collection" }),
+    ).toBeInTheDocument();
   });
 });

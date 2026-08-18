@@ -59,8 +59,9 @@ export function PersistentAppOverlays({
         onConnected={onConnected}
         onDisconnected={onDisconnected}
         onLastFmStatus={commands.setLastFmStatus}
-      />
-      <AppUpdatePrompt updater={updater} suppressed={state.connectionOpen} />
+      >
+        <AppUpdatePrompt updater={updater} />
+      </ConnectionDialog>
       {playlist ? (
         <Suspense fallback={<PlaylistDialogFallback />}>
           <AddToPlaylistDialog

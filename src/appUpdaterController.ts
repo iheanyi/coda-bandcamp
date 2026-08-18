@@ -5,10 +5,12 @@ import { isDesktop } from "./lib";
 import {
   type AppUpdate,
   checkForAppUpdate,
+  getInstalledAppVersion,
   restartAfterUpdate,
 } from "./updater";
 
 const appUpdateQueryKey = ["coda", "app-update"] as const;
+const appVersionQueryKey = ["coda", "app-version"] as const;
 
 type ManualCheckState = "idle" | "checking" | "current" | "error";
 type InstallState =
@@ -21,6 +23,7 @@ type InstallState =
 
 export interface AppUpdaterController {
   readonly supported: boolean;
+  readonly currentVersion?: string;
   readonly update?: AppUpdate;
   readonly promptVisible: boolean;
   readonly checking: boolean;
@@ -43,6 +46,16 @@ export function useAppUpdater(): AppUpdaterController {
   const updateQuery = useQuery({
     queryKey: appUpdateQueryKey,
     queryFn: async () => (await checkForAppUpdate()) ?? null,
+    enabled: supported,
+    retry: false,
+    staleTime: Number.POSITIVE_INFINITY,
+    gcTime: Number.POSITIVE_INFINITY,
+    refetchOnReconnect: false,
+    refetchOnWindowFocus: false,
+  });
+  const versionQuery = useQuery({
+    queryKey: appVersionQueryKey,
+    queryFn: async () => (await getInstalledAppVersion()) ?? null,
     enabled: supported,
     retry: false,
     staleTime: Number.POSITIVE_INFINITY,
@@ -107,6 +120,7 @@ export function useAppUpdater(): AppUpdaterController {
 
   return {
     supported,
+    currentVersion: versionQuery.data ?? undefined,
     update,
     promptVisible: Boolean(update) && !dismissed,
     checking: updateQuery.isFetching,

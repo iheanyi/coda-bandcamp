@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { NativeValue } from "./data-bridge/native";
 import {
   checkForAppUpdate,
+  getInstalledAppVersion,
   type NativeAppUpdate,
   normalizeAppUpdate,
   restartAfterUpdate,
@@ -29,6 +30,7 @@ const nativeBridge = {
   close: vi.fn<() => Promise<void>>(),
   downloadAndInstall: vi.fn<(emit: DownloadEventEmitter) => Promise<void>>(),
   restart: vi.fn<() => Promise<void>>(),
+  version: vi.fn<() => Promise<NativeValue>>(),
 };
 
 const channelCallbacks = new Map<
@@ -89,6 +91,8 @@ function installNativeBridge(): void {
             return nativeBridge.close();
           case "plugin:process|restart":
             return nativeBridge.restart();
+          case "plugin:app|version":
+            return nativeBridge.version();
           default:
             throw new Error(`Unexpected updater command: ${command}`);
         }
@@ -142,6 +146,7 @@ describe("updater boundary", () => {
     nativeBridge.close.mockReset().mockResolvedValue(undefined);
     nativeBridge.downloadAndInstall.mockReset().mockResolvedValue(undefined);
     nativeBridge.restart.mockReset().mockResolvedValue(undefined);
+    nativeBridge.version.mockReset().mockResolvedValue("0.1.0");
   });
 
   afterEach(() => {
@@ -150,6 +155,7 @@ describe("updater boundary", () => {
 
   it("keeps browser builds inert without loading native plugins", async () => {
     await expect(checkForAppUpdate()).resolves.toBeUndefined();
+    await expect(getInstalledAppVersion()).resolves.toBeUndefined();
     await expect(restartAfterUpdate()).resolves.toBeUndefined();
   });
 
@@ -468,5 +474,27 @@ describe("updater boundary", () => {
     await restartAfterUpdate();
 
     expect(nativeBridge.restart).toHaveBeenCalledOnce();
+  });
+
+  it("returns a bounded installed app version", async () => {
+    nativeBridge.version.mockResolvedValue(" 0.7.1 ");
+    installNativeBridge();
+
+    await expect(getInstalledAppVersion()).resolves.toBe("0.7.1");
+    expect(nativeBridge.version).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["null", null],
+    ["non-text", ["0.7.1"]],
+    ["empty", " \t "],
+    ["oversized", "v".repeat(65)],
+    ["control characters", "0.7.1\n"],
+  ])("rejects a %s installed app version", async (_label, version) => {
+    nativeBridge.version.mockResolvedValue(version);
+    installNativeBridge();
+
+    await expect(getInstalledAppVersion()).resolves.toBeUndefined();
   });
 });
