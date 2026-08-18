@@ -170,8 +170,24 @@ test("release builds skip only the already-run typecheck", async () => {
   );
   assert.match(
     workflow,
+    /- run: npm run typecheck\n/,
+    "branch CI must keep the typecheck gate the release green-CI check relies on",
+  );
+  assert.doesNotMatch(
+    workflow,
     /- run: npm run build\n/,
-    "branch CI must keep its own typecheck via npm run build",
+    "branch CI must not build the frontend twice; the vite build lives in the tauri-action beforeBuildCommand",
+  );
+
+  const ciOverlay = JSON.parse(
+    await readTextFile(
+      new URL("../src-tauri/tauri.ci.conf.json", import.meta.url),
+    ),
+  );
+  assert.equal(
+    ciOverlay.build.beforeBuildCommand,
+    "npx vite build",
+    "the CI overlay owns the single frontend build",
   );
 
   const releaseOverlay = JSON.parse(
@@ -184,6 +200,25 @@ test("release builds skip only the already-run typecheck", async () => {
     releaseOverlay.bundle,
     undefined,
     "release overlay must not touch bundle settings such as updater artifacts",
+  );
+});
+
+test("coverage floors run once while every platform runs the suite", () => {
+  const coverageCondition = workflow.match(
+    /- run: npm run test:coverage\n\s+if: (.+)\n/,
+  )?.[1];
+  assert.equal(
+    coverageCondition,
+    "matrix.platform == 'ubuntu-22.04'",
+    "coverage floors must stay enforced on every push via the Linux job",
+  );
+  const plainSuiteCondition = workflow.match(
+    /- run: npx vitest run --dir src\n\s+if: (.+)\n/,
+  )?.[1];
+  assert.equal(
+    plainSuiteCondition,
+    "matrix.platform != 'ubuntu-22.04'",
+    "Windows and macOS must still gate on the full frontend suite",
   );
 });
 
@@ -425,7 +460,7 @@ test("workflow probes survive CRLF checkouts", () => {
     normalizedRelease.match(/\n {2}prepare-release:[\s\S]*?(?=\n {2}[\w-]+:\n)/),
     "normalization must restore the prepare-release job probe",
   );
-  assert.match(normalizedWorkflow, /- run: npm run build\n/);
+  assert.match(normalizedWorkflow, /- run: npm run typecheck\n/);
   assert.ok(normalizedWorkflow.indexOf("\njobs:\n") >= 0);
   assert.match(
     normalizedWorkflow,

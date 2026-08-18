@@ -134,8 +134,17 @@ jobs:
       - run: npm run lint
       - run: npm run lint:anti-slop
       - run: npm run test:automation-build
+      # Coverage floors are platform-independent, so instrument once on Linux;
+      # Windows and macOS run the identical suite uninstrumented (~25% cheaper
+      # measured locally, ~60-90 s on the Windows critical path).
       - run: npm run test:coverage
-      - run: npm run build
+        if: matrix.platform == 'ubuntu-22.04'
+      - run: npx vitest run --dir src
+        if: matrix.platform != 'ubuntu-22.04'
+      # The single vite build happens inside tauri-action's beforeBuildCommand
+      # (tauri.ci.conf.json); this step keeps only the typecheck gate that the
+      # release flow's green-CI check relies on.
+      - run: npm run typecheck
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
       - run: cargo test --manifest-path src-tauri/Cargo.toml
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
