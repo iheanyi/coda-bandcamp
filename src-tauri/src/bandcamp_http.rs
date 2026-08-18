@@ -22,7 +22,7 @@ pub(super) const MAX_JSON_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 const BANDCAMP_REQUESTS_PER_SECOND: u32 = 2;
 const BANDCAMP_MAX_READ_RETRIES: u32 = 2;
 pub(super) const BANDCAMP_RETRY_BASE_MS: u64 = 400;
-const BANDCAMP_RETRY_JITTER_MS: u64 = 180;
+pub(super) const BANDCAMP_RETRY_JITTER_MS: u64 = 180;
 pub(super) const BANDCAMP_MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 const BANDCAMP_RATE_LIMIT_JITTER: Duration = Duration::from_millis(80);
 

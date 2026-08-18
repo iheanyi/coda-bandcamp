@@ -131,6 +131,64 @@ fn lastfm_errors_never_echo_remote_messages_or_session_material() {
 }
 
 #[test]
+fn lastfm_transient_retries_are_bounded_and_scoped_to_idempotent_writes() {
+    for retry_number in 0..LASTFM_MAX_TRANSIENT_RETRIES {
+        assert!(retryable_lastfm_failure(
+            LastFmRetryPolicy::IdempotentWrite,
+            retry_number,
+            true,
+        ));
+    }
+    assert!(!retryable_lastfm_failure(
+        LastFmRetryPolicy::IdempotentWrite,
+        LASTFM_MAX_TRANSIENT_RETRIES,
+        true,
+    ));
+    assert!(!retryable_lastfm_failure(
+        LastFmRetryPolicy::IdempotentWrite,
+        0,
+        false,
+    ));
+    // Scrobbles and authorization stay single-shot: at-most-once submission
+    // must survive a lost response.
+    assert!(!retryable_lastfm_failure(LastFmRetryPolicy::Never, 0, true));
+}
+
+#[test]
+fn classifies_local_connection_failures_as_transient_lastfm_transport_errors() {
+    let error = tauri::async_runtime::block_on(async {
+        reqwest::Client::builder()
+            .connect_timeout(Duration::from_millis(100))
+            .timeout(Duration::from_millis(250))
+            .build()
+            .unwrap()
+            .post("https://127.0.0.1:1/")
+            .send()
+            .await
+            .unwrap_err()
+    });
+    assert!(transient_lastfm_transport_error(&error));
+}
+
+#[test]
+fn lastfm_failure_categories_expose_only_numeric_error_codes() {
+    let category = lastfm_api_error_category(&serde_json::json!({
+        "error": 13,
+        "message": "Invalid method signature supplied: private-detail"
+    }));
+    assert_eq!(category, "api_error_13");
+    assert!(!category.contains("private-detail"));
+    assert_eq!(
+        lastfm_api_error_category(&serde_json::json!({ "error": "29" })),
+        "api_error_29"
+    );
+    assert_eq!(
+        lastfm_api_error_category(&serde_json::json!({ "error": true })),
+        "api_error_unknown"
+    );
+}
+
+#[test]
 fn preserves_supported_lastfm_identity_from_subsonic_tracks() {
     let track = track_from_value(
         &serde_json::json!({

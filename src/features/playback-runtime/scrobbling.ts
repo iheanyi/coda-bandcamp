@@ -17,6 +17,7 @@ import type {
   Track,
 } from "@/types";
 
+import { safePlaybackErrorDetail } from "./errors";
 import type { PlaybackNotify, PlaybackScrobbleAdapters } from "./types";
 
 type PlaybackSession = {
@@ -107,9 +108,9 @@ export function createPlaybackScrobbleController({
   ) => {
     for (const action of actions) {
       if (action.kind === "now-playing") {
-        void adapters.updateNowPlaying(action.track).catch(() => {
+        void adapters.updateNowPlaying(action.track).catch((cause: unknown) => {
           getEnvironment().notify(
-            "Last.fm could not update this Radio chapter.",
+            `Last.fm could not update this Radio chapter: ${safePlaybackErrorDetail(cause)}`,
             "bad",
           );
         });
@@ -126,7 +127,7 @@ export function createPlaybackScrobbleController({
             );
           }
         })
-        .catch(() => {
+        .catch((cause: unknown) => {
           if (radioProgress?.showTrackId === showTrackId) {
             radioProgress = markRadioChapterScrobble(
               radioProgress,
@@ -135,7 +136,7 @@ export function createPlaybackScrobbleController({
             );
           }
           getEnvironment().notify(
-            "Last.fm could not scrobble this Radio chapter.",
+            `Last.fm could not scrobble this Radio chapter: ${safePlaybackErrorDetail(cause)}`,
             "bad",
           );
         });
@@ -209,11 +210,16 @@ export function createPlaybackScrobbleController({
     if (!session.startedAt) session.startedAt = adapters.nowSeconds();
     if (!environment.connected || session.nowPlayingSent) return;
     session.nowPlayingSent = true;
-    void adapters.updateNowPlaying(lastFmTrackInput(track)).catch(() => {
-      if (playbackSession === session) {
-        getEnvironment().notify("Last.fm could not update Now Playing.", "bad");
-      }
-    });
+    void adapters
+      .updateNowPlaying(lastFmTrackInput(track))
+      .catch((cause: unknown) => {
+        if (playbackSession === session) {
+          getEnvironment().notify(
+            `Last.fm could not update Now Playing: ${safePlaybackErrorDetail(cause)}`,
+            "bad",
+          );
+        }
+      });
   };
 
   const onTimeUpdate = (
@@ -264,11 +270,11 @@ export function createPlaybackScrobbleController({
       .then(() => {
         if (playbackSession === session) session.scrobbleState = "sent";
       })
-      .catch(() => {
+      .catch((cause: unknown) => {
         if (playbackSession === session) {
           session.scrobbleState = "failed";
           getEnvironment().notify(
-            "Last.fm could not scrobble this track.",
+            `Last.fm could not scrobble this track: ${safePlaybackErrorDetail(cause)}`,
             "bad",
           );
         }
@@ -318,12 +324,12 @@ export function createPlaybackScrobbleController({
             radioProgress = markRadioShowScrobble(radioProgress, "sent");
           }
         })
-        .catch(() => {
+        .catch((cause: unknown) => {
           if (radioProgress?.showTrackId === showTrackId) {
             radioProgress = markRadioShowScrobble(radioProgress, "failed");
           }
           getEnvironment().notify(
-            "Last.fm could not scrobble this completed Radio show.",
+            `Last.fm could not scrobble this completed Radio show: ${safePlaybackErrorDetail(cause)}`,
             "bad",
           );
         });

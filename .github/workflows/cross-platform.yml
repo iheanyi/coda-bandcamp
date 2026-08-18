@@ -73,6 +73,9 @@ jobs:
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
       - uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1
+        env:
+          CODA_LASTFM_API_KEY: ${{ secrets.CODA_LASTFM_API_KEY }}
+          CODA_LASTFM_SHARED_SECRET: ${{ secrets.CODA_LASTFM_SHARED_SECRET }}
         with:
           uploadWorkflowArtifacts: true
           args: --config src-tauri/tauri.ci.conf.json --target ${{ matrix.target }} ${{ matrix.bundleArgs }}

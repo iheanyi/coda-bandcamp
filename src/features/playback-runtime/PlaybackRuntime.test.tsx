@@ -218,6 +218,29 @@ describe("Playback runtime", () => {
     );
   });
 
+  it("surfaces a sanitized reason when Last.fm cannot update Now Playing", async () => {
+    mocks.updateLastFmNowPlaying.mockRejectedValueOnce(
+      "Could not reach Last.fm: https://ws.audioscrobbler.com/2.0/ timed out",
+    );
+    const { container, current, notify } = renderRuntime({
+      connected: true,
+      lastFmConnected: true,
+    });
+    const audio = container.querySelector<HTMLAudioElement>("audio")!;
+    await waitFor(() => expect(controllerFrom(current).queue.ready).toBe(true));
+
+    act(() => controllerFrom(current).queueCommands.playTrack(tracks[0]));
+    await waitFor(() => expect(audio).toHaveAttribute("src"));
+    fireEvent.playing(audio);
+
+    await waitFor(() =>
+      expect(notify).toHaveBeenCalledWith(
+        "Last.fm could not update Now Playing: Could not reach Last.fm: [redacted URL] timed out",
+        "bad",
+      ),
+    );
+  });
+
   it("starts fresh same-track activations for playTrack and playTracks", async () => {
     const { container, current } = renderRuntime({
       connected: true,

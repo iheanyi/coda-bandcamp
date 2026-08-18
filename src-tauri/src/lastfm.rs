@@ -1,15 +1,19 @@
-use crate::bandcamp_http::{read_bounded_response, redacted_request_error};
+use crate::bandcamp_http::{
+    bandcamp_retry_delay, is_retryable_bandcamp_status, read_bounded_response,
+    redacted_request_error, BANDCAMP_RETRY_JITTER_MS,
+};
 use crate::models::{
     LastFmAuthorization, LastFmScrobbleInput, LastFmSession, LastFmStatus, LastFmTrackInput,
 };
 use crate::storage::run_blocking;
 use crate::validation::{valid_musicbrainz_id, MAX_MEDIA_SECONDS, MAX_TRACK_NUMBER};
 use keyring::Entry;
+use rand::Rng;
 use reqwest::{redirect::Policy, Client};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use url::Url;
 
 const LASTFM_SERVICE_NAME: &str = "com.coda.lastfm";
@@ -29,6 +33,19 @@ pub(super) const LASTFM_SHARED_SECRET: &str = match option_env!("CODA_LASTFM_SHA
 };
 const MAX_LASTFM_METADATA_LENGTH: usize = 1_024;
 const MAX_LASTFM_RESPONSE_BYTES: usize = 1024 * 1024;
+pub(super) const LASTFM_MAX_TRANSIENT_RETRIES: u32 = 2;
+
+/// Whether a Last.fm request may be resent after a transient failure.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum LastFmRetryPolicy {
+    /// Authorization and scrobble submissions run once. Retrying a scrobble
+    /// whose response was lost could double-submit the listen and break the
+    /// at-most-once scrobble contract.
+    Never,
+    /// `track.updateNowPlaying` sets transient now-playing state, so
+    /// resending it after a dropped connection cannot duplicate anything.
+    IdempotentWrite,
+}
 
 static LASTFM_HTTP_CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
 
@@ -199,47 +216,165 @@ pub(super) fn lastfm_http_client() -> Result<&'static Client, String> {
         .map_err(Clone::clone)
 }
 
+pub(super) fn transient_lastfm_transport_error(error: &reqwest::Error) -> bool {
+    error.is_connect() || error.is_timeout()
+}
+
+pub(super) fn retryable_lastfm_failure(
+    policy: LastFmRetryPolicy,
+    retry_number: u32,
+    transient_failure: bool,
+) -> bool {
+    policy == LastFmRetryPolicy::IdempotentWrite
+        && transient_failure
+        && retry_number < LASTFM_MAX_TRANSIENT_RETRIES
+}
+
+// Outcome logs carry only the fixed API method name, a bounded error
+// category, and timing. Parameter values, credentials, and remote response
+// text never reach the log.
+fn log_lastfm_success(method: &str, attempts: u32, started: Instant) {
+    tracing::info!(
+        target: "coda::lastfm",
+        operation = method,
+        status = "ok",
+        attempts,
+        elapsed_ms = started.elapsed().as_millis(),
+    );
+}
+
+fn log_lastfm_failure(method: &str, error_category: &str, attempts: u32, started: Instant) {
+    tracing::warn!(
+        target: "coda::lastfm",
+        operation = method,
+        status = "failed",
+        error_category,
+        attempts,
+        elapsed_ms = started.elapsed().as_millis(),
+    );
+}
+
 pub(super) async fn lastfm_request(
     mut parameters: BTreeMap<String, String>,
+    retry_policy: LastFmRetryPolicy,
 ) -> Result<Value, String> {
     require_lastfm_configuration()?;
+    let method = parameters
+        .get("method")
+        .cloned()
+        .unwrap_or_else(|| "unknown".into());
+    let started = Instant::now();
     parameters.insert("api_key".into(), LASTFM_API_KEY.into());
     let signature = lastfm_signature(&parameters);
     parameters.insert("api_sig".into(), signature);
     parameters.insert("format".into(), "json".into());
 
-    let response = lastfm_http_client()?
-        .post(LASTFM_API_ENDPOINT)
-        .form(&parameters)
-        .send()
-        .await
-        .map_err(|error| redacted_request_error("Last.fm", error))?;
-
-    if !response.status().is_success() {
-        return Err(format!(
-            "Last.fm returned HTTP {}.",
-            response.status().as_u16()
-        ));
-    }
-    let bytes = read_bounded_response(response, MAX_LASTFM_RESPONSE_BYTES, "Last.fm").await?;
-    run_blocking("Could not finish parsing the Last.fm response", move || {
-        let body: Value = serde_json::from_slice(&bytes)
-            .map_err(|_| "Last.fm returned an unreadable response.".to_string())?;
-        if body.get("error").is_some() {
-            return Err(lastfm_error_message(&body));
+    let client = lastfm_http_client()?;
+    let mut retry_number = 0;
+    let response = loop {
+        match client
+            .post(LASTFM_API_ENDPOINT)
+            .form(&parameters)
+            .send()
+            .await
+        {
+            Ok(response)
+                if retryable_lastfm_failure(
+                    retry_policy,
+                    retry_number,
+                    is_retryable_bandcamp_status(response.status()),
+                ) =>
+            {
+                let jitter_ms = rand::thread_rng().gen_range(0..=BANDCAMP_RETRY_JITTER_MS);
+                let delay = bandcamp_retry_delay(
+                    Some(response.headers()),
+                    retry_number,
+                    SystemTime::now(),
+                    jitter_ms,
+                );
+                retry_number += 1;
+                tokio::time::sleep(delay).await;
+            }
+            Ok(response) => break response,
+            Err(error)
+                if retryable_lastfm_failure(
+                    retry_policy,
+                    retry_number,
+                    transient_lastfm_transport_error(&error),
+                ) =>
+            {
+                let jitter_ms = rand::thread_rng().gen_range(0..=BANDCAMP_RETRY_JITTER_MS);
+                let delay = bandcamp_retry_delay(None, retry_number, SystemTime::now(), jitter_ms);
+                retry_number += 1;
+                tokio::time::sleep(delay).await;
+            }
+            Err(error) => {
+                log_lastfm_failure(&method, "network", retry_number + 1, started);
+                return Err(redacted_request_error("Last.fm", error));
+            }
         }
-        Ok(body)
+    };
+    let attempts = retry_number + 1;
+
+    let status = response.status();
+    if !status.is_success() {
+        log_lastfm_failure(
+            &method,
+            &format!("http_{}", status.as_u16()),
+            attempts,
+            started,
+        );
+        return Err(format!("Last.fm returned HTTP {}.", status.as_u16()));
+    }
+    let bytes = match read_bounded_response(response, MAX_LASTFM_RESPONSE_BYTES, "Last.fm").await {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            log_lastfm_failure(&method, "unreadable_response", attempts, started);
+            return Err(error);
+        }
+    };
+    let body = match run_blocking("Could not finish parsing the Last.fm response", move || {
+        serde_json::from_slice::<Value>(&bytes)
+            .map_err(|_| "Last.fm returned an unreadable response.".to_string())
     })
     .await
+    {
+        Ok(body) => body,
+        Err(error) => {
+            log_lastfm_failure(&method, "unreadable_response", attempts, started);
+            return Err(error);
+        }
+    };
+    if body.get("error").is_some() {
+        log_lastfm_failure(
+            &method,
+            &lastfm_api_error_category(&body),
+            attempts,
+            started,
+        );
+        return Err(lastfm_error_message(&body));
+    }
+    log_lastfm_success(&method, attempts, started);
+    Ok(body)
 }
 
-pub(super) fn lastfm_error_message(body: &Value) -> String {
-    let code = body.get("error").and_then(|value| {
+fn lastfm_error_code(body: &Value) -> Option<u64> {
+    body.get("error").and_then(|value| {
         value
             .as_u64()
             .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
-    });
-    match code {
+    })
+}
+
+pub(super) fn lastfm_api_error_category(body: &Value) -> String {
+    match lastfm_error_code(body) {
+        Some(code) => format!("api_error_{code}"),
+        None => "api_error_unknown".into(),
+    }
+}
+
+pub(super) fn lastfm_error_message(body: &Value) -> String {
+    match lastfm_error_code(body) {
         Some(code) => format!("Last.fm rejected the request (error code {code})."),
         None => "Last.fm rejected the request.".into(),
     }
@@ -295,7 +430,11 @@ pub(super) async fn lastfm_status() -> Result<LastFmStatus, String> {
 #[tauri::command]
 pub(super) async fn lastfm_begin_auth() -> Result<LastFmAuthorization, String> {
     require_lastfm_configuration()?;
-    let body = lastfm_request(BTreeMap::from([("method".into(), "auth.getToken".into())])).await?;
+    let body = lastfm_request(
+        BTreeMap::from([("method".into(), "auth.getToken".into())]),
+        LastFmRetryPolicy::Never,
+    )
+    .await?;
     let token = body
         .get("token")
         .and_then(Value::as_str)
@@ -318,10 +457,13 @@ pub(super) async fn lastfm_begin_auth() -> Result<LastFmAuthorization, String> {
 pub(super) async fn lastfm_complete_auth(token: String) -> Result<LastFmStatus, String> {
     require_lastfm_configuration()?;
     validate_lastfm_token(&token)?;
-    let body = lastfm_request(BTreeMap::from([
-        ("method".into(), "auth.getSession".into()),
-        ("token".into(), token),
-    ]))
+    let body = lastfm_request(
+        BTreeMap::from([
+            ("method".into(), "auth.getSession".into()),
+            ("token".into(), token),
+        ]),
+        LastFmRetryPolicy::Never,
+    )
     .await?;
     let session = body
         .get("session")
@@ -373,7 +515,7 @@ pub(super) async fn lastfm_update_now_playing(input: LastFmTrackInput) -> Result
     let mut parameters = lastfm_track_parameters(&input);
     parameters.insert("method".into(), "track.updateNowPlaying".into());
     parameters.insert("sk".into(), session.key);
-    lastfm_request(parameters).await?;
+    lastfm_request(parameters, LastFmRetryPolicy::IdempotentWrite).await?;
     Ok(())
 }
 
@@ -392,6 +534,6 @@ pub(super) async fn lastfm_scrobble(input: LastFmScrobbleInput) -> Result<(), St
     parameters.insert("method".into(), "track.scrobble".into());
     parameters.insert("sk".into(), session.key);
     parameters.insert("timestamp".into(), input.timestamp.to_string());
-    lastfm_request(parameters).await?;
+    lastfm_request(parameters, LastFmRetryPolicy::Never).await?;
     Ok(())
 }

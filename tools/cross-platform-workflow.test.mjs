@@ -54,6 +54,31 @@ test("branch CI keeps Linux packaging deterministic while releases build AppImag
   assert.doesNotMatch(releaseWorkflow, /--bundles deb,rpm/);
 });
 
+test("bundle builds receive Last.fm credentials from GitHub secrets", () => {
+  for (const [name, contents] of [
+    ["cross-platform", workflow],
+    ["release", releaseWorkflow],
+  ]) {
+    const tauriActionStep = contents.match(
+      /uses: tauri-apps\/tauri-action@[\s\S]*?(?=\n\s{6}- |$)/,
+    )?.[0];
+    assert.ok(
+      tauriActionStep,
+      `${name} workflow is missing its Tauri action step`,
+    );
+    for (const variable of [
+      "CODA_LASTFM_API_KEY",
+      "CODA_LASTFM_SHARED_SECRET",
+    ]) {
+      assert.match(
+        tauriActionStep,
+        new RegExp(`${variable}: \\$\\{\\{ secrets\\.${variable} \\}\\}`),
+        `${name} workflow must map ${variable} from GitHub secrets`,
+      );
+    }
+  }
+});
+
 test("release builds retry transient packaging and asset-upload failures in place", () => {
   const tauriActionStep = releaseWorkflow.match(
     /uses: tauri-apps\/tauri-action@[\s\S]*?(?=\n\s{2}[a-z][a-z-]+:|\n\s{6}- name:|$)/,
