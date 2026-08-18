@@ -14,13 +14,24 @@ import { fileURLToPath } from "node:url";
 
 const repositoryRoot = new URL("..", import.meta.url);
 const releaseCommit = "a".repeat(40);
-const workflow = await readFile(
+
+// Windows runners check out text with CRLF (core.autocrlf defaults on and no
+// .gitattributes pins line endings), which broke every "\n"-anchored probe in
+// this suite on 2026-08-18. All file reads go through this helper so current
+// and future probes stay checkout-agnostic.
+function normalizeLineEndings(text) {
+  return text.replaceAll("\r\n", "\n");
+}
+
+async function readTextFile(path) {
+  return normalizeLineEndings(await readFile(path, "utf8"));
+}
+
+const workflow = await readTextFile(
   new URL("../.github/workflows/cross-platform.yml", import.meta.url),
-  "utf8",
 );
-const releaseWorkflow = await readFile(
+const releaseWorkflow = await readTextFile(
   new URL("../.github/workflows/release.yml", import.meta.url),
-  "utf8",
 );
 
 function runTool(path, arguments_) {
@@ -164,9 +175,8 @@ test("release builds skip only the already-run typecheck", async () => {
   );
 
   const releaseOverlay = JSON.parse(
-    await readFile(
+    await readTextFile(
       new URL("../src-tauri/tauri.release.conf.json", import.meta.url),
-      "utf8",
     ),
   );
   assert.equal(releaseOverlay.build.beforeBuildCommand, "npx vite build");
@@ -264,7 +274,7 @@ test("updater manifest assembly validates and maps release assets", async () => 
     ]);
     assert.equal(result.status, 0, result.stderr);
 
-    const manifest = JSON.parse(await readFile(outputPath, "utf8"));
+    const manifest = JSON.parse(await readTextFile(outputPath));
     assert.equal(manifest.version, "1.2.3");
     assert.equal(Object.keys(manifest.platforms).length, 11);
     assert.equal(
@@ -306,7 +316,7 @@ test("every workflow job declares an execution timeout", () => {
 test("Linux apt cache stays shareable between branch CI and releases", () => {
   const extractAptSetup = (name, contents) => {
     const packageList = contents.match(
-      /sudo apt-get install -y \\\n([\s\S]*?patchelf)\n/,
+      /apt-get "\$\{apt_options\[@\]\}" install -y \\\n([\s\S]*?patchelf)\n/,
     )?.[1];
     assert.ok(packageList, `${name} workflow is missing its apt package list`);
     const cacheKey = contents.match(/key: (apt-archives-[^\n]+)/)?.[1];
@@ -333,4 +343,79 @@ test("Linux apt cache stays shareable between branch CI and releases", () => {
   assert.equal(release.cacheKey, branch.cacheKey);
   assert.deepEqual(release.packages, branch.packages);
   assert.ok(branch.packages.includes("libwebkit2gtk-4.1-dev"));
+});
+
+test("workflow probes survive CRLF checkouts", () => {
+  // Replays the four probes that failed on the 2026-08-18 windows-latest run
+  // against a simulated CRLF checkout: the raw text must reproduce that
+  // failure, and read-site normalization must satisfy every probe.
+  const crlfWorkflow = workflow.replaceAll("\n", "\r\n");
+  const crlfRelease = releaseWorkflow.replaceAll("\n", "\r\n");
+
+  assert.equal(
+    crlfRelease.match(/\n {2}prepare-release:[\s\S]*?(?=\n {2}[\w-]+:\n)/),
+    null,
+    "an unnormalized CRLF checkout must reproduce the original failure",
+  );
+
+  const normalizedWorkflow = normalizeLineEndings(crlfWorkflow);
+  const normalizedRelease = normalizeLineEndings(crlfRelease);
+  assert.ok(
+    normalizedRelease.match(/\n {2}prepare-release:[\s\S]*?(?=\n {2}[\w-]+:\n)/),
+    "normalization must restore the prepare-release job probe",
+  );
+  assert.match(normalizedWorkflow, /- run: npm run build\n/);
+  assert.ok(normalizedWorkflow.indexOf("\njobs:\n") >= 0);
+  assert.match(
+    normalizedWorkflow,
+    /apt-get "\$\{apt_options\[@\]\}" install -y \\\n[\s\S]*?patchelf\n/,
+  );
+});
+
+test("every apt invocation carries fail-fast hang guards", () => {
+  // The v0.7.1 publish hang and the 2026-08-18 ubuntu-22.04 CI hang were
+  // both apt fetches wedged on a mirror with no acquire timeout. Every
+  // apt-get call in every workflow must use the guarded noninteractive form.
+  const requiredGuards = [
+    "-o Acquire::https::Timeout=30",
+    "-o Acquire::http::Timeout=30",
+    "-o Acquire::Retries=3",
+    "-o DPkg::Lock::Timeout=60",
+  ];
+
+  for (const [name, contents] of [
+    ["cross-platform", workflow],
+    ["release", releaseWorkflow],
+  ]) {
+    const optionBlocks = contents.match(/apt_options=\([\s\S]*?\n\s*\)/g);
+    assert.ok(optionBlocks?.length, `${name} workflow must define apt_options`);
+    for (const block of optionBlocks) {
+      for (const guard of requiredGuards) {
+        assert.ok(
+          block.includes(guard),
+          `${name} workflow apt_options must include ${guard}`,
+        );
+      }
+    }
+
+    let invocationCount = 0;
+    for (const line of contents.split("\n")) {
+      if (!line.includes("apt-get") || line.trimStart().startsWith("#")) {
+        continue;
+      }
+      assert.ok(
+        line.includes('apt-get "${apt_options[@]}"'),
+        `${name} workflow has an unguarded apt-get invocation: ${line.trim()}`,
+      );
+      invocationCount += 1;
+    }
+    const noninteractiveCount =
+      contents.match(/sudo env DEBIAN_FRONTEND=noninteractive/g)?.length ?? 0;
+    assert.ok(invocationCount > 0, `${name} workflow must invoke apt-get`);
+    assert.equal(
+      noninteractiveCount,
+      invocationCount,
+      `${name} workflow must run every apt-get under a noninteractive frontend`,
+    );
+  }
 });

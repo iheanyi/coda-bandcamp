@@ -74,10 +74,20 @@ jobs:
       - name: Install Linux system dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
+          # Same acquire/lock guards as the release publish step: a wedged
+          # mirror fetch must fail fast and retry, never hang the job.
+          apt_options=(
+            -o Acquire::https::Timeout=30
+            -o Acquire::http::Timeout=30
+            -o Acquire::Retries=3
+            -o DPkg::Lock::Timeout=60
+          )
           mkdir -p "$RUNNER_TEMP/apt-archives/partial"
           sudo rm -f /var/lib/man-db/auto-update
-          sudo apt-get update
-          sudo apt-get install -y \
+          sudo env DEBIAN_FRONTEND=noninteractive \
+            apt-get "${apt_options[@]}" update
+          sudo env DEBIAN_FRONTEND=noninteractive \
+            apt-get "${apt_options[@]}" install -y \
             -o Dir::Cache::archives="$RUNNER_TEMP/apt-archives" \
             -o APT::Keep-Downloaded-Packages=true \
             libwebkit2gtk-4.1-dev \
