@@ -265,11 +265,15 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # Saves only on main (dispatch-mode releases): a cache saved on a tag
+      # ref is unreachable from every other tag, so tag-run saves were dead
+      # weight that cost up to two minutes of post-job upload. Main's
+      # cross-platform CI and its Intel warm job are the producers.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: ./src-tauri -> target
           shared-key: coda-${{ matrix.target }}
-          save-if: ${{ github.ref == 'refs/heads/main' || github.ref_type == 'tag' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Cache Tauri bundler tools (Linux)
         if: matrix.platform == 'ubuntu-22.04'

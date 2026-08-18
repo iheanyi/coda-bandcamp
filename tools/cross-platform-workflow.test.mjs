@@ -53,10 +53,10 @@ async function withTemporaryDirectory(prefix, operation) {
   }
 }
 
-test("branch CI keeps Linux packaging deterministic while releases build AppImage", () => {
+test("branch CI exercises every Linux bundle the release ships", () => {
   assert.match(
     workflow,
-    /platform: ubuntu-22\.04\s+target: x86_64-unknown-linux-gnu\s+bundleArgs: --bundles deb,rpm/,
+    /platform: ubuntu-22\.04\s+target: x86_64-unknown-linux-gnu\s+bundleArgs: --bundles deb,rpm,appimage/,
   );
   assert.match(
     workflow,
@@ -201,6 +201,71 @@ test("release builds skip only the already-run typecheck", async () => {
     undefined,
     "release overlay must not touch bundle settings such as updater artifacts",
   );
+});
+
+test("main produces the caches that tag releases restore", () => {
+  // Linux bundler tools: branch CI bundles the AppImage so ~/.cache/tauri
+  // populates and main saves it under the exact key release builds restore.
+  const extractLinuxBundlerKey = (name, contents) => {
+    const key = contents.match(
+      /- name: Cache Tauri bundler tools \(Linux\)[\s\S]*?key: ([^\n]+)/,
+    )?.[1];
+    assert.ok(key, `${name} workflow is missing the Linux bundler cache`);
+    return key;
+  };
+  assert.equal(
+    extractLinuxBundlerKey("cross-platform", workflow),
+    extractLinuxBundlerKey("release", releaseWorkflow),
+  );
+
+  // macOS Intel Rust cache: nothing else on main compiles this target, so
+  // the warm job must exist, run only on main pushes, and share the release
+  // Intel leg's cache key family.
+  const warmJob = workflow.match(/\n {2}warm-intel-rust-cache:[\s\S]*$/)?.[0];
+  assert.ok(warmJob, "cross-platform must warm the Intel Rust cache");
+  assert.match(
+    warmJob,
+    /if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'/,
+    "the Intel warm job must cost nothing on branch pushes and pull requests",
+  );
+  assert.match(warmJob, /shared-key: coda-x86_64-apple-darwin\n/);
+  assert.match(
+    warmJob,
+    /cargo build --release --manifest-path src-tauri\/Cargo\.toml --target x86_64-apple-darwin/,
+  );
+  assert.match(
+    releaseWorkflow,
+    /target: x86_64-apple-darwin/,
+    "release must still build the Intel leg this cache serves",
+  );
+  assert.match(
+    releaseWorkflow,
+    /shared-key: coda-\$\{\{ matrix\.target \}\}/,
+    "release rust-cache must key by target so the warm Intel cache matches",
+  );
+
+  // A cache saved on one tag ref is unreachable from every other tag, so
+  // rust-cache saves must be main-only everywhere; tag-run saves are dead
+  // weight that cost minutes of post-job upload.
+  for (const [name, contents] of [
+    ["cross-platform", workflow],
+    ["release", releaseWorkflow],
+  ]) {
+    const saveConditions = [...contents.matchAll(/save-if: (.+)/g)].map(
+      (match) => match[1],
+    );
+    assert.ok(
+      saveConditions.length > 0,
+      `${name} workflow must configure rust-cache saves`,
+    );
+    for (const condition of saveConditions) {
+      assert.equal(
+        condition,
+        "${{ github.ref == 'refs/heads/main' }}",
+        `${name} workflow rust-cache saves must be main-only`,
+      );
+    }
+  }
 });
 
 test("coverage floors run once while every platform runs the suite", () => {

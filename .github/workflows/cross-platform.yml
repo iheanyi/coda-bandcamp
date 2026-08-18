@@ -29,9 +29,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # appimage keeps branch CI exercising every Linux bundle the
+          # release ships and populates ~/.cache/tauri so main saves the
+          # bundler-tools cache tag builds restore (tag-ref saves are
+          # unreachable from the next tag).
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            bundleArgs: --bundles deb,rpm
+            bundleArgs: --bundles deb,rpm,appimage
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
             bundleArgs: ""
@@ -68,6 +72,17 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/AppData/Local/tauri
+          key: tauri-bundler-tools-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: tauri-bundler-tools-${{ runner.os }}-
+
+      # Same role for AppImage tooling (linuxdeploy): the appimage bundle
+      # above populates ~/.cache/tauri, and main-branch saves are the only
+      # entries a tag-triggered release can restore.
+      - name: Cache Tauri bundler tools (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/tauri
           key: tauri-bundler-tools-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
           restore-keys: tauri-bundler-tools-${{ runner.os }}-
 
@@ -167,3 +182,41 @@ jobs:
         with:
           uploadWorkflowArtifacts: true
           args: --config src-tauri/tauri.ci.conf.json --target ${{ matrix.target }} ${{ matrix.bundleArgs }}
+
+  # No job on main otherwise compiles x86_64-apple-darwin, so tag-triggered
+  # release Intel builds started cold or from stale-lockfile prefix matches
+  # (tag-ref cache saves are unreachable from the next tag). Main-push only:
+  # zero cost on branch pushes and pull requests, and the release gate
+  # ignores this check because it requires exactly the three matrix job
+  # names above.
+  warm-intel-rust-cache:
+    name: Warm macOS Intel Rust cache
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          targets: x86_64-apple-darwin
+
+      # Same shared-key family as release.yml's Intel matrix leg, so the
+      # release build's primary cache key matches this main-saved entry.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: ./src-tauri -> target
+          shared-key: coda-x86_64-apple-darwin
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Compile release dependencies for the Intel target
+        run: |
+          # tauri-build only checks that frontendDist exists, and rust-cache
+          # prunes workspace-crate artifacts before saving, so an empty stub
+          # is enough to compile and cache the dependency graph without a
+          # frontend build.
+          mkdir -p dist
+          cargo build --release --manifest-path src-tauri/Cargo.toml --target x86_64-apple-darwin
