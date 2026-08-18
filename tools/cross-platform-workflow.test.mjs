@@ -319,8 +319,30 @@ test("Linux apt cache stays shareable between branch CI and releases", () => {
       /apt_retry \d+ install -y \\\n([\s\S]*?patchelf)\n/,
     )?.[1];
     assert.ok(packageList, `${name} workflow is missing its apt package list`);
-    const cacheKey = contents.match(/key: (apt-archives-[^\n]+)/)?.[1];
-    assert.ok(cacheKey, `${name} workflow is missing the apt cache key`);
+    const cacheKeys = [...contents.matchAll(/key: (apt-archives-[^\n]+)/g)].map(
+      (match) => match[1],
+    );
+    assert.ok(
+      cacheKeys.length > 0,
+      `${name} workflow is missing the apt cache key`,
+    );
+    for (const key of cacheKeys) {
+      // env.ImageOS/env.ImageVersion are runner process env vars that render
+      // empty in a cache step's with: context (observed as
+      // apt-archives---coda-v1 in v0.7.2), so keys must use the
+      // GITHUB_ENV-promoted image id.
+      assert.match(
+        key,
+        /^apt-archives-\$\{\{ env\.APT_CACHE_IMAGE \}\}-/,
+        `${name} workflow apt cache key must use the runtime-resolved image id: ${key}`,
+      );
+    }
+    assert.match(
+      contents,
+      /APT_CACHE_IMAGE=\$\{ImageOS:\?\}-\$\{ImageVersion:\?\}" >> "\$GITHUB_ENV"/,
+      `${name} workflow must promote the runner image id into GITHUB_ENV`,
+    );
+    const cacheKey = cacheKeys[0];
     const restoreIndex = contents.indexOf("Restore apt package cache");
     const installIndex = contents.indexOf("Install Linux system dependencies");
     assert.ok(
@@ -343,6 +365,45 @@ test("Linux apt cache stays shareable between branch CI and releases", () => {
   assert.equal(release.cacheKey, branch.cacheKey);
   assert.deepEqual(release.packages, branch.packages);
   assert.ok(branch.packages.includes("libwebkit2gtk-4.1-dev"));
+});
+
+test("publish installs minisign from the baked index with a guarded fallback", () => {
+  const publishJob = releaseWorkflow.slice(
+    releaseWorkflow.indexOf("\n  publish-release:"),
+  );
+  assert.ok(publishJob.length > 0, "release workflow is missing publish job");
+
+  const cacheIndex = publishJob.indexOf("Restore apt package cache");
+  const verifyIndex = publishJob.indexOf(
+    "Cryptographically verify updater signatures",
+  );
+  assert.ok(
+    cacheIndex >= 0 && verifyIndex > cacheIndex,
+    "publish must restore its apt cache before verifying signatures",
+  );
+  assert.match(
+    publishJob,
+    /key: apt-archives-\$\{\{ env\.APT_CACHE_IMAGE \}\}-minisign-v1/,
+    "the publish apt cache must stay distinct from the build-dependency cache",
+  );
+
+  const fastPathIndex = publishJob.indexOf(
+    'timeout 120 apt-get "${apt_options[@]}" "${install_args[@]}"',
+  );
+  const fallbackUpdateIndex = publishJob.indexOf("apt_retry 180 update");
+  assert.ok(
+    fastPathIndex >= 0,
+    "publish must try installing minisign from the baked image index first",
+  );
+  assert.ok(
+    fallbackUpdateIndex > fastPathIndex,
+    "the index refresh must only run as fallback for a failed baked-index install",
+  );
+  assert.match(
+    publishJob,
+    /apt_retry 120 "\$\{install_args\[@\]\}"/,
+    "the fallback install must keep the wall-clock retry wrapper",
+  );
 });
 
 test("workflow probes survive CRLF checkouts", () => {

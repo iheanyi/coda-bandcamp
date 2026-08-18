@@ -290,12 +290,18 @@ jobs:
       # Same key as cross-platform.yml so tag-triggered releases restore the
       # cache that main-branch CI keeps warm. apt hash-verifies cached .debs,
       # so staleness degrades to a re-download, never to a wrong package.
+      # ImageOS/ImageVersion are runner process env vars only; promote them
+      # through GITHUB_ENV or the key renders with empty segments.
+      - name: Resolve apt cache key
+        if: matrix.platform == 'ubuntu-22.04'
+        run: echo "APT_CACHE_IMAGE=${ImageOS:?}-${ImageVersion:?}" >> "$GITHUB_ENV"
+
       - name: Restore apt package cache
         if: matrix.platform == 'ubuntu-22.04'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/apt-archives
-          key: apt-archives-${{ env.ImageOS }}-${{ env.ImageVersion }}-coda-v1
+          key: apt-archives-${{ env.APT_CACHE_IMAGE }}-coda-v1
 
       - name: Install Linux system dependencies
         if: matrix.platform == 'ubuntu-22.04'
@@ -466,6 +472,20 @@ jobs:
             "$UPDATER_MANIFEST_PATH"
           gh release upload "$RELEASE_TAG" "$UPDATER_MANIFEST_PATH" --clobber
 
+      # Distinct suffix from the build-dependency cache: different package
+      # set and a different runner image (ubuntu-24.04). Tag runs can only
+      # restore caches saved on a shared ref, so this mostly serves
+      # dispatch-mode releases and re-runs; the baked-index fast path below
+      # is what removes the apt cost on fresh tags.
+      - name: Resolve apt cache key
+        run: echo "APT_CACHE_IMAGE=${ImageOS:?}-${ImageVersion:?}" >> "$GITHUB_ENV"
+
+      - name: Restore apt package cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/apt-archives
+          key: apt-archives-${{ env.APT_CACHE_IMAGE }}-minisign-v1
+
       - name: Cryptographically verify updater signatures
         shell: bash
         env:
@@ -504,10 +524,26 @@ jobs:
             done
           }
           echo "phase: apt install minisign"
-          # Index refresh moves ~25 MB cold; 180 s is >4x a healthy fetch.
-          apt_retry 180 update
-          # minisign is a ~100 KB package; 120 s covers dpkg overhead.
-          apt_retry 120 install --yes --no-install-recommends minisign
+          mkdir -p "$RUNNER_TEMP/apt-archives/partial"
+          install_args=(
+            install --yes --no-install-recommends
+            -o Dir::Cache::archives="$RUNNER_TEMP/apt-archives"
+            -o APT::Keep-Downloaded-Packages=true
+            minisign
+          )
+          # Fast path: the runner image ships baked apt indexes, so minisign
+          # usually installs without the ~25 MB index refresh that consumed
+          # 39 s of the v0.7.2 publish job. Any failure (stale baked index,
+          # wedged mirror) falls back to exactly the previous sequence.
+          if ! sudo env DEBIAN_FRONTEND=noninteractive \
+            timeout 120 apt-get "${apt_options[@]}" "${install_args[@]}"; then
+            echo "baked-index install failed; refreshing apt indexes" >&2
+            # Index refresh moves ~25 MB cold; 180 s is >4x a healthy fetch.
+            apt_retry 180 update
+            # minisign is a ~100 KB package; 120 s covers dpkg overhead.
+            apt_retry 120 "${install_args[@]}"
+          fi
+          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/apt-archives"
 
           echo "phase: write updater public key"
           node --input-type=module <<'NODE'

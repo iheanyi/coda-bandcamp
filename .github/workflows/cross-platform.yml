@@ -64,12 +64,20 @@ jobs:
       # apt hash-verifies every cached .deb against the live index, so a stale
       # cache degrades to a re-download, never to a wrong package. Bump the
       # coda-v1 suffix when the package list changes.
+      #
+      # ImageOS/ImageVersion exist only as runner process env vars, not in the
+      # workflow env context, so they must be promoted through GITHUB_ENV or
+      # the cache key renders with empty segments (observed in v0.7.2).
+      - name: Resolve apt cache key
+        if: matrix.platform == 'ubuntu-22.04'
+        run: echo "APT_CACHE_IMAGE=${ImageOS:?}-${ImageVersion:?}" >> "$GITHUB_ENV"
+
       - name: Restore apt package cache
         if: matrix.platform == 'ubuntu-22.04'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/apt-archives
-          key: apt-archives-${{ env.ImageOS }}-${{ env.ImageVersion }}-coda-v1
+          key: apt-archives-${{ env.APT_CACHE_IMAGE }}-coda-v1
 
       - name: Install Linux system dependencies
         if: matrix.platform == 'ubuntu-22.04'
