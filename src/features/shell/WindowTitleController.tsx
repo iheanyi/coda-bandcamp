@@ -1,11 +1,20 @@
 import { memo, useEffect, useRef } from "react";
 import { useCurrentRadioChapter } from "@/features/player/playbackClockHooks";
 import { isDesktop } from "@/lib";
-import {
-  applyCurrentNativeWindowTitle,
-  getWindowTitle,
-  type WindowTitleControllerProps,
-} from "./windowTitle";
+import type { PlaybackClock } from "@/playbackClock";
+import type { CodaPrimaryView } from "@/routing/routeMeta";
+import type { RadioChapter, Track } from "@/types";
+import { applyCurrentNativeWindowTitle, getWindowTitle } from "./windowTitle";
+
+type WindowTitleControllerProps = Readonly<{
+  playbackClock: PlaybackClock;
+  currentTrack?: Track;
+  radioTimeline: readonly RadioChapter[];
+  nowPlayingOpen: boolean;
+  selectedAlbumTitle?: string;
+  activeArtistName?: string;
+  view: CodaPrimaryView;
+}>;
 
 export const WindowTitleController = memo(function WindowTitleController({
   playbackClock,

@@ -3,16 +3,21 @@ import {
   type DetailTransitionKey,
   type DetailTransitionMarker,
 } from "./detailTransitionDescriptors";
-import {
-  applyDomEdits,
-  type DomEdit,
-} from "./features/navigation/domSnapshot";
+import { applyDomEdits, type DomEdit } from "./features/navigation/domSnapshot";
 import {
   findDetailTransitionTrigger,
   findSlottedDetailReturnTrigger,
   resolveDetailTransitionEndpointTargets,
 } from "./features/navigation/detailSourceIdentity";
-import type { RouteCommitOutcome, RouteCommitResult } from "./features/navigation/routeCommit";
+import type {
+  RouteCommitOutcome,
+  RouteCommitResult,
+} from "./features/navigation/routeCommit";
+import {
+  cancelScheduledFrame,
+  isAnimationFrameRequester,
+  scheduleNextFrame,
+} from "./domTiming";
 import {
   currentTransitionId,
   isCurrentTransition,
@@ -38,11 +43,6 @@ export type DetailTransitionSource = Readonly<{
   targets?: DetailTransitionEndpointTargets;
 }>;
 
-export type DetailOpenCommitResult = Readonly<{
-  locationKey: string;
-  outcome: RouteCommitOutcome;
-}>;
-
 export type DetailOpenInput = Readonly<{
   forcePageTransition?: boolean;
   headingFallbackId?: string;
@@ -51,7 +51,7 @@ export type DetailOpenInput = Readonly<{
   returnScrollTop?: number;
   source: DetailTransitionSource;
   targetKey: string;
-  update: () => DetailOpenCommitResult | Promise<DetailOpenCommitResult>;
+  update: () => RouteCommitResult | Promise<RouteCommitResult>;
 }>;
 
 export type DetailCloseInput = Readonly<{
@@ -62,10 +62,7 @@ export type DetailCloseInput = Readonly<{
   targetKey: string;
   update: (
     hasReturnState: boolean,
-  ) =>
-    | RouteCommitOutcome
-    | RouteCommitResult
-    | Promise<RouteCommitOutcome | RouteCommitResult>;
+  ) => RouteCommitResult | Promise<RouteCommitResult>;
 }>;
 
 type DetailReturnState = Readonly<{
@@ -91,27 +88,9 @@ let focusTimer: number | undefined;
 let pendingScrollTop: number | undefined;
 
 function assertNever(value: never): never {
-  throw new TypeError(`Unsupported detail navigation variant: ${String(value)}`);
-}
-
-function isAnimationFrameRequester(
-  value: typeof globalThis.requestAnimationFrame | undefined,
-): value is (callback: FrameRequestCallback) => number {
-  return value instanceof Function;
-}
-
-function isAnimationFrameCanceller(
-  value: typeof globalThis.cancelAnimationFrame | undefined,
-): value is (handle: number) => void {
-  return value instanceof Function;
-}
-
-function cancelScheduledFrame(handle: number | undefined): void {
-  if (handle === undefined) return;
-  const cancelFrame = globalThis.cancelAnimationFrame;
-  if (isAnimationFrameCanceller(cancelFrame)) {
-    cancelFrame.call(globalThis, handle);
-  }
+  throw new TypeError(
+    `Unsupported detail navigation variant: ${String(value)}`,
+  );
 }
 
 export function libraryScrollRoot(): HTMLElement | null {
@@ -151,7 +130,8 @@ function endpointMarkerEdits(
   targets: DetailTransitionEndpointTargets,
   identity: string,
 ): DomEdit[] {
-  const definition = DETAIL_TRANSITION_DESCRIPTORS[kind].markerEndpoints[endpoint];
+  const definition =
+    DETAIL_TRANSITION_DESCRIPTORS[kind].markerEndpoints[endpoint];
   const edits: DomEdit[] = [];
   if ("shared" in definition && definition.shared && targets.shared) {
     edits.push(markerEdit(targets.shared, definition.shared, identity));
@@ -170,8 +150,9 @@ function paintedAncestorEdits(
   let candidate: HTMLElement | null = element;
   while (candidate && candidate !== scrollRoot) {
     if (
-      window.getComputedStyle(candidate).getPropertyValue("content-visibility") ===
-      "auto"
+      window
+        .getComputedStyle(candidate)
+        .getPropertyValue("content-visibility") === "auto"
     ) {
       edits.push({
         element: candidate,
@@ -183,17 +164,6 @@ function paintedAncestorEdits(
     candidate = candidate.parentElement;
   }
   return edits;
-}
-
-function nextDomOpportunity(): Promise<void> {
-  return new Promise((resolve) => {
-    const requestFrame = globalThis.requestAnimationFrame;
-    if (isAnimationFrameRequester(requestFrame)) {
-      requestFrame.call(globalThis, () => resolve());
-      return;
-    }
-    queueMicrotask(resolve);
-  });
 }
 
 async function awaitVirtualReturnTrigger(
@@ -209,7 +179,7 @@ async function awaitVirtualReturnTrigger(
     const trigger = findTrigger();
     if (trigger?.isConnected) return trigger;
     if (attempt === MAX_VIRTUAL_RETURN_ATTEMPTS) return undefined;
-    await nextDomOpportunity();
+    await scheduleNextFrame();
   }
   return undefined;
 }
@@ -309,16 +279,23 @@ function lookupReturnState(key: string): DetailReturnState | undefined {
   return returnStates.get(key);
 }
 
-function triggerSlot(trigger: HTMLElement | undefined, kind: DetailTransitionKey): string | undefined {
+function triggerSlot(
+  trigger: HTMLElement | undefined,
+  kind: DetailTransitionKey,
+): string | undefined {
   const slotAttribute =
     DETAIL_TRANSITION_DESCRIPTORS[kind].domIdentity.trigger.slotAttribute;
   if (!slotAttribute || !trigger) return undefined;
   return trigger.getAttribute(slotAttribute) ?? undefined;
 }
 
-function sharedReturnSlots(kind: DetailTransitionKey): readonly string[] | undefined {
+function sharedReturnSlots(
+  kind: DetailTransitionKey,
+): readonly string[] | undefined {
   const descriptor = DETAIL_TRANSITION_DESCRIPTORS[kind];
-  return "sharedReturnSlots" in descriptor ? descriptor.sharedReturnSlots : undefined;
+  return "sharedReturnSlots" in descriptor
+    ? descriptor.sharedReturnSlots
+    : undefined;
 }
 
 function canReverseShared(state: DetailReturnState | undefined): boolean {
@@ -355,7 +332,8 @@ function findReturnTrigger(state: DetailReturnState): HTMLElement | undefined {
   if (state.kind === "now-playing") return liveCompactPlayerArtwork();
   if (state.slot === "player-album") {
     return (
-      document.querySelector<HTMLElement>("[data-player-album-link]") ?? undefined
+      document.querySelector<HTMLElement>("[data-player-album-link]") ??
+      undefined
     );
   }
   if (state.slot) {
@@ -372,7 +350,8 @@ function findReturnTrigger(state: DetailReturnState): HTMLElement | undefined {
       return findDetailTransitionTrigger(state.kind, state.identity);
     }
     const slotAttribute =
-      DETAIL_TRANSITION_DESCRIPTORS[state.kind].domIdentity.trigger.slotAttribute;
+      DETAIL_TRANSITION_DESCRIPTORS[state.kind].domIdentity.trigger
+        .slotAttribute;
     if (slotAttribute) {
       const bySlot = document.querySelector<HTMLElement>(
         `[${slotAttribute}="${state.slot}"]`,
@@ -388,33 +367,18 @@ function findReturnTrigger(state: DetailReturnState): HTMLElement | undefined {
   return findDetailTransitionTrigger(state.kind, state.identity);
 }
 
-function commitOutcome(
-  result: RouteCommitOutcome | RouteCommitResult | undefined,
-): RouteCommitOutcome {
-  if (result === undefined) return "failed";
-  if (
-    result === "rendered" ||
-    result === "same-location" ||
-    result === "timeout" ||
-    result === "failed"
-  ) {
-    return result;
-  }
-  return result.outcome;
-}
-
 function closeCommitSucceeded(outcome: RouteCommitOutcome): boolean {
   return outcome === "rendered";
 }
 
 function openCommitSucceeded(
-  result: DetailOpenCommitResult | undefined,
-): result is DetailOpenCommitResult {
+  result: RouteCommitResult | undefined,
+): result is RouteCommitResult {
   return result !== undefined && result.outcome === "rendered";
 }
 
 function openReturnStateKey(
-  result: DetailOpenCommitResult,
+  result: RouteCommitResult,
   targetKey: string,
 ): string | undefined {
   if (!openCommitSucceeded(result)) return undefined;
@@ -440,7 +404,9 @@ function consumeReturnState(
   if (lookupReturnState(targetKey) === stored) takeReturnState(targetKey);
 }
 
-export async function openDetail(input: DetailOpenInput): Promise<RouteCommitOutcome> {
+export async function openDetail(
+  input: DetailOpenInput,
+): Promise<RouteCommitOutcome> {
   abortDetailNavigationWork();
   const descriptor = DETAIL_TRANSITION_DESCRIPTORS[input.kind];
   const useShared = Boolean(
@@ -467,7 +433,7 @@ export async function openDetail(input: DetailOpenInput): Promise<RouteCommitOut
       async (token) => {
         if (!token.isCurrent()) return;
         const result = await input.update();
-        outcome = commitOutcome(result);
+        outcome = result.outcome;
         if (!token.isCurrent() || !openCommitSucceeded(result)) return;
         const returnKey = openReturnStateKey(result, input.targetKey);
         if (!returnKey) return;
@@ -499,7 +465,9 @@ export async function openDetail(input: DetailOpenInput): Promise<RouteCommitOut
   }
 }
 
-async function performClose(input: DetailCloseInput): Promise<RouteCommitOutcome> {
+async function performClose(
+  input: DetailCloseInput,
+): Promise<RouteCommitOutcome> {
   cancelScheduledFocus();
   focusedDestinationKey = undefined;
   const epoch = closeEpoch;
@@ -539,7 +507,11 @@ async function performClose(input: DetailCloseInput): Promise<RouteCommitOutcome
   };
 
   const applyReturnFocus = async (token: TransitionToken) => {
-    if (input.restoreFocus === false || focusApplied || !closeStillCurrent(token)) {
+    if (
+      input.restoreFocus === false ||
+      focusApplied ||
+      !closeStillCurrent(token)
+    ) {
       return;
     }
     let focusTarget: HTMLElement | undefined;
@@ -607,7 +579,7 @@ async function performClose(input: DetailCloseInput): Promise<RouteCommitOutcome
       async (token) => {
         if (!closeStillCurrent(token)) return;
         const commitResult = await input.update(Boolean(stored));
-        outcome = commitOutcome(commitResult);
+        outcome = commitResult.outcome;
         if (!closeStillCurrent(token)) {
           pendingScrollTop = undefined;
           return;
@@ -642,8 +614,11 @@ async function performClose(input: DetailCloseInput): Promise<RouteCommitOutcome
   }
 }
 
-export function closeDetail(input: DetailCloseInput): Promise<RouteCommitOutcome> {
-  const key = input.requestKey ?? `${input.kind}:${input.targetKey}:${input.identity}`;
+export function closeDetail(
+  input: DetailCloseInput,
+): Promise<RouteCommitOutcome> {
+  const key =
+    input.requestKey ?? `${input.kind}:${input.targetKey}:${input.identity}`;
   const active = closeRequests.get(key);
   if (active) return active;
   const request = performClose(input).finally(() => {

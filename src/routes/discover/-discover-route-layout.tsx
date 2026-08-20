@@ -1,8 +1,4 @@
-import {
-  getRouteApi,
-  Outlet,
-  useMatch,
-} from "@tanstack/react-router";
+import { getRouteApi, Outlet, useMatch } from "@tanstack/react-router";
 
 import { DiscoverScreen } from "@/DiscoverView";
 import { useDiscoverRuntime } from "@/features/discover/DiscoverRuntimeContext";
@@ -34,7 +30,6 @@ export function DiscoverRouteLayout() {
               viewTransition: false,
             });
           }}
-          onOpenRelease={runtime.onOpenRelease}
         />
       </div>
       <Outlet />

@@ -6,7 +6,7 @@ import { NowPlayingRuntimeProvider } from "@/features/now-playing/NowPlayingRunt
 import { PlaybackRuntimeProvider } from "@/features/playback-runtime";
 import type { PlaybackRuntimeController } from "@/features/playback-runtime/types";
 import { RadioRuntimeProvider } from "@/features/radio/RadioRuntimeProvider";
-import { SavedLibraryRuntimeProvider } from "@/features/saved-library/SavedLibraryRuntimeProvider";
+import { SavedLibraryRuntimeContext } from "@/features/saved-library/SavedLibraryRuntimeContext";
 
 import type { AppRouteRuntimes } from "./useAppRouteRuntimes";
 
@@ -26,13 +26,13 @@ export function AppRouteRuntimeProviders({
     <PlaybackRuntimeProvider controller={playback}>
       <LibraryRouteRuntimeProvider runtime={runtimes.library}>
         <DiscoverRuntimeProvider value={runtimes.discover}>
-          <SavedLibraryRuntimeProvider value={runtimes.savedLibrary}>
+          <SavedLibraryRuntimeContext.Provider value={runtimes.savedLibrary}>
             <RadioRuntimeProvider value={runtimes.radio}>
               <NowPlayingRuntimeProvider value={runtimes.nowPlaying}>
                 {children}
               </NowPlayingRuntimeProvider>
             </RadioRuntimeProvider>
-          </SavedLibraryRuntimeProvider>
+          </SavedLibraryRuntimeContext.Provider>
         </DiscoverRuntimeProvider>
       </LibraryRouteRuntimeProvider>
     </PlaybackRuntimeProvider>

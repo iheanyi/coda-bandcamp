@@ -63,26 +63,23 @@ pub(super) fn validate_credentials(input: &ConnectionInput) -> Result<(), String
     Ok(())
 }
 
-pub(super) fn validate_identifier(value: &str) -> Result<(), String> {
-    if value.is_empty()
-        || value.trim() != value
-        || value.len() > MAX_IDENTIFIER_LENGTH
-        || value.chars().any(|character| character.is_control())
-    {
-        return Err("Bandcamp returned an invalid media identifier.".into());
-    }
-    Ok(())
-}
-
-pub(super) fn validate_subsonic_id(value: &str, label: &str) -> Result<(), String> {
+fn validate_bounded_identifier(value: &str, error: impl Into<String>) -> Result<(), String> {
     if value.is_empty()
         || value.trim() != value
         || value.len() > MAX_IDENTIFIER_LENGTH
         || value.chars().any(char::is_control)
     {
-        return Err(format!("The {label} identifier is invalid."));
+        return Err(error.into());
     }
     Ok(())
+}
+
+pub(super) fn validate_identifier(value: &str) -> Result<(), String> {
+    validate_bounded_identifier(value, "Bandcamp returned an invalid media identifier.")
+}
+
+pub(super) fn validate_subsonic_id(value: &str, label: &str) -> Result<(), String> {
+    validate_bounded_identifier(value, format!("The {label} identifier is invalid."))
 }
 
 pub(super) fn validate_playlist_name(value: &str) -> Result<(), String> {

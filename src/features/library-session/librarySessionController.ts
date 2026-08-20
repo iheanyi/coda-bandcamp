@@ -10,6 +10,7 @@ import {
   type LibrarySyncProgress,
 } from "@/lib";
 import { clearCoverArtRendererState } from "@/coverArtSource";
+import { albumWithRecoveredCover, albumWithTracks } from "@/libraryAlbumHydration";
 import {
   albumQueryKey,
   cachedAlbumTracks,
@@ -254,24 +255,6 @@ function errorMessage(cause: unknown, fallback: string): string {
     .replace(/[\r\n\t]+/g, " ")
     .trim();
   return (normalized || fallback).slice(0, 300);
-}
-
-function albumWithTracks(album: Album, tracks: readonly Track[]): Album {
-  return {
-    ...album,
-    coverArt:
-      album.coverArt ?? tracks.find((track) => track.coverArt)?.coverArt,
-    tracks: [...tracks],
-  };
-}
-
-function albumWithRecoveredCover(
-  album: Album,
-  tracks: readonly Track[],
-): Album {
-  if (album.coverArt) return album;
-  const coverArt = tracks.find((track) => track.coverArt)?.coverArt;
-  return coverArt ? { ...album, coverArt } : album;
 }
 
 function sessionLibrarySummaries(albums: readonly Album[]): Album[] {

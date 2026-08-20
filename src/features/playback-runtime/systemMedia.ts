@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { normalizedReleaseTitle } from "@/playerState";
-import { radioAiringIndexesAt } from "@/radioPlayback";
+import { nextRadioChapterIndex, radioAiringIndexesAt } from "@/radioPlayback";
 import type { Album, RadioChapter, Track } from "@/types";
 import { useCoverArtSource } from "@/coverArtSource";
 
@@ -48,8 +48,7 @@ type CurrentSystemMedia = {
   display?: SystemMediaDisplay;
   browserArtworkUrl?: string;
   nativeArtwork?:
-    | { kind: "cover"; coverArtId: string }
-    | { kind: "remote"; url: string };
+    { kind: "cover"; coverArtId: string } | { kind: "remote"; url: string };
 };
 
 function displayAt(
@@ -64,14 +63,15 @@ function displayAt(
   ).currentIndex;
   const chapter =
     currentIndex >= 0 ? environment.timeline[currentIndex] : undefined;
-  const coverArtId = environment.timeline.length > 0
-    ? undefined
-    : (track.coverArt ?? environment.album?.coverArt);
-  const directArtworkUrl = chapter?.artworkUrl ?? (
-    coverArtId
+  const coverArtId =
+    environment.timeline.length > 0
+      ? undefined
+      : (track.coverArt ?? environment.album?.coverArt);
+  const directArtworkUrl =
+    chapter?.artworkUrl ??
+    (coverArtId
       ? environment.coverArtworkUrl
-      : (track.artworkUrl ?? environment.album?.artworkUrl)
-  );
+      : (track.artworkUrl ?? environment.album?.artworkUrl));
   return {
     identity: [
       track.id,
@@ -87,7 +87,8 @@ function displayAt(
     coverArtId,
     nativeCanNext:
       environment.canNext ||
-      (currentIndex >= 0 && currentIndex < environment.timeline.length - 1),
+      (currentIndex >= 0 &&
+        nextRadioChapterIndex(currentIndex, environment.timeline.length) >= 0),
   };
 }
 
@@ -289,9 +290,10 @@ export function usePlaybackSystemMediaController({
         : undefined,
     [albums, core.queueModel.currentTrack],
   );
-  const currentCoverArtId = core.queueModel.currentRadioTimeline.length > 0
-    ? undefined
-    : (core.queueModel.currentTrack?.coverArt ?? currentAlbum?.coverArt);
+  const currentCoverArtId =
+    core.queueModel.currentRadioTimeline.length > 0
+      ? undefined
+      : (core.queueModel.currentTrack?.coverArt ?? currentAlbum?.coverArt);
   const subscribedCoverArtworkUrl = useCoverArtSource(currentCoverArtId);
   const coverArtworkUrl = currentCoverArtId
     ? (subscribedCoverArtworkUrl ?? adapters.coverArtSource(currentCoverArtId))

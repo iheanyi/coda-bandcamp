@@ -1,1 +1,2 @@
 export const PREVIOUS_RESTART_THRESHOLD_SECONDS = 4;
+export const DEFAULT_VOLUME = 0.72;

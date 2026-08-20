@@ -40,6 +40,7 @@ import type { QueueRecommendation } from "@/queueRecommendation";
 import { handleCodaLinkActivation } from "@/routing/linkActivation";
 import type { Album, RadioChapter, Track } from "@/types";
 import { CoverArt } from "@/features/artwork/CoverArt";
+import { coverArtAlbumFromTrack } from "@/features/artwork/coverArtAlbum";
 import type { ArtistNavigationHandler } from "@/features/library/types";
 import { useCurrentRadioChapter } from "@/features/player/playbackClockHooks";
 import {
@@ -55,6 +56,8 @@ const TrackQueueList = lazy(() => import("@/TrackQueueList"));
 const queueTrackKey = (track: Track, absoluteIndex: number) =>
   `${track.id}-${absoluteIndex}`;
 const queueTrackLabel = (track: Track) => track.title;
+const QUEUE_LIST_REGION_CLASS_NAME =
+  "min-h-0 flex-1 [touch-action:pan-y] [scrollbar-color:#343738_transparent] scrollbar-thin overflow-x-hidden overflow-y-auto overscroll-y-contain bg-coda-queue px-2 pt-0.5 pb-2.5 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary/60";
 
 export type QueuePanelProps = {
   open: boolean;
@@ -134,14 +137,12 @@ export const QueuePanel = memo(function QueuePanel({
     () => upcoming.reduce((total, item) => total + item.duration, 0),
     [upcoming],
   );
-  const { current: currentRadioChapter, next: nextRadioChapter } =
-    useCurrentRadioChapter(playbackClock, radioTimeline);
-  const currentChapterIndex = currentRadioChapter
-    ? radioTimeline.indexOf(currentRadioChapter)
-    : -1;
-  const nextChapterIndex = nextRadioChapter
-    ? radioTimeline.indexOf(nextRadioChapter)
-    : -1;
+  const {
+    current: currentRadioChapter,
+    next: nextRadioChapter,
+    currentIndex: currentChapterIndex,
+    nextIndex: nextChapterIndex,
+  } = useCurrentRadioChapter(playbackClock, radioTimeline);
   const recommendationCard =
     recommendation && !hasDeferredTracks ? (
       <div className="grid w-full min-w-0 grid-cols-[3rem_minmax(0,1fr)] gap-x-3 gap-y-2.5 overflow-hidden rounded-lg border border-white/9 bg-[radial-gradient(circle_at_0_0,rgba(221,101,73,0.09),transparent_58%),#1a1d1f] p-3 text-left shadow-[inset_0_1px_rgba(255,255,255,0.025)] *:data-[slot=cover]:self-center">
@@ -346,14 +347,7 @@ export const QueuePanel = memo(function QueuePanel({
               >
                 <CoverArt
                   size="small"
-                  album={{
-                    id: currentTrack.albumId,
-                    title: currentTrack.album,
-                    artist: currentTrack.artist,
-                    coverArt: currentTrack.coverArt,
-                    artworkUrl: currentTrack.artworkUrl,
-                    palette: currentTrack.palette,
-                  }}
+                  album={coverArtAlbumFromTrack(currentTrack)}
                 />
               </Link>
               <div className="flex min-w-0 shrink grow basis-0 flex-col gap-1 overflow-hidden">
@@ -421,7 +415,7 @@ export const QueuePanel = memo(function QueuePanel({
         fallback={
           <div
             aria-label="Upcoming tracks"
-            className="min-h-0 flex-1 [touch-action:pan-y] [scrollbar-color:#343738_transparent] scrollbar-thin overflow-x-hidden overflow-y-auto overscroll-y-contain bg-coda-queue px-2 pt-0.5 pb-2.5 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary/60"
+            className={QUEUE_LIST_REGION_CLASS_NAME}
             role="region"
             tabIndex={0}
           >
@@ -431,7 +425,7 @@ export const QueuePanel = memo(function QueuePanel({
       >
         <TrackQueueList
           aria-label="Upcoming tracks"
-          className="min-h-0 flex-1 [touch-action:pan-y] [scrollbar-color:#343738_transparent] scrollbar-thin overflow-x-hidden overflow-y-auto overscroll-y-contain bg-coda-queue px-2 pt-0.5 pb-2.5 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary/60"
+          className={QUEUE_LIST_REGION_CLASS_NAME}
           empty={emptyQueue}
           getItemKey={queueTrackKey}
           getItemLabel={queueTrackLabel}
@@ -470,14 +464,7 @@ export const QueuePanel = memo(function QueuePanel({
                 >
                   <CoverArt
                     size="small"
-                    album={{
-                      id: track.albumId,
-                      title: track.album,
-                      artist: track.artist,
-                      coverArt: track.coverArt,
-                      artworkUrl: track.artworkUrl,
-                      palette: track.palette,
-                    }}
+                    album={coverArtAlbumFromTrack(track)}
                   />
                   {loadingAlbumId === track.albumId ? (
                     <span className="pointer-events-none absolute inset-0 grid place-items-center bg-black/40">

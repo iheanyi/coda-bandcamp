@@ -16,16 +16,7 @@ export type IdentifiedDetailOpenRequest = Readonly<{
   sourceTrigger?: HTMLElement;
 }>;
 
-type MutableIdentifiedDetailOpen = {
-  kind: DetailTransitionKey;
-  resetScrollOnOpen?: boolean;
-  returnScrollTop?: number;
-  source: DetailOpenInput["source"];
-  targetKey: string;
-  update: DetailOpenInput["update"];
-};
-
-export function identifiedDetailTargetKey(
+function identifiedDetailTargetKey(
   kind: DetailTransitionKey,
   identity: string,
 ): string {
@@ -38,7 +29,7 @@ export function openIdentifiedDetail(
   request: IdentifiedDetailOpenRequest,
   update: DetailOpenInput["update"],
 ): Promise<RouteCommitOutcome> {
-  const openInput: MutableIdentifiedDetailOpen = {
+  return openDetail({
     kind,
     source: prepareDetailSource(
       kind,
@@ -48,12 +39,9 @@ export function openIdentifiedDetail(
     ),
     targetKey: identifiedDetailTargetKey(kind, identity),
     update,
-  };
-  if (request.returnScrollTop !== undefined) {
-    openInput.returnScrollTop = request.returnScrollTop;
-  }
-  if (request.resetScrollOnOpen) openInput.resetScrollOnOpen = true;
-  return openDetail(openInput);
+    returnScrollTop: request.returnScrollTop,
+    resetScrollOnOpen: request.resetScrollOnOpen,
+  });
 }
 
 export function closeIdentifiedDetail(

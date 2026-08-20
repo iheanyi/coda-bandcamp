@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getMotionDiagnosticHistory } from "@/motionDiagnostics";
 import type { OwnDataValue } from "@/ownData";
+import { BANDCAMP_RADIO_PROVIDER } from "@/radioIdentity";
 import { deriveLibraryRouteInput } from "@/routing/libraryRouteInput";
 import {
   DEFAULT_COLLECTION_ROUTE_SEARCH,
@@ -35,7 +36,11 @@ import {
 } from "./useCodaNavigationController";
 import type { CodaRouteDestination } from "./useRouteDestination";
 import type { RenderedNavigationRouter } from "./routeNavigationAdapters";
-import { MAX_ROUTE_COMMIT_MS, type RouteCommitOutcome } from "./routeCommit";
+import {
+  MAX_ROUTE_COMMIT_MS,
+  renderedLocationPath,
+  type RouteCommitOutcome,
+} from "./routeCommit";
 
 const navigate = vi.fn();
 
@@ -159,11 +164,12 @@ function wrapper(queryClient: QueryClient) {
 function createRuntimeRouter(href = "/", search?: OwnDataValue) {
   let locationKey = 1;
   let renderedListener:
-    | ((event: Readonly<{ toLocation: { state: { __TSR_key: string } } }>) => void)
+    | ((
+        event: Readonly<{ toLocation: { state: { __TSR_key: string } } }>,
+      ) => void)
     | undefined;
   const locationState = { __TSR_key: "entry-1" };
-  const queryIndex = href.indexOf("?");
-  const pathname = queryIndex >= 0 ? href.slice(0, queryIndex) : href;
+  const pathname = renderedLocationPath({ href, state: locationState });
   const location = {
     href,
     pathname,
@@ -459,6 +465,7 @@ describe("useCodaNavigationController", () => {
     await waitFor(() => {
       expect(navigate).toHaveBeenCalledWith({
         params: { seriesId: "7" },
+        replace: false,
         to: "/radio/series/$seriesId",
         viewTransition: false,
       });
@@ -470,9 +477,12 @@ describe("useCodaNavigationController", () => {
         id: "radio:979",
       });
     });
-    expect(navigate).toHaveBeenCalledWith({
-      params: { showId: "979" },
-      to: "/radio/shows/$showId",
+    await waitFor(() => {
+      expect(navigate).toHaveBeenCalledWith({
+        params: { showId: "979" },
+        to: "/radio/shows/$showId",
+        viewTransition: false,
+      });
     });
 
     const localLinks =
@@ -480,6 +490,76 @@ describe("useCodaNavigationController", () => {
     expect(localLinks.album?.albumId).toBe(parseAlbumIdParam(album.id));
     localLinks.album?.onNavigate?.(trigger);
     expect(rendered.openAlbum).toHaveBeenCalledWith(album, trigger);
+  });
+
+  it("commits a Radio series page when the show id is unparsable", async () => {
+    const rendered = renderController();
+
+    act(() => {
+      rendered.result.current.commands.album.openFromTrack({
+        ...track,
+        album: "The Hip Hop Show",
+        albumId: "radio:not-a-show",
+        artist: BANDCAMP_RADIO_PROVIDER,
+        id: "radio:not-a-show",
+      });
+    });
+
+    await waitFor(() => {
+      expect(navigate).toHaveBeenCalledWith({
+        params: { seriesId: "5" },
+        replace: false,
+        to: "/radio/series/$seriesId",
+        viewTransition: false,
+      });
+    });
+  });
+
+  it("routes Bandcamp Radio artist names through radioRouteNav", async () => {
+    const radioTrackWithKnownSeries: Track = {
+      ...track,
+      album: "The Hip Hop Show",
+      albumId: "radio:979",
+      artist: BANDCAMP_RADIO_PROVIDER,
+      id: "radio:979",
+    };
+    const seriesRendered = renderController();
+
+    act(() => {
+      seriesRendered.result.current.commands.artist.openName(
+        BANDCAMP_RADIO_PROVIDER,
+        undefined,
+        radioTrackWithKnownSeries,
+      );
+    });
+
+    await waitFor(() => {
+      expect(navigate).toHaveBeenCalledWith({
+        params: { seriesId: "5" },
+        replace: false,
+        to: "/radio/series/$seriesId",
+        viewTransition: false,
+      });
+    });
+    expect(seriesRendered.detail.transitionPrimary).not.toHaveBeenCalled();
+
+    navigate.mockClear();
+    const archiveRendered = renderController();
+
+    act(() => {
+      archiveRendered.result.current.commands.artist.openName(
+        BANDCAMP_RADIO_PROVIDER,
+      );
+    });
+
+    await waitFor(() => {
+      expect(navigate).toHaveBeenCalledWith({
+        replace: false,
+        to: "/radio",
+        viewTransition: false,
+      });
+    });
+    expect(archiveRendered.detail.transitionPrimary).not.toHaveBeenCalled();
   });
 
   it("uses one back interface while applying destination-specific cleanup", async () => {
@@ -598,7 +678,10 @@ describe("useCodaNavigationController", () => {
     pane.dataset.codaTransitionKey = "favorites";
     document.body.append(pane);
     const rendered = renderController({
-      destination: routeDestination({ primaryView: "favorites", screen: "favorites" }),
+      destination: routeDestination({
+        primaryView: "favorites",
+        screen: "favorites",
+      }),
     });
     const commitNavigation = vi.fn(async () => {
       pane.dataset.codaTransitionKey = "collection";
@@ -618,7 +701,9 @@ describe("useCodaNavigationController", () => {
   it("releases sidebar navigation at the route-commit bound", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     let renderedListener:
-      | ((event: Readonly<{ toLocation: { state: { __TSR_key: string } } }>) => void)
+      | ((
+          event: Readonly<{ toLocation: { state: { __TSR_key: string } } }>,
+        ) => void)
       | undefined;
     const hungRouter: RenderedNavigationRouter = {
       history: {
@@ -646,10 +731,12 @@ describe("useCodaNavigationController", () => {
     );
     const commitNavigation = vi.fn(() => new Promise<void>(() => {}));
 
-    const navigation = rendered.result.current.commands.sidebar.navigatePrimary({
-      destination: "/collection",
-      navigate: commitNavigation,
-    });
+    const navigation = rendered.result.current.commands.sidebar.navigatePrimary(
+      {
+        destination: "/collection",
+        navigate: commitNavigation,
+      },
+    );
     await vi.advanceTimersByTimeAsync(MAX_ROUTE_COMMIT_MS);
     await navigation;
 
@@ -694,7 +781,12 @@ describe("useCodaNavigationController", () => {
   it("compares sidebar targets by pathname plus committed search", async () => {
     const hung = vi.fn(() => new Promise<void>(() => {}));
     const lists = renderController(
-      { destination: routeDestination({ primaryView: "daily", screen: "daily" }) },
+      {
+        destination: routeDestination({
+          primaryView: "daily",
+          screen: "daily",
+        }),
+      },
       { href: "/daily?category=lists", search: { category: "lists" } },
     );
     const listsCommit = vi.fn(async () => {

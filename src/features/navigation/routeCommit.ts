@@ -10,10 +10,7 @@ import type {
 } from "./routeNavigationAdapters";
 
 export type RouteCommitOutcome =
-  | "rendered"
-  | "same-location"
-  | "timeout"
-  | "failed";
+  "rendered" | "same-location" | "timeout" | "failed";
 
 export type RouteCommitResult = Readonly<{
   locationKey: string;
@@ -34,6 +31,13 @@ export function renderedLocationKey(location: RenderedRouterLocation) {
   return location.state.__TSR_key ?? location.href ?? "";
 }
 
+export function renderedLocationPath(location: RenderedRouterLocation) {
+  if (location.pathname) return location.pathname;
+  const href = location.href ?? "";
+  const queryIndex = href.indexOf("?");
+  return queryIndex >= 0 ? href.slice(0, queryIndex) : href;
+}
+
 export function routeCommitResult(
   router: RenderedNavigationRouter,
   outcome: RouteCommitOutcome,
@@ -42,6 +46,24 @@ export function routeCommitResult(
     locationKey: renderedLocationKey(router.state.location),
     outcome,
   };
+}
+
+export function routeCommitFailureCopy(
+  outcome: RouteCommitOutcome,
+  subject: string,
+  failedCopy = `${subject} failed. Try again.`,
+): string | undefined {
+  switch (outcome) {
+    case "rendered":
+    case "same-location":
+      return undefined;
+    case "failed":
+      return failedCopy;
+    case "timeout":
+      return `${subject} took too long. Try again.`;
+    default:
+      return assertNever(outcome);
+  }
 }
 
 function activeMotionDiagnosticId(): number | undefined {

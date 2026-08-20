@@ -8,13 +8,13 @@ import {
   MapPin,
   Music2,
   Plus,
-  RefreshCw,
 } from "lucide-react";
 import { memo, useMemo } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { RetryButton } from "@/components/ui/retry-button";
 import {
   CardActionOverlay,
   RowActionGroup,
@@ -24,6 +24,7 @@ import { PlaybackIcon } from "@/components/ui/playback-icon";
 import { Spinner } from "@/components/ui/spinner";
 import { ScrollableLinkSelectionRail } from "@/components/ScrollableLinkSelectionRail";
 import { countLabel } from "@/countLabel";
+import { formatErrorMessage } from "@/formatError";
 import {
   DAILY_CATEGORY_GROUPS,
   dailyArticlesNewestFirst,
@@ -44,6 +45,8 @@ import type {
   DailyCategory,
   Track,
 } from "@/types";
+
+import { DailyFeedStatus } from "./DailyFeedStatus";
 
 export type DailyPlaybackProps = Readonly<{
   currentTrackId?: string;
@@ -183,9 +186,7 @@ const DailyArticleCard = memo(function DailyArticleCard({
               <BookOpenText size={24} />
             </span>
           )}
-          <CardActionOverlay
-            contentClassName="grid size-8 place-items-center rounded-full border border-white/10 bg-black/60 text-white shadow-[0_5px_15px_rgba(0,0,0,0.3)] backdrop-blur-sm"
-          >
+          <CardActionOverlay contentClassName="grid size-8 place-items-center rounded-full border border-white/10 bg-black/60 text-white shadow-[0_5px_15px_rgba(0,0,0,0.3)] backdrop-blur-sm">
             <ArrowUpRight size={15} />
           </CardActionOverlay>
         </div>
@@ -247,39 +248,32 @@ export function DailyArchiveScreen({
       </div>
 
       {query.isPending ? (
-        <div
-          className="grid min-h-72 place-items-center text-center text-muted-foreground"
-          role="status"
-        >
-          <div>
+        <DailyFeedStatus
+          icon={
             <Spinner
               aria-hidden="true"
               className="mx-auto size-7 motion-reduce:animate-none"
             />
-            <strong className="mt-3 block text-sm text-foreground">
-              Finding the music…
-            </strong>
-          </div>
-        </div>
+          }
+          muted
+          role="status"
+          title="Finding the music…"
+        />
       ) : query.isError && !articles.length ? (
-        <div className="grid min-h-72 place-items-center text-center">
-          <div>
-            <Music2 className="mx-auto text-muted-foreground" size={28} />
-            <strong className="mt-3 block text-sm">
-              Bandcamp Daily is taking a break
-            </strong>
-            <p className="mt-1 max-w-sm text-xs text-muted-foreground">
-              {String(query.error).replace(/^Error:\s*/u, "")}
-            </p>
-            <Button
+        <DailyFeedStatus
+          action={
+            <RetryButton
+              busy={query.isFetching}
+              busyLabel="Trying again…"
               className="mt-3"
+              label="Try again"
               onClick={() => void query.refetch()}
-              size="compact"
-            >
-              <RefreshCw size={14} /> Try again
-            </Button>
-          </div>
-        </div>
+            />
+          }
+          detail={formatErrorMessage(query.error)}
+          icon={<Music2 className="mx-auto text-muted-foreground" size={28} />}
+          title="Bandcamp Daily is taking a break"
+        />
       ) : articles.length ? (
         <>
           {query.isError ? (
@@ -322,14 +316,11 @@ export function DailyArchiveScreen({
           ) : null}
         </>
       ) : (
-        <div className="grid min-h-72 place-items-center text-center text-muted-foreground">
-          <div>
-            <Music2 className="mx-auto" size={28} />
-            <strong className="mt-3 block text-sm text-foreground">
-              No music stories found
-            </strong>
-          </div>
-        </div>
+        <DailyFeedStatus
+          icon={<Music2 className="mx-auto" size={28} />}
+          muted
+          title="No music stories found"
+        />
       )}
     </section>
   );
@@ -504,95 +495,90 @@ export function DailyArticleScreen({
         <ArrowLeft size={15} /> Back to {dailyCategoryLabel(section)}
       </Link>
       <div data-coda-daily-detail-surface>
-      <header
-        className="mt-3 grid gap-6 rounded-xl border border-border bg-[radial-gradient(circle_at_85%_15%,rgba(221,101,73,0.14),transparent_35%),linear-gradient(135deg,#24282a,#191c1e_70%)] p-6 sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)] lg:p-8"
-      >
-        {article.artworkUrl ? (
-          <div
-            className="aspect-square w-full max-w-48 overflow-hidden rounded-lg bg-muted shadow-[0_18px_38px_rgba(0,0,0,0.32)] outline-1 -outline-offset-1 outline-white/10"
-            data-coda-daily-artwork-detail={article.slug}
-          >
-            <img
-              alt=""
-              className="size-full object-cover"
-              decoding="async"
-              draggable={false}
-              src={article.artworkUrl}
-            />
-          </div>
-        ) : null}
-        <div className="min-w-0 self-center">
-          <Badge variant="artwork">From Bandcamp Daily</Badge>
-          <h1
-            className="mt-3 mb-0 max-w-3xl text-3xl font-semibold tracking-tight wrap-anywhere outline-none"
-            data-coda-daily-title-detail={article.slug}
-            id="daily-article-heading"
-            tabIndex={-1}
-          >
-            {article.title}
-          </h1>
-          <p className="mt-2 mb-0 text-xs text-muted-foreground">
-            {[article.author, published].filter(Boolean).join(" · ")}
-          </p>
-          {article.description ? (
-            <p className="mt-3 mb-0 max-w-3xl text-sm text-muted-foreground">
-              {article.description}
-            </p>
+        <header className="mt-3 grid gap-6 rounded-xl border border-border bg-[radial-gradient(circle_at_85%_15%,rgba(221,101,73,0.14),transparent_35%),linear-gradient(135deg,#24282a,#191c1e_70%)] p-6 sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)] lg:p-8">
+          {article.artworkUrl ? (
+            <div
+              className="aspect-square w-full max-w-48 overflow-hidden rounded-lg bg-muted shadow-[0_18px_38px_rgba(0,0,0,0.32)] outline-1 -outline-offset-1 outline-white/10"
+              data-coda-daily-artwork-detail={article.slug}
+            >
+              <img
+                alt=""
+                className="size-full object-cover"
+                decoding="async"
+                draggable={false}
+                src={article.artworkUrl}
+              />
+            </div>
           ) : null}
-          <Button
-            className="mt-4"
-            onClick={() => void openBandcampUrl(article.articleUrl)}
-            size="compact"
-            variant="outline"
-          >
-            <BookOpenText size={14} /> Read the story <ArrowUpRight size={13} />
-          </Button>
-        </div>
-      </header>
-
-      <div className="mt-7 flex items-center justify-between gap-3">
-        <h2 className="m-0 text-xl font-semibold">Music in this story</h2>
-        <div className="flex flex-wrap items-center justify-end gap-3">
-          <span className="text-xs text-muted-foreground">
-            {countLabel(article.embeds.length, "release")}
-          </span>
-          {article.embeds.length > 1 && allTracks.length ? (
+          <div className="min-w-0 self-center">
+            <Badge variant="artwork">From Bandcamp Daily</Badge>
+            <h1
+              className="mt-3 mb-0 max-w-3xl text-3xl font-semibold tracking-tight wrap-anywhere outline-none"
+              data-coda-daily-title-detail={article.slug}
+              id="daily-article-heading"
+              tabIndex={-1}
+            >
+              {article.title}
+            </h1>
+            <p className="mt-2 mb-0 text-xs text-muted-foreground">
+              {[article.author, published].filter(Boolean).join(" · ")}
+            </p>
+            {article.description ? (
+              <p className="mt-3 mb-0 max-w-3xl text-sm text-muted-foreground">
+                {article.description}
+              </p>
+            ) : null}
             <Button
-              aria-label="Queue all releases"
-              onClick={() => playback.onQueueTracks(allTracks)}
+              className="mt-4"
+              onClick={() => void openBandcampUrl(article.articleUrl)}
               size="compact"
-              title="Add every playable track to the queue"
               variant="outline"
             >
-              <ListPlus size={14} /> Queue all
+              <BookOpenText size={14} /> Read the story{" "}
+              <ArrowUpRight size={13} />
             </Button>
-          ) : null}
-        </div>
-      </div>
-      {article.embeds.length ? (
-        <div className="mt-4 grid gap-5">
-          {article.embeds.map((embed, index) => (
-            <DailyEmbedCard
-              article={article}
-              embedIndex={index}
-              key={embed.id}
-              playback={playback}
-            />
-          ))}
-        </div>
-      ) : (
-        <div className="mt-4 grid min-h-60 place-items-center rounded-xl border border-border text-center text-muted-foreground">
-          <div>
-            <Music2 className="mx-auto" size={28} />
-            <strong className="mt-3 block text-sm text-foreground">
-              No playable embeds found
-            </strong>
-            <p className="mt-1 mb-0 max-w-sm text-xs">
-              The story is still available on Bandcamp Daily.
-            </p>
+          </div>
+        </header>
+
+        <div className="mt-7 flex items-center justify-between gap-3">
+          <h2 className="m-0 text-xl font-semibold">Music in this story</h2>
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            <span className="text-xs text-muted-foreground">
+              {countLabel(article.embeds.length, "release")}
+            </span>
+            {article.embeds.length > 1 && allTracks.length ? (
+              <Button
+                aria-label="Queue all releases"
+                onClick={() => playback.onQueueTracks(allTracks)}
+                size="compact"
+                title="Add every playable track to the queue"
+                variant="outline"
+              >
+                <ListPlus size={14} /> Queue all
+              </Button>
+            ) : null}
           </div>
         </div>
-      )}
+        {article.embeds.length ? (
+          <div className="mt-4 grid gap-5">
+            {article.embeds.map((embed, index) => (
+              <DailyEmbedCard
+                article={article}
+                embedIndex={index}
+                key={embed.id}
+                playback={playback}
+              />
+            ))}
+          </div>
+        ) : (
+          <DailyFeedStatus
+            className="mt-4 min-h-60 rounded-xl border border-border"
+            detail="The story is still available on Bandcamp Daily."
+            icon={<Music2 className="mx-auto" size={28} />}
+            muted
+            title="No playable embeds found"
+          />
+        )}
       </div>
     </section>
   );

@@ -20,10 +20,8 @@ import {
   type CSSProperties,
   type ReactNode,
   type RefObject,
-  useCallback,
   useEffect,
   useState,
-  useSyncExternalStore,
 } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,23 +35,26 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { DEFAULT_VOLUME } from "@/features/player/constants";
+import { usePlaybackPosition } from "@/features/player/playbackClockHooks";
 import {
   TrackAlbumLink,
   TrackArtistLink,
 } from "@/features/player/TrackRouteLinks";
+import {
+  queueOrChapterCanNext,
+  queueOrChapterCanPrevious,
+} from "@/features/player/transportEnablement";
 import { useActivateDetailDestination } from "@/features/navigation/useActivateDetailDestination";
+import { useOpenExternalBandcampItem } from "@/features/radio/useOpenExternalBandcampItem";
 import { cn } from "@/lib/utils";
 import { countLabel } from "@/countLabel";
 import { formatTime, openBandcampUrl } from "@/lib";
 import { normalizedReleaseTitle } from "@/playerState";
 import type { RadioChapterLocalLinks } from "@/RadioChapterMetadata";
-import {
-  nextRadioChapterTimeInTimeline,
-  previousRadioChapterTimeInTimeline,
-  radioShowIdFromTrackId,
-} from "@/radioPlayback";
+import { radioShowIdFromTrackId } from "@/radioPlayback";
 import { BANDCAMP_RADIO_PROVIDER } from "@/radioIdentity";
-import { radioSeriesByTitle } from "@/radioSeries";
+import { radioEpisodeUrl, radioSeriesByTitle } from "@/radioSeries";
 import type { PlaybackClock } from "@/playbackClock";
 import type { QueueRecommendation } from "@/queueRecommendation";
 import { handleCodaLinkActivation } from "@/routing/linkActivation";
@@ -157,24 +158,20 @@ const NowPlayingPlaybackControls = memo(function NowPlayingPlaybackControls({
   onToggle: () => void;
   onNext: () => void;
 }) {
-  const currentTime = useSyncExternalStore(
-    playbackClock.subscribe,
-    playbackClock.getSnapshot,
-    playbackClock.getSnapshot,
-  );
-  const safeDuration = Math.max(0, duration);
-  const remaining = Math.max(0, safeDuration - currentTime);
+  const currentTime = usePlaybackPosition(playbackClock);
+  const remaining = Math.max(0, duration - currentTime);
   const repeatLabel =
     repeat === "off"
       ? "Repeat off"
       : repeat === "all"
         ? "Repeat queue"
         : "Repeat current track";
-  const positionCanPrevious =
-    currentTime > 4 ||
-    previousRadioChapterTimeInTimeline(timeline, currentTime) !== undefined;
-  const positionCanNext =
-    nextRadioChapterTimeInTimeline(timeline, currentTime) !== undefined;
+  const chapterCanPrevious = queueOrChapterCanPrevious(
+    canPrevious,
+    currentTime,
+    timeline,
+  );
+  const chapterCanNext = queueOrChapterCanNext(canNext, currentTime, timeline);
 
   return (
     <>
@@ -183,9 +180,9 @@ const NowPlayingPlaybackControls = memo(function NowPlayingPlaybackControls({
           className="**:data-[slot=slider-range]:bg-[#ebe8e1] **:data-[slot=slider-thumb]:size-3 **:data-[slot=slider-thumb]:opacity-100 **:data-[slot=slider-track]:h-1 **:data-[slot=slider-track]:bg-white/15"
           aria-label="Now playing position"
           min={0}
-          max={safeDuration || 1}
+          max={duration || 1}
           step={1}
-          value={[Math.min(Math.max(0, currentTime), safeDuration || 1)]}
+          value={[Math.min(Math.max(0, currentTime), duration || 1)]}
           onValueChange={(values) => onSeek(values[0] ?? 0)}
         />
         <div
@@ -234,7 +231,7 @@ const NowPlayingPlaybackControls = memo(function NowPlayingPlaybackControls({
                 size="icon"
                 className="size-11 justify-self-center text-[#dedcd6] max-lg:size-9"
                 onClick={onPrevious}
-                disabled={!canPrevious && !positionCanPrevious}
+                disabled={!chapterCanPrevious}
                 aria-label="Previous"
               />
             }
@@ -260,7 +257,7 @@ const NowPlayingPlaybackControls = memo(function NowPlayingPlaybackControls({
                 size="icon"
                 className="size-11 justify-self-center text-[#dedcd6] max-lg:size-9"
                 onClick={onNext}
-                disabled={!canNext && !positionCanNext}
+                disabled={!chapterCanNext}
                 aria-label="Next"
               />
             }
@@ -353,9 +350,8 @@ function NowPlayingViewComponent({
   const radioShowId = radioShowIdFromTrackId(track.id);
   const radioShowRouteId =
     radioShowId === undefined ? undefined : parseRadioShowIdParam(radioShowId);
-  const radioShowUrl = radioShowId
-    ? `https://bandcamp.com/radio?show=${radioShowId}`
-    : undefined;
+  const radioShowUrl =
+    radioShowId === undefined ? undefined : radioEpisodeUrl(radioShowId);
   const radioSeries = radioShowUrl
     ? radioSeriesByTitle(track.album)
     : undefined;
@@ -364,12 +360,10 @@ function NowPlayingViewComponent({
     : undefined;
   const releaseTitle = normalizedReleaseTitle(track.album);
 
-  const openRadioChapter = useCallback((url: string) => {
-    setRadioLinkError("");
-    void openExternal(url).catch((cause) => {
-      setRadioLinkError(String(cause).replace(/^Error:\s*/, ""));
-    });
-  }, [openExternal]);
+  const openRadioChapter = useOpenExternalBandcampItem(
+    openExternal,
+    setRadioLinkError,
+  );
   useActivateDetailDestination("now-playing", "now-playing");
   useEffect(() => {
     if (supplementalReady) return;
@@ -671,7 +665,7 @@ function NowPlayingViewComponent({
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => onVolume(volume ? 0 : 0.72)}
+                      onClick={() => onVolume(volume ? 0 : DEFAULT_VOLUME)}
                       aria-label={volume ? "Mute" : "Unmute"}
                     />
                   }

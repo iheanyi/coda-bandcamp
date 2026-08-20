@@ -2,11 +2,11 @@ import { useMemo } from "react";
 
 import type { ToastNotifier } from "@/components/ui/toastManager";
 import type { FavoritesController } from "@/features/favorites/useLocalFavoritesController";
-import type { Album, RadioShowSummary, Track } from "@/types";
+import type { Album, Track } from "@/types";
 
 import type { SavedLibraryRuntimeValue } from "./SavedLibraryRuntimeContext";
 
-export type SavedLibraryPlaybackRuntime = Pick<
+type SavedLibraryPlaybackRuntime = Pick<
   SavedLibraryRuntimeValue,
   | "currentTrackId"
   | "onPlayTrack"
@@ -17,7 +17,7 @@ export type SavedLibraryPlaybackRuntime = Pick<
   | "playing"
 >;
 
-export type SavedLibraryNavigationRuntime = Readonly<{
+type SavedLibraryNavigationRuntime = Readonly<{
   onOpenAlbum: (album: Album, trigger: HTMLElement) => void | Promise<void>;
   onOpenArtist: SavedLibraryRuntimeValue["onOpenArtist"];
   onOpenRadioSeries: SavedLibraryRuntimeValue["onOpenRadioSeries"];
@@ -35,7 +35,7 @@ type SavedLibraryFavoritesRuntime = Pick<
   | "toggleRadioFavorite"
 >;
 
-export type SavedLibraryRuntimeAdapterOptions = Readonly<{
+type SavedLibraryRuntimeAdapterOptions = Readonly<{
   connected: boolean;
   favorites: SavedLibraryFavoritesRuntime;
   loadingAlbumId?: string;
@@ -105,8 +105,7 @@ export function useSavedLibraryRuntimeAdapter({
       onRefreshFavorites: refresh,
       onToggleFavorite: toggleFavorite,
       onTogglePlayback,
-      onToggleRadioFavorite: (show: RadioShowSummary, favorite: boolean) =>
-        toggleRadioFavorite(show, favorite),
+      onToggleRadioFavorite: toggleRadioFavorite,
       playing,
     }),
     [

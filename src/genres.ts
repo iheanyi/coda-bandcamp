@@ -56,21 +56,29 @@ export function normalizeGenre(value?: string): string | undefined {
   return key.replace(/(^|[\s/])\p{L}/gu, (letter) => letter.toLocaleUpperCase("en-US"));
 }
 
-export function summarizeGenres(
-  albums: ReadonlyArray<{ genre?: string }>,
-  featuredLimit = 5,
+export type GenreCountEntry = Readonly<{
+  label: string;
+  count: number;
+}>;
+
+export function recordAlbumGenre(
+  counts: Map<string, GenreCountEntry>,
+  genre?: string,
+): void {
+  const label = normalizeGenre(genre);
+  if (!label) return;
+  const key = genreKey(label);
+  const existing = counts.get(key);
+  counts.set(key, {
+    label: existing?.label ?? label,
+    count: (existing?.count ?? 0) + 1,
+  });
+}
+
+function featuredAndAllGenres(
+  counts: Map<string, GenreCountEntry>,
+  featuredLimit: number,
 ) {
-  const counts = new Map<string, { label: string; count: number }>();
-  for (const album of albums) {
-    const label = normalizeGenre(album.genre);
-    if (!label) continue;
-    const key = genreKey(label);
-    const existing = counts.get(key);
-    counts.set(key, {
-      label: existing?.label ?? label,
-      count: (existing?.count ?? 0) + 1,
-    });
-  }
   const all = Array.from(counts.values())
     .map(({ label }) => label)
     .sort((a, b) => a.localeCompare(b));
@@ -79,4 +87,27 @@ export function summarizeGenres(
     .slice(0, featuredLimit)
     .map(({ label }) => label);
   return { all, featured };
+}
+
+export function orderedGenreTabsFromCounts(
+  counts: Map<string, GenreCountEntry>,
+  featuredLimit = 5,
+): string[] {
+  const { all, featured } = featuredAndAllGenres(counts, featuredLimit);
+  const featuredKeys = new Set(featured.map(genreKey));
+  return [
+    ...featured,
+    ...all.filter((genre) => !featuredKeys.has(genreKey(genre))),
+  ];
+}
+
+export function summarizeGenres(
+  albums: ReadonlyArray<{ genre?: string }>,
+  featuredLimit = 5,
+) {
+  const counts = new Map<string, GenreCountEntry>();
+  for (const album of albums) {
+    recordAlbumGenre(counts, album.genre);
+  }
+  return featuredAndAllGenres(counts, featuredLimit);
 }

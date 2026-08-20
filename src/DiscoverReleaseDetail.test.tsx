@@ -1,10 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
-import {
-  DiscoverReleaseDetail,
-  DiscoverReleaseScreen,
-} from "./DiscoverReleaseDetail";
+import { DiscoverReleaseScreen } from "./DiscoverReleaseDetail";
 import type { DiscoverRelease } from "./types";
 
 const release: DiscoverRelease = {
@@ -43,8 +40,9 @@ describe("DiscoverReleaseDetail", () => {
       />,
     );
 
-    expect(screen.getByRole("article", { name: "Blue Hours" }))
-      .toHaveClass("route-detail");
+    expect(screen.getByRole("article", { name: "Blue Hours" })).toHaveClass(
+      "route-detail",
+    );
     expect(screen.getByRole("heading", { name: "Blue Hours" })).toHaveFocus();
   });
 
@@ -55,7 +53,7 @@ describe("DiscoverReleaseDetail", () => {
     const onOpenBandcamp = vi.fn();
     const onTogglePlayback = vi.fn();
     const { rerender } = renderDetail(
-      <DiscoverReleaseDetail
+      <DiscoverReleaseScreen
         release={release}
         playing={false}
         onBack={vi.fn()}
@@ -83,38 +81,49 @@ describe("DiscoverReleaseDetail", () => {
       "data-coda-discover-artwork-detail",
       "discover:release-1",
     );
-    expect(within(detail).getByRole("heading", {
-      name: "Blue Hours",
-    }).firstElementChild).toHaveAttribute(
-      "data-coda-discover-title-detail",
-      "discover:release-1",
+    expect(
+      within(detail).getByRole("heading", {
+        name: "Blue Hours",
+      }).firstElementChild,
+    ).toHaveAttribute("data-coda-discover-title-detail", "discover:release-1");
+    fireEvent.click(
+      within(detail).getByRole("button", {
+        name: "Signal Garden",
+      }),
     );
-    fireEvent.click(within(detail).getByRole("button", {
-      name: "Signal Garden",
-    }));
-    fireEvent.click(within(detail).getAllByRole("button", {
-      name: "Play Glass Lines",
-    })[0]);
-    fireEvent.click(within(detail).getByRole("button", {
-      name: "Add to queue",
-    }));
-    fireEvent.click(within(detail).getByRole("button", {
-      name: "Open on Bandcamp",
-    }));
+    fireEvent.click(
+      within(detail).getAllByRole("button", {
+        name: "Play Glass Lines",
+      })[0],
+    );
+    fireEvent.click(
+      within(detail).getByRole("button", {
+        name: "Add to queue",
+      }),
+    );
+    fireEvent.click(
+      within(detail).getByRole("button", {
+        name: "Open on Bandcamp",
+      }),
+    );
 
     expect(onArtist).toHaveBeenCalledWith(release);
-    expect(onPlay).toHaveBeenCalledWith(expect.objectContaining({
-      id: "discover:preview-1",
-      discoverRelease: release,
-    }));
-    expect(onQueue).toHaveBeenCalledWith(expect.objectContaining({
-      id: "discover:preview-1",
-      discoverRelease: release,
-    }));
+    expect(onPlay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "discover:preview-1",
+        discoverRelease: release,
+      }),
+    );
+    expect(onQueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "discover:preview-1",
+        discoverRelease: release,
+      }),
+    );
     expect(onOpenBandcamp).toHaveBeenCalledWith(release.itemUrl);
 
     rerender(
-      <DiscoverReleaseDetail
+      <DiscoverReleaseScreen
         release={release}
         currentTrackId="discover:preview-1"
         playing
@@ -129,9 +138,11 @@ describe("DiscoverReleaseDetail", () => {
     detail = screen.getByRole("article", {
       name: "Blue Hours",
     });
-    fireEvent.click(within(detail).getAllByRole("button", {
-      name: "Pause Glass Lines",
-    })[0]);
+    fireEvent.click(
+      within(detail).getAllByRole("button", {
+        name: "Pause Glass Lines",
+      })[0],
+    );
 
     expect(onTogglePlayback).toHaveBeenCalledTimes(1);
   });

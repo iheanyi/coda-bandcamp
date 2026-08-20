@@ -9,16 +9,22 @@ import type { OwnDataValue } from "@/ownData";
 export type LibraryArtistRouteSearch = CollectionRouteSearch &
   Readonly<{ albumId?: AlbumId }>;
 
-export function libraryArtistRouteSearch(
+export function resetCollectionSearchForArtist(
   value: OwnDataValue,
-  sourceAlbumId?: string,
-): LibraryArtistRouteSearch {
-  const search: LibraryArtistRouteSearch = {
+): CollectionRouteSearch {
+  return {
     ...validateCollectionSearch(value),
     genre: "All",
     mode: "artists",
     q: "",
   };
+}
+
+export function libraryArtistRouteSearch(
+  value: OwnDataValue,
+  sourceAlbumId?: string,
+): LibraryArtistRouteSearch {
+  const search = resetCollectionSearchForArtist(value);
   return sourceAlbumId
     ? { ...search, albumId: parseAlbumIdParam(sourceAlbumId) }
     : search;

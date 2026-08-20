@@ -170,4 +170,19 @@ describe("library browse controller", () => {
       trackFilterArtistKey: "guest voice",
     });
   });
+
+  it("groups only the selected artist instead of the full catalog", () => {
+    const albums = [
+      album("a", "Alpha", 2),
+      album("b", "Beta", 1),
+      album("c", "Gamma", 3),
+    ];
+
+    expect(
+      derive(albums, {
+        browseMode: "artists",
+        selectedArtist: "beta",
+      }).artistGroups.map((group) => group.key),
+    ).toEqual(["beta"]);
+  });
 });

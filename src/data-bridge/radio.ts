@@ -1,5 +1,5 @@
 import type { RadioShow, RadioShowsPage } from "../types";
-import { isDesktop } from "./desktop";
+import { requireDesktop } from "./desktop";
 import {
   decodeNativeArray,
   decodeNativeBandcampUrl,
@@ -192,9 +192,7 @@ export async function fetchRadioShows({
   seriesId?: number;
   cursor?: string;
 } = {}): Promise<RadioShowsPage> {
-  if (!isDesktop()) {
-    throw new Error("Bandcamp Radio is available in the Coda desktop app.");
-  }
+  requireDesktop("Bandcamp Radio");
   return parseRadioShowsPage(
     await invokeNative("radio_shows", { seriesId, cursor }),
     "radio_shows",
@@ -202,9 +200,7 @@ export async function fetchRadioShows({
 }
 
 export async function fetchRadioShow(showId: number): Promise<RadioShow> {
-  if (!isDesktop()) {
-    throw new Error("Bandcamp Radio is available in the Coda desktop app.");
-  }
+  requireDesktop("Bandcamp Radio");
   return parseRadioShow(
     await invokeNative("radio_show", { showId }),
     "radio_show",

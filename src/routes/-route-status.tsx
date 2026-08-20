@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { DEFAULT_COLLECTION_ROUTE_SEARCH } from "@/routing/routeContracts";
+import { ROUTE_STATUS_ACTION_CLASS } from "@/routes/-route-status-action";
 import { RouteLoadingState } from "@/routes/-route-loading";
 
 function RouteStatus({
@@ -36,9 +37,6 @@ function RouteStatus({
   );
 }
 
-const actionClassName =
-  "inline-flex min-h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary";
-
 export function CodaRoutePending() {
   return (
     <RouteLoadingState
@@ -49,15 +47,28 @@ export function CodaRoutePending() {
   );
 }
 
-export function CodaRouteError({ onRetry }: { onRetry: () => void }) {
+export function CodaRouteError({
+  cause,
+  onRetry,
+}: {
+  cause?: unknown;
+  onRetry: () => void;
+}) {
+  const diagnostic =
+    import.meta.env.DEV && cause instanceof Error
+      ? cause.message
+      : undefined;
   return (
     <RouteStatus
       action={
-        <button className={actionClassName} onClick={onRetry} type="button">
+        <button className={ROUTE_STATUS_ACTION_CLASS} onClick={onRetry} type="button">
           Try again
         </button>
       }
-      detail="The requested page could not be opened. Your library and player data are unchanged."
+      detail={
+        diagnostic ??
+        "The requested page could not be opened. Your library and player data are unchanged."
+      }
       role="alert"
       title="Coda couldn’t open this page"
     />
@@ -69,7 +80,7 @@ export function CodaRouteNotFound() {
     <RouteStatus
       action={
         <Link
-          className={actionClassName}
+          className={ROUTE_STATUS_ACTION_CLASS}
           search={DEFAULT_COLLECTION_ROUTE_SEARCH}
           to="/collection"
         >

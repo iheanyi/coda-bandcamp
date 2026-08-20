@@ -22,12 +22,13 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { countLabel } from "@/countLabel";
+import { formatErrorMessage } from "@/formatError";
 import {
   beginLastFmAuthorization,
   completeLastFmAuthorization,
   connectBandcamp,
   disconnectLastFm,
-  isDesktop,
+  openBandcampUrl,
   openLastFmAuthorization,
 } from "@/lib";
 import { cn } from "@/lib/utils";
@@ -93,7 +94,7 @@ export function ConnectionDialog({
     } catch (cause) {
       setState("error");
       setPassword("");
-      setError(String(cause).replace(/^Error:\s*/, ""));
+      setError(formatErrorMessage(cause));
     }
   };
 
@@ -103,12 +104,7 @@ export function ConnectionDialog({
     setError("");
     setSettingsOpening(true);
     try {
-      if (isDesktop()) {
-        const { openUrl } = await import("@tauri-apps/plugin-opener");
-        await openUrl(settingsUrl);
-      } else {
-        window.open(settingsUrl, "_blank", "noopener,noreferrer");
-      }
+      await openBandcampUrl(settingsUrl);
     } catch {
       setError(
         "Could not open your browser. Visit bandcamp.com/settings and choose Fan.",
@@ -125,7 +121,7 @@ export function ConnectionDialog({
     try {
       await onDisconnected();
     } catch (cause) {
-      setError(String(cause).replace(/^Error:\s*/, ""));
+      setError(formatErrorMessage(cause));
       setDisconnecting(false);
     }
   };
@@ -138,7 +134,7 @@ export function ConnectionDialog({
       await openLastFmAuthorization(authorization.authorizationUrl);
       setLastFmToken(authorization.token);
     } catch (cause) {
-      setLastFmError(String(cause).replace(/^Error:\s*/, ""));
+      setLastFmError(formatErrorMessage(cause));
     } finally {
       setLastFmAction("idle");
     }
@@ -153,7 +149,7 @@ export function ConnectionDialog({
       setLastFmToken("");
       onLastFmStatus(status);
     } catch (cause) {
-      setLastFmError(String(cause).replace(/^Error:\s*/, ""));
+      setLastFmError(formatErrorMessage(cause));
     } finally {
       setLastFmAction("idle");
     }
@@ -166,7 +162,7 @@ export function ConnectionDialog({
       onLastFmStatus(await disconnectLastFm());
       setLastFmToken("");
     } catch (cause) {
-      setLastFmError(String(cause).replace(/^Error:\s*/, ""));
+      setLastFmError(formatErrorMessage(cause));
     } finally {
       setLastFmAction("idle");
     }

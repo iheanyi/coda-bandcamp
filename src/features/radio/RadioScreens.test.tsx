@@ -12,7 +12,7 @@ import { createCodaMemoryRouter } from "@/router";
 import { parseRadioShowIdParam } from "@/routing/routeContracts";
 import type { RadioShow, RadioShowSummary } from "@/types";
 
-import { RadioIndexScreen } from "./RadioArchiveScreen";
+import { RadioArchiveScreen } from "./RadioArchiveScreen";
 import { RadioArtwork } from "./RadioPresentation";
 import { RadioShowScreen } from "./RadioShowScreen";
 
@@ -247,7 +247,7 @@ it.each([
     render(
       <QueryClientProvider client={client}>
         <RouterContextProvider router={router}>
-          <RadioIndexScreen
+          <RadioArchiveScreen
             onPlay={vi.fn()}
             onQueue={vi.fn()}
             playing={false}

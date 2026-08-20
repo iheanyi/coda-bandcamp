@@ -51,6 +51,10 @@ function albumLinkActivation(
   if (activate) handleCodaLinkActivation(event, activate);
 }
 
+function assertNever(value: never): never {
+  throw new TypeError(`Unsupported exhaustive variant: ${String(value)}`);
+}
+
 export function TrackAlbumLink({
   track,
   disabled = false,
@@ -63,7 +67,7 @@ export function TrackAlbumLink({
   title,
 }: TrackAlbumLinkProps) {
   const destination = trackAlbumDestination(track);
-  if (!destination) {
+  const renderExternalItemButton = () => {
     if (!onNavigate) return <>{children}</>;
     return (
       <Button
@@ -80,6 +84,13 @@ export function TrackAlbumLink({
         {children}
       </Button>
     );
+  };
+
+  if (!destination) return renderExternalItemButton();
+  if (destination.kind === "daily-external-item") {
+    // Daily item URLs cross Tauri's native HTTPS allowlist, so this stays
+    // an explicitly named action instead of bypassing validation with an href.
+    return renderExternalItemButton();
   }
 
   const commonProps = {
@@ -130,6 +141,26 @@ export function TrackAlbumLink({
           {children}
         </Link>
       );
+    case "radio-series":
+      return (
+        <Link
+          {...commonProps}
+          params={{
+            seriesId: stringifyRadioSeriesIdParam(destination.seriesId),
+          }}
+          to="/radio/series/$seriesId"
+        >
+          {children}
+        </Link>
+      );
+    case "radio":
+      return (
+        <Link {...commonProps} to="/radio">
+          {children}
+        </Link>
+      );
+    default:
+      return assertNever(destination);
   }
 }
 

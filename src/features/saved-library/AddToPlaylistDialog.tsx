@@ -25,7 +25,7 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import type { ToastNotifier } from "@/components/ui/toastManager";
 import { countLabel } from "@/countLabel";
-import { createPlaylist, updatePlaylist } from "@/lib";
+import { updatePlaylist } from "@/lib";
 import {
   PLAYLISTS_QUERY_KEY,
   playlistQueryKey,
@@ -37,17 +37,14 @@ import { VirtualizedSavedTrackList } from "@/VirtualizedSavedTrackList";
 import {
   addedPlaylistTracks,
   type PlaylistDetailMutationContext,
-  type PlaylistListMutationContext,
-  optimisticPlaylistId,
   playlistSummary,
-  replaceOptimisticPlaylist,
-  restorePlaylistList,
   restorePlaylistMutation,
   revalidateCommittedPlaylist,
   upsertPlaylistSummary,
 } from "./playlistCache";
-import { mutationError } from "./savedLibraryPresentationData";
+import { formatErrorMessage } from "@/formatError";
 import { Eyebrow } from "./SavedLibraryPresentation";
+import { useCreatePlaylistMutation } from "./useCreatePlaylistMutation";
 
 const playlistSummaryKey = (playlist: PlaylistSummary) => playlist.id;
 const parentScrollElement = (root: HTMLElement) => root.parentElement;
@@ -134,52 +131,20 @@ export function AddToPlaylistDialog({
     },
     onError: (cause, target, context) => {
       if (context) restorePlaylistMutation(queryClient, target.id, context);
-      onNotify(mutationError(cause), "bad");
+      onNotify(formatErrorMessage(cause), "bad");
     },
   });
-  const createMutation = useMutation({
-    mutationFn: (playlistName: string) => createPlaylist(playlistName, songIds),
-    onMutate: async (playlistName): Promise<PlaylistListMutationContext> => {
-      await queryClient.cancelQueries({
-        queryKey: PLAYLISTS_QUERY_KEY,
-        exact: true,
-      });
-      const previousPlaylists =
-        queryClient.getQueryData<PlaylistSummary[]>(PLAYLISTS_QUERY_KEY);
-      const optimisticId = optimisticPlaylistId();
-      const optimisticSummary: PlaylistSummary = {
-        duration: tracks.reduce((total, track) => total + track.duration, 0),
-        id: optimisticId,
-        name: playlistName,
-        songCount: songIds.length,
-      };
-      queryClient.setQueryData<PlaylistSummary[]>(
-        PLAYLISTS_QUERY_KEY,
-        (current) => [optimisticSummary, ...(current ?? [])],
-      );
-      return { optimisticId, previousPlaylists };
-    },
-    onSuccess: (created, _playlistName, context) => {
-      queryClient.setQueryData(playlistQueryKey(created.id), created);
-      queryClient.setQueryData<PlaylistSummary[]>(
-        PLAYLISTS_QUERY_KEY,
-        (current) =>
-          replaceOptimisticPlaylist(
-            current,
-            context?.optimisticId,
-            playlistSummary(created),
-          ),
-      );
+  const createMutation = useCreatePlaylistMutation({
+    onCommitted: (created) => {
       onNotify(
         `${created.name} created with ${countLabel(tracks.length, "track")}`,
         "good",
       );
       onClose();
     },
-    onError: (cause, _playlistName, context) => {
-      if (context) restorePlaylistList(queryClient, context.previousPlaylists);
-      onNotify(mutationError(cause), "bad");
-    },
+    onNotify,
+    songIds,
+    tracks,
   });
   const pending = addMutation.isPending || createMutation.isPending;
   const submitCreate = (event: FormEvent) => {

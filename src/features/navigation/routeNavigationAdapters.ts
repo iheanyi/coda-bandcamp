@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import type { DailyRouteNavigationAdapter } from "@/features/daily/DailyRouteNavigationContext";
 import type { RadioRouteNavigationAdapter } from "@/features/radio/RadioRouteNavigationContext";
 import type { PlaylistRouteNavigationAdapter } from "@/features/saved-library/playlistRouteNavigation";
+import type { OwnDataValue } from "@/ownData";
 import {
   stringifyRadioSeriesIdParam,
   stringifyRadioShowIdParam,
@@ -18,6 +19,7 @@ import {
 export type RenderedRouterLocation = Readonly<{
   href?: string;
   pathname?: string;
+  search?: OwnDataValue;
   state: Readonly<{ __TSR_key?: string }>;
 }>;
 
@@ -37,7 +39,7 @@ export type RenderedNavigationRouter = Readonly<{
   ) => () => void;
 }>;
 
-export type RouteNavigationAdapterRuntime = Readonly<{
+type RouteNavigationAdapterRuntime = Readonly<{
   navigate: ReturnType<typeof useNavigate>;
   router: RenderedNavigationRouter;
 }>;
@@ -46,13 +48,11 @@ export const DAILY_ROUTE_SPEC = { kind: "daily" } as const;
 export const PLAYLIST_ROUTE_SPEC = { kind: "playlist" } as const;
 export const RADIO_ROUTE_SPEC = { kind: "radio" } as const;
 
-export type DailyDetailRouteSpec = typeof DAILY_ROUTE_SPEC;
-export type PlaylistDetailRouteSpec = typeof PLAYLIST_ROUTE_SPEC;
-export type RadioDetailRouteSpec = typeof RADIO_ROUTE_SPEC;
-export type DetailRouteSpec =
-  | DailyDetailRouteSpec
-  | PlaylistDetailRouteSpec
-  | RadioDetailRouteSpec;
+type DailyDetailRouteSpec = typeof DAILY_ROUTE_SPEC;
+type PlaylistDetailRouteSpec = typeof PLAYLIST_ROUTE_SPEC;
+type RadioDetailRouteSpec = typeof RADIO_ROUTE_SPEC;
+type DetailRouteSpec =
+  DailyDetailRouteSpec | PlaylistDetailRouteSpec | RadioDetailRouteSpec;
 
 function assertNever(value: never): never {
   throw new TypeError(`Unsupported exhaustive variant: ${String(value)}`);
@@ -270,16 +270,4 @@ export function useRouteNavigationAdapter(
     () => createRouteNavigationAdapter({ navigate, router }, spec),
     [navigate, router, spec],
   );
-}
-
-export function useDailyRouteNavigationAdapter(): DailyRouteNavigationAdapter {
-  return useRouteNavigationAdapter(DAILY_ROUTE_SPEC);
-}
-
-export function usePlaylistRouteNavigationAdapter(): PlaylistRouteNavigationAdapter {
-  return useRouteNavigationAdapter(PLAYLIST_ROUTE_SPEC);
-}
-
-export function useRadioRouteNavigationAdapter(): RadioRouteNavigationAdapter {
-  return useRouteNavigationAdapter(RADIO_ROUTE_SPEC);
 }

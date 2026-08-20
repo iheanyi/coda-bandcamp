@@ -4,12 +4,12 @@ import {
   Library,
   ListPlus,
   Radio,
-  RefreshCw,
   Search,
   UsersRound,
 } from "lucide-react";
 import { lazy, Suspense, type ReactNode, type RefObject } from "react";
 import { Button } from "@/components/ui/button";
+import { RetryButton } from "@/components/ui/retry-button";
 import { Spinner } from "@/components/ui/spinner";
 import { countLabel } from "@/countLabel";
 import { cn } from "@/lib/utils";
@@ -65,24 +65,18 @@ export function LibraryAvailability({
           "Bandcamp could not be reached. Check your connection and try again."
         }
         action={
-          <Button
+          <RetryButton
+            busy={model.syncState === "syncing"}
+            busyLabel="Syncing…"
             className="mt-3 text-xs text-[#ed8a71]"
-            onClick={model.connected ? actions.onSync : actions.onRetryStartup}
-            disabled={model.syncState === "syncing"}
-            size="compact"
+            label={
+              model.connected ? "Try syncing again" : "Try checking again"
+            }
+            onClick={
+              model.connected ? actions.onSync : actions.onRetryStartup
+            }
             variant="text"
-          >
-            {model.syncState === "syncing" ? (
-              <Spinner aria-hidden="true" className="size-3.5" />
-            ) : (
-              <RefreshCw size={14} />
-            )}
-            {model.syncState === "syncing"
-              ? "Syncing…"
-              : model.connected
-                ? "Try syncing again"
-                : "Try checking again"}
-          </Button>
+          />
         }
       />
     );
@@ -115,20 +109,14 @@ export function LibraryAvailability({
         title="No releases found"
         detail="Bandcamp connected successfully, but its Subsonic library returned no purchases yet."
         action={
-          <Button
+          <RetryButton
+            busy={model.syncState === "syncing"}
+            busyLabel="Checking…"
             className="mt-3 text-xs text-[#ed8a71]"
+            label="Check again"
             onClick={actions.onSync}
-            disabled={model.syncState === "syncing"}
-            size="compact"
             variant="text"
-          >
-            {model.syncState === "syncing" ? (
-              <Spinner aria-hidden="true" className="size-3.5" />
-            ) : (
-              <RefreshCw size={14} />
-            )}
-            {model.syncState === "syncing" ? "Checking…" : "Check again"}
-          </Button>
+          />
         }
       />
     );

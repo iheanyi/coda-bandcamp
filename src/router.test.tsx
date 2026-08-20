@@ -96,8 +96,24 @@ describe("Coda router foundation", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Coda couldn’t open this page",
     );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The requested page could not be opened. Your library and player data are unchanged.",
+    );
     await user.click(screen.getByRole("button", { name: "Try again" }));
     expect(retry).toHaveBeenCalledOnce();
+  });
+
+  it("surfaces the thrown message in development builds", () => {
+    render(
+      <CodaRouteError
+        cause={new ReferenceError("shuffleActionLabel is not defined")}
+        onRetry={() => undefined}
+      />,
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "shuffleActionLabel is not defined",
+    );
   });
 
   it("announces the root pending UI without exposing internal details", () => {

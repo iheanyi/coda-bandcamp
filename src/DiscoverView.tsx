@@ -5,7 +5,6 @@ import {
   Check,
   Disc3,
   Plus,
-  RefreshCw,
   Search,
   Sparkles,
 } from "lucide-react";
@@ -29,6 +28,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { OverflowMarquee } from "@/components/ui/overflow-marquee";
 import { PlaybackIcon } from "@/components/ui/playback-icon";
+import { RetryButton } from "@/components/ui/retry-button";
 import {
   Select,
   SelectContent,
@@ -43,7 +43,9 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { countLabel } from "@/countLabel";
+import { DiscoverFeedStatus } from "@/DiscoverFeedStatus";
 import { discoverPreviewTrack } from "@/discover";
+import { formatErrorMessage } from "@/formatError";
 import { DISCOVER_GENRES, normalizeGenre } from "@/genres";
 import { initials, paletteFor } from "@/lib";
 import { cn } from "@/lib/utils";
@@ -360,11 +362,6 @@ export type DiscoverScreenProps = {
   onOpenArtist: (release: DiscoverRelease) => void;
 };
 
-type DiscoverViewProps = Omit<
-  DiscoverScreenProps,
-  "filters" | "onFiltersChange"
->;
-
 export function DiscoverScreen({
   className,
   filters,
@@ -449,7 +446,7 @@ export function DiscoverScreen({
         left,
       });
     },
-    [updateGenreRailEdges],
+    [],
   );
 
   useLayoutEffect(() => {
@@ -558,32 +555,32 @@ export function DiscoverScreen({
       </div>
 
       {query.isPending ? (
-        <div className="flex min-h-80 flex-col items-center justify-center text-center text-[#6e726d]">
-          <Spinner
-            aria-hidden="true"
-            className="size-7 text-current motion-reduce:animate-none"
-          />
-          <strong className="mt-3 text-sm text-[#c8c7c1]">Scanning Bandcamp…</strong>
-          <span className="mt-1 max-w-sm text-xs text-[#747873]">Finding releases with playable previews.</span>
-        </div>
+        <DiscoverFeedStatus
+          detail="Finding releases with playable previews."
+          icon={
+            <Spinner
+              aria-hidden="true"
+              className="size-7 text-current motion-reduce:animate-none"
+            />
+          }
+          title="Scanning Bandcamp…"
+        />
       ) : query.isError && !releases.length ? (
-        <div className="flex min-h-80 flex-col items-center justify-center text-center text-[#6e726d]">
-          <Disc3 size={28} />
-          <strong className="mt-3 text-sm text-[#c8c7c1]">Discover is taking a break</strong>
-          <span className="mt-1 max-w-sm text-xs text-[#747873]">{String(query.error).replace(/^Error:\s*/, "")}</span>
-          <Button
-            variant="artwork"
-            size="compact"
-            className="mt-3 h-auto gap-1.5 rounded-md border border-(--line) px-2.5 py-2 text-xs font-bold text-[#d98974] hover:bg-white/2.5 hover:text-[#d98974]"
-            onClick={() => void query.refetch()}
-            disabled={query.isFetching}
-          >
-            {query.isFetching
-              ? <Spinner aria-hidden="true" className="size-3.5 text-current motion-reduce:animate-none" />
-              : <RefreshCw size={14} />}
-            {query.isFetching ? "Trying again…" : "Try again"}
-          </Button>
-        </div>
+        <DiscoverFeedStatus
+          action={
+            <RetryButton
+              busy={query.isFetching}
+              busyLabel="Trying again…"
+              className="mt-3 h-auto gap-1.5 rounded-md border border-(--line) px-2.5 py-2 text-xs font-bold text-[#d98974] hover:bg-white/2.5 hover:text-[#d98974]"
+              label="Try again"
+              onClick={() => void query.refetch()}
+              variant="artwork"
+            />
+          }
+          detail={formatErrorMessage(query.error)}
+          icon={<Disc3 size={28} />}
+          title="Discover is taking a break"
+        />
       ) : releases.length ? (
         <>
           {query.isError ? (
@@ -591,12 +588,17 @@ export function DiscoverScreen({
               <Disc3 size={16} />
               <div>
                 <AlertTitle>Discover is taking a break</AlertTitle>
-                <AlertDescription>{String(query.error).replace(/^Error:\s*/, "")}</AlertDescription>
+                <AlertDescription>{formatErrorMessage(query.error)}</AlertDescription>
               </div>
               <AlertAction className="static">
-                <Button variant="text" size="compact" className="h-auto px-0 text-xs text-[#d98974] hover:text-[#d98974]" onClick={() => void query.refetch()} disabled={query.isFetching}>
-                  {query.isFetching ? "Trying again…" : "Try again"}
-                </Button>
+                <RetryButton
+                  busy={query.isFetching}
+                  busyLabel="Trying again…"
+                  className="h-auto px-0 text-xs text-[#d98974] hover:text-[#d98974]"
+                  label="Try again"
+                  onClick={() => void query.refetch()}
+                  variant="text"
+                />
               </AlertAction>
             </Alert>
           ) : null}
@@ -643,27 +645,15 @@ export function DiscoverScreen({
           ) : null}
         </>
       ) : (
-        <div className="flex min-h-80 flex-col items-center justify-center text-center text-[#6e726d]">
-          <Search size={28} />
-          <strong className="mt-3 text-sm text-[#c8c7c1]">No releases found</strong>
-          <span className="mt-1 max-w-sm text-xs text-[#747873]">Try a broader genre or a different tag.</span>
-          <Button variant="artwork" size="compact" className="mt-3 h-auto gap-1.5 rounded-md border border-(--line) px-2.5 py-2 text-xs font-bold text-[#d98974] hover:bg-white/2.5 hover:text-[#d98974]" onClick={() => chooseGenre("all")}>Clear tag</Button>
-        </div>
+        <DiscoverFeedStatus
+          action={
+            <Button variant="artwork" size="compact" className="mt-3 h-auto gap-1.5 rounded-md border border-(--line) px-2.5 py-2 text-xs font-bold text-[#d98974] hover:bg-white/2.5 hover:text-[#d98974]" onClick={() => chooseGenre("all")}>Clear tag</Button>
+          }
+          detail="Try a broader genre or a different tag."
+          icon={<Search size={28} />}
+          title="No releases found"
+        />
       )}
     </section>
-  );
-}
-
-export default function DiscoverView(props: DiscoverViewProps) {
-  const [filters, setFilters] = useState<DiscoverFilters>({
-    tag: "",
-    sort: "top",
-  });
-  return (
-    <DiscoverScreen
-      {...props}
-      filters={filters}
-      onFiltersChange={setFilters}
-    />
   );
 }

@@ -4,6 +4,7 @@ import type { RadioShow, RadioShowSummary, RadioShowsPage } from "@/types";
 
 import {
   findRadioShowSummaryInCache,
+  mergeRadioShowSeries,
   radioShowQueryOptions,
   radioShowRestoreQueryOptions,
   radioShowsInfiniteQueryOptions,
@@ -217,5 +218,22 @@ describe("Radio query options", () => {
     expect(findRadioShowSummaryInCache(queryClient, show.id)).toEqual(
       refreshedAll,
     );
+  });
+
+  it("copies missing series metadata onto a loaded show", () => {
+    const series = {
+      id: 5,
+      title: "The Hip Hop Show",
+      slug: "the-hip-hop-show",
+    };
+    expect(mergeRadioShowSeries(show, { series })).toEqual({
+      ...show,
+      series,
+    });
+    expect(mergeRadioShowSeries({ ...show, series }, { series: { ...series, id: 9 } })).toEqual({
+      ...show,
+      series,
+    });
+    expect(mergeRadioShowSeries(show)).toBe(show);
   });
 });

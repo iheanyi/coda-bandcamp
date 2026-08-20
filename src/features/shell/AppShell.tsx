@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 import { recordActiveMotionRender } from "@/motionDiagnostics";
 import { consumePendingPageEntrance } from "@/viewTransitions";
 
-export type AppShellRoute = Readonly<{
+type AppShellRoute = Readonly<{
   sidebar: ReactNode;
   chrome?: ReactNode;
   outlet: ReactNode;
@@ -21,17 +21,17 @@ export type AppShellRoute = Readonly<{
   transitionKey: string;
 }>;
 
-export type AppShellQueue = Readonly<{
+type AppShellQueue = Readonly<{
   open: boolean;
   onOpenChange: (open: boolean) => void;
   panel: ReactNode;
 }>;
 
-export type AppShellPlayback = Readonly<{
+type AppShellPlayback = Readonly<{
   dock?: ReactNode;
 }>;
 
-export type AppShellProps = Readonly<{
+type AppShellProps = Readonly<{
   route: AppShellRoute;
   queue: AppShellQueue;
   playback: AppShellPlayback;

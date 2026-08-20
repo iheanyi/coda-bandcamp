@@ -3,7 +3,7 @@ use crate::bandcamp_http::{
 };
 use crate::models::{DailyArticle, DailyArticleSummary, DailyArticlesPage, DailyEmbed, DailyTrack};
 use crate::storage::run_blocking;
-use crate::url_policy::{allowed_url, UrlKind};
+use crate::url_policy::{allowed_url, bcbits_album_art_url, UrlKind};
 use crate::validation::{
     bounded_trimmed_text, valid_library_date, MAX_MEDIA_SECONDS, MAX_METADATA_TEXT_LENGTH,
     MAX_TRACK_NUMBER,
@@ -553,9 +553,7 @@ fn daily_artwork_url(value: &str) -> Option<String> {
 }
 
 fn daily_artwork_url_from_id(value: Option<u64>) -> Option<String> {
-    value
-        .filter(|id| *id > 0)
-        .map(|id| format!("https://f4.bcbits.com/img/a{id}_10.jpg"))
+    value.filter(|id| *id > 0).map(bcbits_album_art_url)
 }
 
 fn listing_date_from_html(value: &str) -> Option<String> {

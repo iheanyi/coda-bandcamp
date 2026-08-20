@@ -23,6 +23,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "./components/ui/tooltip";
+import { DEFAULT_VOLUME } from "./features/player/constants";
 import { cn } from "./lib/utils";
 import {
   MINI_PLAYER_COMMAND_EVENT,
@@ -39,7 +40,7 @@ const EMPTY_SNAPSHOT: MiniPlayerSnapshot = {
   playing: false,
   positionSeconds: 0,
   durationSeconds: 0,
-  volume: 0.72,
+  volume: DEFAULT_VOLUME,
   canPrevious: false,
   canNext: false,
 };
@@ -315,7 +316,7 @@ function MiniPlayerView({
             onClick={() =>
               onCommand({
                 type: "volume",
-                volume: snapshot.volume ? 0 : 0.72,
+                volume: snapshot.volume ? 0 : DEFAULT_VOLUME,
               })}
             label={snapshot.volume ? "Mute" : "Unmute"}
           >

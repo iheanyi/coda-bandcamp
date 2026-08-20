@@ -13,9 +13,7 @@ import {
   DiscoverReleasePending,
 } from "@/routes/discover/-release-status";
 
-const discoverReleaseRouteApi = getRouteApi(
-  "/discover/releases/$releaseId",
-);
+const discoverReleaseRouteApi = getRouteApi("/discover/releases/$releaseId");
 
 export function DiscoverReleaseRoute() {
   const runtime = useDiscoverRuntime();
@@ -61,9 +59,7 @@ export function DiscoverReleaseRoute() {
       currentTrackId={runtime.currentTrackId}
       onArtist={runtime.onOpenArtist}
       onBack={runtime.onCloseRelease}
-      onOpenBandcamp={(url) => {
-        void openBandcampUrl(url);
-      }}
+      onOpenBandcamp={openBandcampUrl}
       onPlay={runtime.onPlay}
       onQueue={runtime.onQueue}
       onTogglePlayback={runtime.onTogglePlayback}

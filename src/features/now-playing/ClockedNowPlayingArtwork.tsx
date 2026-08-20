@@ -1,6 +1,10 @@
 import { memo } from "react";
 
 import { CoverArt } from "@/features/artwork/CoverArt";
+import {
+  coverArtAlbumFromTrack,
+  coverArtFallbackFromTrack,
+} from "@/features/artwork/coverArtAlbum";
 import { useCurrentRadioChapter } from "@/features/player/playbackClockHooks";
 import type { PlaybackClock } from "@/playbackClock";
 import type { RadioChapter, Track } from "@/types";
@@ -23,17 +27,10 @@ export const ClockedNowPlayingArtwork = memo(function ClockedNowPlayingArtwork({
 
   return (
     <CoverArt
-      album={{
-        id: track.albumId,
-        title: current?.title ?? track.album,
-        artist: current?.artist ?? track.artist,
-        coverArt: track.coverArt,
-        artworkUrl: current?.artworkUrl ?? track.artworkUrl,
-        palette: track.palette,
-      }}
+      album={coverArtAlbumFromTrack(track, current)}
       animateChanges={Boolean(track.radioChapters?.length)}
       className={className}
-      fallbackArtworkUrl={current?.artworkUrl ? track.artworkUrl : undefined}
+      fallbackArtworkUrl={coverArtFallbackFromTrack(track, current)}
       size="large"
     />
   );

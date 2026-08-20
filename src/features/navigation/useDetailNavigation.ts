@@ -13,7 +13,6 @@ import {
   closeDetail,
   openDetail,
   restoreDetailScroll,
-  type DetailOpenCommitResult,
 } from "@/detailNavigation";
 import { DETAIL_TRANSITION_DESCRIPTORS } from "@/detailTransitionDescriptors";
 import type {
@@ -29,10 +28,20 @@ import {
 
 import {
   detailTransitionEndpointTargets,
+  interactiveTrigger,
   prepareDetailSource,
 } from "./detailSourceIdentity";
-import { awaitRouteCommit, type RouteCommitOutcome } from "./routeCommit";
-import type { RenderedNavigationRouter } from "./routeNavigationAdapters";
+import {
+  awaitRouteCommit,
+  routeCommitResult,
+  type RouteCommitOutcome,
+  type RouteCommitResult,
+} from "./routeCommit";
+import {
+  awaitRouterBackAfterRender,
+  awaitRouterNavigationAfterRender,
+  type RenderedNavigationRouter,
+} from "./routeNavigationAdapters";
 import {
   detailDestinationKey,
   type CodaDetailDestination,
@@ -90,13 +99,13 @@ export type DetailNavigationController = Readonly<{
   transitionPrimary: (update: CodaViewTransitionUpdate) => Promise<void>;
 }>;
 
-export type DetailNavigationRuntime = Readonly<{
+type DetailNavigationRuntime = Readonly<{
   navigate: ReturnType<typeof useNavigate>;
   router: RenderedNavigationRouter;
 }>;
 
-export type CoordinatedDetailKind = DetailNavigationRequest["kind"];
-export type CoordinatedDetailDestination = Extract<
+type CoordinatedDetailKind = DetailNavigationRequest["kind"];
+type CoordinatedDetailDestination = Extract<
   CodaDetailDestination,
   Readonly<{ kind: CoordinatedDetailKind }>
 >;
@@ -105,7 +114,7 @@ function assertNever(value: never): never {
   throw new TypeError(`Unsupported exhaustive variant: ${String(value)}`);
 }
 
-export function targetFromRequest(
+function targetFromRequest(
   request: DetailNavigationRequest,
 ): CoordinatedDetailDestination {
   switch (request.kind) {
@@ -128,7 +137,7 @@ export function targetFromRequest(
   }
 }
 
-export function coordinatedDetailDestination(
+function coordinatedDetailDestination(
   destination: CodaDetailDestination | undefined,
 ): CoordinatedDetailDestination | undefined {
   if (!destination) return undefined;
@@ -147,22 +156,7 @@ export function coordinatedDetailDestination(
   }
 }
 
-export function detailTargetKey(target: CoordinatedDetailDestination): string {
-  switch (target.kind) {
-    case "album":
-      return `album:${target.albumId}`;
-    case "artist":
-      return `artist:${target.artistKey}:${target.sourceAlbumId ?? ""}`;
-    case "discover-release":
-      return `discover-release:${target.releaseId}`;
-    case "now-playing":
-      return "now-playing";
-    default:
-      return assertNever(target);
-  }
-}
-
-export function detailMarkerIdentity(target: CoordinatedDetailDestination): string {
+function detailMarkerIdentity(target: CoordinatedDetailDestination): string {
   switch (target.kind) {
     case "album":
       return target.albumId;
@@ -177,14 +171,16 @@ export function detailMarkerIdentity(target: CoordinatedDetailDestination): stri
   }
 }
 
-export function targetMatchesDestination(
+function targetMatchesDestination(
   target: CoordinatedDetailDestination | undefined,
   destination: CodaDetailDestination | undefined,
 ): boolean {
   if (!target || !destination || target.kind !== destination.kind) return false;
   switch (target.kind) {
     case "album":
-      return destination.kind === "album" && target.albumId === destination.albumId;
+      return (
+        destination.kind === "album" && target.albumId === destination.albumId
+      );
     case "artist":
       return (
         destination.kind === "artist" &&
@@ -201,33 +197,6 @@ export function targetMatchesDestination(
     default:
       return assertNever(target);
   }
-}
-
-function detailKind(
-  destination: CodaDetailDestination | undefined,
-): CoordinatedDetailKind | undefined {
-  if (!destination) return undefined;
-  switch (destination.kind) {
-    case "album":
-    case "artist":
-    case "discover-release":
-    case "now-playing":
-      return destination.kind;
-    case "playlist":
-    case "radio-series":
-    case "radio-show":
-      return undefined;
-    default:
-      return assertNever(destination);
-  }
-}
-
-function interactiveSourceTrigger(
-  trigger: HTMLElement | undefined,
-): HTMLElement | undefined {
-  return (
-    trigger?.closest<HTMLElement>("a[href], button, [role=button]") ?? trigger
-  );
 }
 
 function prepareRequestedDetailSource(
@@ -257,9 +226,7 @@ function prepareRequestedDetailSource(
         request.sourceTrigger,
       );
       if (prepared.targets?.shared) return prepared;
-      return (
-        prepareDiscoverNowPlayingSource(request, destination) ?? prepared
-      );
+      return prepareDiscoverNowPlayingSource(request, destination) ?? prepared;
     }
     case "now-playing":
       return prepareDetailSource("now-playing", request.trackId, true);
@@ -272,7 +239,7 @@ function prepareDiscoverNowPlayingSource(
   request: DiscoverDetailNavigationRequest,
   destination: CodaRouteDestination,
 ): ReturnType<typeof prepareDetailSource> | undefined {
-  const trigger = interactiveSourceTrigger(request.sourceTrigger);
+  const trigger = interactiveTrigger(request.sourceTrigger);
   if (
     destination.detail?.kind !== "now-playing" ||
     !request.sourceTrackId ||
@@ -325,10 +292,6 @@ function headingFallbackId(
   return from.destinationHeadingId;
 }
 
-function routerLocationKey(router: RenderedNavigationRouter): string {
-  return router.state.location.state.__TSR_key ?? router.state.location.href ?? "";
-}
-
 export function useDetailNavigation(
   destination: CodaRouteDestination,
 ): DetailNavigationController {
@@ -345,7 +308,7 @@ export function useDetailNavigationWithRuntime(
   const currentDetailKey = detailDestinationKey(destination.detail);
 
   const commitOpen = useCallback(
-    async (request: DetailNavigationRequest): Promise<DetailOpenCommitResult> => {
+    async (request: DetailNavigationRequest): Promise<RouteCommitResult> => {
       switch (request.kind) {
         case "album": {
           const outcome = await awaitRouteCommit(runtime.router, () =>
@@ -356,7 +319,7 @@ export function useDetailNavigationWithRuntime(
               viewTransition: false,
             }),
           );
-          return { locationKey: routerLocationKey(runtime.router), outcome };
+          return routeCommitResult(runtime.router, outcome);
         }
         case "artist": {
           const outcome = await awaitRouteCommit(runtime.router, () =>
@@ -364,19 +327,21 @@ export function useDetailNavigationWithRuntime(
               params: { artistKey: request.artistKey },
               search: request.sourceAlbumId
                 ? {
-                    ...(request.collectionSearch ?? destination.collectionSearch),
+                    ...(request.collectionSearch ??
+                      destination.collectionSearch),
                     albumId: request.sourceAlbumId,
                     mode: "artists",
                   }
                 : {
-                    ...(request.collectionSearch ?? destination.collectionSearch),
+                    ...(request.collectionSearch ??
+                      destination.collectionSearch),
                     mode: "artists",
                   },
               to: "/collection/artists/$artistKey",
               viewTransition: false,
             }),
           );
-          return { locationKey: routerLocationKey(runtime.router), outcome };
+          return routeCommitResult(runtime.router, outcome);
         }
         case "discover-release": {
           const outcome = await awaitRouteCommit(runtime.router, () =>
@@ -387,13 +352,13 @@ export function useDetailNavigationWithRuntime(
               viewTransition: false,
             }),
           );
-          return { locationKey: routerLocationKey(runtime.router), outcome };
+          return routeCommitResult(runtime.router, outcome);
         }
         case "now-playing": {
           const outcome = await awaitRouteCommit(runtime.router, () =>
             runtime.navigate({ to: "/now-playing", viewTransition: false }),
           );
-          return { locationKey: routerLocationKey(runtime.router), outcome };
+          return routeCommitResult(runtime.router, outcome);
         }
         default:
           return assertNever(request);
@@ -413,24 +378,29 @@ export function useDetailNavigationWithRuntime(
       if (targetMatchesDestination(target, destination.detail)) {
         request.beforeCommit?.();
         clearDestinationFocus();
-        activateDetailDestination(request.kind, detailTargetKey(target));
+        activateDetailDestination(request.kind, detailDestinationKey(target));
         return "refocused";
       }
-      const fallbackId = headingFallbackId(detailKind(destination.detail), request.kind);
+      const fallbackId = headingFallbackId(
+        coordinatedDetailDestination(destination.detail)?.kind,
+        request.kind,
+      );
       return openDetail({
-        forcePageTransition: Boolean(request.kind === "album" && request.coldLoad),
+        forcePageTransition: Boolean(
+          request.kind === "album" && request.coldLoad,
+        ),
         headingFallbackId: fallbackId,
         kind: request.kind,
         resetScrollOnOpen: true,
         source: prepareRequestedDetailSource(request, destination),
-        targetKey: detailTargetKey(target),
+        targetKey: detailDestinationKey(target),
         update: async () => {
           request.beforeCommit?.();
           return commitOpen(request);
         },
       });
     },
-    [commitOpen, destination, runtime.router],
+    [commitOpen, destination],
   );
 
   const back = useCallback<DetailNavigationController["back"]>(
@@ -442,17 +412,15 @@ export function useDetailNavigationWithRuntime(
         kind: detail.kind,
         requestKey: destination.locationKey,
         restoreFocus: options.restoreFocus !== false,
-        targetKey: detailTargetKey(detail),
+        targetKey: detailDestinationKey(detail),
         update: async () => {
           if (runtime.router.history.canGoBack()) {
-            return awaitRouteCommit(runtime.router, () => {
-              runtime.router.history.back();
-            });
+            return awaitRouterBackAfterRender(runtime.router);
           }
           switch (detail.kind) {
             case "album":
             case "now-playing":
-              return awaitRouteCommit(runtime.router, () =>
+              return awaitRouterNavigationAfterRender(runtime.router, () =>
                 runtime.navigate({
                   replace: true,
                   search: destination.collectionSearch,
@@ -461,7 +429,7 @@ export function useDetailNavigationWithRuntime(
                 }),
               );
             case "artist":
-              return awaitRouteCommit(runtime.router, () =>
+              return awaitRouterNavigationAfterRender(runtime.router, () =>
                 runtime.navigate({
                   replace: true,
                   search: { ...destination.collectionSearch, mode: "artists" },
@@ -470,7 +438,7 @@ export function useDetailNavigationWithRuntime(
                 }),
               );
             case "discover-release":
-              return awaitRouteCommit(runtime.router, () =>
+              return awaitRouterNavigationAfterRender(runtime.router, () =>
                 runtime.navigate({
                   replace: true,
                   search: destination.discoverSearch,
@@ -495,7 +463,8 @@ export function useDetailNavigationWithRuntime(
   );
 
   const transitionPrimary = useCallback(
-    (update: CodaViewTransitionUpdate) => transitionCodaView(update, "page-forward"),
+    (update: CodaViewTransitionUpdate) =>
+      transitionCodaView(update, "page-forward"),
     [],
   );
 

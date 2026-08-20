@@ -1,22 +1,11 @@
 import { BANDCAMP_RADIO_PROVIDER } from "@/radioIdentity";
 import type { CodaPrimaryView } from "@/routing/routeMeta";
 import type { RadioChapter, Track } from "@/types";
-import type { PlaybackClock } from "@/playbackClock";
 
 const CODA_APP_NAME = import.meta.env.VITE_CODA_APP_NAME?.trim() || "Coda";
 
 type NativeTitleWindow = Readonly<{
   setTitle: (title: string) => Promise<void>;
-}>;
-
-export type WindowTitleControllerProps = Readonly<{
-  playbackClock: PlaybackClock;
-  currentTrack?: Track;
-  radioTimeline: readonly RadioChapter[];
-  nowPlayingOpen: boolean;
-  selectedAlbumTitle?: string;
-  activeArtistName?: string;
-  view: CodaPrimaryView;
 }>;
 
 async function loadNativeTitleWindow(): Promise<NativeTitleWindow> {

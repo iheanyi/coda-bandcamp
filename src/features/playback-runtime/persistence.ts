@@ -208,8 +208,9 @@ export function usePlaybackPersistenceController({
   const currentTrackId = core.queueModel.currentTrack?.id;
   const activationGeneration = core.snapshot.activationGeneration;
   useEffect(() => {
+    const snapshot = getCoreSnapshot();
     scrobbling.activateTrack(
-      getCoreSnapshot().queue[getCoreSnapshot().currentIndex],
+      snapshot.queue[snapshot.currentIndex],
       playbackClock.readExact(),
     );
   }, [

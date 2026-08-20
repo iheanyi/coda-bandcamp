@@ -1,6 +1,9 @@
 import { createFileRoute, Outlet } from "@tanstack/react-router";
 
-import { useRadioRouteNavigationAdapter } from "@/features/navigation";
+import {
+  RADIO_ROUTE_SPEC,
+  useRouteNavigationAdapter,
+} from "@/features/navigation";
 import { RadioRouteNavigationProvider } from "@/features/radio/RadioRouteNavigationContext";
 import { codaRouteMeta } from "@/routing/routeMeta";
 import {
@@ -10,7 +13,7 @@ import {
 } from "@/routes/radio/-radio-route-status";
 
 function RadioRouteLayout() {
-  const adapter = useRadioRouteNavigationAdapter();
+  const adapter = useRouteNavigationAdapter(RADIO_ROUTE_SPEC);
 
   return (
     <RadioRouteNavigationProvider adapter={adapter}>

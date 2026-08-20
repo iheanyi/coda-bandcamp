@@ -35,3 +35,20 @@ export function SavedEmpty({
     </div>
   );
 }
+
+export function SavedSectionHeader({
+  title,
+  count,
+}: {
+  title: string;
+  count: string;
+}) {
+  return (
+    <div className="mb-4 flex items-baseline justify-between">
+      <h2 className="m-0 font-display text-base leading-none font-semibold tracking-tight">
+        {title}
+      </h2>
+      <span className="text-xs text-[#6f736e]">{count}</span>
+    </div>
+  );
+}

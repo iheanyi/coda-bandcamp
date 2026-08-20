@@ -25,7 +25,10 @@ import type {
   CodaRouteMeta,
   CodaScreen,
 } from "@/routing/routeMeta";
+import { tryParseRouteId } from "@/routing/tryParseRouteId";
 import { useCodaRouteMeta } from "@/routing/useCodaRouteMeta";
+
+import { renderedLocationKey } from "./routeCommit";
 
 export type CodaDetailDestination =
   | Readonly<{ kind: "album"; albumId: AlbumId }>
@@ -55,19 +58,9 @@ export type CodaRouteDestination = Readonly<{
   screen?: CodaScreen;
 }>;
 
-type MutableCodaRouteDestination = {
-  collectionSearch: CollectionRouteSearch;
-  detail?: CodaDetailDestination;
-  discoverSearch: DiscoverRouteSearch;
-  libraryRouteInput: LibraryRouteInput;
-  locationKey: string;
-  meta?: CodaRouteMeta;
-  nowPlayingOpen: boolean;
-  primaryView: CodaPrimaryView;
-  screen?: CodaScreen;
-};
-
-export type CodaRouteDestinationSnapshot<Search extends OwnDataValue = OwnDataValue> = Readonly<{
+type CodaRouteDestinationSnapshot<
+  Search extends OwnDataValue = OwnDataValue,
+> = Readonly<{
   albumMatch?: Readonly<{ params: Readonly<{ albumId: AlbumId }> }>;
   artistMatch?: Readonly<{
     params: Readonly<{ artistKey: ArtistKey }>;
@@ -91,20 +84,6 @@ export type CodaRouteDestinationSnapshot<Search extends OwnDataValue = OwnDataVa
     search: Search;
   }>;
 }>;
-
-type RouteIdParser<Value> = (value: string | number) => Value;
-
-function tryParse<Value>(
-  value: string | number | undefined,
-  parse: RouteIdParser<Value>,
-): Value | undefined {
-  if (value === undefined) return undefined;
-  try {
-    return parse(value);
-  } catch {
-    return undefined;
-  }
-}
 
 export function detailDestinationKey(
   destination: CodaDetailDestination | undefined,
@@ -137,7 +116,10 @@ export function useRouteDestination(): CodaRouteDestination {
   const meta = useCodaRouteMeta();
   const routeLocation = useRouterState({
     select: (state) => ({
-      key: state.location.state.__TSR_key ?? state.location.href,
+      key: renderedLocationKey({
+        href: state.location.href,
+        state: state.location.state,
+      }),
       search: state.location.search,
     }),
   });
@@ -179,14 +161,14 @@ export function useRouteDestination(): CodaRouteDestination {
         routeLocation,
       }),
     [
-    albumMatch,
-    artistMatch,
-    discoverReleaseMatch,
-    meta,
-    playlistMatch,
-    radioSeriesMatch,
-    radioShowMatch,
-    routeLocation,
+      albumMatch,
+      artistMatch,
+      discoverReleaseMatch,
+      meta,
+      playlistMatch,
+      radioSeriesMatch,
+      radioShowMatch,
+      routeLocation,
     ],
   );
 }
@@ -252,7 +234,7 @@ export function projectRouteDestination<Search extends OwnDataValue>({
       }
       break;
     case "radio-series": {
-      const seriesId = tryParse(
+      const seriesId = tryParseRouteId(
         radioSeriesMatch?.params.seriesId,
         parseRadioSeriesIdParam,
       );
@@ -260,7 +242,7 @@ export function projectRouteDestination<Search extends OwnDataValue>({
       break;
     }
     case "radio-show": {
-      const showId = tryParse(
+      const showId = tryParseRouteId(
         radioShowMatch?.params.showId,
         parseRadioShowIdParam,
       );
@@ -272,7 +254,7 @@ export function projectRouteDestination<Search extends OwnDataValue>({
       break;
   }
 
-  const routeDestination: MutableCodaRouteDestination = {
+  return {
     collectionSearch,
     discoverSearch,
     libraryRouteInput,
@@ -280,8 +262,7 @@ export function projectRouteDestination<Search extends OwnDataValue>({
     nowPlayingOpen: meta?.screen === "now-playing",
     primaryView: meta?.primaryView ?? "library",
     screen: meta?.screen,
+    detail,
+    meta,
   };
-  if (detail) routeDestination.detail = detail;
-  if (meta) routeDestination.meta = meta;
-  return routeDestination;
 }

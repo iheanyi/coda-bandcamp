@@ -4,10 +4,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { FavoritesController } from "@/features/favorites/useLocalFavoritesController";
 import {
   artistKey,
+  resolveAlbumSummary,
   type ArtistGroup,
   type LibraryBrowseMode,
 } from "@/libraryBrowse";
-import { cachedAlbumTracks } from "@/libraryQueries";
+import { albumWithCachedTracks } from "@/libraryQueries";
 import type { LibraryRouteInput } from "@/routing/libraryRouteInput";
 import {
   missingRouteResource,
@@ -84,15 +85,6 @@ export type LibraryRouteRuntimeAdapterOptions = Readonly<{
   screens: LibraryRouteScreensRuntime;
 }>;
 
-function albumWithTracks(album: Album, tracks: Track[]): Album {
-  return {
-    ...album,
-    coverArt:
-      album.coverArt ?? tracks.find((track) => track.coverArt)?.coverArt,
-    tracks,
-  };
-}
-
 /** Owns route-resource resolution for Collection, Recent, album, and artist screens. */
 export function useLibraryRouteRuntimeAdapter({
   album,
@@ -137,21 +129,19 @@ export function useLibraryRouteRuntimeAdapter({
       getCollectionScreenProps: () => collectionProps,
       getRecentScreenProps: () => recentProps,
       resolveAlbumScreen: (albumId) => {
-        const summary =
-          catalog.selectedAlbum?.id === albumId
-            ? catalog.selectedAlbum
-            : (catalog.albums.find((item) => item.id === albumId) ??
-              favorites.collection.albums.find((item) => item.id === albumId));
+        const summary = resolveAlbumSummary(
+          albumId,
+          catalog.selectedAlbum,
+          catalog.albums,
+          favorites.collection.albums,
+        );
         if (!summary) {
           return initialLoading
             ? pendingRouteResource()
             : missingRouteResource();
         }
 
-        const cachedTracks = cachedAlbumTracks(queryClient, summary);
-        const albumForScreen = cachedTracks
-          ? albumWithTracks(summary, cachedTracks)
-          : summary;
+        const albumForScreen = albumWithCachedTracks(queryClient, summary);
 
         return readyRouteResource({
           model: {
@@ -229,7 +219,6 @@ export function useLibraryRouteRuntimeAdapter({
             results: {
               ...screens.releaseResultsModel,
               albums: artist.group.albums,
-              title: "Releases",
             },
           },
           actions: {

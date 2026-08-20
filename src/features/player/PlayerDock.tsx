@@ -12,6 +12,7 @@ import type { RadioChapterLocalLinks } from "@/RadioChapterMetadata";
 import { cn } from "@/lib/utils";
 import type { PlaybackClock } from "@/playbackClock";
 import type { RadioChapter, RepeatMode, Track } from "@/types";
+import { DEFAULT_VOLUME } from "@/features/player/constants";
 import type { ArtistNavigationHandler } from "@/features/library/types";
 import { PlayerTrack } from "./PlayerTrack";
 import { PlayerTransport } from "./PlayerTransport";
@@ -127,7 +128,7 @@ export function PlayerDock({
           <TooltipTrigger
             render={
               <Button
-                onClick={() => onVolume(volume ? 0 : 0.72)}
+                onClick={() => onVolume(volume ? 0 : DEFAULT_VOLUME)}
                 aria-label={volume ? "Mute" : "Unmute"}
                 size="icon"
                 variant="ghost"
@@ -215,10 +216,9 @@ export function PlayerDock({
                 <TooltipTrigger
                   render={
                     <Button
-                      className={queueOpen ? "text-primary" : ""}
                       ref={queueControlRef}
-                      aria-label={queueOpen ? "Hide queue" : "Show queue"}
-                      aria-pressed={queueOpen}
+                      aria-label="Show queue"
+                      aria-pressed={false}
                       size="icon"
                       variant="ghost"
                     />

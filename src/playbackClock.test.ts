@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  clampPlaybackPosition,
   createPlaybackClock,
   MAX_PLAYBACK_POSITION_SECONDS,
+  readPlaybackSeconds,
 } from "./playbackClock";
 
 describe("playback clock", () => {
@@ -114,4 +116,12 @@ describe("playback clock", () => {
     expect(listener).toHaveBeenCalledTimes(1);
   });
 
+  it("clamps pending positions without the clock’s seven-day cap", () => {
+    expect(clampPlaybackPosition(4)).toBe(4);
+    expect(clampPlaybackPosition(-1)).toBe(0);
+    expect(clampPlaybackPosition(Number.NaN)).toBe(0);
+    const clock = createPlaybackClock(8);
+    expect(readPlaybackSeconds(undefined, clock)).toBe(8);
+    expect(readPlaybackSeconds({ currentTime: 3.5 }, clock)).toBe(3.5);
+  });
 });

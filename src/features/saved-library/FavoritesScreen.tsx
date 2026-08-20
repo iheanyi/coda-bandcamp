@@ -1,11 +1,11 @@
-import { HardDrive, Heart, RefreshCw } from "lucide-react";
+import { HardDrive, Heart } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useRef, useState } from "react";
 
-import { Button } from "@/components/ui/button";
+import { RetryButton } from "@/components/ui/retry-button";
 import { Spinner } from "@/components/ui/spinner";
 import { countLabel } from "@/countLabel";
-import { cn } from "@/lib/utils";
+import { formatErrorMessage } from "@/formatError";
 import { radioShowQueryOptions } from "@/queries/radioQueries";
 import { radioTrackFromShow } from "@/radioTrack";
 import type { RadioShowSummary } from "@/types";
@@ -13,38 +13,38 @@ import type { RadioShowSummary } from "@/types";
 import { FavoriteAlbumsSection } from "./FavoriteAlbumsSection";
 import { FavoriteRadioShowsSection } from "./FavoriteRadioShowsSection";
 import { FavoriteTracksSection } from "./FavoriteTracksSection";
+import { savedPageClassName } from "./savedLibraryPresentationData";
 import {
-  mutationError,
-  savedPageClassName,
-} from "./savedLibraryPresentationData";
-import { Eyebrow, SavedEmpty } from "./SavedLibraryPresentation";
-import type { FavoritesScreenProps } from "./savedLibraryTypes";
+  Eyebrow,
+  SavedEmpty,
+} from "./SavedLibraryPresentation";
+import { useSavedLibraryRuntime } from "./SavedLibraryRuntimeContext";
 
-export function FavoritesView({
-  className,
-  favorites,
-  favoritesLoading,
-  favoritesError,
-  favoritesLocal = false,
-  loadingAlbumId,
-  onRefreshFavorites,
-  onToggleFavorite,
-  onToggleRadioFavorite,
-  currentTrackId,
-  playing,
-  onTogglePlayback,
-  onPlayTracks,
-  onQueueTracks,
-  onPlayTrack,
-  onQueueTrack,
-  onOpenAlbum,
-  onOpenTrackAlbum,
-  onOpenArtist,
-  onOpenRadioShow,
-  onOpenRadioSeries,
-  onAddToPlaylist,
-  onNotify,
-}: FavoritesScreenProps) {
+export function FavoritesScreen() {
+  const {
+    favorites,
+    favoritesLoading,
+    favoritesError,
+    favoritesLocal = false,
+    loadingAlbumId,
+    onRefreshFavorites,
+    onToggleFavorite,
+    onToggleRadioFavorite,
+    currentTrackId,
+    playing,
+    onTogglePlayback,
+    onPlayTracks,
+    onQueueTracks,
+    onPlayTrack,
+    onQueueTrack,
+    onOpenAlbum,
+    onOpenTrackAlbum,
+    onOpenArtist,
+    onOpenRadioShow,
+    onOpenRadioSeries,
+    onAddToPlaylist,
+    onNotify,
+  } = useSavedLibraryRuntime();
   const queryClient = useQueryClient();
   const favoriteScrollElementRef = useRef<HTMLElement | null>(null);
   const setFavoritePageRoot = useCallback((element: HTMLElement | null) => {
@@ -71,7 +71,7 @@ export function FavoritesView({
       if (action === "play") onPlayTrack(track);
       else onQueueTrack(track);
     } catch (cause) {
-      onNotify(mutationError(cause), "bad");
+      onNotify(formatErrorMessage(cause), "bad");
     } finally {
       setRadioAction(undefined);
     }
@@ -88,10 +88,7 @@ export function FavoritesView({
     favoriteTrackCount + favoriteAlbumCount + favoriteRadioShowCount;
 
   return (
-    <section
-      className={cn(savedPageClassName, className)}
-      ref={setFavoritePageRoot}
-    >
+    <section className={savedPageClassName} ref={setFavoritePageRoot}>
       <header className="mb-8 flex items-start justify-between gap-6">
         <div className="flex min-w-0 flex-col gap-2.5">
           <Eyebrow className="mb-0 inline-flex items-center gap-1.5">
@@ -115,19 +112,14 @@ export function FavoritesView({
           </div>
         </div>
         {!favoritesLocal ? (
-          <Button
+          <RetryButton
+            busy={favoritesLoading}
+            busyLabel="Refreshing…"
+            iconSize={15}
+            label="Refresh"
             onClick={onRefreshFavorites}
-            disabled={favoritesLoading}
-            size="compact"
             variant="artwork"
-          >
-            {favoritesLoading ? (
-              <Spinner aria-hidden="true" className="size-4 text-current" />
-            ) : (
-              <RefreshCw size={15} />
-            )}
-            {favoritesLoading ? "Refreshing…" : "Refresh"}
-          </Button>
+          />
         ) : null}
       </header>
       {favoritesLoading ? (
@@ -142,18 +134,12 @@ export function FavoritesView({
           title="Favorites couldn’t load"
           detail={favoritesError}
           action={
-            <Button
+            <RetryButton
+              busy={favoritesLoading}
+              busyLabel="Trying again…"
+              label="Try again"
               onClick={onRefreshFavorites}
-              disabled={favoritesLoading}
-              size="compact"
-            >
-              {favoritesLoading ? (
-                <Spinner aria-hidden="true" className="size-4 text-current" />
-              ) : (
-                <RefreshCw size={14} />
-              )}
-              {favoritesLoading ? "Trying again…" : "Try again"}
-            </Button>
+            />
           }
         />
       ) : !favoriteAlbumCount &&
@@ -183,21 +169,12 @@ export function FavoritesView({
               }
               action={
                 favoritesLocal ? undefined : (
-                  <Button
+                  <RetryButton
+                    busy={favoritesLoading}
+                    busyLabel="Refreshing…"
+                    label="Refresh metadata"
                     onClick={onRefreshFavorites}
-                    disabled={favoritesLoading}
-                    size="compact"
-                  >
-                    {favoritesLoading ? (
-                      <Spinner
-                        aria-hidden="true"
-                        className="size-4 text-current"
-                      />
-                    ) : (
-                      <RefreshCw size={14} />
-                    )}
-                    {favoritesLoading ? "Refreshing…" : "Refresh metadata"}
-                  </Button>
+                  />
                 )
               }
             />

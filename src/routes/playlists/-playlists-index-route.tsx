@@ -1,11 +1,9 @@
 import { useLayoutEffect } from "react";
 
-import { PlaylistsScreen } from "@/features/saved-library";
+import { PlaylistsController } from "@/features/saved-library";
 import { usePlaylistRouteNavigation } from "@/features/saved-library/playlistRouteNavigation";
-import { useSavedLibraryRuntime } from "@/features/saved-library/SavedLibraryRuntimeContext";
 
 export function PlaylistsIndexRoute() {
-  const runtime = useSavedLibraryRuntime();
   const navigation = usePlaylistRouteNavigation();
 
   useLayoutEffect(() => {
@@ -13,10 +11,9 @@ export function PlaylistsIndexRoute() {
   }, [navigation.restoreListContext]);
 
   return (
-    <PlaylistsScreen
-      connected={runtime.connected}
-      onNotify={runtime.onNotify}
+    <PlaylistsController
       onOpenPlaylist={navigation.openPlaylist}
+      screen="index"
     />
   );
 }

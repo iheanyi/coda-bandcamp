@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 
 import type { ToastNotifier } from "@/components/ui/toastManager";
+import { formatErrorMessage } from "@/formatError";
 import { radioShowQueryOptions } from "@/queries/radioQueries";
 import { radioShowIdFromTrackId } from "@/radioPlayback";
 import type { Track } from "@/types";
@@ -48,7 +49,7 @@ export function useCurrentFavoriteController({
     }
     void queryClient.fetchQuery(radioShowQueryOptions(radioShowId)).then(
       (show) => favorites.toggleRadioFavorite(show),
-      (cause) => notify(String(cause).replace(/^Error:\s*/u, ""), "bad"),
+      (cause) => notify(formatErrorMessage(cause), "bad"),
     );
   }, [currentTrack, favorites, notify, queryClient]);
 

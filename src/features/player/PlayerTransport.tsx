@@ -11,13 +11,12 @@ import {
 import { formatTime } from "@/lib";
 import { cn } from "@/lib/utils";
 import type { PlaybackClock } from "@/playbackClock";
-import {
-  nextRadioChapterTimeInTimeline,
-  previousRadioChapterTimeInTimeline,
-} from "@/radioPlayback";
 import type { RadioChapter, RepeatMode, Track } from "@/types";
-import { PREVIOUS_RESTART_THRESHOLD_SECONDS } from "./constants";
 import { usePlaybackPosition } from "./playbackClockHooks";
+import {
+  queueOrChapterCanNext,
+  queueOrChapterCanPrevious,
+} from "./transportEnablement";
 
 export type PlayerTransportProps = {
   track?: Track;
@@ -53,14 +52,12 @@ export const PlayerTransport = memo(function PlayerTransport({
   className,
 }: PlayerTransportProps) {
   const currentTime = usePlaybackPosition(playbackClock);
-  const positionCanPrevious =
-    Boolean(track) &&
-    (currentTime > PREVIOUS_RESTART_THRESHOLD_SECONDS ||
-      previousRadioChapterTimeInTimeline(radioTimeline, currentTime) !==
-        undefined);
-  const positionCanNext =
-    Boolean(track) &&
-    nextRadioChapterTimeInTimeline(radioTimeline, currentTime) !== undefined;
+  const canSkipPrevious = track
+    ? queueOrChapterCanPrevious(canPrevious, currentTime, radioTimeline)
+    : canPrevious;
+  const canSkipNext = track
+    ? queueOrChapterCanNext(canNext, currentTime, radioTimeline)
+    : canNext;
 
   return (
     <div
@@ -80,7 +77,7 @@ export const PlayerTransport = memo(function PlayerTransport({
             render={
               <Button
                 onClick={onPrevious}
-                disabled={!canPrevious && !positionCanPrevious}
+                disabled={!canSkipPrevious}
                 aria-label="Previous"
                 size="icon"
                 variant="ghost"
@@ -105,7 +102,7 @@ export const PlayerTransport = memo(function PlayerTransport({
             render={
               <Button
                 onClick={onNext}
-                disabled={!canNext && !positionCanNext}
+                disabled={!canSkipNext}
                 aria-label="Next"
                 size="icon"
                 variant="ghost"

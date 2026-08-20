@@ -27,6 +27,17 @@ function boundedPosition(positionSeconds: number): number {
   );
 }
 
+export function clampPlaybackPosition(positionSeconds: number): number {
+  return Number.isFinite(positionSeconds) ? Math.max(0, positionSeconds) : 0;
+}
+
+export function readPlaybackSeconds(
+  audio: Pick<HTMLAudioElement, "currentTime"> | null | undefined,
+  playbackClock: PlaybackClock,
+): number {
+  return audio?.currentTime ?? playbackClock.readExact();
+}
+
 /**
  * Creates an isolated playback clock. Frequent media events update the exact
  * position without forcing the React tree to render more than once per second.

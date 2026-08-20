@@ -22,3 +22,11 @@ pub(crate) fn allowed_url(value: &str, kind: UrlKind) -> Option<String> {
     };
     allowed.then(|| parsed.to_string())
 }
+
+pub(crate) fn bcbits_album_art_url(image_id: u64) -> String {
+    format!("https://f4.bcbits.com/img/a{image_id}_10.jpg")
+}
+
+pub(crate) fn bcbits_show_art_url(image_id: u64) -> String {
+    format!("https://f4.bcbits.com/img/{image_id:010}_10.jpg")
+}

@@ -1,3 +1,4 @@
+import { bandcampArtistOrigin } from "./bandcampUrl";
 import { paletteFor } from "./lib";
 import type { DiscoverRelease, Track } from "./types";
 
@@ -23,18 +24,5 @@ export function discoverPreviewTrack(
 export function discoverArtistUrl(
   release: DiscoverRelease,
 ): string | undefined {
-  try {
-    const itemUrl = new URL(release.itemUrl);
-    const host = itemUrl.hostname.toLowerCase();
-    if (
-      itemUrl.protocol !== "https:" ||
-      host === "bandcamp.com" ||
-      !host.endsWith(".bandcamp.com")
-    ) {
-      return undefined;
-    }
-    return `${itemUrl.origin}/`;
-  } catch {
-    return undefined;
-  }
+  return bandcampArtistOrigin(release.itemUrl);
 }
