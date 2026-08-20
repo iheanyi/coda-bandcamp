@@ -1,6 +1,5 @@
 import { Link } from "@tanstack/react-router";
 import {
-  ArrowLeft,
   CalendarDays,
   Clock3,
   ExternalLink,
@@ -8,7 +7,6 @@ import {
   ListMusic,
   ListPlus,
   Radio,
-  RefreshCw,
 } from "lucide-react";
 import {
   memo,
@@ -20,6 +18,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { PlaybackIcon } from "@/components/ui/playback-icon";
+import { RetryButton } from "@/components/ui/retry-button";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Tooltip,
@@ -46,6 +45,7 @@ import { RadioArtwork } from "./RadioArtwork";
 import { showDate } from "./radioPresentationFormatting";
 import { radioSeriesId } from "./radioRouteIds";
 import { RadioSeriesLink } from "./RadioSeriesNavigation";
+import { RadioShowBackButton } from "./RadioShowBackButton";
 
 export const RadioDetail = memo(function RadioDetail({
   show,
@@ -116,15 +116,7 @@ export const RadioDetail = memo(function RadioDetail({
       className="mx-auto w-full max-w-5xl pt-2 pb-12"
       aria-labelledby="radio-detail-title"
     >
-      <Button
-        variant="text"
-        size="compact"
-        className="mb-3.5 -ml-1 h-auto gap-1.5 p-1 text-xs text-[#969994] hover:bg-transparent hover:text-foreground"
-        onClick={onBack}
-      >
-        <ArrowLeft size={16} />
-        Back
-      </Button>
+      <RadioShowBackButton onBack={onBack} />
       <div data-coda-radio-detail-surface>
         <header className="grid min-h-76 grid-cols-[16rem_minmax(0,1fr)] items-center gap-12 overflow-hidden rounded-xl border border-(--line) bg-[radial-gradient(circle_at_78%_5%,rgba(221,101,73,0.15),transparent_40%),linear-gradient(140deg,#25292b,#181b1d_72%)] p-8 max-xl:min-h-64 max-xl:grid-cols-[12rem_minmax(0,1fr)] max-xl:gap-6 max-xl:p-6 max-lg:min-h-48 max-lg:grid-cols-[8rem_minmax(0,1fr)] max-lg:gap-4 max-lg:p-5">
           <div className="aspect-square w-64 drop-shadow-[0_22px_30px_rgba(0,0,0,0.32)] max-xl:w-48 max-lg:w-32 [&>div]:size-full">
@@ -389,23 +381,13 @@ export const RadioDetail = memo(function RadioDetail({
               <span className="mt-1.5 block max-w-md text-xs/normal text-coda-subtle-foreground">
                 {loadError}
               </span>
-              <Button
-                variant="secondary"
-                size="compact"
+              <RetryButton
+                busy={retrying}
+                busyLabel="Loading again…"
                 className="mt-4 text-xs text-[#dd8973]"
+                label="Try again"
                 onClick={onRetry}
-                disabled={retrying}
-              >
-                {retrying ? (
-                  <Spinner
-                    aria-hidden="true"
-                    className="size-3.5 text-current motion-reduce:animate-none"
-                  />
-                ) : (
-                  <RefreshCw size={14} />
-                )}
-                {retrying ? "Loading again…" : "Try again"}
-              </Button>
+              />
             </div>
           </div>
         ) : (

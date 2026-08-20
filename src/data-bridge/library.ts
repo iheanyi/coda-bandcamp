@@ -21,7 +21,6 @@ import {
   nativeChannel,
   type NativeValue,
 } from "./native";
-import { clearConnectionMediaCaches } from "./runtimeData";
 
 const MAX_LIBRARY_ALBUMS = 5_000;
 const MAX_ALBUM_TRACKS = 25_000;
@@ -322,6 +321,25 @@ function reportLibraryProgress(
   });
 }
 
+async function invokeLibrarySync(
+  command: "connect" | "fetch_library",
+  args: { input: ConnectionInput } | { forceFull: boolean },
+  progressContext: string,
+  onPage?: (progress: LibrarySyncProgress) => void,
+): Promise<Album[]> {
+  const onProgress = nativeChannel((event) =>
+    reportLibraryProgress(
+      parseNativeLibrarySyncEvent(event, progressContext),
+      onPage,
+    ),
+  );
+  const albums = parseNativeAlbumList(
+    await invokeNative(command, { ...args, onProgress }),
+    command,
+  );
+  return albums.map(hydrateAlbum);
+}
+
 export async function hasConnection(): Promise<boolean> {
   if (!isDesktop()) return false;
   return decodeNativeBoolean(
@@ -356,21 +374,7 @@ export async function connectBandcamp(
   input: ConnectionInput,
   onPage?: (progress: LibrarySyncProgress) => void,
 ): Promise<Album[]> {
-  const onProgress = nativeChannel((event) =>
-    reportLibraryProgress(
-      parseNativeLibrarySyncEvent(event, "connect progress"),
-      onPage,
-    ),
-  );
-  const albums = parseNativeAlbumList(
-    await invokeNative("connect", {
-      input,
-      onProgress,
-    }),
-    "connect",
-  );
-  clearConnectionMediaCaches();
-  return albums.map(hydrateAlbum);
+  return invokeLibrarySync("connect", { input }, "connect progress", onPage);
 }
 
 export async function disconnect(): Promise<string | undefined> {
@@ -383,20 +387,12 @@ export async function fetchLibrary(
   onPage?: (progress: LibrarySyncProgress) => void,
   options: { forceFull?: boolean } = {},
 ): Promise<Album[]> {
-  const onProgress = nativeChannel((event) =>
-    reportLibraryProgress(
-      parseNativeLibrarySyncEvent(event, "fetch_library progress"),
-      onPage,
-    ),
-  );
-  const albums = parseNativeAlbumList(
-    await invokeNative("fetch_library", {
-      onProgress,
-      forceFull: options.forceFull ?? false,
-    }),
+  return invokeLibrarySync(
     "fetch_library",
+    { forceFull: options.forceFull ?? false },
+    "fetch_library progress",
+    onPage,
   );
-  return albums.map(hydrateAlbum);
 }
 
 export async function fetchAlbum(

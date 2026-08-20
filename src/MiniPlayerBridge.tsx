@@ -2,9 +2,16 @@ import {
   useEffect,
   useMemo,
   useRef,
-  useSyncExternalStore,
 } from "react";
 import { useCoverArtSource } from "./coverArtSource";
+import {
+  queueOrChapterCanNext,
+  queueOrChapterCanPrevious,
+} from "./features/player/transportEnablement";
+import {
+  useCurrentRadioChapter,
+  usePlaybackPosition,
+} from "./features/player/playbackClockHooks";
 import { isDesktop } from "./lib";
 import {
   createMiniPlayerSnapshot,
@@ -16,11 +23,6 @@ import {
 } from "./miniPlayer";
 import type { OwnDataValue } from "./ownData";
 import type { PlaybackClock } from "./playbackClock";
-import {
-  nextRadioChapterTimeInTimeline,
-  previousRadioChapterTimeInTimeline,
-  radioAiringIndexesAt,
-} from "./radioPlayback";
 import type { RadioChapter, Track } from "./types";
 
 type MiniPlayerEventBridge = {
@@ -59,7 +61,9 @@ function nativeEventBridge(): Promise<MiniPlayerEventBridge> {
           emitTo("mini-player", MINI_PLAYER_STATE_EVENT, snapshot),
         listenForRequest: (handler: () => void) =>
           listen(MINI_PLAYER_REQUEST_STATE_EVENT, handler),
-        listenForCommand: (handler: (payload: OwnDataValue) => void) =>
+        listenForCommand: (
+          handler: (payload: OwnDataValue) => void,
+        ) =>
           listen<OwnDataValue>(
             MINI_PLAYER_COMMAND_EVENT,
             ({ payload }) => handler(payload),
@@ -88,18 +92,11 @@ export function MiniPlayerBridge({
   onShowMain,
 }: MiniPlayerBridgeProps) {
   const bridgeEnabled = isDesktop();
-  const positionSeconds = useSyncExternalStore(
-    playbackClock.subscribe,
-    playbackClock.getSnapshot,
-    playbackClock.getSnapshot,
-  );
-  const { currentIndex } = radioAiringIndexesAt(
+  const positionSeconds = usePlaybackPosition(playbackClock);
+  const { current: currentChapter } = useCurrentRadioChapter(
+    playbackClock,
     radioTimeline,
-    positionSeconds,
   );
-  const currentChapter = currentIndex >= 0
-    ? radioTimeline[currentIndex]
-    : undefined;
   const coverArtId = radioTimeline.length > 0
     ? undefined
     : (track?.coverArt ?? artwork?.coverArt);
@@ -130,23 +127,16 @@ export function MiniPlayerBridge({
         durationSeconds: track ? durationSeconds : 0,
         volume,
         canPrevious: Boolean(
-          track && (
-            canPrevious ||
-            positionSeconds > 4 ||
-            previousRadioChapterTimeInTimeline(
-              radioTimeline,
+          track &&
+            queueOrChapterCanPrevious(
+              canPrevious,
               positionSeconds,
-            ) !== undefined
-          ),
+              radioTimeline,
+            ),
         ),
         canNext: Boolean(
-          track && (
-            canNext ||
-            nextRadioChapterTimeInTimeline(
-              radioTimeline,
-              positionSeconds,
-            ) !== undefined
-          ),
+          track &&
+            queueOrChapterCanNext(canNext, positionSeconds, radioTimeline),
         ),
       }),
     [

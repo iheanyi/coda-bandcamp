@@ -1,4 +1,4 @@
-import type { Track } from "./types";
+import type { RepeatMode, Track } from "./types";
 
 export type ActivatedTrack = {
   queue: Track[];
@@ -55,11 +55,64 @@ export function moveItem<T>(items: T[], from: number, to: number): T[] {
   return copy;
 }
 
-export function shuffled<T>(items: T[], random = Math.random): T[] {
+export function shuffled<T>(items: readonly T[], random = Math.random): T[] {
   const copy = [...items];
   for (let index = copy.length - 1; index > 0; index -= 1) {
     const swapIndex = Math.floor(random() * (index + 1));
     [copy[index], copy[swapIndex]] = [copy[swapIndex], copy[index]];
   }
   return copy;
+}
+
+export function nextQueueIndex(
+  currentIndex: number,
+  queueLength: number,
+  repeatMode: RepeatMode,
+): number {
+  if (currentIndex + 1 < queueLength) return currentIndex + 1;
+  if (repeatMode === "all" && queueLength > 1) return 0;
+  return currentIndex;
+}
+
+export function previousQueueIndex(
+  currentIndex: number,
+  queueLength: number,
+  repeatMode: RepeatMode,
+): number {
+  if (currentIndex > 0) return currentIndex - 1;
+  if (repeatMode === "all" && queueLength > 1) return queueLength - 1;
+  return currentIndex;
+}
+
+export function queueCanNext(
+  currentIndex: number,
+  queueLength: number,
+  repeatMode: RepeatMode,
+): boolean {
+  return nextQueueIndex(currentIndex, queueLength, repeatMode) !== currentIndex;
+}
+
+export function queueCanPrevious(
+  currentIndex: number,
+  queueLength: number,
+  repeatMode: RepeatMode,
+): boolean {
+  return (
+    previousQueueIndex(currentIndex, queueLength, repeatMode) !== currentIndex
+  );
+}
+
+export function cycleRepeatMode(repeatMode: RepeatMode): RepeatMode {
+  switch (repeatMode) {
+    case "off":
+      return "all";
+    case "all":
+      return "one";
+    case "one":
+      return "off";
+    default: {
+      const exhaustive: never = repeatMode;
+      return exhaustive;
+    }
+  }
 }

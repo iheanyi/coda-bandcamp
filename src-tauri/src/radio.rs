@@ -1,6 +1,6 @@
 use crate::bandcamp_http::{fetch_bounded_json, fetch_bounded_json_request, http_client};
 use crate::models::{RadioChapter, RadioSeries, RadioShow, RadioShowSummary, RadioShowsPage};
-use crate::url_policy::{allowed_url, UrlKind};
+use crate::url_policy::{allowed_url, bcbits_album_art_url, bcbits_show_art_url, UrlKind};
 use crate::validation::{valid_library_date, MAX_RADIO_CHAPTERS};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -159,15 +159,11 @@ pub(super) fn clean_radio_date(value: &str) -> String {
 }
 
 pub(super) fn radio_artwork_url(image_id: Option<u64>) -> Option<String> {
-    image_id
-        .filter(|id| *id > 0)
-        .map(|id| format!("https://f4.bcbits.com/img/{id:010}_10.jpg"))
+    image_id.filter(|id| *id > 0).map(bcbits_show_art_url)
 }
 
 pub(super) fn radio_track_artwork_url(image_id: Option<u64>) -> Option<String> {
-    image_id
-        .filter(|id| *id > 0)
-        .map(|id| format!("https://f4.bcbits.com/img/a{id}_10.jpg"))
+    image_id.filter(|id| *id > 0).map(bcbits_album_art_url)
 }
 
 pub(super) fn radio_series_by_id(id: u64) -> Option<RadioSeries> {

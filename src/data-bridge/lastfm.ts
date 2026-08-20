@@ -17,6 +17,16 @@ import {
   type NativeValue,
 } from "./native";
 
+function isVerifiedLastFmAuthorizationUrl(url: URL): boolean {
+  return (
+    url.protocol === "https:" &&
+    url.hostname.toLowerCase() === "www.last.fm" &&
+    url.pathname === "/api/auth/" &&
+    url.username.length === 0 &&
+    url.password.length === 0
+  );
+}
+
 export function parseLastFmStatus(
   value: NativeValue,
   context: string,
@@ -57,13 +67,7 @@ export function parseLastFmAuthorization(
       "the Last.fm authorization URL",
     );
   }
-  if (
-    url.protocol !== "https:" ||
-    url.hostname.toLowerCase() !== "www.last.fm" ||
-    url.pathname !== "/api/auth/" ||
-    url.username.length > 0 ||
-    url.password.length > 0
-  ) {
+  if (!isVerifiedLastFmAuthorizationUrl(url)) {
     return invalidNativeResponse(
       `${context}.authorizationUrl`,
       "the verified Last.fm authorization URL",
@@ -132,13 +136,7 @@ export async function scrobbleLastFm(
 
 export async function openLastFmAuthorization(value: string): Promise<void> {
   const url = new URL(value);
-  if (
-    url.protocol !== "https:" ||
-    url.hostname.toLowerCase() !== "www.last.fm" ||
-    url.pathname !== "/api/auth/" ||
-    url.username.length > 0 ||
-    url.password.length > 0
-  ) {
+  if (!isVerifiedLastFmAuthorizationUrl(url)) {
     throw new Error("Coda only opens the verified Last.fm authorization page.");
   }
   if (isDesktop()) {

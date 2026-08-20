@@ -1,9 +1,6 @@
 import { useLayoutEffect } from "react";
 
-import {
-  RadioIndexScreen,
-  RadioSeriesScreen,
-} from "@/features/radio/RadioArchiveScreen";
+import { RadioArchiveScreen } from "@/features/radio/RadioArchiveScreen";
 import { useRadioRouteNavigation } from "@/features/radio/RadioRouteNavigationState";
 import { useRadioRuntime } from "@/features/radio/RadioRuntimeContext";
 import type { RadioSeriesId } from "@/routing/routeContracts";
@@ -20,22 +17,19 @@ export function RadioArchiveRoute({
     navigation.restoreArchiveContext(seriesId);
   }, [navigation.restoreArchiveContext, seriesId]);
 
-  const screenProps = {
-    currentTrackId: runtime.currentTrackId,
-    favoriteShowIds: runtime.favoriteShowIds,
-    onOpenShow: navigation.openShow,
-    onPlay: runtime.onPlay,
-    onQueue: runtime.onQueue,
-    onSelectSeries: navigation.selectSeries,
-    onToggleFavorite: runtime.onToggleFavorite,
-    onTogglePlayback: runtime.onTogglePlayback,
-    playing: runtime.playing,
-    seriesTravelSteps: navigation.seriesTravelSteps,
-  };
-
-  return seriesId ? (
-    <RadioSeriesScreen {...screenProps} seriesId={seriesId} />
-  ) : (
-    <RadioIndexScreen {...screenProps} />
+  return (
+    <RadioArchiveScreen
+      currentTrackId={runtime.currentTrackId}
+      favoriteShowIds={runtime.favoriteShowIds}
+      onOpenShow={navigation.openShow}
+      onPlay={runtime.onPlay}
+      onQueue={runtime.onQueue}
+      onSelectSeries={navigation.selectSeries}
+      onToggleFavorite={runtime.onToggleFavorite}
+      onTogglePlayback={runtime.onTogglePlayback}
+      playing={runtime.playing}
+      seriesId={seriesId}
+      seriesTravelSteps={navigation.seriesTravelSteps}
+    />
   );
 }

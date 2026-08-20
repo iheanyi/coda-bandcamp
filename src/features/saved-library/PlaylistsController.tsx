@@ -1,18 +1,17 @@
-import { ListMusic, RefreshCw } from "lucide-react";
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { ListMusic } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 
-import { Button } from "@/components/ui/button";
+import { RetryButton } from "@/components/ui/retry-button";
 import { Spinner } from "@/components/ui/spinner";
-import type { RouteCommitOutcome } from "@/features/navigation/routeCommit";
+import {
+  routeCommitFailureCopy,
+  type RouteCommitOutcome,
+} from "@/features/navigation/routeCommit";
 import { useActivateDetailDestination } from "@/features/navigation/useActivateDetailDestination";
-import { createPlaylist, deletePlaylist, updatePlaylist } from "@/lib";
-import { cn } from "@/lib/utils";
+import { formatErrorMessage } from "@/formatError";
+import { deletePlaylist, updatePlaylist } from "@/lib";
 import {
   PLAYLISTS_QUERY_KEY,
   playlistQueryKey,
@@ -27,25 +26,37 @@ import type {
 } from "@/types";
 
 import {
-  optimisticPlaylistId,
   type PlaylistDetailMutationContext,
-  type PlaylistListMutationContext,
   playlistSummary,
   removedPlaylistTracks,
-  replaceOptimisticPlaylist,
-  restorePlaylistList,
   restorePlaylistMutation,
   revalidateCommittedPlaylist,
   upsertPlaylistSummary,
 } from "./playlistCache";
+import { useCreatePlaylistMutation } from "./useCreatePlaylistMutation";
 import { PlaylistDetailView } from "./PlaylistDetailView";
 import { PlaylistList } from "./PlaylistList";
+import { savedPageClassName } from "./savedLibraryPresentationData";
 import {
-  mutationError,
-  savedPageClassName,
-} from "./savedLibraryPresentationData";
-import { SavedEmpty, Eyebrow } from "./SavedLibraryPresentation";
-import type { PlaylistsControllerProps } from "./savedLibraryTypes";
+  Eyebrow,
+  SavedEmpty,
+} from "./SavedLibraryPresentation";
+import type { PlaylistOpenRequest } from "./playlistRouteNavigation";
+import { useSavedLibraryRuntime } from "./SavedLibraryRuntimeContext";
+
+type PlaylistsControllerProps =
+  | Readonly<{
+      screen: "index";
+      onOpenPlaylist: (
+        request: PlaylistOpenRequest,
+      ) => Promise<RouteCommitOutcome>;
+    }>
+  | Readonly<{
+      screen: "detail";
+      playlistId: PlaylistId;
+      onBack: () => Promise<RouteCommitOutcome>;
+      onReplaceIndex: () => Promise<RouteCommitOutcome>;
+    }>;
 
 function assertNever(value: never): never {
   throw new TypeError(`Unsupported exhaustive variant: ${String(value)}`);
@@ -64,21 +75,20 @@ function playlistNavigationSucceeded(outcome: RouteCommitOutcome): boolean {
   }
 }
 
-function playlistNavigationFailureCopy(
-  outcome: "failed" | "timeout",
-): string {
-  switch (outcome) {
-    case "failed":
-      return "Playlist navigation failed. Try again.";
-    case "timeout":
-      return "Playlist navigation took too long. Try again.";
-    default:
-      return assertNever(outcome);
-  }
-}
-
 export function PlaylistsController(props: PlaylistsControllerProps) {
-  const { className, connected, onNotify } = props;
+  const {
+    connected,
+    currentTrackId,
+    loadingAlbumId,
+    onAddToPlaylist,
+    onNotify,
+    onOpenArtist,
+    onOpenTrackAlbum,
+    onPlayTracks,
+    onQueueTracks,
+    onTogglePlayback,
+    playing,
+  } = useSavedLibraryRuntime();
   const selectedPlaylistId =
     props.screen === "detail" ? props.playlistId : undefined;
   const queryClient = useQueryClient();
@@ -112,22 +122,21 @@ export function PlaylistsController(props: PlaylistsControllerProps) {
       try {
         if (await recoverOrReplace()) return;
       } catch (recoveryCause) {
-        onNotify(mutationError(recoveryCause), "bad");
+        onNotify(formatErrorMessage(recoveryCause), "bad");
         return;
       }
-      if (outcome === "failed" || outcome === "timeout") {
-        onNotify(playlistNavigationFailureCopy(outcome), "bad");
-      }
+      const message = routeCommitFailureCopy(outcome, "Playlist navigation");
+      if (message) onNotify(message, "bad");
     } catch (cause) {
       if (recover) {
         try {
           if (await recoverOrReplace()) return;
         } catch (recoveryCause) {
-          onNotify(mutationError(recoveryCause), "bad");
+          onNotify(formatErrorMessage(recoveryCause), "bad");
           return;
         }
       }
-      onNotify(mutationError(cause), "bad");
+      onNotify(formatErrorMessage(cause), "bad");
     } finally {
       onSettled?.();
     }
@@ -148,47 +157,12 @@ export function PlaylistsController(props: PlaylistsControllerProps) {
   useActivateDetailDestination(
     "playlist",
     `playlist:${selectedPlaylistId ?? ""}`,
-    Boolean(
-      selectedPlaylistId && playlist.data?.id === selectedPlaylistId,
-    ),
+    Boolean(selectedPlaylistId && playlist.data?.id === selectedPlaylistId),
   );
-  const createMutation = useMutation({
-    mutationFn: (name: string) => createPlaylist(name),
-    onMutate: async (name): Promise<PlaylistListMutationContext> => {
-      await queryClient.cancelQueries({
-        queryKey: PLAYLISTS_QUERY_KEY,
-        exact: true,
-      });
-      const previousPlaylists =
-        queryClient.getQueryData<PlaylistSummary[]>(PLAYLISTS_QUERY_KEY);
-      const optimisticId = optimisticPlaylistId();
-      queryClient.setQueryData<PlaylistSummary[]>(
-        PLAYLISTS_QUERY_KEY,
-        (current) => [
-          {
-            duration: 0,
-            id: optimisticId,
-            name,
-            songCount: 0,
-          },
-          ...(current ?? []),
-        ],
-      );
-      return { optimisticId, previousPlaylists };
-    },
-    onSuccess: (created, _name, context) => {
+  const createMutation = useCreatePlaylistMutation({
+    onCommitted: (created) => {
       // SAFETY: createPlaylist decodes the id through parseNativePlaylistSummary.
       const createdPlaylistId = created.id as PlaylistId;
-      queryClient.setQueryData(playlistQueryKey(created.id), created);
-      queryClient.setQueryData<PlaylistSummary[]>(
-        PLAYLISTS_QUERY_KEY,
-        (current) =>
-          replaceOptimisticPlaylist(
-            current,
-            context?.optimisticId,
-            playlistSummary(created),
-          ),
-      );
       if (props.screen === "index") {
         void runPlaylistNavigation(() =>
           props.onOpenPlaylist({
@@ -203,10 +177,7 @@ export function PlaylistsController(props: PlaylistsControllerProps) {
       }
       onNotify(`${created.name} created`, "good");
     },
-    onError: (cause, _name, context) => {
-      if (context) restorePlaylistList(queryClient, context.previousPlaylists);
-      onNotify(mutationError(cause), "bad");
-    },
+    onNotify,
   });
   const updateMutation = useMutation({
     mutationFn: (input: PlaylistUpdateInput) => updatePlaylist(input),
@@ -269,7 +240,7 @@ export function PlaylistsController(props: PlaylistsControllerProps) {
       if (context) {
         restorePlaylistMutation(queryClient, input.playlistId, context);
       }
-      onNotify(mutationError(cause), "bad");
+      onNotify(formatErrorMessage(cause), "bad");
     },
   });
   const deleteMutation = useMutation({
@@ -308,13 +279,13 @@ export function PlaylistsController(props: PlaylistsControllerProps) {
     },
     onError: (cause, playlistId, context) => {
       if (context) restorePlaylistMutation(queryClient, playlistId, context);
-      onNotify(mutationError(cause), "bad");
+      onNotify(formatErrorMessage(cause), "bad");
     },
   });
 
   if (!connected) {
     return (
-      <section className={cn(savedPageClassName, className)}>
+      <section className={savedPageClassName}>
         <SavedEmpty
           icon={<ListMusic size={28} />}
           title="Connect Bandcamp to see playlists"
@@ -326,25 +297,19 @@ export function PlaylistsController(props: PlaylistsControllerProps) {
 
   if (props.screen === "detail") {
     return (
-      <section className={cn(savedPageClassName, className)}>
+      <section className={savedPageClassName}>
         {playlist.isError ? (
           <SavedEmpty
             icon={<ListMusic size={28} />}
             title="This playlist couldn’t load"
-            detail={mutationError(playlist.error)}
+            detail={formatErrorMessage(playlist.error)}
             action={
-              <Button
+              <RetryButton
+                busy={playlist.isFetching}
+                busyLabel="Trying again…"
+                label="Try again"
                 onClick={() => void playlist.refetch()}
-                disabled={playlist.isFetching}
-                size="compact"
-              >
-                {playlist.isFetching ? (
-                  <Spinner aria-hidden="true" className="size-4 text-current" />
-                ) : (
-                  <RefreshCw size={14} />
-                )}
-                {playlist.isFetching ? "Trying again…" : "Try again"}
-              </Button>
+              />
             }
           />
         ) : (
@@ -352,15 +317,15 @@ export function PlaylistsController(props: PlaylistsControllerProps) {
             playlist={playlist.data}
             loading={playlist.isLoading}
             onBack={closePlaylist}
-            onPlay={props.onPlayTracks}
-            onQueue={props.onQueueTracks}
-            currentTrackId={props.currentTrackId}
-            playing={props.playing}
-            loadingAlbumId={props.loadingAlbumId}
-            onTogglePlayback={props.onTogglePlayback}
-            onAddToPlaylist={props.onAddToPlaylist}
-            onOpenTrackAlbum={props.onOpenTrackAlbum}
-            onOpenArtist={props.onOpenArtist}
+            onPlay={onPlayTracks}
+            onQueue={onQueueTracks}
+            currentTrackId={currentTrackId}
+            playing={playing}
+            loadingAlbumId={loadingAlbumId}
+            onTogglePlayback={onTogglePlayback}
+            onAddToPlaylist={onAddToPlaylist}
+            onOpenTrackAlbum={onOpenTrackAlbum}
+            onOpenArtist={onOpenArtist}
             onRename={(name) =>
               updateMutation.mutate({ playlistId: props.playlistId, name })
             }
@@ -378,7 +343,8 @@ export function PlaylistsController(props: PlaylistsControllerProps) {
                 : undefined
             }
             renaming={
-              updateMutation.isPending && Boolean(updateMutation.variables?.name)
+              updateMutation.isPending &&
+              Boolean(updateMutation.variables?.name)
             }
             deleting={deleteMutation.isPending}
           />
@@ -388,7 +354,7 @@ export function PlaylistsController(props: PlaylistsControllerProps) {
   }
 
   return (
-    <section className={cn(savedPageClassName, className)}>
+    <section className={savedPageClassName}>
       <header className="mb-7 flex items-start justify-between gap-6">
         <div>
           <Eyebrow>Synced with Bandcamp</Eyebrow>
@@ -399,19 +365,14 @@ export function PlaylistsController(props: PlaylistsControllerProps) {
             Build a sequence here and it follows you to Bandcamp.
           </p>
         </div>
-        <Button
+        <RetryButton
+          busy={playlists.isFetching}
+          busyLabel="Refreshing…"
+          iconSize={15}
+          label="Refresh"
           onClick={() => void playlists.refetch()}
-          disabled={playlists.isFetching}
-          size="compact"
           variant="artwork"
-        >
-          {playlists.isFetching ? (
-            <Spinner aria-hidden="true" className="size-4 text-current" />
-          ) : (
-            <RefreshCw size={15} />
-          )}
-          {playlists.isFetching ? "Refreshing…" : "Refresh"}
-        </Button>
+        />
       </header>
       {playlists.isLoading ? (
         <SavedEmpty
@@ -423,20 +384,14 @@ export function PlaylistsController(props: PlaylistsControllerProps) {
         <SavedEmpty
           icon={<ListMusic size={28} />}
           title="Playlists couldn’t load"
-          detail={mutationError(playlists.error)}
+          detail={formatErrorMessage(playlists.error)}
           action={
-            <Button
+            <RetryButton
+              busy={playlists.isFetching}
+              busyLabel="Trying again…"
+              label="Try again"
               onClick={() => void playlists.refetch()}
-              disabled={playlists.isFetching}
-              size="compact"
-            >
-              {playlists.isFetching ? (
-                <Spinner aria-hidden="true" className="size-4 text-current" />
-              ) : (
-                <RefreshCw size={14} />
-              )}
-              {playlists.isFetching ? "Trying again…" : "Try again"}
-            </Button>
+            />
           }
         />
       ) : (

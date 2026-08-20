@@ -4,7 +4,7 @@ use crate::bandcamp_http::{
 };
 use crate::models::{DiscoverInput, DiscoverPage, DiscoverRelease, DiscoverTrack};
 use crate::storage::run_blocking;
-use crate::url_policy::{allowed_url, UrlKind};
+use crate::url_policy::{allowed_url, bcbits_album_art_url, UrlKind};
 use crate::validation::{
     bounded_trimmed_text, valid_bounded_text, MAX_MEDIA_SECONDS, MAX_METADATA_TEXT_LENGTH,
 };
@@ -138,7 +138,7 @@ pub(super) fn discover_release_from_raw(value: RawDiscoverRelease) -> Option<Dis
     let artwork_url = value
         .primary_image
         .and_then(|image| image.image_id)
-        .map(|image_id| format!("https://f4.bcbits.com/img/a{image_id}_10.jpg"));
+        .map(bcbits_album_art_url);
     let featured_track = value.featured_track.and_then(|track| {
         let id = opaque_discover_id(&track.id)?;
         let stream_url = allowed_url(track.stream_url.as_deref()?, UrlKind::BandcampMedia)?;

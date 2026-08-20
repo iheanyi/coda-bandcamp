@@ -1,14 +1,16 @@
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Radio, RefreshCw } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { Radio } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
 
-import { Button } from "@/components/ui/button";
+import { RetryButton } from "@/components/ui/retry-button";
 import { Spinner } from "@/components/ui/spinner";
 import type { RouteCommitOutcome } from "@/features/navigation/routeCommit";
 import { useActivateDetailDestination } from "@/features/navigation/useActivateDetailDestination";
+import { formatErrorMessage } from "@/formatError";
 import { openBandcampUrl } from "@/lib";
 import {
   type RadioArchiveScope,
+  mergeRadioShowSeries,
   radioShowSummaryCandidatesInCache,
   radioShowSummaryObserverOptions,
   radioShowQueryOptions,
@@ -17,8 +19,11 @@ import {
 } from "@/queries/radioQueries";
 import type { RadioSeriesId, RadioShowId } from "@/routing/routeContracts";
 
-import { RadioDetail } from "./RadioPresentation";
+import { RadioFeedStatus } from "./RadioFeedStatus";
+import { RadioDetail } from "./RadioDetail";
+import { RadioShowBackButton } from "./RadioShowBackButton";
 import type { RadioPlaybackProps } from "./radioScreenTypes";
+import { useOpenExternalBandcampItem } from "./useOpenExternalBandcampItem";
 
 export type RadioShowScreenProps = RadioPlaybackProps &
   Readonly<{
@@ -29,6 +34,41 @@ export type RadioShowScreenProps = RadioPlaybackProps &
     preferredSummaryScope?: RadioArchiveScope;
     repository?: RadioQueryRepository;
   }>;
+
+function RadioShowStatusShell({
+  onBack,
+  busy,
+  action,
+  detail,
+  icon,
+  role,
+  title,
+}: {
+  onBack: () => Promise<RouteCommitOutcome>;
+  busy?: boolean;
+  action?: ReactNode;
+  detail: string;
+  icon: ReactNode;
+  role?: "alert" | "status";
+  title: string;
+}) {
+  return (
+    <section
+      className="min-h-full pb-2.5"
+      aria-busy={busy ? "true" : undefined}
+      aria-live={busy ? "polite" : undefined}
+    >
+      <RadioShowBackButton onBack={onBack} />
+      <RadioFeedStatus
+        action={action}
+        detail={detail}
+        icon={icon}
+        role={role}
+        title={title}
+      />
+    </section>
+  );
+}
 
 export function RadioShowScreen({
   showId,
@@ -71,12 +111,13 @@ export function RadioShowScreen({
     preferredSummaryScope,
   );
   const showQuery = useQuery(radioShowQueryOptions(showId, repository));
-  const details = useMemo(() => {
-    if (!showQuery.data || showQuery.data.series || !cachedSummary?.series) {
-      return showQuery.data;
-    }
-    return { ...showQuery.data, series: cachedSummary.series };
-  }, [cachedSummary?.series, showQuery.data]);
+  const details = useMemo(
+    () =>
+      showQuery.data
+        ? mergeRadioShowSeries(showQuery.data, cachedSummary)
+        : showQuery.data,
+    [cachedSummary, showQuery.data],
+  );
   const summary = details ?? cachedSummary;
   const [actionError, setActionError] = useState("");
 
@@ -86,89 +127,47 @@ export function RadioShowScreen({
     Boolean(summary),
   );
 
-  const openItem = useCallback((url: string) => {
-    setActionError("");
-    void openExternal(url).catch((cause) => {
-      setActionError(String(cause).replace(/^Error:\s*/, ""));
-    });
-  }, [openExternal]);
+  const openItem = useOpenExternalBandcampItem(openExternal, setActionError);
 
   if (!summary && showQuery.isPending) {
     return (
-      <section
-        className="min-h-full pb-2.5"
-        aria-busy="true"
-        aria-live="polite"
-      >
-        <Button
-          variant="text"
-          size="compact"
-          className="mb-3.5 -ml-1 h-auto gap-1.5 p-1 text-xs text-[#969994] hover:bg-transparent hover:text-foreground"
-          onClick={onBack}
-        >
-          <ArrowLeft size={16} />
-          Back
-        </Button>
-        <div className="flex min-h-108 flex-col items-center justify-center text-center text-[#6e726d]">
+      <RadioShowStatusShell
+        busy
+        detail="Fetching the episode audio and tracklist from Bandcamp."
+        icon={
           <Spinner
             className="size-7 motion-reduce:animate-none"
             aria-label="Loading Radio show details"
           />
-          <strong className="mt-3 text-base text-[#cac9c3]">
-            Loading show details…
-          </strong>
-          <span className="mt-1.5 max-w-md text-xs/normal text-coda-subtle-foreground">
-            Fetching the episode audio and tracklist from Bandcamp.
-          </span>
-        </div>
-      </section>
+        }
+        onBack={onBack}
+        title="Loading show details…"
+      />
     );
   }
 
   if (!summary) {
     return (
-      <section className="min-h-full pb-2.5">
-        <Button
-          variant="text"
-          size="compact"
-          className="mb-3.5 -ml-1 h-auto gap-1.5 p-1 text-xs text-[#969994] hover:bg-transparent hover:text-foreground"
-          onClick={onBack}
-        >
-          <ArrowLeft size={16} />
-          Back
-        </Button>
-        <div
-          className="flex min-h-108 flex-col items-center justify-center text-center text-[#6e726d]"
-          role="alert"
-        >
-          <Radio size={30} />
-          <strong className="mt-3 text-base text-[#cac9c3]">
-            This Radio show is off the air
-          </strong>
-          <span className="mt-1.5 max-w-md text-xs/normal text-coda-subtle-foreground">
-            {showQuery.isError
-              ? String(showQuery.error).replace(/^Error:\s*/, "")
-              : "Bandcamp did not return this Radio show."}
-          </span>
-          <Button
-            variant="secondary"
-            size="compact"
+      <RadioShowStatusShell
+        action={
+          <RetryButton
+            busy={showQuery.isFetching}
+            busyLabel="Loading again…"
             className="mt-4 text-xs text-[#dd8973]"
+            label="Try again"
             onClick={() => void showQuery.refetch()}
-            disabled={showQuery.isFetching}
-          >
-            {showQuery.isFetching ? (
-              <Spinner
-                aria-hidden="true"
-                className="size-3.5 text-current motion-reduce:animate-none"
-              />
-            ) : (
-              <RefreshCw size={14} />
-            )}
-            {showQuery.isFetching ? "Loading again…" : "Try again"}
-          </Button>
-        </div>
-      </section>
+          />
+        }
+        detail={
+          showQuery.isError
+            ? formatErrorMessage(showQuery.error)
+            : "Bandcamp did not return this Radio show."
+        }
+        icon={<Radio size={30} />}
+        onBack={onBack}
+        role="alert"
+        title="This Radio show is off the air"
+      />
     );
   }
 
@@ -179,7 +178,7 @@ export function RadioShowScreen({
       loading={!details && showQuery.isPending}
       loadError={
         !details && showQuery.isError
-          ? String(showQuery.error).replace(/^Error:\s*/, "")
+          ? formatErrorMessage(showQuery.error)
           : undefined
       }
       retrying={!details && showQuery.isFetching}

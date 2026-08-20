@@ -17,6 +17,7 @@ import {
   validateCollectionSearch,
 } from "@/routing/routeContracts";
 import type { LibraryBrowseMode } from "@/libraryBrowse";
+import { resetCollectionSearchForArtist } from "./libraryLinkSearch";
 import type { SortMode } from "@/types";
 
 export type PreparedArtistSearch = Readonly<{
@@ -230,12 +231,7 @@ export function useLibraryRouteSearchControllerWithNavigation(
   }, [navigate]);
 
   const prepareArtistSearch = useCallback<() => PreparedArtistSearch>(() => {
-    const artistSearch = validateCollectionSearch({
-      ...validatedSearch,
-      genre: "All",
-      mode: "artists",
-      q: "",
-    });
+    const artistSearch = resetCollectionSearchForArtist(validatedSearch);
     return {
       commitDeferredReset: () => {
         artistDeferredResetPendingRef.current = true;

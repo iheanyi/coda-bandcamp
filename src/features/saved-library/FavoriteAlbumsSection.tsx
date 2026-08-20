@@ -20,6 +20,7 @@ import {
   artistRouteKey,
   metadataLinkClassName,
 } from "./savedLibraryPresentationData";
+import { SavedSectionHeader } from "./SavedLibraryPresentation";
 
 const FAVORITE_ALBUM_GRID_LAYOUTS = [
   {
@@ -60,14 +61,10 @@ export function FavoriteAlbumsSection({
 }) {
   return (
     <section className="mt-8">
-      <div className="mb-4 flex items-baseline justify-between">
-        <h2 className="m-0 font-display text-base leading-none font-semibold tracking-tight">
-          Releases
-        </h2>
-        <span className="text-xs text-[#6f736e]">
-          {countLabel(albumCount, "release")}
-        </span>
-      </div>
+      <SavedSectionHeader
+        title="Releases"
+        count={countLabel(albumCount, "release")}
+      />
       <ResponsiveVirtualGrid
         aria-label="Favorite releases"
         className="w-full"

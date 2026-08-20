@@ -1,6 +1,6 @@
 import { useCallback, useSyncExternalStore } from "react";
 import type { PlaybackClock } from "@/playbackClock";
-import { radioAiringIndexesAt } from "@/radioPlayback";
+import { nextRadioChapterIndex, radioAiringIndexesAt } from "@/radioPlayback";
 import type { RadioChapter } from "@/types";
 
 export function usePlaybackPosition(playbackClock: PlaybackClock): number {
@@ -14,6 +14,8 @@ export function usePlaybackPosition(playbackClock: PlaybackClock): number {
 export type CurrentRadioChapterState = {
   current?: RadioChapter;
   next?: RadioChapter;
+  currentIndex: number;
+  nextIndex: number;
 };
 
 export function useCurrentRadioChapter(
@@ -31,6 +33,7 @@ export function useCurrentRadioChapter(
     getCurrentIndex,
   );
   const current = currentIndex >= 0 ? timeline[currentIndex] : undefined;
-  const next = current ? timeline[currentIndex + 1] : timeline[0];
-  return { current, next };
+  const nextIndex = nextRadioChapterIndex(currentIndex, timeline.length);
+  const next = nextIndex >= 0 ? timeline[nextIndex] : undefined;
+  return { current, next, currentIndex, nextIndex };
 }

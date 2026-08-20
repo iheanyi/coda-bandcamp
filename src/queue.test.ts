@@ -4,6 +4,11 @@ import {
   appendUnique,
   keepCurrentTrack,
   moveItem,
+  nextQueueIndex,
+  previousQueueIndex,
+  queueCanNext,
+  queueCanPrevious,
+  cycleRepeatMode,
   shuffled,
 } from "./queue";
 import type { Track } from "./types";
@@ -61,6 +66,23 @@ describe("queue helpers", () => {
 
   it("supports deterministic shuffling", () => {
     expect(shuffled(["a", "b", "c"], () => 0)).toEqual(["b", "c", "a"]);
+  });
+
+  it("advances and wraps only for repeat-all queues with more than one track", () => {
+    expect(nextQueueIndex(0, 3, "off")).toBe(1);
+    expect(nextQueueIndex(2, 3, "off")).toBe(2);
+    expect(nextQueueIndex(2, 3, "all")).toBe(0);
+    expect(nextQueueIndex(0, 1, "all")).toBe(0);
+    expect(previousQueueIndex(2, 3, "off")).toBe(1);
+    expect(previousQueueIndex(0, 3, "off")).toBe(0);
+    expect(previousQueueIndex(0, 3, "all")).toBe(2);
+    expect(queueCanNext(0, 3, "off")).toBe(true);
+    expect(queueCanNext(2, 3, "off")).toBe(false);
+    expect(queueCanPrevious(0, 3, "all")).toBe(true);
+    expect(queueCanPrevious(0, 3, "off")).toBe(false);
+    expect(cycleRepeatMode("off")).toBe("all");
+    expect(cycleRepeatMode("all")).toBe("one");
+    expect(cycleRepeatMode("one")).toBe("off");
   });
 
   it("preserves queue invariants across deterministic randomized operations", () => {

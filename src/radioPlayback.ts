@@ -19,10 +19,15 @@ export function radioShowIdFromTrackId(trackId: string): number | undefined {
  * The stable source index makes the last chapter at a duplicate timecode the one
  * that goes on air, matching a sequence of timestamped chapter transitions.
  */
-export function boundRadioChapters(chapters: readonly RadioChapter[]): RadioChapter[] {
+export function boundRadioChapters(
+  chapters: readonly RadioChapter[],
+): RadioChapter[] {
   return chapters
     .map((chapter, sourceIndex) => ({ chapter, sourceIndex }))
-    .filter(({ chapter }) => Number.isFinite(chapter.timecode) && chapter.timecode >= 0)
+    .filter(
+      ({ chapter }) =>
+        Number.isFinite(chapter.timecode) && chapter.timecode >= 0,
+    )
     .sort(
       (left, right) =>
         left.chapter.timecode - right.chapter.timecode ||
@@ -30,6 +35,23 @@ export function boundRadioChapters(chapters: readonly RadioChapter[]): RadioChap
     )
     .slice(0, MAX_RADIO_CHAPTERS)
     .map(({ chapter }) => chapter);
+}
+
+export function trackBoundedRadioTimeline(track?: {
+  radioChapters?: readonly RadioChapter[];
+}): RadioChapter[] {
+  return boundRadioChapters(track?.radioChapters ?? []);
+}
+
+export function nextRadioChapterIndex(
+  currentIndex: number,
+  timelineLength: number,
+): number {
+  return currentIndex + 1 < timelineLength ? currentIndex + 1 : -1;
+}
+
+function normalizePlaybackSeconds(playbackSeconds: number): number {
+  return Number.isFinite(playbackSeconds) ? Math.max(0, playbackSeconds) : 0;
 }
 
 /**
@@ -42,9 +64,7 @@ export function radioAiringIndexesAt(
 ): RadioAiringIndexes {
   if (!timeline.length) return { currentIndex: -1, nextIndex: -1 };
 
-  const position = Number.isFinite(playbackSeconds)
-    ? Math.max(0, playbackSeconds)
-    : 0;
+  const position = normalizePlaybackSeconds(playbackSeconds);
   let low = 0;
   let high = timeline.length - 1;
   let currentIndex = -1;
@@ -57,10 +77,10 @@ export function radioAiringIndexesAt(
       high = middle - 1;
     }
   }
-  const nextIndex = currentIndex + 1 < timeline.length
-    ? currentIndex + 1
-    : -1;
-  return { currentIndex, nextIndex };
+  return {
+    currentIndex,
+    nextIndex: nextRadioChapterIndex(currentIndex, timeline.length),
+  };
 }
 
 export function nextRadioChapterTimeInTimeline(
@@ -77,9 +97,7 @@ export function previousRadioChapterTimeInTimeline(
   restartThresholdSeconds = 4,
 ): number | undefined {
   if (!timeline.length) return undefined;
-  const position = Number.isFinite(playbackSeconds)
-    ? Math.max(0, playbackSeconds)
-    : 0;
+  const position = normalizePlaybackSeconds(playbackSeconds);
   const { currentIndex } = radioAiringIndexesAt(timeline, position);
   if (currentIndex < 0) return undefined;
   const currentStart = timeline[currentIndex].timecode;
@@ -87,7 +105,8 @@ export function previousRadioChapterTimeInTimeline(
     return currentStart;
   }
   for (let index = currentIndex - 1; index >= 0; index -= 1) {
-    if (timeline[index].timecode < currentStart) return timeline[index].timecode;
+    if (timeline[index].timecode < currentStart)
+      return timeline[index].timecode;
   }
   return undefined;
 }

@@ -10,7 +10,7 @@ import {
   openDetail,
   resetDetailNavigation,
 } from "@/detailNavigation";
-import type { RouteCommitOutcome } from "@/features/navigation/routeCommit";
+import type { RouteCommitResult } from "@/features/navigation/routeCommit";
 import {
   parseAlbumIdParam,
   parseArtistKeyParam,
@@ -181,9 +181,9 @@ describe("detail navigation chain restoration", () => {
       requestKey: "radio-entry",
       restoreFocus: false,
       targetKey: "radio:42",
-      update: async (): Promise<RouteCommitOutcome> => {
+      update: async (): Promise<RouteCommitResult> => {
         await radioCommit;
-        return "rendered";
+        return { locationKey: "radio-close", outcome: "rendered" };
       },
     });
     await act(() =>
@@ -279,7 +279,7 @@ describe("detail navigation chain restoration", () => {
       targetKey: "playlist:playlist-0",
       update: (hasReturnState) => {
         seen.push(hasReturnState);
-        return "rendered";
+        return { locationKey: "evicted-close", outcome: "rendered" };
       },
     });
     expect(seen).toEqual([false]);

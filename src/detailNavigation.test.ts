@@ -107,7 +107,10 @@ describe("detailNavigation module", () => {
           kind,
           restoreFocus: false,
           targetKey,
-          update: () => "rendered",
+          update: () => ({
+            locationKey: `${kind}-return`,
+            outcome: "rendered",
+          }),
         });
       }
       kinds.push(
@@ -164,7 +167,10 @@ describe("detailNavigation module", () => {
         kind: "playlist",
         requestKey: "playlist-open",
         targetKey: `playlist:${playlistId}`,
-        update: () => "rendered",
+        update: () => ({
+          locationKey: "playlist-return",
+          outcome: "rendered",
+        }),
       });
       await vi.waitFor(() =>
         expect(source.identity).toHaveAttribute(
@@ -278,7 +284,7 @@ describe("detailNavigation module", () => {
         targetKey: `playlist:${playlistId}`,
         update: (hasReturnState) => {
           closeUpdates.push(hasReturnState);
-          return "rendered";
+          return { locationKey: "failed-open-close", outcome: "rendered" };
         },
       });
       expect(closeUpdates).toEqual([false]);
@@ -318,7 +324,10 @@ describe("detailNavigation module", () => {
         kind: "discover-release",
         requestKey: "discover-detail",
         targetKey: `discover-release:${releaseId}`,
-        update: () => "rendered",
+        update: () => ({
+          locationKey: "discover-player-return",
+          outcome: "rendered",
+        }),
       });
       expect(playerAlbumLink).toHaveFocus();
     } finally {
@@ -366,7 +375,10 @@ describe("detailNavigation module", () => {
         kind: "discover-release",
         requestKey: "discover-detail",
         targetKey: "discover-release:discover:blue-hours",
-        update: () => "rendered",
+        update: () => ({
+          locationKey: "discover-title-return",
+          outcome: "rendered",
+        }),
       });
       await vi.waitFor(() =>
         expect(openedRelease.artworkLink).toHaveAttribute(
@@ -393,7 +405,10 @@ describe("detailNavigation module", () => {
         identity: "gone",
         kind: "playlist",
         targetKey: "playlist:gone",
-        update: () => "rendered",
+        update: () => ({
+          locationKey: "abandoned-close",
+          outcome: "rendered",
+        }),
       });
       resetDetailNavigation();
       harness.transitions[0]?.resolve();
@@ -434,7 +449,7 @@ describe("detailNavigation module", () => {
         targetKey: `playlist:${playlistId}`,
         update: (hasReturnState) => {
           closeUpdates.push(hasReturnState);
-          return "rendered";
+          return { locationKey: "timeout-close", outcome: "rendered" };
         },
       });
       expect(closeUpdates).toEqual([false]);
@@ -471,7 +486,7 @@ describe("detailNavigation module", () => {
         requestKey: "retry-open",
         restoreFocus: false,
         targetKey: `playlist:${playlistId}`,
-        update: () => "failed",
+        update: () => ({ locationKey: "retry-close", outcome: "failed" }),
       });
       expect(firstClose).toBe("failed");
       expect(detailReturnStateCount()).toBe(1);
@@ -481,7 +496,10 @@ describe("detailNavigation module", () => {
         kind: "playlist",
         requestKey: "retry-open",
         targetKey: `playlist:${playlistId}`,
-        update: () => "rendered",
+        update: () => ({
+          locationKey: "retry-close-success",
+          outcome: "rendered",
+        }),
       });
       expect(secondClose).toBe("rendered");
       expect(detailReturnStateCount()).toBe(0);
@@ -542,7 +560,10 @@ describe("detailNavigation module", () => {
         kind: "playlist",
         requestKey: "focus-cancel",
         targetKey: `playlist:${playlistId}`,
-        update: () => "rendered",
+        update: () => ({
+          locationKey: "focus-cancel-close",
+          outcome: "rendered",
+        }),
       });
 
       expect(heading).not.toHaveFocus();
@@ -580,7 +601,10 @@ describe("detailNavigation module", () => {
         requestKey: "cancel-open",
         restoreFocus: false,
         targetKey: `playlist:${playlistId}`,
-        update: () => "rendered",
+        update: () => ({
+          locationKey: "cancel-close",
+          outcome: "rendered",
+        }),
       });
       await cancelDetailNavigation();
       await closing;
@@ -620,7 +644,10 @@ describe("detailNavigation module", () => {
         kind: "now-playing",
         requestKey: "now-playing-open",
         targetKey: "now-playing",
-        update: () => "rendered",
+        update: () => ({
+          locationKey: "now-playing-return",
+          outcome: "rendered",
+        }),
       });
 
       expect(artwork).toHaveFocus();
@@ -660,7 +687,10 @@ describe("detailNavigation module", () => {
         kind: "playlist",
         requestKey: "reassert-open",
         targetKey: `playlist:${playlistId}`,
-        update: () => "rendered",
+        update: () => ({
+          locationKey: "reassert-close",
+          outcome: "rendered",
+        }),
       });
       await vi.waitFor(() => expect(source.trigger).toHaveFocus());
       document.body.tabIndex = -1;
@@ -707,7 +737,10 @@ describe("detailNavigation module", () => {
         kind: "playlist",
         requestKey: "keep-focus-open",
         targetKey: `playlist:${playlistId}`,
-        update: () => "rendered",
+        update: () => ({
+          locationKey: "keep-focus-close",
+          outcome: "rendered",
+        }),
       });
       await vi.waitFor(() => expect(source.trigger).toHaveFocus());
       sentinel.focus();

@@ -18,6 +18,7 @@ import {
 import { createCodaMemoryRouter } from "@/router";
 import { parsePlaylistIdParam } from "@/routing/routeContracts";
 import {
+  commonProps,
   detail,
   mocks,
   summary,
@@ -25,6 +26,10 @@ import {
 import type { PlaylistDetail } from "@/types";
 
 import { PlaylistsController } from "./PlaylistsController";
+import {
+  SavedLibraryRuntimeContext,
+  type SavedLibraryRuntimeValue,
+} from "./SavedLibraryRuntimeContext";
 
 const playlistId = parsePlaylistIdParam(summary.id);
 
@@ -41,8 +46,11 @@ function trackUnhandledRejections() {
 
 function renderPlaylistsController(
   ui: ReactNode,
-  seed?: (queryClient: QueryClient) => void,
-  initialEntry = "/playlists",
+  options?: {
+    seed?: (queryClient: QueryClient) => void;
+    initialEntry?: string;
+    runtime?: SavedLibraryRuntimeValue;
+  },
 ) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -50,13 +58,19 @@ function renderPlaylistsController(
       mutations: { retry: false },
     },
   });
-  seed?.(queryClient);
-  const router = createCodaMemoryRouter(queryClient, [initialEntry]);
+  options?.seed?.(queryClient);
+  const router = createCodaMemoryRouter(queryClient, [
+    options?.initialEntry ?? "/playlists",
+  ]);
   return {
     ...render(
       <CodaMotionProvider>
         <QueryClientProvider client={queryClient}>
-          <RouterContextProvider router={router}>{ui}</RouterContextProvider>
+          <SavedLibraryRuntimeContext.Provider
+            value={options?.runtime ?? commonProps}
+          >
+            <RouterContextProvider router={router}>{ui}</RouterContextProvider>
+          </SavedLibraryRuntimeContext.Provider>
         </QueryClientProvider>
       </CodaMotionProvider>,
     ),
@@ -80,13 +94,10 @@ describe("PlaylistsController navigation rejections", () => {
     const onOpenPlaylist = vi.fn().mockRejectedValue(new Error("Open failed"));
     renderPlaylistsController(
       <PlaylistsController
-        connected
-        mode="playlists"
-        onNotify={onNotify}
         onOpenPlaylist={onOpenPlaylist}
         screen="index"
       />,
-      seedPlaylists,
+      { seed: seedPlaylists, runtime: { ...commonProps, onNotify } },
     );
 
     fireEvent.click(await screen.findByRole("link", { name: /Night drive/ }));
@@ -105,13 +116,10 @@ describe("PlaylistsController navigation rejections", () => {
     const onOpenPlaylist = vi.fn().mockResolvedValue("same-location");
     renderPlaylistsController(
       <PlaylistsController
-        connected
-        mode="playlists"
-        onNotify={onNotify}
         onOpenPlaylist={onOpenPlaylist}
         screen="index"
       />,
-      seedPlaylists,
+      { seed: seedPlaylists, runtime: { ...commonProps, onNotify } },
     );
 
     fireEvent.click(await screen.findByRole("link", { name: /Night drive/ }));
@@ -135,13 +143,10 @@ describe("PlaylistsController navigation rejections", () => {
     const onOpenPlaylist = vi.fn().mockRejectedValue(new Error("Open failed"));
     renderPlaylistsController(
       <PlaylistsController
-        connected
-        mode="playlists"
-        onNotify={onNotify}
         onOpenPlaylist={onOpenPlaylist}
         screen="index"
       />,
-      seedPlaylists,
+      { seed: seedPlaylists, runtime: { ...commonProps, onNotify } },
     );
 
     fireEvent.change(await screen.findByPlaceholderText("Late-night rotation"), {
@@ -165,22 +170,12 @@ describe("PlaylistsController navigation rejections", () => {
     const onReplaceIndex = vi.fn().mockResolvedValue("rendered");
     renderPlaylistsController(
       <PlaylistsController
-        connected
-        mode="playlists"
-        onAddToPlaylist={vi.fn()}
         onBack={onBack}
-        onNotify={onNotify}
-        onOpenArtist={vi.fn()}
-        onOpenTrackAlbum={vi.fn()}
-        onPlayTracks={vi.fn()}
-        onQueueTracks={vi.fn()}
         onReplaceIndex={onReplaceIndex}
-        onTogglePlayback={vi.fn()}
-        playing={false}
         playlistId={playlistId}
         screen="detail"
       />,
-      seedPlaylistDetail,
+      { seed: seedPlaylistDetail, runtime: { ...commonProps, onNotify } },
     );
 
     fireEvent.click(await screen.findByRole("button", { name: "Back" }));
@@ -199,22 +194,12 @@ describe("PlaylistsController navigation rejections", () => {
     const onBack = vi.fn().mockResolvedValue("timeout");
     renderPlaylistsController(
       <PlaylistsController
-        connected
-        mode="playlists"
-        onAddToPlaylist={vi.fn()}
         onBack={onBack}
-        onNotify={onNotify}
-        onOpenArtist={vi.fn()}
-        onOpenTrackAlbum={vi.fn()}
-        onPlayTracks={vi.fn()}
-        onQueueTracks={vi.fn()}
         onReplaceIndex={vi.fn().mockResolvedValue("rendered")}
-        onTogglePlayback={vi.fn()}
-        playing={false}
         playlistId={playlistId}
         screen="detail"
       />,
-      seedPlaylistDetail,
+      { seed: seedPlaylistDetail, runtime: { ...commonProps, onNotify } },
     );
 
     fireEvent.click(await screen.findByRole("button", { name: "Back" }));
@@ -240,24 +225,17 @@ describe("PlaylistsController navigation rejections", () => {
       mocks.fetchPlaylist.mockRejectedValue(new Error("Playlist is gone"));
       const { queryClient } = renderPlaylistsController(
         <PlaylistsController
-          connected
-          mode="playlists"
-          onAddToPlaylist={vi.fn()}
           onBack={onBack}
-          onNotify={onNotify}
-          onOpenArtist={vi.fn()}
-          onOpenTrackAlbum={vi.fn()}
-          onPlayTracks={vi.fn()}
-          onQueueTracks={vi.fn()}
           onReplaceIndex={onReplaceIndex}
-          onTogglePlayback={vi.fn()}
-          playing={false}
           playlistId={playlistId}
           screen="detail"
         />,
-        (queryClient) => {
-          seedPlaylists(queryClient);
-          seedPlaylistDetail(queryClient);
+        {
+          seed: (queryClient) => {
+            seedPlaylists(queryClient);
+            seedPlaylistDetail(queryClient);
+          },
+          runtime: { ...commonProps, onNotify },
         },
       );
 
@@ -297,26 +275,19 @@ describe("PlaylistsController navigation rejections", () => {
     mocks.fetchPlaylist.mockRejectedValue(new Error("Playlist is gone"));
     const { queryClient, router } = renderPlaylistsController(
       <PlaylistsController
-        connected
-        mode="playlists"
-        onAddToPlaylist={vi.fn()}
         onBack={onBack}
-        onNotify={onNotify}
-        onOpenArtist={vi.fn()}
-        onOpenTrackAlbum={vi.fn()}
-        onPlayTracks={vi.fn()}
-        onQueueTracks={vi.fn()}
         onReplaceIndex={onReplaceIndex}
-        onTogglePlayback={vi.fn()}
-        playing={false}
         playlistId={playlistId}
         screen="detail"
       />,
-      (queryClient) => {
-        seedPlaylists(queryClient);
-        seedPlaylistDetail(queryClient);
+      {
+        initialEntry: `/playlists/${playlistId}`,
+        seed: (queryClient) => {
+          seedPlaylists(queryClient);
+          seedPlaylistDetail(queryClient);
+        },
+        runtime: { ...commonProps, onNotify },
       },
-      `/playlists/${playlistId}`,
     );
 
     expect(router.state.location.pathname).toBe(`/playlists/${playlistId}`);

@@ -7,6 +7,7 @@ import {
   applyDomEdits,
   type DomStyleEdit,
 } from "@/features/navigation/domSnapshot";
+import { cancelScheduledFrame, isAnimationFrameRequester } from "./domTiming";
 import { enforceDocumentViewTransitionCompositing } from "./compositorViewTransition";
 import {
   CODA_VIEW_TRANSITION_CLASSES,
@@ -175,26 +176,6 @@ function readStartViewTransition(
   const candidate = owner.startViewTransition;
   if (!isStartViewTransition(candidate)) return undefined;
   return (update) => candidate.call(owner, update);
-}
-
-function isAnimationFrameRequester<Value>(
-  value: Value,
-): value is Value & ((callback: FrameRequestCallback) => number) {
-  return value instanceof Function;
-}
-
-function isAnimationFrameCanceller(
-  value: typeof globalThis.cancelAnimationFrame | undefined,
-): value is (handle: number) => void {
-  return value instanceof Function;
-}
-
-function cancelScheduledFrame(handle: number | undefined): void {
-  if (handle === undefined) return;
-  const cancelFrame = globalThis.cancelAnimationFrame;
-  if (isAnimationFrameCanceller(cancelFrame)) {
-    cancelFrame.call(globalThis, handle);
-  }
 }
 
 function isMediaQueryMatcher<Value>(

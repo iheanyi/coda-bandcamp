@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   groupAlbumsByArtist,
   matchesBrowseMode,
+  resolveAlbumSummary,
+  summarizeLibraryCatalog,
   tracksForArtistGroupAlbum,
+  tracksForScopeAlbum,
 } from "./libraryBrowse";
 import type { Album, Track } from "./types";
 
@@ -84,5 +87,47 @@ describe("library browsing", () => {
     expect(
       tracksForArtistGroupAlbum(scope, "compilation", compilationTracks),
     ).toEqual([compilationTracks[0]]);
+    expect(tracksForScopeAlbum(undefined, "own-release", [ownTrack])).toEqual([
+      ownTrack,
+    ]);
+    expect(tracksForScopeAlbum(scope, "compilation", compilationTracks)).toEqual(
+      [compilationTracks[0]],
+    );
+  });
+
+  it("tallies collection counts and ordered genre tabs in one pass", () => {
+    expect(
+      summarizeLibraryCatalog([
+        album("ambient-1", "A", 1),
+        album("ambient-2", "A", 4),
+        album("jazz", "B", 2),
+        album("rock", "C", 1),
+      ]),
+    ).toEqual({
+      counts: { albums: 2, artists: 3, singles: 2 },
+      orderedGenreTabs: [],
+    });
+    expect(
+      summarizeLibraryCatalog([
+        { ...album("ambient-1", "A", 1), genre: "ambient" },
+        { ...album("ambient-2", "A", 4), genre: "Ambient" },
+        { ...album("jazz", "B", 2), genre: "Jazz" },
+        { ...album("rock", "C", 1), genre: "Rock" },
+        { ...album("folk", "D", 2), genre: "Folk" },
+        { ...album("metal", "E", 2), genre: "Metal" },
+        { ...album("blues", "F", 1), genre: "Blues" },
+      ]).orderedGenreTabs,
+    ).toEqual(["Ambient", "Blues", "Folk", "Jazz", "Metal", "Rock"]);
+  });
+
+  it("prefers the first matching source in call order", () => {
+    const snapshot = album("kept", "A", 2);
+    const catalogs = [album("other", "B", 1), { ...snapshot, title: "stale" }];
+    expect(resolveAlbumSummary("kept", snapshot, catalogs)).toBe(snapshot);
+    expect(resolveAlbumSummary("kept", catalogs, snapshot)?.title).toBe(
+      "stale",
+    );
+    expect(resolveAlbumSummary("other", undefined, catalogs)?.id).toBe("other");
+    expect(resolveAlbumSummary("missing", snapshot, catalogs)).toBeUndefined();
   });
 });

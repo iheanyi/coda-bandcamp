@@ -2,6 +2,7 @@ import { artistKey } from "@/libraryBrowse";
 import { radioShowIdFromTrackId } from "@/radioPlayback";
 import { radioSeriesByTitle } from "@/radioSeries";
 import type { Track } from "@/types";
+import { tryParseRouteId } from "./tryParseRouteId";
 import {
   type AlbumId,
   type ArtistKey,
@@ -17,11 +18,15 @@ import {
 
 export type TrackAlbumDestination =
   | Readonly<{ kind: "album"; albumId: AlbumId }>
+  | Readonly<{ kind: "daily-external-item"; itemUrl: string }>
   | Readonly<{
       kind: "discover-release";
       releaseId: DiscoverReleaseId;
+      release: NonNullable<Track["discoverRelease"]>;
     }>
-  | Readonly<{ kind: "radio-show"; showId: RadioShowId }>;
+  | Readonly<{ kind: "radio-show"; showId: RadioShowId }>
+  | Readonly<{ kind: "radio-series"; seriesId: RadioSeriesId }>
+  | Readonly<{ kind: "radio" }>;
 
 export type TrackArtistDestination =
   | Readonly<{
@@ -29,83 +34,105 @@ export type TrackArtistDestination =
       artistKey: ArtistKey;
       sourceAlbumId?: AlbumId;
     }>
-  | Readonly<{ kind: "discover-external-artist" }>
-  | Readonly<{ kind: "daily-external-artist" }>
+  | Readonly<{
+      kind: "discover-external-artist";
+      release: NonNullable<Track["discoverRelease"]>;
+    }>
+  | Readonly<{ kind: "daily-external-artist"; artistUrl: string }>
   | Readonly<{ kind: "radio" }>
   | Readonly<{ kind: "radio-series"; seriesId: RadioSeriesId }>;
 
-type RouteIdentityParser<Value> = {
-  <Wire>(candidate: Wire): Value;
-};
+export type TrackSourceFamily = "daily" | "discover" | "radio" | "library";
 
-function tryParse<Wire, Value>(
-  value: Wire,
-  parse: RouteIdentityParser<Value>,
-): Value | undefined {
-  try {
-    return parse(value);
-  } catch {
-    return undefined;
-  }
+function assertNever(value: never): never {
+  throw new TypeError(`Unsupported exhaustive variant: ${String(value)}`);
+}
+
+/** Sole owner of the track-id prefixes that separate Coda's source families. */
+export function trackSourceFamily(track: Track): TrackSourceFamily {
+  if (track.id.startsWith("discover:")) return "discover";
+  if (track.id.startsWith("daily:")) return "daily";
+  if (track.id.startsWith("radio:")) return "radio";
+  return "library";
 }
 
 export function trackAlbumDestination(
   track: Track,
 ): TrackAlbumDestination | undefined {
-  if (track.id.startsWith("discover:")) {
-    const release = track.discoverRelease;
-    if (!release || release.id !== track.albumId) return undefined;
-    const releaseId = tryParse(release.id, parseDiscoverReleaseIdParam);
-    return releaseId ? { kind: "discover-release", releaseId } : undefined;
+  const family = trackSourceFamily(track);
+  switch (family) {
+    case "discover": {
+      const release = track.discoverRelease;
+      if (!release || release.id !== track.albumId) return undefined;
+      const releaseId = tryParseRouteId(
+        release.id,
+        parseDiscoverReleaseIdParam,
+      );
+      return releaseId
+        ? { kind: "discover-release", releaseId, release }
+        : undefined;
+    }
+    case "daily": {
+      const itemUrl = track.dailySource?.itemUrl;
+      return itemUrl ? { kind: "daily-external-item", itemUrl } : undefined;
+    }
+    case "radio": {
+      const rawShowId = radioShowIdFromTrackId(track.id);
+      const showId = tryParseRouteId(rawShowId, parseRadioShowIdParam);
+      if (showId) return { kind: "radio-show", showId };
+      const series = radioSeriesByTitle(track.album);
+      const seriesId = tryParseRouteId(series?.id, parseRadioSeriesIdParam);
+      return seriesId ? { kind: "radio-series", seriesId } : { kind: "radio" };
+    }
+    case "library": {
+      const albumId = tryParseRouteId(track.albumId, parseAlbumIdParam);
+      return albumId ? { kind: "album", albumId } : undefined;
+    }
+    default:
+      return assertNever(family);
   }
-
-  if (track.id.startsWith("daily:")) return undefined;
-
-  if (track.id.startsWith("radio:")) {
-    const rawShowId = radioShowIdFromTrackId(track.id);
-    const showId = tryParse(rawShowId, parseRadioShowIdParam);
-    return showId ? { kind: "radio-show", showId } : undefined;
-  }
-
-  const albumId = tryParse(track.albumId, parseAlbumIdParam);
-  return albumId ? { kind: "album", albumId } : undefined;
 }
 
 export function trackArtistDestination(
   track: Track,
 ): TrackArtistDestination | undefined {
-  if (track.id.startsWith("discover:")) {
-    return track.discoverRelease?.id === track.albumId
-      ? { kind: "discover-external-artist" }
-      : undefined;
+  const family = trackSourceFamily(track);
+  switch (family) {
+    case "discover": {
+      const release = track.discoverRelease;
+      if (!release || release.id !== track.albumId) return undefined;
+      return { kind: "discover-external-artist", release };
+    }
+    case "daily": {
+      const artistUrl = track.dailySource?.artistUrl;
+      return artistUrl
+        ? { kind: "daily-external-artist", artistUrl }
+        : undefined;
+    }
+    case "radio": {
+      const series = radioSeriesByTitle(track.album);
+      if (!series) return { kind: "radio" };
+      const seriesId = tryParseRouteId(series.id, parseRadioSeriesIdParam);
+      return seriesId ? { kind: "radio-series", seriesId } : { kind: "radio" };
+    }
+    case "library": {
+      const key = artistKey(track.artist);
+      const parsedArtistKey = tryParseRouteId(key, parseArtistKeyParam);
+      if (!parsedArtistKey) return undefined;
+      const sourceAlbumId = tryParseRouteId(track.albumId, parseAlbumIdParam);
+      if (sourceAlbumId) {
+        return {
+          kind: "artist",
+          artistKey: parsedArtistKey,
+          sourceAlbumId,
+        };
+      }
+      return {
+        kind: "artist",
+        artistKey: parsedArtistKey,
+      };
+    }
+    default:
+      return assertNever(family);
   }
-
-  if (track.id.startsWith("daily:")) {
-    return track.dailySource?.artistUrl
-      ? { kind: "daily-external-artist" }
-      : undefined;
-  }
-
-  if (track.id.startsWith("radio:")) {
-    const series = radioSeriesByTitle(track.album);
-    if (!series) return { kind: "radio" };
-    const seriesId = tryParse(series.id, parseRadioSeriesIdParam);
-    return seriesId ? { kind: "radio-series", seriesId } : { kind: "radio" };
-  }
-
-  const key = artistKey(track.artist);
-  const parsedArtistKey = tryParse(key, parseArtistKeyParam);
-  if (!parsedArtistKey) return undefined;
-  const sourceAlbumId = tryParse(track.albumId, parseAlbumIdParam);
-  if (sourceAlbumId) {
-    return {
-      kind: "artist",
-      artistKey: parsedArtistKey,
-      sourceAlbumId,
-    };
-  }
-  return {
-    kind: "artist",
-    artistKey: parsedArtistKey,
-  };
 }

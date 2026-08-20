@@ -6,7 +6,7 @@ import type {
   DailyEmbed,
   DailyTrack,
 } from "../types";
-import { isDesktop } from "./desktop";
+import { requireDesktop } from "./desktop";
 import {
   decodeNativeArray,
   decodeNativeBandcampUrl,
@@ -274,9 +274,7 @@ export async function fetchDailyArticles(
   section: DailyCategory,
   page = 1,
 ): Promise<DailyArticlesPage> {
-  if (!isDesktop()) {
-    throw new Error("Bandcamp Daily is available in the Coda desktop app.");
-  }
+  requireDesktop("Bandcamp Daily");
   return parseNativeDailyArticlesPage(
     await invokeNative("daily_articles", { page, section }),
   );
@@ -286,9 +284,7 @@ export async function fetchDailyArticle(
   articleSection: string,
   slug: string,
 ): Promise<DailyArticle> {
-  if (!isDesktop()) {
-    throw new Error("Bandcamp Daily is available in the Coda desktop app.");
-  }
+  requireDesktop("Bandcamp Daily");
   return parseNativeDailyArticle(
     await invokeNative("daily_article", { articleSection, slug }),
   );

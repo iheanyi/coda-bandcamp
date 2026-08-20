@@ -4,6 +4,7 @@ import type {
   LibraryActionsCommands,
   LibraryActionsState,
 } from "@/features/library-actions/useLibraryActionsController";
+import { resolveAlbumSummary, type LibraryArtistFallback } from "@/libraryBrowse";
 import type { LibraryRouteInput } from "@/routing/libraryRouteInput";
 import { libraryRouteChromeVisibility } from "@/routing/libraryRouteInput";
 import type { Album, Track } from "@/types";
@@ -25,10 +26,15 @@ import type {
   LibraryScreenChromeProps,
   LibrarySyncState,
 } from "./LibraryScreenChrome";
+import {
+  deriveReleaseResultsTitle,
+  deriveSurpriseScope,
+  hasActiveBrowseFilters,
+  type LibrarySurpriseScope,
+} from "./browseScope";
 import type { ArtistNavigationHandler } from "./types";
 import {
   useLibraryBrowseController,
-  type LibraryArtistFallback,
   type LibraryBrowseController,
 } from "./useLibraryBrowseController";
 import { useGenreRailController } from "./useGenreRailController";
@@ -102,12 +108,6 @@ export type LibraryWorkspaceControllerOptions = Readonly<{
   selectedArtistFallback?: LibraryArtistFallback;
 }>;
 
-export type LibrarySurpriseScope = Readonly<{
-  albums: readonly Album[];
-  artist: LibraryBrowseController["activeArtist"];
-  name: string;
-}>;
-
 export type LibraryWorkspaceController = Readonly<{
   browse: LibraryBrowseController;
   chrome?: LibraryScreenChromeProps;
@@ -117,84 +117,6 @@ export type LibraryWorkspaceController = Readonly<{
     surpriseScope: LibrarySurpriseScope;
   }>;
 }>;
-
-function browseTitle(
-  mode: LibraryBrowseController["effectiveBrowseMode"],
-): string {
-  switch (mode) {
-    case "singles":
-      return "Singles";
-    case "albums":
-      return "Albums & EPs";
-    case "artists":
-    case "releases":
-      return "All releases";
-  }
-}
-
-function surpriseScopeName({
-  activeArtist,
-  effectiveBrowseMode,
-  genre,
-  query,
-  recent,
-  selectedAlbum,
-}: Readonly<{
-  activeArtist: LibraryBrowseController["activeArtist"];
-  effectiveBrowseMode: LibraryBrowseController["effectiveBrowseMode"];
-  genre: string;
-  query: string;
-  recent: boolean;
-  selectedAlbum?: Album;
-}>): string {
-  if (selectedAlbum) return selectedAlbum.title;
-  if (activeArtist) return activeArtist.name;
-  if (query.trim()) return "the current results";
-  if (genre !== "All") return genre;
-  if (recent) return "recent additions";
-  switch (effectiveBrowseMode) {
-    case "singles":
-      return "the singles view";
-    case "albums":
-      return "the albums view";
-    case "artists":
-      return "the visible artists";
-    case "releases":
-      return "the collection";
-  }
-}
-
-function shuffleActionLabel({
-  activeArtist,
-  effectiveBrowseMode,
-  genre,
-  query,
-  recent,
-  selectedAlbum,
-}: Readonly<{
-  activeArtist: LibraryBrowseController["activeArtist"];
-  effectiveBrowseMode: LibraryBrowseController["effectiveBrowseMode"];
-  genre: string;
-  query: string;
-  recent: boolean;
-  selectedAlbum?: Album;
-}>): string {
-  if (selectedAlbum) return "Shuffle album";
-  if (activeArtist) return "Shuffle artist";
-  if (query.trim()) return "Shuffle results";
-  if (genre !== "All") return "Shuffle genre";
-  if (recent) return "Shuffle recent";
-  switch (effectiveBrowseMode) {
-    case "singles":
-      return "Shuffle singles";
-    case "albums":
-      return "Shuffle albums";
-    case "artists":
-      return "Shuffle artists";
-    case "releases":
-      return "Shuffle collection";
-  }
-}
 
 /**
  * Composes URL-owned browse state with the existing pure browse derivation and
@@ -242,56 +164,48 @@ export function useLibraryWorkspaceController({
       availability.state.syncState === "syncing" &&
       !albums.length &&
       !availability.state.libraryError);
-  const hasActiveFilters =
-    Boolean(collectionSearch.q.trim()) ||
-    collectionSearch.genre !== "All" ||
-    collectionSearch.mode !== "releases" ||
-    Boolean(selectedArtist);
+  const hasActiveFilters = hasActiveBrowseFilters({
+    query: collectionSearch.q,
+    genre: collectionSearch.genre,
+    mode: collectionSearch.mode,
+    selectedArtist,
+  });
   const selectedAlbum =
     routeInput.kind === "album"
-      ? (albums.find((album) => album.id === routeInput.albumId) ??
-        (libraryActions.state.selectedAlbum?.id === routeInput.albumId
-          ? libraryActions.state.selectedAlbum
-          : undefined))
+      ? resolveAlbumSummary(
+          routeInput.albumId,
+          albums,
+          libraryActions.state.selectedAlbum,
+        )
       : undefined;
-  const surpriseScope = useMemo<LibrarySurpriseScope>(() => {
-    const scopeAlbums =
-      routeInput.kind === "album"
-        ? selectedAlbum
-          ? [selectedAlbum]
-          : []
-        : routeInput.kind === "artist"
-          ? (browse.activeArtist?.albums ?? [])
-          : browse.visibleAlbums;
-    const scopeArtist =
-      routeInput.kind === "artist" ? browse.activeArtist : undefined;
-    return {
-      albums: scopeAlbums,
-      artist: scopeArtist,
-      name: surpriseScopeName({
+  const surpriseScope = useMemo<LibrarySurpriseScope>(
+    () =>
+      deriveSurpriseScope({
         activeArtist: browse.activeArtist,
         effectiveBrowseMode: browse.effectiveBrowseMode,
         genre: collectionSearch.genre,
         query: collectionSearch.q,
         recent,
+        routeKind: routeInput.kind,
         selectedAlbum,
+        visibleAlbums: browse.visibleAlbums,
       }),
-    };
-  }, [
-    browse.activeArtist,
-    browse.effectiveBrowseMode,
-    browse.visibleAlbums,
-    collectionSearch.genre,
-    collectionSearch.q,
-    recent,
-    routeInput.kind,
-    selectedAlbum,
-  ]);
-  const releaseTitle = browse.activeArtist
-    ? "Releases"
-    : collectionSearch.genre === "All"
-      ? browseTitle(browse.effectiveBrowseMode)
-      : `${browseTitle(browse.effectiveBrowseMode)} · ${collectionSearch.genre}`;
+    [
+      browse.activeArtist,
+      browse.effectiveBrowseMode,
+      browse.visibleAlbums,
+      collectionSearch.genre,
+      collectionSearch.q,
+      recent,
+      routeInput.kind,
+      selectedAlbum,
+    ],
+  );
+  const releaseTitle = deriveReleaseResultsTitle({
+    activeArtist: browse.activeArtist,
+    genre: collectionSearch.genre,
+    mode: browse.effectiveBrowseMode,
+  });
 
   const playSurprise = useCallback(() => {
     void libraryActions.commands.playSurprise(
@@ -334,39 +248,33 @@ export function useLibraryWorkspaceController({
   const queueVisibleAlbums = useCallback(() => {
     void libraryActions.commands.queueAlbums(browse.visibleAlbums);
   }, [browse.visibleAlbums, libraryActions.commands]);
+  const scopeActionsBusy =
+    playback.shuffleInProgress ||
+    libraryActions.state.randomPickLoading ||
+    availability.state.syncState === "syncing";
 
-  const chromeModel: LibraryChromeModel = {
-    kind: recent ? "recent" : "collection",
+  const catalogAvailability = {
     connected: availability.state.connected,
     releaseCount: albums.length,
     syncState: availability.state.syncState,
     libraryError: availability.state.libraryError,
+  };
+  const chromeModel: LibraryChromeModel = {
+    kind: recent ? "recent" : "collection",
+    ...catalogAvailability,
     query: collectionSearch.q,
     surprise: {
       available: Boolean(surpriseScope.albums.length),
       scopeName: surpriseScope.name,
       loading: libraryActions.state.randomPickLoading,
-      disabled:
-        libraryActions.state.randomPickLoading ||
-        playback.shuffleInProgress ||
-        availability.state.syncState === "syncing",
+      disabled: scopeActionsBusy,
     },
     shuffle: {
       available: Boolean(surpriseScope.albums.length),
-      label: shuffleActionLabel({
-        activeArtist: browse.activeArtist,
-        effectiveBrowseMode: browse.effectiveBrowseMode,
-        genre: collectionSearch.genre,
-        query: collectionSearch.q,
-        recent,
-        selectedAlbum,
-      }),
+      label: surpriseScope.shuffleLabel,
       scopeName: surpriseScope.name,
       progress: playback.shuffleProgress,
-      disabled:
-        playback.shuffleInProgress ||
-        libraryActions.state.randomPickLoading ||
-        availability.state.syncState === "syncing",
+      disabled: scopeActionsBusy,
     },
     artwork: {
       refreshing: availability.state.artworkRefreshing,
@@ -384,10 +292,7 @@ export function useLibraryWorkspaceController({
     onConnect: availability.commands.connect,
   };
   const availabilityModel: LibraryAvailabilityModel = {
-    connected: availability.state.connected,
-    releaseCount: albums.length,
-    syncState: availability.state.syncState,
-    libraryError: availability.state.libraryError,
+    ...catalogAvailability,
     isInitialLoading,
   };
   const availabilityActions: LibraryAvailabilityActions = {
@@ -481,16 +386,9 @@ export function useLibraryWorkspaceController({
   }
 
   const state = { isInitialLoading, surpriseScope };
-  if (chrome) {
-    return {
-      browse,
-      chrome,
-      screens,
-      state,
-    };
-  }
   return {
     browse,
+    chrome,
     screens,
     state,
   };

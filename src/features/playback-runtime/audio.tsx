@@ -8,7 +8,11 @@ import {
 } from "react";
 
 import { showAirPlayPicker, supportsAirPlayPicker } from "@/media";
-import { boundRadioChapters, radioShowIdFromTrackId } from "@/radioPlayback";
+import {
+  clampPlaybackPosition,
+  readPlaybackSeconds,
+} from "@/playbackClock";
+import { radioShowIdFromTrackId } from "@/radioPlayback";
 import { radioTrackFromShow } from "@/radioTrack";
 import type { Track } from "@/types";
 
@@ -17,7 +21,11 @@ import { safePlaybackErrorDetail } from "./errors";
 import type { PlaybackPersistenceController } from "./persistence";
 import type { PlaybackScrobbleController } from "./scrobbling";
 import type { PlaybackSystemMediaController } from "./systemMedia";
-import type { PlaybackAudioAdapters, PlaybackNotify } from "./types";
+import type {
+  PlaybackAudioAdapters,
+  PlaybackCoreSnapshot,
+  PlaybackNotify,
+} from "./types";
 
 const MAX_STREAM_REFRESH_ATTEMPTS = 1;
 
@@ -25,6 +33,14 @@ type ResolvedPlaybackStream = {
   trackId: string;
   url: string;
 };
+
+function getBoundActiveTrack(
+  snapshot: PlaybackCoreSnapshot,
+  boundStreamTrackId: string | undefined,
+): Track | undefined {
+  const track = snapshot.queue[snapshot.currentIndex];
+  return track && boundStreamTrackId === track.id ? track : undefined;
+}
 
 function playbackErrorMessage(code: number | undefined): string {
   if (code === 4) return "Coda could not play this stream format.";
@@ -228,22 +244,24 @@ export function usePlaybackAudioController({
   }, [audioRef, notify]);
 
   const handlePlaying = useCallback(() => {
-    const snapshot = getCoreSnapshot();
-    const track = snapshot.queue[snapshot.currentIndex];
-    if (!track || boundStreamTrackId !== track.id) return;
+    const track = getBoundActiveTrack(getCoreSnapshot(), boundStreamTrackId);
+    if (!track) return;
     streamRefreshRef.current = { trackId: track.id, attempts: 0 };
     adapters.recordDiagnostic("renderer.audio.play-ready");
-    const positionSeconds =
-      audioRef.current?.currentTime ?? playbackClock.readExact();
+    const positionSeconds = readPlaybackSeconds(
+      audioRef.current,
+      playbackClock,
+    );
     scrobbling.onPlaying(
       track,
-      boundRadioChapters(track.radioChapters ?? []),
+      core.queueModel.currentRadioTimeline,
       positionSeconds,
     );
   }, [
     adapters,
     audioRef,
     boundStreamTrackId,
+    core.queueModel.currentRadioTimeline,
     getCoreSnapshot,
     playbackClock,
     scrobbling,
@@ -251,9 +269,8 @@ export function usePlaybackAudioController({
 
   const handleSeeking = useCallback(
     (event: SyntheticEvent<HTMLAudioElement>) => {
-      const snapshot = getCoreSnapshot();
-      const track = snapshot.queue[snapshot.currentIndex];
-      if (!track || boundStreamTrackId !== track.id) return;
+      const track = getBoundActiveTrack(getCoreSnapshot(), boundStreamTrackId);
+      if (!track) return;
       const positionSeconds = event.currentTarget.currentTime;
       playbackClock.seek(positionSeconds);
       syncSystemMediaTimeline(event.currentTarget, true);
@@ -271,13 +288,11 @@ export function usePlaybackAudioController({
   const handleLoadedMetadata = useCallback(
     (event: SyntheticEvent<HTMLAudioElement>) => {
       const pending = pendingPosition.current;
-      const snapshot = getCoreSnapshot();
-      const activeTrack = snapshot.queue[snapshot.currentIndex];
-      if (
-        !pending ||
-        pending.trackId !== activeTrack?.id ||
-        boundStreamTrackId !== activeTrack.id
-      ) {
+      const activeTrack = getBoundActiveTrack(
+        getCoreSnapshot(),
+        boundStreamTrackId,
+      );
+      if (!pending || pending.trackId !== activeTrack?.id) {
         return;
       }
       const duration = event.currentTarget.duration;
@@ -285,7 +300,10 @@ export function usePlaybackAudioController({
         Number.isFinite(duration) && duration > 0
           ? Math.max(0, duration - 0.25)
           : pending.positionSeconds;
-      const position = Math.min(Math.max(0, pending.positionSeconds), maximum);
+      const position = Math.min(
+        clampPlaybackPosition(pending.positionSeconds),
+        maximum,
+      );
       scrobbling.onSeek(position);
       event.currentTarget.currentTime = position;
       playbackClock.restore(position);
@@ -305,20 +323,21 @@ export function usePlaybackAudioController({
   const handleTimeUpdate = useCallback(
     (event: SyntheticEvent<HTMLAudioElement>) => {
       const snapshot = getCoreSnapshot();
-      const track = snapshot.queue[snapshot.currentIndex];
-      if (!track || boundStreamTrackId !== track.id) return;
+      const track = getBoundActiveTrack(snapshot, boundStreamTrackId);
+      if (!track) return;
       const positionSeconds = event.currentTarget.currentTime;
       playbackClock.updateFromMedia(positionSeconds);
       syncSystemMediaTimeline(event.currentTarget);
       scrobbling.onTimeUpdate(
         track,
-        boundRadioChapters(track.radioChapters ?? []),
+        core.queueModel.currentRadioTimeline,
         positionSeconds,
         snapshot.playing,
       );
     },
     [
       boundStreamTrackId,
+      core.queueModel.currentRadioTimeline,
       getCoreSnapshot,
       playbackClock,
       scrobbling,
@@ -330,9 +349,8 @@ export function usePlaybackAudioController({
     (event: SyntheticEvent<HTMLAudioElement>) => {
       const mediaError = event.currentTarget.error;
       adapters.recordDiagnostic("renderer.audio.media-error");
-      const snapshot = getCoreSnapshot();
-      const track = snapshot.queue[snapshot.currentIndex];
-      if (!track || boundStreamTrackId !== track.id) return;
+      const track = getBoundActiveTrack(getCoreSnapshot(), boundStreamTrackId);
+      if (!track) return;
       const expiredOrUnreachable =
         mediaError?.code === 2 || mediaError?.code === 4;
       const canRefreshAuthenticatedStream =
@@ -384,12 +402,11 @@ export function usePlaybackAudioController({
 
   const handleEnded = useCallback(
     (event: SyntheticEvent<HTMLAudioElement>) => {
-      const snapshot = getCoreSnapshot();
-      const track = snapshot.queue[snapshot.currentIndex];
-      if (!track || boundStreamTrackId !== track.id) return;
+      const track = getBoundActiveTrack(getCoreSnapshot(), boundStreamTrackId);
+      if (!track) return;
       const result = scrobbling.onEnded(
         track,
-        boundRadioChapters(track.radioChapters ?? []),
+        core.queueModel.currentRadioTimeline,
         event.currentTarget.currentTime,
       );
       if (result.checkpointRecommended) {
@@ -403,6 +420,7 @@ export function usePlaybackAudioController({
       advanceAfterEnded,
       boundStreamTrackId,
       checkpoint,
+      core.queueModel.currentRadioTimeline,
       getCoreSnapshot,
       scrobbling,
     ],
@@ -410,9 +428,8 @@ export function usePlaybackAudioController({
 
   const handleDurationChange = useCallback(
     (event: SyntheticEvent<HTMLAudioElement>) => {
-      const snapshot = getCoreSnapshot();
-      const track = snapshot.queue[snapshot.currentIndex];
-      if (!track || boundStreamTrackId !== track.id) return;
+      const track = getBoundActiveTrack(getCoreSnapshot(), boundStreamTrackId);
+      if (!track) return;
       if (!Number.isFinite(event.currentTarget.duration)) return;
       playbackClock.updateFromMedia(event.currentTarget.currentTime);
       syncSystemMediaTimeline(event.currentTarget, true);

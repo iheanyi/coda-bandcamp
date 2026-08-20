@@ -6,6 +6,7 @@ import {
   type LibraryCacheSnapshot,
   type LibrarySyncProgress,
 } from "./lib";
+import { albumWithTracks } from "./libraryAlbumHydration";
 import type { Album, Track } from "./types";
 
 export const bandcampQueryKey = ["bandcamp"] as const;
@@ -61,6 +62,16 @@ export function cachedAlbumTracks(
   return queryClient.getQueryData<Track[]>(albumQueryKey(album.id));
 }
 
+export function albumWithCachedTracks(
+  queryClient: QueryClient,
+  album: Album,
+): Album {
+  const cachedTracks = cachedAlbumTracks(queryClient, album);
+  return cachedTracks === undefined
+    ? album
+    : albumWithTracks(album, cachedTracks);
+}
+
 function seedLocalAlbumTracks(queryClient: QueryClient, album: Album): boolean {
   const queryKey = albumQueryKey(album.id);
   if (
@@ -80,8 +91,9 @@ export function ensureAlbumQueryData(
   album: Album,
   bridge: LibraryQueryBridge = nativeLibraryQueryBridge,
 ): Promise<Track[]> {
-  if (seedLocalAlbumTracks(queryClient, album)) {
-    return Promise.resolve(album.tracks!);
+  const tracks = album.tracks;
+  if (tracks?.length && seedLocalAlbumTracks(queryClient, album)) {
+    return Promise.resolve(tracks);
   }
   return queryClient.ensureQueryData({
     ...albumQueryOptions(album, bridge),

@@ -1,5 +1,5 @@
 import type { DiscoverFilters, DiscoverPage } from "../types";
-import { isDesktop } from "./desktop";
+import { requireDesktop } from "./desktop";
 import {
   decodeNativeArray,
   decodeNativeBandcampUrl,
@@ -123,9 +123,7 @@ export async function fetchDiscover(
   filters: DiscoverFilters,
   cursor = "*",
 ): Promise<DiscoverPage> {
-  if (!isDesktop()) {
-    throw new Error("Discover is available in the Coda desktop app.");
-  }
+  requireDesktop("Discover");
   return parseDiscoverPage(
     await invokeNative("discover", {
       input: {

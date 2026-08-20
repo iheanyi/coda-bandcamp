@@ -6,7 +6,6 @@ import {
 } from "@tanstack/react-router";
 import { useMemo } from "react";
 
-import { Button } from "@/components/ui/button";
 import { notifyToast } from "@/components/ui/toastManager";
 import { countLabel } from "@/countLabel";
 import { parseDailyArticleSlug } from "@/daily";
@@ -23,31 +22,31 @@ import {
 import { dailyArticleQueryOptions } from "@/queries/dailyQueries";
 import { validateDailySearch } from "@/routing/routeContracts";
 import { codaRouteMeta } from "@/routing/routeMeta";
+import { EmbeddedRouteStatus } from "@/routes/-embedded-route-status";
 import { DailyRoutePending } from "@/routes/-route-loading";
+import { ROUTE_STATUS_ACTION_CLASS } from "@/routes/-route-status-action";
 
 function DailyArticleError({ reset }: ErrorComponentProps) {
   const router = useRouter();
   return (
-    <section className="mx-auto grid min-h-72 max-w-xl place-items-center text-center">
-      <div>
-        <h1 className="m-0 text-xl font-semibold">
-          Could not open this Daily story
-        </h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Bandcamp Daily may have changed the story or its music embeds.
-        </p>
-        <Button
-          className="mt-3"
+    <EmbeddedRouteStatus
+      action={
+        <button
+          className={ROUTE_STATUS_ACTION_CLASS}
           onClick={() => {
             reset();
             void router.invalidate();
           }}
-          size="compact"
+          type="button"
         >
           Try again
-        </Button>
-      </div>
-    </section>
+        </button>
+      }
+      detail="Bandcamp Daily may have changed the story or its music embeds."
+      role="alert"
+      title="Could not open this Daily story"
+      titleId="daily-article-route-status-title"
+    />
   );
 }
 

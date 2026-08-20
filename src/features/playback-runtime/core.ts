@@ -1,18 +1,31 @@
 import { useCallback, useMemo, useRef, useState, type RefObject } from "react";
 
-import { PREVIOUS_RESTART_THRESHOLD_SECONDS } from "@/features/player/constants";
-import { createPlaybackClock, type PlaybackClock } from "@/playbackClock";
+import {
+  DEFAULT_VOLUME,
+  PREVIOUS_RESTART_THRESHOLD_SECONDS,
+} from "@/features/player/constants";
+import {
+  clampPlaybackPosition,
+  createPlaybackClock,
+  readPlaybackSeconds,
+  type PlaybackClock,
+} from "@/playbackClock";
 import {
   activateTrack,
   appendUnique,
+  cycleRepeatMode,
   keepCurrentTrack,
   moveItem,
+  nextQueueIndex,
+  previousQueueIndex,
+  queueCanNext,
+  queueCanPrevious,
   shuffled,
 } from "@/queue";
 import {
-  boundRadioChapters,
   nextRadioChapterTimeInTimeline,
   previousRadioChapterTimeInTimeline,
+  trackBoundedRadioTimeline,
 } from "@/radioPlayback";
 import type { PlayerStateSnapshot, Track } from "@/types";
 import {
@@ -33,8 +46,6 @@ import type {
   PlaybackNotify,
 } from "./types";
 import { publicPlaybackQueueTrack } from "./publicQueue";
-
-const DEFAULT_VOLUME = 0.72;
 
 const disconnectedShuffleOptions: ProgressivePlaybackShuffleOptions = {
   connected: false,
@@ -147,6 +158,17 @@ export function usePlaybackCoreController({
 
   const getSnapshot = useCallback(() => snapshotRef.current, []);
 
+  const resetPlaybackPosition = useCallback(
+    (options?: { restartAudio?: boolean }) => {
+      pendingPosition.current = undefined;
+      playbackClock.reset();
+      if (options?.restartAudio && audioRef.current) {
+        audioRef.current.currentTime = 0;
+      }
+    },
+    [audioRef, playbackClock],
+  );
+
   const getShufflePlayerState = useCallback(() => {
     const current = snapshotRef.current;
     return {
@@ -168,12 +190,10 @@ export function usePlaybackCoreController({
         playing: mutation.playing ?? current.playing,
       }));
       if (mutation.resetPlayback) {
-        pendingPosition.current = undefined;
-        playbackClock.reset();
-        if (audioRef.current) audioRef.current.currentTime = 0;
+        resetPlaybackPosition({ restartAudio: true });
       }
     },
-    [audioRef, commit, playbackClock],
+    [commit, resetPlaybackPosition],
   );
 
   const shuffleOptions = progressiveShuffle ?? disconnectedShuffleOptions;
@@ -223,14 +243,13 @@ export function usePlaybackCoreController({
   const reset = useCallback(
     (options: { ready?: boolean } = {}) => {
       cancelShuffleRef.current();
-      pendingPosition.current = undefined;
-      playbackClock.reset();
+      resetPlaybackPosition();
       commit(() => ({
         ...initialCoreSnapshot(),
         ready: options.ready ?? false,
       }));
     },
-    [commit, playbackClock],
+    [commit, resetPlaybackPosition],
   );
 
   const setReady = useCallback(
@@ -267,9 +286,7 @@ export function usePlaybackCoreController({
         track,
       );
       if (activated.queue !== current.queue) cancelShuffleRef.current();
-      pendingPosition.current = undefined;
-      playbackClock.reset();
-      if (audioRef.current) audioRef.current.currentTime = 0;
+      resetPlaybackPosition({ restartAudio: true });
       commit((latest) => ({
         ...latest,
         queue: activated.queue,
@@ -278,14 +295,12 @@ export function usePlaybackCoreController({
         playing: true,
       }));
     },
-    [audioRef, commit, playbackClock, recordPlayRequest],
+    [commit, recordPlayRequest, resetPlaybackPosition],
   );
 
   const playTrackAt = useCallback(
     (track: Track, positionSeconds: number) => {
-      const safePosition = Number.isFinite(positionSeconds)
-        ? Math.max(0, positionSeconds)
-        : 0;
+      const safePosition = clampPlaybackPosition(positionSeconds);
       const current = snapshotRef.current;
       const alreadyLoaded =
         current.queue[current.currentIndex]?.id === track.id &&
@@ -310,9 +325,7 @@ export function usePlaybackCoreController({
       if (!tracks.length) return;
       cancelShuffleRef.current();
       recordPlayRequest();
-      pendingPosition.current = undefined;
-      playbackClock.reset();
-      if (audioRef.current) audioRef.current.currentTime = 0;
+      resetPlaybackPosition({ restartAudio: true });
       commit((current) => ({
         ...current,
         queue: tracks,
@@ -321,7 +334,7 @@ export function usePlaybackCoreController({
         playing: true,
       }));
     },
-    [audioRef, commit, playbackClock, recordPlayRequest],
+    [commit, recordPlayRequest, resetPlaybackPosition],
   );
 
   const queueTracks = useCallback(
@@ -345,9 +358,7 @@ export function usePlaybackCoreController({
     (index: number) => {
       const current = snapshotRef.current;
       if (!Number.isInteger(index) || !current.queue[index]) return;
-      pendingPosition.current = undefined;
-      playbackClock.reset();
-      if (audioRef.current) audioRef.current.currentTime = 0;
+      resetPlaybackPosition({ restartAudio: true });
       commit((latest) => ({
         ...latest,
         currentIndex: index,
@@ -355,7 +366,7 @@ export function usePlaybackCoreController({
         playing: true,
       }));
     },
-    [audioRef, commit, playbackClock],
+    [commit, resetPlaybackPosition],
   );
 
   const removeQueueItem = useCallback(
@@ -370,8 +381,7 @@ export function usePlaybackCoreController({
           ? current.currentIndex - 1
           : Math.min(current.currentIndex, queue.length - 1);
       if (!queue.length) {
-        pendingPosition.current = undefined;
-        playbackClock.reset();
+        resetPlaybackPosition();
       }
       commit((latest) => ({
         ...latest,
@@ -380,7 +390,7 @@ export function usePlaybackCoreController({
         playing: queue.length ? latest.playing : false,
       }));
     },
-    [commit, playbackClock],
+    [commit, resetPlaybackPosition],
   );
 
   const clearQueue = useCallback(() => {
@@ -395,24 +405,20 @@ export function usePlaybackCoreController({
       }));
       return;
     }
-    pendingPosition.current = undefined;
-    playbackClock.reset();
+    resetPlaybackPosition();
     commit((latest) => ({
       ...latest,
       queue: [],
       currentIndex: 0,
       playing: false,
     }));
-  }, [commit, playbackClock]);
+  }, [commit, resetPlaybackPosition]);
 
   const shuffleQueue = useCallback(() => {
     cancelShuffleRef.current();
     const current = snapshotRef.current;
-    const head = current.queue[current.currentIndex]
-      ? [current.queue[current.currentIndex]]
-      : [];
     const queue = [
-      ...head,
+      ...keepCurrentTrack(current.queue, current.currentIndex),
       ...shuffled(current.queue.slice(current.currentIndex + 1)),
     ];
     commit((latest) => ({ ...latest, queue, currentIndex: 0 }));
@@ -438,13 +444,14 @@ export function usePlaybackCoreController({
     [commit],
   );
 
+  const restartEndedPlayback = useCallback(() => {
+    if (!audioRef.current?.ended) return false;
+    resetPlaybackPosition({ restartAudio: true });
+    return true;
+  }, [audioRef, resetPlaybackPosition]);
+
   const play = useCallback(() => {
-    const restartCompletedTrack = Boolean(audioRef.current?.ended);
-    if (restartCompletedTrack) {
-      pendingPosition.current = undefined;
-      playbackClock.reset();
-      if (audioRef.current) audioRef.current.currentTime = 0;
-    }
+    const restartCompletedTrack = restartEndedPlayback();
     commit((current) =>
       current.queue[current.currentIndex]
         ? {
@@ -456,7 +463,7 @@ export function usePlaybackCoreController({
           }
         : current,
     );
-  }, [audioRef, commit, playbackClock]);
+  }, [commit, restartEndedPlayback]);
 
   const pause = useCallback(() => {
     commit((current) =>
@@ -465,32 +472,13 @@ export function usePlaybackCoreController({
   }, [commit]);
 
   const toggle = useCallback(() => {
-    const restartCompletedTrack = Boolean(
-      !snapshotRef.current.playing && audioRef.current?.ended,
-    );
-    if (restartCompletedTrack) {
-      pendingPosition.current = undefined;
-      playbackClock.reset();
-      if (audioRef.current) audioRef.current.currentTime = 0;
-    }
-    commit((current) =>
-      current.queue[current.currentIndex]
-        ? {
-            ...current,
-            playing: !current.playing,
-            activationGeneration: restartCompletedTrack
-              ? current.activationGeneration + 1
-              : current.activationGeneration,
-          }
-        : current,
-    );
-  }, [audioRef, commit, playbackClock]);
+    if (snapshotRef.current.playing) pause();
+    else play();
+  }, [pause, play]);
 
   const seek = useCallback(
     (positionSeconds: number) => {
-      const safePosition = Number.isFinite(positionSeconds)
-        ? Math.max(0, positionSeconds)
-        : 0;
+      const safePosition = clampPlaybackPosition(positionSeconds);
       playbackClock.seek(safePosition);
       if (audioRef.current) audioRef.current.currentTime = safePosition;
     },
@@ -506,11 +494,8 @@ export function usePlaybackCoreController({
         mediaDuration !== undefined && Number.isFinite(mediaDuration)
           ? mediaDuration
           : (track?.duration ?? 0);
-      seek(
-        durationSeconds > 0
-          ? Math.min(durationSeconds, Math.max(0, positionSeconds))
-          : Math.max(0, positionSeconds),
-      );
+      const clamped = clampPlaybackPosition(positionSeconds);
+      seek(durationSeconds > 0 ? Math.min(durationSeconds, clamped) : clamped);
     },
     [audioRef, seek],
   );
@@ -525,12 +510,7 @@ export function usePlaybackCoreController({
   const cycleRepeat = useCallback(() => {
     commit((current) => ({
       ...current,
-      repeatMode:
-        current.repeatMode === "off"
-          ? "all"
-          : current.repeatMode === "all"
-            ? "one"
-            : "off",
+      repeatMode: cycleRepeatMode(current.repeatMode),
     }));
   }, [commit]);
 
@@ -538,11 +518,12 @@ export function usePlaybackCoreController({
     const current = snapshotRef.current;
     const currentTrack = current.queue[current.currentIndex];
     if (!currentTrack) return;
-    const playbackSeconds =
-      audioRef.current?.currentTime ?? playbackClock.readExact();
-    const radioTimeline = boundRadioChapters(currentTrack.radioChapters ?? []);
+    const playbackSeconds = readPlaybackSeconds(
+      audioRef.current,
+      playbackClock,
+    );
     const chapterTime = nextRadioChapterTimeInTimeline(
-      radioTimeline,
+      trackBoundedRadioTimeline(currentTrack),
       playbackSeconds,
     );
     if (chapterTime !== undefined) {
@@ -550,36 +531,42 @@ export function usePlaybackCoreController({
       return;
     }
     if (
-      current.currentIndex + 1 >= current.queue.length &&
+      !queueCanNext(current.currentIndex, current.queue.length, "off") &&
       waitForProgressiveAdvance("next")
     ) {
       return;
     }
-    const nextIndex =
-      current.currentIndex + 1 < current.queue.length
-        ? current.currentIndex + 1
-        : current.repeatMode === "all" && current.queue.length > 1
-          ? 0
-          : current.currentIndex;
+    const nextIndex = nextQueueIndex(
+      current.currentIndex,
+      current.queue.length,
+      current.repeatMode,
+    );
     if (nextIndex === current.currentIndex) return;
-    pendingPosition.current = undefined;
-    playbackClock.reset();
+    resetPlaybackPosition();
     commit((latest) => ({
       ...latest,
       currentIndex: nextIndex,
       activationGeneration: latest.activationGeneration + 1,
     }));
-  }, [audioRef, commit, playbackClock, seek, waitForProgressiveAdvance]);
+  }, [
+    audioRef,
+    commit,
+    playbackClock,
+    resetPlaybackPosition,
+    seek,
+    waitForProgressiveAdvance,
+  ]);
 
   const previous = useCallback(() => {
     const current = snapshotRef.current;
     const currentTrack = current.queue[current.currentIndex];
     if (!currentTrack) return;
-    const playbackSeconds =
-      audioRef.current?.currentTime ?? playbackClock.readExact();
-    const radioTimeline = boundRadioChapters(currentTrack.radioChapters ?? []);
+    const playbackSeconds = readPlaybackSeconds(
+      audioRef.current,
+      playbackClock,
+    );
     const chapterTime = previousRadioChapterTimeInTimeline(
-      radioTimeline,
+      trackBoundedRadioTimeline(currentTrack),
       playbackSeconds,
       PREVIOUS_RESTART_THRESHOLD_SECONDS,
     );
@@ -591,36 +578,30 @@ export function usePlaybackCoreController({
       seek(0);
       return;
     }
-    const previousIndex =
-      current.currentIndex > 0
-        ? current.currentIndex - 1
-        : current.repeatMode === "all" && current.queue.length > 1
-          ? current.queue.length - 1
-          : current.currentIndex;
+    const previousIndex = previousQueueIndex(
+      current.currentIndex,
+      current.queue.length,
+      current.repeatMode,
+    );
     if (previousIndex === current.currentIndex) return;
-    pendingPosition.current = undefined;
-    playbackClock.reset();
+    resetPlaybackPosition();
     commit((latest) => ({
       ...latest,
       currentIndex: previousIndex,
       activationGeneration: latest.activationGeneration + 1,
     }));
-  }, [audioRef, commit, playbackClock, seek]);
+  }, [audioRef, commit, playbackClock, resetPlaybackPosition, seek]);
 
   const advanceAfterEnded = useCallback(() => {
     const current = snapshotRef.current;
     if (
       current.repeatMode !== "one" &&
-      current.currentIndex + 1 >= current.queue.length &&
+      !queueCanNext(current.currentIndex, current.queue.length, "off") &&
       waitForProgressiveAdvance("ended")
     ) {
       return;
     }
-    pendingPosition.current = undefined;
-    playbackClock.reset();
-    if (current.repeatMode === "one" && audioRef.current) {
-      audioRef.current.currentTime = 0;
-    }
+    resetPlaybackPosition({ restartAudio: current.repeatMode === "one" });
     commit((latest) => {
       if (latest.repeatMode === "one") {
         return {
@@ -628,10 +609,15 @@ export function usePlaybackCoreController({
           activationGeneration: latest.activationGeneration + 1,
         };
       }
-      if (latest.currentIndex + 1 < latest.queue.length) {
+      const nextIndex = nextQueueIndex(
+        latest.currentIndex,
+        latest.queue.length,
+        "off",
+      );
+      if (nextIndex !== latest.currentIndex) {
         return {
           ...latest,
-          currentIndex: latest.currentIndex + 1,
+          currentIndex: nextIndex,
           activationGeneration: latest.activationGeneration + 1,
         };
       }
@@ -644,11 +630,11 @@ export function usePlaybackCoreController({
       }
       return { ...latest, playing: false };
     });
-  }, [audioRef, commit, playbackClock, waitForProgressiveAdvance]);
+  }, [commit, resetPlaybackPosition, waitForProgressiveAdvance]);
 
   const currentTrack = snapshot.queue[snapshot.currentIndex];
   const currentRadioTimeline = useMemo(
-    () => boundRadioChapters(currentTrack?.radioChapters ?? []),
+    () => trackBoundedRadioTimeline(currentTrack),
     [currentTrack?.radioChapters],
   );
   const internalQueueModel = useMemo<PlaybackInternalQueueModel>(
@@ -676,28 +662,22 @@ export function usePlaybackCoreController({
     [snapshot.queue],
   );
   const publicCurrentTrack = publicQueue[snapshot.currentIndex];
-  const publicRadioTimeline = useMemo(
-    () => boundRadioChapters(publicCurrentTrack?.radioChapters ?? []),
+  const publicCurrentRadioTimeline = useMemo(
+    () => trackBoundedRadioTimeline(publicCurrentTrack),
     [publicCurrentTrack?.radioChapters],
   );
   const publicQueueModel = useMemo<PlaybackQueueModel>(
     () => ({
+      ...internalQueueModel,
       queue: publicQueue,
-      currentIndex: snapshot.currentIndex,
       currentTrack: publicCurrentTrack,
-      currentRadioTimeline: publicRadioTimeline,
-      open: snapshot.queueOpen,
-      ready: snapshot.ready,
-      hasDeferredTracks: progressive.hasMore,
+      currentRadioTimeline: publicCurrentRadioTimeline,
     }),
     [
-      progressive.hasMore,
+      internalQueueModel,
+      publicCurrentRadioTimeline,
       publicCurrentTrack,
       publicQueue,
-      publicRadioTimeline,
-      snapshot.currentIndex,
-      snapshot.queueOpen,
-      snapshot.ready,
     ],
   );
   const transportModel = useMemo<
@@ -709,13 +689,19 @@ export function usePlaybackCoreController({
       repeat: snapshot.repeatMode,
       canPrevious:
         Boolean(currentTrack) &&
-        (snapshot.currentIndex > 0 ||
-          (snapshot.repeatMode === "all" && snapshot.queue.length > 1)),
+        queueCanPrevious(
+          snapshot.currentIndex,
+          snapshot.queue.length,
+          snapshot.repeatMode,
+        ),
       canNext:
         Boolean(currentTrack) &&
-        (snapshot.currentIndex + 1 < snapshot.queue.length ||
-          progressive.hasMore ||
-          (snapshot.repeatMode === "all" && snapshot.queue.length > 1)),
+        (queueCanNext(
+          snapshot.currentIndex,
+          snapshot.queue.length,
+          snapshot.repeatMode,
+        ) ||
+          progressive.hasMore),
     }),
     [
       currentTrack,

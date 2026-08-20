@@ -27,7 +27,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { countLabel } from "@/countLabel";
 import { genreKey } from "@/genres";
 import { cn } from "@/lib/utils";
-import type { LibraryBrowseMode } from "@/libraryBrowse";
+import type { LibraryBrowseCounts, LibraryBrowseMode } from "@/libraryBrowse";
 import { useDistanceAwareSelectionPill } from "@/selectionMotion";
 import type { SortMode } from "@/types";
 
@@ -74,11 +74,7 @@ export type LibraryChromeActions = Readonly<{
 export type LibraryBrowseModel = Readonly<{
   mode: LibraryBrowseMode;
   releaseCount: number;
-  counts: Readonly<{
-    artists: number;
-    albums: number;
-    singles: number;
-  }>;
+  counts: LibraryBrowseCounts;
 }>;
 
 export type LibraryBrowseActions = Readonly<{

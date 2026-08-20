@@ -3,29 +3,36 @@ import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef, useState, type RefObject } from "react";
 
 import type { ToastNotifier } from "@/components/ui/toastManager";
-import type { LibraryArtistFallback } from "@/features/library/useLibraryBrowseController";
 import type { PreparedArtistSearch } from "@/features/library/useLibraryRouteSearchController";
+import { formatErrorMessage } from "@/formatError";
 import { discoverArtistUrl } from "@/discover";
 import { openBandcampUrl } from "@/lib";
-import { artistKey, type ArtistGroup } from "@/libraryBrowse";
+import {
+  artistKey,
+  type ArtistGroup,
+  type LibraryArtistFallback,
+} from "@/libraryBrowse";
 import { cachedAlbumTracks } from "@/libraryQueries";
 import { isAbsent, isOwnDataRecord, type OwnDataValue } from "@/ownData";
 import type { RadioChapterLocalLinks } from "@/RadioChapterMetadata";
 import { BANDCAMP_RADIO_PROVIDER } from "@/radioIdentity";
 import { resolveRadioChapterLibraryTargets } from "@/radioNavigation";
-import { radioShowIdFromTrackId } from "@/radioPlayback";
-import { radioSeriesByTitle } from "@/radioSeries";
 import {
   isDiscoverReleaseId,
   parseAlbumIdParam,
   parseArtistKeyParam,
   parseRadioSeriesIdParam,
   parseRadioShowIdParam,
-  stringifyRadioSeriesIdParam,
-  stringifyRadioShowIdParam,
   type DiscoverReleaseId,
+  type RadioSeriesId,
+  type RadioShowId,
 } from "@/routing/routeContracts";
 import type { CodaPrimaryView } from "@/routing/routeMeta";
+import {
+  trackAlbumDestination,
+  trackArtistDestination,
+  trackSourceFamily,
+} from "@/routing/trackRouteDestinations";
 import type {
   Album,
   DiscoverRelease,
@@ -36,15 +43,24 @@ import type {
 import { transitionCodaView } from "@/viewTransitions";
 import type { AppSidebarDestination } from "@/AppSidebar";
 
-import { awaitRouteCommit, type RouteCommitOutcome } from "./routeCommit";
-import type { RenderedNavigationRouter } from "./routeNavigationAdapters";
+import {
+  awaitRouteCommit,
+  renderedLocationPath,
+  routeCommitFailureCopy,
+  type RouteCommitOutcome,
+} from "./routeCommit";
+import {
+  createRouteNavigationAdapter,
+  RADIO_ROUTE_SPEC,
+  type RenderedNavigationRouter,
+} from "./routeNavigationAdapters";
 import type {
   DetailNavigationController,
   DiscoverDetailNavigationRequest,
 } from "./useDetailNavigation";
 import type { CodaRouteDestination } from "./useRouteDestination";
 
-export type DiscoverDetailNavigation = Readonly<{
+type DiscoverDetailNavigation = Readonly<{
   releaseId: DiscoverReleaseId;
   releaseTitle: string;
 }>;
@@ -65,8 +81,8 @@ type ArtistNavigationRequest =
 
 type RadioNavigationRequest =
   | Readonly<{ kind: "archive" }>
-  | Readonly<{ kind: "series"; seriesId: number }>
-  | Readonly<{ kind: "show"; show: RadioShowSummary }>;
+  | Readonly<{ kind: "series"; seriesId: RadioSeriesId }>
+  | Readonly<{ kind: "show"; showId: RadioShowId }>;
 
 type DetailBackRequest = Readonly<{
   kind: "album" | "artist" | "discover" | "now-playing";
@@ -101,24 +117,6 @@ const PRIMARY_DESTINATION_VIEW = {
   "/radio": "radio",
 } satisfies Record<AppSidebarDestination, CodaPrimaryView>;
 
-function routerLocationPath(location: {
-  href?: string;
-  pathname?: string;
-}): string {
-  if (location.pathname) return location.pathname;
-  const href = location.href ?? "";
-  const queryIndex = href.indexOf("?");
-  return queryIndex >= 0 ? href.slice(0, queryIndex) : href;
-}
-
-function routerLocationSearch(location: {
-  href?: string;
-  pathname?: string;
-  search?: OwnDataValue;
-}): OwnDataValue {
-  return location.search;
-}
-
 function serializedRouteSearch<Value>(value: Value): string {
   if (isAbsent(value)) return "{}";
   if (!isOwnDataRecord(value)) return "\0";
@@ -151,6 +149,21 @@ function isTrackedAppPath(path: string): boolean {
     path.startsWith("/radio") ||
     path.startsWith("/recent")
   );
+}
+
+function trackAlbumUnavailableMessage(track: Track): string {
+  const family = trackSourceFamily(track);
+  switch (family) {
+    case "daily":
+      return `Could not open ${track.album} on Bandcamp`;
+    case "discover":
+      return `Could not open ${track.album} from Discover`;
+    case "radio":
+    case "library":
+      return `Could not find ${track.album} in this library`;
+    default:
+      return assertNever(family);
+  }
 }
 
 export type CodaNavigationControllerOptions = Readonly<{
@@ -213,7 +226,7 @@ export type CodaNavigationController = Readonly<{
   state: CodaNavigationState;
 }>;
 
-export type CodaNavigationRuntime = Readonly<{
+type CodaNavigationRuntime = Readonly<{
   navigate: ReturnType<typeof useNavigate>;
   router: RenderedNavigationRouter;
 }>;
@@ -226,21 +239,6 @@ function currentNavigationTrigger(): HTMLElement | undefined {
   return document.activeElement instanceof HTMLElement
     ? document.activeElement
     : undefined;
-}
-
-function errorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
-}
-
-function routeCloseFailureCopy(outcome: "failed" | "timeout"): string {
-  switch (outcome) {
-    case "failed":
-      return "Could not go back. Try again.";
-    case "timeout":
-      return "Going back took too long. Try again.";
-    default:
-      return assertNever(outcome);
-  }
 }
 
 function isCurrentPrimaryDestination(
@@ -268,13 +266,13 @@ function isCurrentRadioDestination(
       if (path === `/radio/series/${request.seriesId}`) return true;
       return (
         current.detail?.kind === "radio-series" &&
-        current.detail.seriesId === parseRadioSeriesIdParam(request.seriesId)
+        current.detail.seriesId === request.seriesId
       );
     case "show":
-      if (path === `/radio/shows/${request.show.id}`) return true;
+      if (path === `/radio/shows/${request.showId}`) return true;
       return (
         current.detail?.kind === "radio-show" &&
-        current.detail.showId === parseRadioShowIdParam(request.show.id)
+        current.detail.showId === request.showId
       );
     default:
       return assertNever(request);
@@ -296,15 +294,15 @@ export function useCodaNavigationController(
 
 export function useCodaNavigationControllerWithRuntime(
   {
-  albums,
-  clearSelectedAlbum,
-  currentTrack,
-  destination,
-  detailNavigation,
-  notify,
-  openAlbum,
-  prepareArtistSearch,
-  queue,
+    albums,
+    clearSelectedAlbum,
+    currentTrack,
+    destination,
+    detailNavigation,
+    notify,
+    openAlbum,
+    prepareArtistSearch,
+    queue,
   }: CodaNavigationControllerOptions,
   { navigate, router }: CodaNavigationRuntime,
 ): CodaNavigationController {
@@ -313,7 +311,7 @@ export function useCodaNavigationControllerWithRuntime(
     useState<LibraryArtistFallback>();
   const [discoverDetailSnapshot, setDiscoverDetailSnapshot] =
     useState<DiscoverDetailNavigation>();
-  const routerPath = routerLocationPath(router.state.location);
+  const routerPath = renderedLocationPath(router.state.location);
   const destinationIsDiscoverRelease =
     destination.detail?.kind === "discover-release" ||
     destination.screen === "discover-release";
@@ -323,6 +321,10 @@ export function useCodaNavigationControllerWithRuntime(
     (destinationIsDiscoverRelease && !isTrackedAppPath(routerPath));
   const lastNonDiscoverReleaseView = useRef<CodaPrimaryView | undefined>(
     onDiscoverRelease ? undefined : destination.primaryView,
+  );
+  const radioRouteNav = useMemo(
+    () => createRouteNavigationAdapter({ navigate, router }, RADIO_ROUTE_SPEC),
+    [navigate, router],
   );
   const lastNonDiscoverReleasePath = useRef<string | undefined>(
     onDiscoverRelease ? undefined : routerPath,
@@ -418,7 +420,7 @@ export function useCodaNavigationControllerWithRuntime(
       }
       void detailNavigation
         .open(detailRequest)
-        .catch((cause) => notify(errorMessage(cause), "bad"));
+        .catch((cause) => notify(formatErrorMessage(cause), "bad"));
     },
     [detailNavigation, notify],
   );
@@ -426,7 +428,7 @@ export function useCodaNavigationControllerWithRuntime(
   const openExternal = useCallback(
     (url: string) => {
       void openBandcampUrl(url).catch((cause) =>
-        notify(errorMessage(cause).replace(/^Error:\s*/, ""), "bad"),
+        notify(formatErrorMessage(cause), "bad"),
       );
     },
     [notify],
@@ -444,6 +446,32 @@ export function useCodaNavigationControllerWithRuntime(
     [notify, openExternal],
   );
 
+  const openRadio = useCallback(
+    (request: RadioNavigationRequest) => {
+      if (isCurrentRadioDestination(request, destination, routerPath)) {
+        return;
+      }
+      void transitionCodaView(async (token) => {
+        if (!token.isCurrent()) return;
+        clearSelectedAlbum();
+        switch (request.kind) {
+          case "archive":
+            await radioRouteNav.goToIndex();
+            return;
+          case "series":
+            await radioRouteNav.goToSeries(request.seriesId);
+            return;
+          case "show":
+            await radioRouteNav.goToShow(request.showId);
+            return;
+          default:
+            return assertNever(request);
+        }
+      }, "page-forward");
+    },
+    [clearSelectedAlbum, destination, radioRouteNav, routerPath],
+  );
+
   const openArtist = useCallback(
     (request: ArtistNavigationRequest) => {
       if (request.kind === "group") {
@@ -457,7 +485,7 @@ export function useCodaNavigationControllerWithRuntime(
               clearSelectedAlbum();
             },
           })
-          .catch((cause) => notify(errorMessage(cause), "bad"));
+          .catch((cause) => notify(formatErrorMessage(cause), "bad"));
         return;
       }
 
@@ -467,34 +495,32 @@ export function useCodaNavigationControllerWithRuntime(
         sourceTrack,
         sourceTrigger = currentNavigationTrigger(),
       } = request;
-      if (sourceTrack?.id.startsWith("daily:")) {
-        const artistUrl = sourceTrack.dailySource?.artistUrl;
-        if (!artistUrl) {
-          notify(`Could not open ${artist} on Bandcamp`, "bad");
-          return;
+      const artistDestination = sourceTrack
+        ? trackArtistDestination(sourceTrack)
+        : artist === BANDCAMP_RADIO_PROVIDER
+          ? { kind: "radio" as const }
+          : undefined;
+      if (artistDestination) {
+        switch (artistDestination.kind) {
+          case "daily-external-artist":
+            openExternal(artistDestination.artistUrl);
+            return;
+          case "discover-external-artist":
+            openDiscoverArtist(artistDestination.release);
+            return;
+          case "radio-series":
+            setSelectedArtistFallbackSnapshot(undefined);
+            openRadio({ kind: "series", seriesId: artistDestination.seriesId });
+            return;
+          case "radio":
+            setSelectedArtistFallbackSnapshot(undefined);
+            openRadio({ kind: "archive" });
+            return;
+          case "artist":
+            break; // Library flow below stays authoritative (fallback albums, prepared search).
+          default:
+            return assertNever(artistDestination);
         }
-        openExternal(artistUrl);
-        return;
-      }
-      if (sourceTrack?.id.startsWith("discover:")) {
-        const release = sourceTrack.discoverRelease;
-        if (!release || release.id !== sourceTrack.albumId) {
-          notify(`Could not open ${artist} on Bandcamp`, "bad");
-          return;
-        }
-        openDiscoverArtist(release);
-        return;
-      }
-      if (artist === BANDCAMP_RADIO_PROVIDER) {
-        void detailNavigation.transitionPrimary(async (token) => {
-          if (!token.isCurrent()) return;
-          clearSelectedAlbum();
-          setSelectedArtistFallbackSnapshot(undefined);
-          await awaitRouteCommit(router, () =>
-            navigate({ to: "/radio", viewTransition: false }),
-          );
-        });
-        return;
       }
 
       const key = artistKey(artist);
@@ -550,85 +576,59 @@ export function useCodaNavigationControllerWithRuntime(
             clearSelectedAlbum();
           },
         })
-        .catch((cause) => notify(errorMessage(cause), "bad"));
+        .catch((cause) => notify(formatErrorMessage(cause), "bad"));
     },
     [
       albums,
       clearSelectedAlbum,
-      destination.collectionSearch,
       detailNavigation,
-      navigate,
       notify,
       openDiscoverArtist,
       openExternal,
+      openRadio,
       prepareArtistSearch,
-      router,
     ],
   );
 
   const openTrackAlbum = useCallback(
     (track: Track, sourceTrigger?: HTMLElement) => {
-      if (track.id.startsWith("daily:")) {
-        const itemUrl = track.dailySource?.itemUrl;
-        if (!itemUrl) {
-          notify(`Could not open ${track.album} on Bandcamp`, "bad");
-          return;
-        }
-        openExternal(itemUrl);
+      const destination = trackAlbumDestination(track);
+      if (!destination) {
+        notify(trackAlbumUnavailableMessage(track), "bad");
         return;
       }
-      if (track.id.startsWith("discover:")) {
-        const release = track.discoverRelease;
-        if (!release || release.id !== track.albumId) {
-          notify(`Could not open ${track.album} from Discover`, "bad");
+      switch (destination.kind) {
+        case "album": {
+          const album = albums.find(
+            (candidate) => candidate.id === destination.albumId,
+          );
+          if (album) {
+            openAlbum(album, sourceTrigger);
+            return;
+          }
+          notify(trackAlbumUnavailableMessage(track), "bad");
           return;
         }
-        openDiscoverDetail(release, sourceTrigger, track.id);
-        return;
-      }
-      if (track.id.startsWith("radio:")) {
-        clearSelectedAlbum();
-        const showId = radioShowIdFromTrackId(track.id);
-        if (showId !== undefined) {
-          void navigate({
-            params: {
-              showId: stringifyRadioShowIdParam(parseRadioShowIdParam(showId)),
-            },
-            to: "/radio/shows/$showId",
-          });
+        case "daily-external-item":
+          openExternal(destination.itemUrl);
           return;
-        }
-        const series = radioSeriesByTitle(track.album);
-        if (series) {
-          void navigate({
-            params: {
-              seriesId: stringifyRadioSeriesIdParam(
-                parseRadioSeriesIdParam(series.id),
-              ),
-            },
-            to: "/radio/series/$seriesId",
-          });
+        case "discover-release":
+          openDiscoverDetail(destination.release, sourceTrigger, track.id);
           return;
-        }
-        void navigate({ to: "/radio" });
-        return;
+        case "radio-show":
+          openRadio({ kind: "show", showId: destination.showId });
+          return;
+        case "radio-series":
+          openRadio({ kind: "series", seriesId: destination.seriesId });
+          return;
+        case "radio":
+          openRadio({ kind: "archive" });
+          return;
+        default:
+          return assertNever(destination);
       }
-      const album = albums.find((candidate) => candidate.id === track.albumId);
-      if (album) {
-        openAlbum(album, sourceTrigger);
-        return;
-      }
-      notify(`Could not find ${track.album} in this library`, "bad");
     },
-    [
-      albums,
-      clearSelectedAlbum,
-      navigate,
-      notify,
-      openAlbum,
-      openDiscoverDetail,
-      openExternal,
-    ],
+    [albums, notify, openAlbum, openDiscoverDetail, openExternal, openRadio],
   );
 
   const openDiscoverRelease = useCallback(
@@ -642,56 +642,8 @@ export function useCodaNavigationControllerWithRuntime(
     if (!currentTrack) return;
     void detailNavigation
       .open({ kind: "now-playing", trackId: currentTrack.id })
-      .catch((cause) => notify(errorMessage(cause), "bad"));
+      .catch((cause) => notify(formatErrorMessage(cause), "bad"));
   }, [currentTrack, detailNavigation, notify]);
-
-  const openRadio = useCallback(
-    (request: RadioNavigationRequest) => {
-      if (isCurrentRadioDestination(request, destination, routerPath)) {
-        return;
-      }
-      void transitionCodaView(async (token) => {
-        if (!token.isCurrent()) return;
-        clearSelectedAlbum();
-        switch (request.kind) {
-          case "archive":
-            await awaitRouteCommit(router, () =>
-              navigate({ to: "/radio", viewTransition: false }),
-            );
-            return;
-          case "series":
-            await awaitRouteCommit(router, () =>
-              navigate({
-                params: {
-                  seriesId: stringifyRadioSeriesIdParam(
-                    parseRadioSeriesIdParam(request.seriesId),
-                  ),
-                },
-                to: "/radio/series/$seriesId",
-                viewTransition: false,
-              }),
-            );
-            return;
-          case "show":
-            await awaitRouteCommit(router, () =>
-              navigate({
-                params: {
-                  showId: stringifyRadioShowIdParam(
-                    parseRadioShowIdParam(request.show.id),
-                  ),
-                },
-                to: "/radio/shows/$showId",
-                viewTransition: false,
-              }),
-            );
-            return;
-          default:
-            return assertNever(request);
-        }
-      }, "page-forward");
-    },
-    [clearSelectedAlbum, destination, navigate, router, routerPath],
-  );
 
   const back = useCallback(
     async ({
@@ -707,12 +659,16 @@ export function useCodaNavigationControllerWithRuntime(
           if (kind === "discover") setDiscoverDetailSnapshot(undefined);
           return outcome;
         }
-        if (outcome === "failed" || outcome === "timeout") {
-          notify(routeCloseFailureCopy(outcome), "bad");
-        }
+        if (!outcome) return outcome;
+        const message = routeCommitFailureCopy(
+          outcome,
+          "Going back",
+          "Could not go back. Try again.",
+        );
+        if (message) notify(message, "bad");
         return outcome;
       } catch (cause) {
-        notify(errorMessage(cause), "bad");
+        notify(formatErrorMessage(cause), "bad");
         return undefined;
       }
     },
@@ -794,7 +750,7 @@ export function useCodaNavigationControllerWithRuntime(
           viewTransition: false,
         });
       } catch (cause) {
-        notify(errorMessage(cause), "bad");
+        notify(formatErrorMessage(cause), "bad");
       }
     })();
     return true;
@@ -817,7 +773,7 @@ export function useCodaNavigationControllerWithRuntime(
           target,
           routerPath,
           committedSearch,
-          routerLocationSearch(router.state.location),
+          router.state.location.search,
         )
       ) {
         return;
@@ -875,9 +831,10 @@ export function useCodaNavigationControllerWithRuntime(
           openRadio(
             seriesId === undefined
               ? { kind: "archive" }
-              : { kind: "series", seriesId },
+              : { kind: "series", seriesId: parseRadioSeriesIdParam(seriesId) },
           ),
-        openShow: (show) => openRadio({ kind: "show", show }),
+        openShow: (show) =>
+          openRadio({ kind: "show", showId: parseRadioShowIdParam(show.id) }),
       },
       sidebar: {
         beforeDiscoverNavigate,
@@ -901,27 +858,19 @@ export function useCodaNavigationControllerWithRuntime(
     ],
   );
 
-  return useMemo(
-    () => {
-      const navigationState: CodaNavigationState =
-        discoverDetail && selectedArtistFallback
-          ? { discoverDetail, selectedArtistFallback }
-          : discoverDetail
-            ? { discoverDetail }
-            : selectedArtistFallback
-              ? { selectedArtistFallback }
-              : {};
-      return {
-        commands,
-        scrollRootRef: detailNavigation.scrollRootRef,
-        state: navigationState,
-      };
-    },
-    [
+  return useMemo(() => {
+    return {
       commands,
-      detailNavigation.scrollRootRef,
-      discoverDetail,
-      selectedArtistFallback,
-    ],
-  );
+      scrollRootRef: detailNavigation.scrollRootRef,
+      state: {
+        discoverDetail,
+        selectedArtistFallback,
+      },
+    };
+  }, [
+    commands,
+    detailNavigation.scrollRootRef,
+    discoverDetail,
+    selectedArtistFallback,
+  ]);
 }

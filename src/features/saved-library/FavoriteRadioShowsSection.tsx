@@ -19,13 +19,14 @@ import {
   radioSeriesId,
   radioShowId,
 } from "@/features/radio/radioRouteIds";
+import { showDate } from "@/features/radio/radioPresentationFormatting";
 import { ResponsiveVirtualGrid } from "@/ResponsiveVirtualGrid";
 import { handleCodaLinkActivation } from "@/routing/linkActivation";
 import { stringifyRadioShowIdParam } from "@/routing/routeContracts";
 import type { RadioShowSummary } from "@/types";
 
 import { FavoriteArtwork } from "./FavoriteArtwork";
-import { radioShowDate } from "./savedLibraryPresentationData";
+import { SavedSectionHeader } from "./SavedLibraryPresentation";
 
 const FAVORITE_RADIO_GRID_LAYOUTS = [
   {
@@ -75,14 +76,10 @@ export function FavoriteRadioShowsSection({
 }) {
   return (
     <section className="mt-8">
-      <div className="mb-4 flex items-baseline justify-between">
-        <h2 className="m-0 font-display text-base leading-none font-semibold tracking-tight">
-          Radio shows
-        </h2>
-        <span className="text-xs text-[#6f736e]">
-          {countLabel(showCount, "show")}
-        </span>
-      </div>
+      <SavedSectionHeader
+        title="Radio shows"
+        count={countLabel(showCount, "show")}
+      />
       <ResponsiveVirtualGrid
         aria-label="Favorite radio shows"
         className="w-full"
@@ -193,7 +190,7 @@ export function FavoriteRadioShowsSection({
                   </Link>
                   <span aria-hidden="true">·</span>
                   <time className="shrink-0" dateTime={show.publishedAt}>
-                    {radioShowDate(show.publishedAt)}
+                    {showDate(show.publishedAt)}
                   </time>
                 </div>
               </div>

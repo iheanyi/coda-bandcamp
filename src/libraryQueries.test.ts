@@ -5,6 +5,7 @@ import {
   LIBRARY_AUTO_REVALIDATE_INTERVAL_MS,
   albumQueryKey,
   cachedAlbumTracks,
+  albumWithCachedTracks,
   clearBandcampQueryData,
   ensureAlbumQueryData,
   libraryQueryKey,
@@ -187,6 +188,9 @@ describe("library query helpers", () => {
     ]);
 
     expect(cachedAlbumTracks(client, cachedRelease)).toEqual([
+      expect.objectContaining({ id: "cached" }),
+    ]);
+    expect(albumWithCachedTracks(client, cachedRelease).tracks).toEqual([
       expect.objectContaining({ id: "cached" }),
     ]);
     expect(mocks.fetchAlbum).not.toHaveBeenCalled();

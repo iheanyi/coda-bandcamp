@@ -9,6 +9,7 @@ import {
 import {
   awaitRouteCommit,
   MAX_ROUTE_COMMIT_MS,
+  routeCommitFailureCopy,
 } from "./routeCommit";
 import type {
   RenderedNavigationRouter,
@@ -171,5 +172,27 @@ describe("awaitRouteCommit", () => {
     fake.emitRendered("entry-2");
     await vi.advanceTimersByTimeAsync(MAX_ROUTE_COMMIT_MS);
     expect(fake.unsubscribeCount).toBe(1);
+  });
+
+  it("returns exhaustive failure copy and leaves successful commits silent", () => {
+    expect(routeCommitFailureCopy("rendered", "Playlist navigation")).toBe(
+      undefined,
+    );
+    expect(
+      routeCommitFailureCopy("same-location", "Playlist navigation"),
+    ).toBeUndefined();
+    expect(routeCommitFailureCopy("failed", "Playlist navigation")).toBe(
+      "Playlist navigation failed. Try again.",
+    );
+    expect(routeCommitFailureCopy("timeout", "Radio show navigation")).toBe(
+      "Radio show navigation took too long. Try again.",
+    );
+    expect(
+      routeCommitFailureCopy(
+        "failed",
+        "Going back",
+        "Could not go back. Try again.",
+      ),
+    ).toBe("Could not go back. Try again.");
   });
 });

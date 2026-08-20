@@ -11,15 +11,12 @@ import {
   CodaRoutePending,
 } from "./-route-status";
 
-function RootRouteError({ reset }: ErrorComponentProps) {
-  const router = useRouter();
-
+function RootRouteError({ error }: ErrorComponentProps) {
   const retry = () => {
-    reset();
-    void router.invalidate();
+    window.location.reload();
   };
 
-  return <CodaRouteError onRetry={retry} />;
+  return <CodaRouteError cause={error} onRetry={retry} />;
 }
 
 function CodaRoot() {

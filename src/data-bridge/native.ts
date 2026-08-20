@@ -20,7 +20,10 @@ import {
  */
 export type NativeValue = OwnDataValue;
 export type NativeRecord = OwnDataRecord;
-export type NativeDecoder<Value> = (value: NativeValue, context: string) => Value;
+export type NativeDecoder<Value> = (
+  value: NativeValue,
+  context: string,
+) => Value;
 
 export const MAX_NATIVE_IDENTIFIER_BYTES = 512;
 export const MAX_NATIVE_METADATA_BYTES = 1_024;
@@ -61,22 +64,6 @@ export function decodeNativeRecord(
     return invalidNativeResponse(context, "an object");
   }
   return record;
-}
-
-export function decodeNativeProperty(
-  record: NativeRecord,
-  key: string,
-  context: string,
-  required = true,
-): NativeValue {
-  const value = record[key];
-  if (required && value === undefined) {
-    return invalidNativeResponse(
-      `${context}.${key}`,
-      "an own data property",
-    );
-  }
-  return value;
 }
 
 export function decodeNativeArray<Value>(
@@ -201,35 +188,11 @@ export function decodeNativeOptionalInteger(
   return decodeNativeInteger(value, context, maximum, minimum);
 }
 
-export function decodeNativeNumber(
-  value: NativeValue,
-  context: string,
-  maximum: number,
-  minimum = 0,
-): number {
-  if (
-    !isNumberValue(value) ||
-    !Number.isFinite(value) ||
-    value < minimum ||
-    value > maximum
-  ) {
-    return invalidNativeResponse(
-      context,
-      `a finite number from ${minimum} through ${maximum}`,
-    );
-  }
-  return value;
-}
-
 export function decodeNativeBandcampUrl(
   value: NativeValue,
   context: string,
 ): string {
-  const candidate = decodeNativeString(
-    value,
-    context,
-    MAX_NATIVE_URL_BYTES,
-  );
+  const candidate = decodeNativeString(value, context, MAX_NATIVE_URL_BYTES);
   let url: URL;
   try {
     url = new URL(candidate);

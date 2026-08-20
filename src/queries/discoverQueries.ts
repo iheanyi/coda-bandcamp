@@ -1,5 +1,6 @@
 import { infiniteQueryOptions } from "@tanstack/react-query";
 import { fetchDiscover } from "@/lib";
+import { cursorNextPageParam } from "@/queries/anonymousFeed";
 import type { DiscoverFilters } from "@/types";
 
 export function discoverInfiniteQueryOptions(filters: DiscoverFilters) {
@@ -7,7 +8,6 @@ export function discoverInfiniteQueryOptions(filters: DiscoverFilters) {
     queryKey: ["discover", filters] as const,
     queryFn: ({ pageParam }) => fetchDiscover(filters, pageParam),
     initialPageParam: "*",
-    getNextPageParam: (lastPage) =>
-      lastPage.hasMore && lastPage.cursor ? lastPage.cursor : undefined,
+    getNextPageParam: (lastPage) => cursorNextPageParam(lastPage),
   });
 }

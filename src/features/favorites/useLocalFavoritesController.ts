@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ToastNotifier } from "@/components/ui/toastManager";
+import { formatErrorMessage } from "@/formatError";
 import {
   fetchFavorites,
   reconcileFavoriteTracks,
@@ -90,10 +91,6 @@ type UseLocalFavoritesControllerOptions = Readonly<{
   repository?: LocalFavoritesRepository;
   selectedAlbum?: Album;
 }>;
-
-function errorMessage(cause: unknown): string {
-  return String(cause).replace(/^Error:\s*/u, "");
-}
 
 function emptyMusicFavorites(): FavoriteCollection {
   return { albumIds: [], songIds: [], albums: [], tracks: [] };
@@ -291,7 +288,7 @@ export function useLocalFavoritesController({
         ) {
           return undefined;
         }
-        const message = errorMessage(cause);
+        const message = formatErrorMessage(cause);
         committedLocalCollectionRef.current = persistedLocalCollectionRef.current;
         setLocalCollection(persistedLocalCollectionRef.current);
         setLocalLoadError(message);
@@ -340,7 +337,7 @@ export function useLocalFavoritesController({
               persistedLocalCollectionRef.current;
             setLocalCollection(persistedLocalCollectionRef.current);
           }
-          if (reportFailure) notify(errorMessage(cause), "bad");
+          if (reportFailure) notify(formatErrorMessage(cause), "bad");
           return false;
         },
       );
@@ -377,7 +374,7 @@ export function useLocalFavoritesController({
   );
   const ready = localReady && (!connected || !musicQuery.isPending);
   const loadError = localLoadError ??
-    (musicQuery.error ? errorMessage(musicQuery.error) : undefined);
+    (musicQuery.error ? formatErrorMessage(musicQuery.error) : undefined);
 
   const reconcileKnownTracks = useCallback(async (
     favorites: LocalFavoriteCollection,
@@ -415,7 +412,7 @@ export function useLocalFavoritesController({
       }
     } catch (cause) {
       if (connectionEpochRef.current !== epoch) return;
-      if (reportUnavailable) notify(errorMessage(cause), "bad");
+      if (reportUnavailable) notify(formatErrorMessage(cause), "bad");
     }
   }, [connected, musicRepository, notify, persistLocal]);
 
@@ -461,7 +458,7 @@ export function useLocalFavoritesController({
       if (next === current) return;
       void persistLocal(next, false, connectionEpochRef.current);
     } catch (cause) {
-      notify(errorMessage(cause), "bad");
+      notify(formatErrorMessage(cause), "bad");
     }
   }, [
     enumeratedTrackStarsSignature,
@@ -531,7 +528,7 @@ export function useLocalFavoritesController({
           if (next !== current) void persistLocal(next, false, epoch);
         } catch (cause) {
           reconciledHydratedTrackStarsRef.current = { epoch, signature: "" };
-          notify(errorMessage(cause), "bad");
+          notify(formatErrorMessage(cause), "bad");
         }
       },
       () => {
@@ -632,7 +629,7 @@ export function useLocalFavoritesController({
             );
             return true;
           } catch (cause) {
-            notify(errorMessage(cause), "bad");
+            notify(formatErrorMessage(cause), "bad");
             return false;
           }
         };
@@ -738,11 +735,11 @@ export function useLocalFavoritesController({
                 ),
               );
             }
-            notify(errorMessage(cause), "bad");
+            notify(formatErrorMessage(cause), "bad");
           },
         );
       } catch (cause) {
-        notify(errorMessage(cause), "bad");
+        notify(formatErrorMessage(cause), "bad");
       }
     },
     [
@@ -782,7 +779,7 @@ export function useLocalFavoritesController({
           );
         });
       } catch (cause) {
-        notify(errorMessage(cause), "bad");
+        notify(formatErrorMessage(cause), "bad");
       }
     },
     [

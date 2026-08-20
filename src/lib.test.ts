@@ -1,18 +1,22 @@
-import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import { clearMocks } from "@tauri-apps/api/mocks";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as coverArtSource from "./coverArtSource";
 import { fetchDiscover } from "./data-bridge/discover";
 import { hydrateAlbum } from "./data-bridge/hydration";
 import { getLastFmStatus } from "./data-bridge/lastfm";
+import * as libraryBridge from "./data-bridge/library";
 import { readLibraryCache } from "./data-bridge/libraryCache";
 import { fetchRadioShow } from "./data-bridge/radio";
+import * as runtimeData from "./data-bridge/runtimeData";
 import { updateSystemMediaPlayback } from "./data-bridge/systemMedia";
+import { coverCacheDiagnostics as coverCacheDiagnosticsFromModule } from "./data-bridge/coverCache";
+import { openBandcampUrl as openBandcampUrlFromDesktop } from "./data-bridge/desktop";
 import {
+  connectBandcamp,
   coverCacheDiagnostics,
   fetchDiscover as fetchDiscoverFromBarrel,
   fetchRadioShow as fetchRadioShowFromBarrel,
-  formatTime,
   getLastFmStatus as getLastFmStatusFromBarrel,
-  initials,
   openBandcampUrl,
   updateSystemMediaPlayback as updateSystemMediaPlaybackFromBarrel,
 } from "./lib";
@@ -45,10 +49,7 @@ function installStorage(value: string | null) {
   return () => removed;
 }
 
-function storedLibrarySnapshot(
-  albums: unknown[],
-  savedAt = 1_000,
-): string {
+function storedLibrarySnapshot(albums: unknown[], savedAt = 1_000): string {
   return JSON.stringify({
     version: 1,
     savedAt,
@@ -78,7 +79,8 @@ describe("library metadata cache", () => {
       artist: "Test Artist",
       songCount: 1,
       duration: 180,
-      artworkUrl: "https://bandcamp.com/api/subsonic/getCoverArt?s=salt&t=token",
+      artworkUrl:
+        "https://bandcamp.com/api/subsonic/getCoverArt?s=salt&t=token",
       tracks: [
         {
           id: "track-1",
@@ -93,11 +95,15 @@ describe("library metadata cache", () => {
         },
       ],
     });
-    installStorage(storedLibrarySnapshot([{
-      ...album,
-      credentials: "must-not-survive",
-      streamUrl: "https://bandcamp.com/api/subsonic/stream?s=salt&t=token",
-    }]));
+    installStorage(
+      storedLibrarySnapshot([
+        {
+          ...album,
+          credentials: "must-not-survive",
+          streamUrl: "https://bandcamp.com/api/subsonic/stream?s=salt&t=token",
+        },
+      ]),
+    );
 
     expect(readLibraryCache(1_001)).toEqual([
       expect.not.objectContaining({
@@ -135,13 +141,15 @@ describe("library metadata cache", () => {
       songCount: 1,
       duration: 180,
     });
-    const wasRemoved = installStorage(storedLibrarySnapshot([
-      {
-        ...album,
-        originalReleaseDate: {},
-        releaseDate: { year: 2025, month: 2, day: 29 },
-      },
-    ]));
+    const wasRemoved = installStorage(
+      storedLibrarySnapshot([
+        {
+          ...album,
+          originalReleaseDate: {},
+          releaseDate: { year: 2025, month: 2, day: 29 },
+        },
+      ]),
+    );
 
     expect(readLibraryCache(1_001)).toEqual([]);
     expect(wasRemoved()).toBe(true);
@@ -150,12 +158,14 @@ describe("library metadata cache", () => {
   it.each([undefined, 2])(
     "discards unsupported cache schema version %j",
     (version) => {
-      const wasRemoved = installStorage(JSON.stringify({
-        version,
-        savedAt: 1_000,
-        lastFullSyncAt: 1_000,
-        albums: [],
-      }));
+      const wasRemoved = installStorage(
+        JSON.stringify({
+          version,
+          savedAt: 1_000,
+          lastFullSyncAt: 1_000,
+          albums: [],
+        }),
+      );
 
       expect(readLibraryCache(1_001)).toEqual([]);
       expect(wasRemoved()).toBe(true);
@@ -181,17 +191,26 @@ describe("public barrel helpers", () => {
     expect(fetchDiscoverFromBarrel).toBe(fetchDiscover);
     expect(fetchRadioShowFromBarrel).toBe(fetchRadioShow);
     expect(getLastFmStatusFromBarrel).toBe(getLastFmStatus);
-    expect(updateSystemMediaPlaybackFromBarrel).toBe(
-      updateSystemMediaPlayback,
-    );
+    expect(updateSystemMediaPlaybackFromBarrel).toBe(updateSystemMediaPlayback);
+    expect(coverCacheDiagnostics).toBe(coverCacheDiagnosticsFromModule);
+    expect(openBandcampUrl).toBe(openBandcampUrlFromDesktop);
   });
 
-  it("formats playback times and two-letter initials", () => {
-    expect(formatTime(-1)).toBe("0:00");
-    expect(formatTime(Number.NaN)).toBe("0:00");
-    expect(formatTime(65)).toBe("1:05");
-    expect(formatTime(3_661)).toBe("1:01:01");
-    expect(initials("soft focus extra")).toBe("SF");
+  it("clears native media caches and renderer cover state after connect", async () => {
+    vi.spyOn(libraryBridge, "connectBandcamp").mockResolvedValue([]);
+    const clearMedia = vi.spyOn(runtimeData, "clearConnectionMediaCaches");
+    const clearCover = vi.spyOn(
+      coverArtSource,
+      "clearCoverArtRendererState",
+    );
+
+    await expect(
+      connectBandcamp({ username: "listener", password: "token" }),
+    ).resolves.toEqual([]);
+
+    expect(libraryBridge.connectBandcamp).toHaveBeenCalledOnce();
+    expect(clearMedia).toHaveBeenCalledOnce();
+    expect(clearCover).toHaveBeenCalledOnce();
   });
 
   it("opens only verified Bandcamp HTTPS links", async () => {
@@ -205,36 +224,13 @@ describe("public barrel helpers", () => {
       "Coda only opens verified Bandcamp links.",
     );
     await expect(
-      openBandcampUrl("https://token@nightarchive.bandcamp.com/album/soft-focus"),
+      openBandcampUrl(
+        "https://token@nightarchive.bandcamp.com/album/soft-focus",
+      ),
     ).rejects.toThrow("Coda only opens verified Bandcamp links.");
     await openBandcampUrl("https://nightarchive.bandcamp.com/album/soft-focus");
     expect(opened).toEqual([
       "https://nightarchive.bandcamp.com/album/soft-focus",
     ]);
-  });
-
-  it("decodes native cover-cache diagnostics through the barrel", async () => {
-    mockIPC((command) => {
-      if (command === "cover_cache_diagnostics") {
-        return {
-          entryCount: 2,
-          totalBytes: 1_024,
-          hitCount: 8,
-          missCount: 1,
-          staleCount: 0,
-          cleanupPending: false,
-        };
-      }
-      throw new Error(`Unexpected native command: ${command}`);
-    });
-
-    await expect(coverCacheDiagnostics()).resolves.toEqual({
-      entryCount: 2,
-      totalBytes: 1_024,
-      hitCount: 8,
-      missCount: 1,
-      staleCount: 0,
-      cleanupPending: false,
-    });
   });
 });

@@ -2,11 +2,23 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import type { QueryClient } from "@tanstack/react-query";
 
 import type { ToastNotifier } from "@/components/ui/toastManager";
-import type { LibrarySessionCommands } from "@/features/library-session";
-import type { DetailNavigationController } from "@/features/navigation/useDetailNavigation";
-import { tracksForArtistGroupAlbum, type ArtistGroup } from "@/libraryBrowse";
+import { formatErrorMessage } from "@/formatError";
 import {
-  cachedAlbumTracks,
+  LIBRARY_METADATA_CONCURRENCY,
+  type LibrarySessionCommands,
+} from "@/features/library-session";
+import type { DetailNavigationController } from "@/features/navigation/useDetailNavigation";
+import {
+  albumWithRecoveredCover,
+  albumWithTracks,
+} from "@/libraryAlbumHydration";
+import {
+  resolveAlbumSummary,
+  tracksForScopeAlbum,
+  type ArtistGroup,
+} from "@/libraryBrowse";
+import {
+  albumWithCachedTracks,
   libraryQueryKey,
   revalidateAlbumQueryData,
 } from "@/libraryQueries";
@@ -20,7 +32,6 @@ import { parseAlbumIdParam } from "@/routing/routeContracts";
 import { resolveSurprise } from "@/surpriseMe";
 import type { Album, Track } from "@/types";
 
-const ALBUM_BATCH_CONCURRENCY = 6;
 const RANDOM_PICK_YIELD_INTERVAL = 16;
 
 type ArtistAction = "play" | "queue";
@@ -95,24 +106,6 @@ export type LibraryActionsController = Readonly<{
   state: LibraryActionsState;
 }>;
 
-function albumWithTracks(album: Album, tracks: readonly Track[]): Album {
-  return {
-    ...album,
-    coverArt:
-      album.coverArt ?? tracks.find((track) => track.coverArt)?.coverArt,
-    tracks: [...tracks],
-  };
-}
-
-function albumWithRecoveredCover(
-  album: Album,
-  tracks: readonly Track[],
-): Album {
-  if (album.coverArt) return album;
-  const coverArt = tracks.find((track) => track.coverArt)?.coverArt;
-  return coverArt ? { ...album, coverArt } : album;
-}
-
 /**
  * Owns generation-safe library action workflows and their bounded transient
  * progress. TanStack Query and LibrarySession remain the only remote-data
@@ -146,9 +139,7 @@ export function useLibraryActionsController({
   const randomPickActiveRef = useRef(false);
 
   const selectedAlbum = selectedAlbumId
-    ? selectedAlbumSnapshot?.id === selectedAlbumId
-      ? selectedAlbumSnapshot
-      : albums.find((album) => album.id === selectedAlbumId)
+    ? resolveAlbumSummary(selectedAlbumId, selectedAlbumSnapshot, albums)
     : undefined;
 
   const ensureTracks = useCallback(
@@ -178,11 +169,8 @@ export function useLibraryActionsController({
     async (album: Album, sourceTrigger?: HTMLElement) => {
       const sessionGeneration = session.generation.current();
       const hasLocalTracklist = Boolean(album.tracks?.length);
-      const cachedTracks = cachedAlbumTracks(queryClient, album);
-      const coldLoad = cachedTracks === undefined;
-      let albumForDetail = coldLoad
-        ? album
-        : albumWithTracks(album, cachedTracks);
+      let albumForDetail = albumWithCachedTracks(queryClient, album);
+      const coldLoad = albumForDetail === album;
       let hydrationPending = coldLoad;
 
       void detailNavigation
@@ -199,7 +187,7 @@ export function useLibraryActionsController({
         })
         .catch((cause) => {
           if (!session.generation.isCurrent(sessionGeneration)) return;
-          notify(String(cause), "bad");
+          notify(formatErrorMessage(cause), "bad");
         });
 
       try {
@@ -232,7 +220,7 @@ export function useLibraryActionsController({
         }
       } catch (cause) {
         if (session.generation.isCurrent(sessionGeneration)) {
-          notify(String(cause), "bad");
+          notify(formatErrorMessage(cause), "bad");
         }
       } finally {
         hydrationPending = false;
@@ -253,51 +241,46 @@ export function useLibraryActionsController({
     ],
   );
 
-  const playAlbum = useCallback(
-    async (album: Album) => {
+  const withHydratedAlbum = useCallback(
+    async (
+      album: Album,
+      run: (tracks: Track[]) => void,
+    ): Promise<boolean> => {
       cancelShuffle();
       const generation = session.generation.current();
       try {
         const ready = await ensureTracks(album, generation);
-        if (
-          !ready?.tracks?.length ||
-          !session.generation.isCurrent(generation)
-        ) {
-          return;
-        }
-        playTracks(ready.tracks);
-      } catch (cause) {
-        if (session.generation.isCurrent(generation)) {
-          notify(String(cause), "bad");
-        }
-      }
-    },
-    [cancelShuffle, ensureTracks, notify, playTracks, session],
-  );
-
-  const queueAlbum = useCallback(
-    async (album: Album): Promise<boolean> => {
-      cancelShuffle();
-      const generation = session.generation.current();
-      try {
-        const ready = await ensureTracks(album, generation);
-        if (
-          !ready?.tracks?.length ||
-          !session.generation.isCurrent(generation)
-        ) {
+        const tracks = ready?.tracks;
+        if (!tracks?.length || !session.generation.isCurrent(generation)) {
           return false;
         }
-        queueTracks(ready.tracks);
-        notify(`${album.title} added to queue`, "good");
+        run(tracks);
         return true;
       } catch (cause) {
         if (session.generation.isCurrent(generation)) {
-          notify(String(cause), "bad");
+          notify(formatErrorMessage(cause), "bad");
         }
         return false;
       }
     },
-    [cancelShuffle, ensureTracks, notify, queueTracks, session],
+    [cancelShuffle, ensureTracks, notify, session],
+  );
+
+  const playAlbum = useCallback(
+    async (album: Album) => {
+      await withHydratedAlbum(album, playTracks);
+    },
+    [playTracks, withHydratedAlbum],
+  );
+
+  const queueAlbum = useCallback(
+    async (album: Album): Promise<boolean> => {
+      return withHydratedAlbum(album, (tracks) => {
+        queueTracks(tracks);
+        notify(`${album.title} added to queue`, "good");
+      });
+    },
+    [notify, queueTracks, withHydratedAlbum],
   );
 
   const loadArtistTracks = useCallback(
@@ -308,13 +291,11 @@ export function useLibraryActionsController({
       setArtistAction(action);
       try {
         const result = await session.ensureAlbums(group.albums, {
-          concurrency: ALBUM_BATCH_CONCURRENCY,
+          concurrency: LIBRARY_METADATA_CONCURRENCY,
         });
         if (result.stale || !session.generation.isCurrent(generation)) return;
         const tracks = result.albums.flatMap((album) =>
-          album
-            ? tracksForArtistGroupAlbum(group, album.id, album.tracks ?? [])
-            : [],
+          album ? tracksForScopeAlbum(group, album.id, album.tracks ?? []) : [],
         );
         if (!tracks.length) {
           notify(`No playable tracks were returned for ${group.name}.`, "bad");
@@ -356,7 +337,7 @@ export function useLibraryActionsController({
       setQueueSearchProgress({ done: 0, total: targets.length });
       try {
         const result = await session.ensureAlbums(targets, {
-          concurrency: ALBUM_BATCH_CONCURRENCY,
+          concurrency: LIBRARY_METADATA_CONCURRENCY,
           onProgress: ({ completed, total }) => {
             if (session.generation.isCurrent(generation)) {
               setQueueSearchProgress({ done: completed, total });
@@ -391,11 +372,10 @@ export function useLibraryActionsController({
     ],
   );
 
-  const playRandomTrack = useCallback(
+  const withRandomPickScope = useCallback(
     async (
       scopeAlbums: readonly Album[],
-      scopeName: string,
-      artistScope?: ArtistGroup,
+      run: (generation: number) => Promise<void>,
     ) => {
       if (randomPickActiveRef.current || !connected || !scopeAlbums.length) {
         return;
@@ -404,24 +384,40 @@ export function useLibraryActionsController({
       const generation = session.generation.current();
       randomPickActiveRef.current = true;
       setRandomPickLoading(true);
-      const candidates = weightedRandomOrder(scopeAlbums, (album) =>
-        Math.max(1, album.songCount),
-      );
-      let misses = 0;
-
       try {
+        await run(generation);
+      } finally {
+        if (session.generation.isCurrent(generation)) {
+          randomPickActiveRef.current = false;
+          setRandomPickLoading(false);
+        }
+      }
+    },
+    [cancelShuffle, connected, session],
+  );
+
+  const playRandomTrack = useCallback(
+    async (
+      scopeAlbums: readonly Album[],
+      scopeName: string,
+      artistScope?: ArtistGroup,
+    ) => {
+      await withRandomPickScope(scopeAlbums, async (generation) => {
+        const candidates = weightedRandomOrder(scopeAlbums, (album) =>
+          Math.max(1, album.songCount),
+        );
+        let misses = 0;
+
         for (const album of candidates) {
           if (!session.generation.isCurrent(generation)) return;
           try {
             const ready = await ensureTracks(album, generation);
             if (!ready || !session.generation.isCurrent(generation)) return;
-            const tracks = artistScope
-              ? tracksForArtistGroupAlbum(
-                  artistScope,
-                  album.id,
-                  ready.tracks ?? [],
-                )
-              : (ready.tracks ?? []);
+            const tracks = tracksForScopeAlbum(
+              artistScope,
+              album.id,
+              ready.tracks ?? [],
+            );
             const track = pickRandomItem(tracks);
             if (!track) {
               misses += 1;
@@ -444,14 +440,9 @@ export function useLibraryActionsController({
         if (session.generation.isCurrent(generation)) {
           notify(`No playable tracks were found in ${scopeName}.`, "bad");
         }
-      } finally {
-        if (session.generation.isCurrent(generation)) {
-          randomPickActiveRef.current = false;
-          setRandomPickLoading(false);
-        }
-      }
+      });
     },
-    [activateTrack, cancelShuffle, connected, ensureTracks, notify, session],
+    [activateTrack, ensureTracks, notify, session, withRandomPickScope],
   );
 
   const playSurprise = useCallback(
@@ -460,20 +451,13 @@ export function useLibraryActionsController({
       scopeName: string,
       artistScope?: ArtistGroup,
     ) => {
-      if (randomPickActiveRef.current || !connected || !scopeAlbums.length) {
-        return;
-      }
-      cancelShuffle();
-      const generation = session.generation.current();
-      randomPickActiveRef.current = true;
-      setRandomPickLoading(true);
-      try {
+      await withRandomPickScope(scopeAlbums, async (generation) => {
         const result = await resolveSurprise(scopeAlbums, {
           loadTracks: async (album) =>
             (await ensureTracks(album, generation))?.tracks,
           selectTracks: artistScope
             ? (album, tracks) =>
-                tracksForArtistGroupAlbum(artistScope, album.id, [...tracks])
+                tracksForScopeAlbum(artistScope, album.id, [...tracks])
             : undefined,
           isActive: () => session.generation.isCurrent(generation),
         });
@@ -489,14 +473,9 @@ export function useLibraryActionsController({
             : `Playing ${result.queue[0].title} by ${result.queue[0].artist}.`,
           "good",
         );
-      } finally {
-        if (session.generation.isCurrent(generation)) {
-          randomPickActiveRef.current = false;
-          setRandomPickLoading(false);
-        }
-      }
+      });
     },
-    [cancelShuffle, connected, ensureTracks, notify, playTracks, session],
+    [ensureTracks, notify, playTracks, session, withRandomPickScope],
   );
 
   const clearSelectedAlbum = useCallback(() => {

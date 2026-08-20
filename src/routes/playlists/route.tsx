@@ -1,12 +1,15 @@
 import { createFileRoute, Outlet } from "@tanstack/react-router";
 
-import { usePlaylistRouteNavigationAdapter } from "@/features/navigation";
+import {
+  PLAYLIST_ROUTE_SPEC,
+  useRouteNavigationAdapter,
+} from "@/features/navigation";
 import { PlaylistRouteNavigationProvider } from "@/features/saved-library/PlaylistRouteNavigationContext";
 import { codaRouteMeta } from "@/routing/routeMeta";
 import { PlaylistsRoutePending } from "@/routes/-route-loading";
 
 function PlaylistsRouteLayout() {
-  const adapter = usePlaylistRouteNavigationAdapter();
+  const adapter = useRouteNavigationAdapter(PLAYLIST_ROUTE_SPEC);
 
   return (
     <PlaylistRouteNavigationProvider adapter={adapter}>

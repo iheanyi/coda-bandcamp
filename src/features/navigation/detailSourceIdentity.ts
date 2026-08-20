@@ -9,30 +9,16 @@ import {
   type DetailTransitionKey,
 } from "@/detailTransitionDescriptors";
 
-export type PreparedDetailSource = DetailTransitionSource;
-
-type MutablePreparedDetailSource = {
-  identity: string;
-  sharedIdentityAvailable: boolean;
-  sourceTrigger?: HTMLElement;
-  targets?: DetailTransitionEndpointTargets;
-};
-
-type MutableDetailTransitionEndpointTargets = {
-  owner: HTMLElement;
-  secondary?: HTMLElement;
-  shared?: HTMLElement;
-};
-
 export function detailTransitionEndpointTargets(
   owner: HTMLElement,
   shared?: HTMLElement,
   secondary?: HTMLElement,
 ): DetailTransitionEndpointTargets {
-  const targets: MutableDetailTransitionEndpointTargets = { owner };
-  if (shared) targets.shared = shared;
-  if (secondary) targets.secondary = secondary;
-  return targets;
+  return {
+    owner,
+    shared,
+    secondary,
+  };
 }
 
 function preparedDetailSource(
@@ -40,14 +26,13 @@ function preparedDetailSource(
   sharedIdentityAvailable: boolean,
   sourceTrigger?: HTMLElement,
   targets?: DetailTransitionEndpointTargets,
-): PreparedDetailSource {
-  const prepared: MutablePreparedDetailSource = {
+): DetailTransitionSource {
+  return Object.freeze({
     identity,
     sharedIdentityAvailable,
-  };
-  if (sourceTrigger) prepared.sourceTrigger = sourceTrigger;
-  if (targets) prepared.targets = targets;
-  return Object.freeze(prepared);
+    sourceTrigger,
+    targets,
+  });
 }
 
 function isFromOwnerTarget(
@@ -107,7 +92,7 @@ function triggerMatchesIdentity(
 ): boolean {
   return Boolean(
     trigger?.matches(definition.trigger.selector) &&
-      trigger.getAttribute(definition.trigger.identityAttribute) === identity,
+    trigger.getAttribute(definition.trigger.identityAttribute) === identity,
   );
 }
 
@@ -200,7 +185,7 @@ export function findSlottedDetailReturnTrigger(
   });
 }
 
-function interactiveTrigger(
+export function interactiveTrigger(
   trigger: HTMLElement | undefined,
 ): HTMLElement | undefined {
   return (
@@ -250,7 +235,9 @@ function assignSharedReturnSlot(
   const descriptor = DETAIL_TRANSITION_DESCRIPTORS[kind];
   const slotAttribute = descriptor.domIdentity.trigger.slotAttribute;
   const slots =
-    "sharedReturnSlots" in descriptor ? descriptor.sharedReturnSlots : undefined;
+    "sharedReturnSlots" in descriptor
+      ? descriptor.sharedReturnSlots
+      : undefined;
   if (!slotAttribute || !slots?.length || trigger.getAttribute(slotAttribute)) {
     return;
   }

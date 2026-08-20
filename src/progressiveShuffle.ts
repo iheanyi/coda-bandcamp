@@ -1,3 +1,6 @@
+import { nextQueueIndex, shuffled } from "./queue";
+import { unitInterval } from "./random";
+
 const UINT32_RANGE = 0x1_0000_0000;
 
 type ShuffleSource = {
@@ -51,12 +54,6 @@ export type ProgressiveShuffleAdvanceResolution =
       playing: boolean;
     };
 
-function unitInterval(random: () => number): number {
-  const value = random();
-  if (!Number.isFinite(value)) return 0;
-  return Math.min(Math.max(value, 0), 1 - Number.EPSILON);
-}
-
 function seededRandom(seed: number): () => number {
   let state = seed >>> 0;
   return () => {
@@ -74,15 +71,6 @@ function albumSeed(seed: number, albumId: string): number {
     hash = Math.imul(hash ^ albumId.charCodeAt(index), 16777619) >>> 0;
   }
   return hash;
-}
-
-function shuffleWithRandom<T>(items: readonly T[], random: () => number): T[] {
-  const copy = [...items];
-  for (let index = copy.length - 1; index > 0; index -= 1) {
-    const swapIndex = Math.floor(unitInterval(random) * (index + 1));
-    [copy[index], copy[swapIndex]] = [copy[swapIndex], copy[index]];
-  }
-  return copy;
 }
 
 function addWeight(tree: Float64Array, index: number, change: number): void {
@@ -151,7 +139,8 @@ export function shuffleProgressiveAlbumTracks<T>(
   planSeed: number,
   albumId: string,
 ): T[] {
-  return shuffleWithRandom(tracks, seededRandom(albumSeed(planSeed, albumId)));
+  const random = seededRandom(albumSeed(planSeed, albumId));
+  return shuffled(tracks, () => unitInterval(random));
 }
 
 export function createProgressiveShuffleMaterialization<
@@ -344,22 +333,20 @@ export function resolveProgressiveShuffleAdvance<TTrack extends Identified>(
     return { status: "waiting" };
   }
 
-  if (currentIndex + 1 < queue.length) {
+  const nextIndex = nextQueueIndex(
+    currentIndex,
+    queue.length,
+    exhausted ? repeatMode : "off",
+  );
+  if (nextIndex !== currentIndex) {
     return {
       status: "resolved",
-      currentIndex: currentIndex + 1,
+      currentIndex: nextIndex,
       playing: pending.reason === "ended" ? true : pending.wasPlaying,
     };
   }
   if (!exhausted) return { status: "waiting" };
 
-  if (repeatMode === "all" && queue.length > 1) {
-    return {
-      status: "resolved",
-      currentIndex: 0,
-      playing: pending.reason === "ended" ? true : pending.wasPlaying,
-    };
-  }
   return {
     status: "resolved",
     currentIndex,

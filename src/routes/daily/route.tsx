@@ -2,13 +2,16 @@ import { createFileRoute, Outlet, useMatch } from "@tanstack/react-router";
 
 import { DailyArchiveScreen } from "@/features/daily/DailyScreens";
 import { DailyRouteNavigationProvider } from "@/features/daily/DailyRouteNavigationContext";
-import { useDailyRouteNavigationAdapter } from "@/features/navigation";
+import {
+  DAILY_ROUTE_SPEC,
+  useRouteNavigationAdapter,
+} from "@/features/navigation";
 import { validateDailySearch } from "@/routing/routeContracts";
 import { codaRouteMeta } from "@/routing/routeMeta";
 import { DailyRoutePending } from "@/routes/-route-loading";
 
 function DailyRouteLayout() {
-  const adapter = useDailyRouteNavigationAdapter();
+  const adapter = useRouteNavigationAdapter(DAILY_ROUTE_SPEC);
   const { category } = validateDailySearch(Route.useSearch());
   const articleMatch = useMatch({
     from: "/daily/$slug",

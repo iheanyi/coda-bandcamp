@@ -1,8 +1,8 @@
 import type { InvokeArgs } from "@tauri-apps/api/core";
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createPlayerState } from "./playerState";
-import type { PlayerStateInput } from "./types";
+import { createPlayerState } from "../playerState";
+import type { PlayerStateInput } from "../types";
 
 type NativeInvocation = {
   command: string;
@@ -104,7 +104,7 @@ describe("native player-state contract negotiation", () => {
       if (command === "checkpoint_player_state") return Promise.resolve(true);
       return Promise.reject(new Error(`Unexpected command: ${command}`));
     });
-    const { checkpointPlayerState, savePlayerState } = await import("./lib");
+    const { checkpointPlayerState, savePlayerState } = await import("./playerState");
 
     const saving = savePlayerState(radioInput);
     expect(invocationFor("save_player_state")).toBeUndefined();
@@ -140,7 +140,7 @@ describe("native player-state contract negotiation", () => {
       if (command === "save_player_state") return Promise.resolve();
       return Promise.reject(new Error(`Unexpected command: ${command}`));
     });
-    const { savePlayerState } = await import("./lib");
+    const { savePlayerState } = await import("./playerState");
 
     await savePlayerState(radioInput);
 
@@ -167,7 +167,7 @@ describe("native player-state contract negotiation", () => {
       if (command === "save_player_state") return Promise.resolve();
       return Promise.reject(new Error(`Unexpected command: ${command}`));
     });
-    const { savePlayerState } = await import("./lib");
+    const { savePlayerState } = await import("./playerState");
     const queue = Array.from({ length: 25_000 }, (_, index) => ({
       ...radioInput.queue[0],
       id: `radio:${index + 1}`,
@@ -217,7 +217,7 @@ describe("native player-state contract negotiation", () => {
       if (command === "record_player_state_diagnostic") return Promise.resolve();
       return Promise.reject(new Error(`Unexpected command: ${command}`));
     });
-    const { loadPlayerState } = await import("./lib");
+    const { loadPlayerState } = await import("./playerState");
 
     const loading = loadPlayerState();
     let settled = false;

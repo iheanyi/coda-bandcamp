@@ -7,10 +7,12 @@ import {
   skipToken,
 } from "@tanstack/react-query";
 import { fetchRadioShow, fetchRadioShows } from "@/lib";
+import {
+  ANONYMOUS_FEED_STALE_TIME_MS,
+  cursorNextPageParam,
+} from "@/queries/anonymousFeed";
 import { BANDCAMP_RADIO_SERIES } from "@/radioSeries";
 import type { RadioShowSummary, RadioShowsPage } from "@/types";
-
-const RADIO_STALE_TIME_MS = 10 * 60 * 1_000;
 
 export type RadioArchiveScope = number | "all";
 type RadioArchiveQueryKey = readonly [
@@ -49,9 +51,8 @@ export function radioShowsInfiniteQueryOptions(
         cursor: pageParam ?? undefined,
       }),
     initialPageParam: null,
-    getNextPageParam: (page): string | null | undefined =>
-      page.hasMore && page.cursor ? page.cursor : undefined,
-    staleTime: RADIO_STALE_TIME_MS,
+    getNextPageParam: (page) => cursorNextPageParam(page),
+    staleTime: ANONYMOUS_FEED_STALE_TIME_MS,
   });
 }
 
@@ -62,7 +63,7 @@ export function radioShowQueryOptions(
   return queryOptions({
     queryKey: ["bandcamp-radio-show", showId] as const,
     queryFn: () => repository.fetchShow(showId),
-    staleTime: RADIO_STALE_TIME_MS,
+    staleTime: ANONYMOUS_FEED_STALE_TIME_MS,
   });
 }
 
@@ -115,6 +116,14 @@ function radioShowSummaryFromArchive(
     return summary;
   }
   return undefined;
+}
+
+export function mergeRadioShowSeries<T extends { series?: RadioShowSummary["series"] }>(
+  loaded: T,
+  fallback?: Pick<RadioShowSummary, "series">,
+): T {
+  if (loaded.series || !fallback?.series) return loaded;
+  return { ...loaded, series: fallback.series };
 }
 
 export function radioShowSummaryCandidatesInCache(

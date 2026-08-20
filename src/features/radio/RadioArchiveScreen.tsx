@@ -9,7 +9,6 @@ import {
   ListMusic,
   ListPlus,
   Radio,
-  RefreshCw,
 } from "lucide-react";
 import {
   useCallback,
@@ -18,11 +17,13 @@ import {
   useRef,
   useState,
   useTransition,
+  type ReactNode,
 } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { PlaybackIcon } from "@/components/ui/playback-icon";
+import { RetryButton } from "@/components/ui/retry-button";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Tooltip,
@@ -30,10 +31,13 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { countLabel } from "@/countLabel";
-import type { RouteCommitOutcome } from "@/features/navigation/routeCommit";
+import { libraryScrollRoot } from "@/detailNavigation";
+import { routeCommitFailureCopy } from "@/features/navigation/routeCommit";
+import { formatErrorMessage } from "@/formatError";
 import { openBandcampUrl } from "@/lib";
 import { cn } from "@/lib/utils";
 import {
+  mergeRadioShowSeries,
   radioShowQueryOptions,
   radioShowsInfiniteQueryOptions,
 } from "@/queries/radioQueries";
@@ -48,6 +52,8 @@ import {
 } from "@/routing/routeContracts";
 import type { RadioShowSummary } from "@/types";
 
+import { RadioFeedStatus } from "./RadioFeedStatus";
+import { useOpenExternalBandcampItem } from "./useOpenExternalBandcampItem";
 import {
   RadioArtwork,
   RadioCard,
@@ -56,9 +62,7 @@ import {
 } from "./RadioPresentation";
 import { showDate } from "./radioPresentationFormatting";
 import { radioShowId } from "./radioRouteIds";
-import type {
-  RadioArchiveScreenProps,
-} from "./radioScreenTypes";
+import type { RadioArchiveScreenProps } from "./radioScreenTypes";
 
 const RADIO_ARCHIVE_GRID_LAYOUTS = [
   {
@@ -77,26 +81,22 @@ const RADIO_ARCHIVE_GRID_LAYOUTS = [
 ] as const;
 const radioShowKey = (show: RadioShowSummary) => show.id;
 
-function assertNever(value: never): never {
-  throw new TypeError(`Unsupported exhaustive variant: ${String(value)}`);
+function RadioArchiveFeedShell({
+  seriesNavigation,
+  children,
+}: {
+  seriesNavigation: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="min-h-full pb-2.5">
+      {seriesNavigation}
+      {children}
+    </section>
+  );
 }
 
-function radioShowNavigationFailureCopy(
-  outcome: RouteCommitOutcome,
-): string | undefined {
-  switch (outcome) {
-    case "rendered":
-    case "same-location":
-      return undefined;
-    case "failed":
-      return "Radio show navigation failed. Try again.";
-    case "timeout":
-      return "Radio show navigation took too long. Try again.";
-    default:
-      return assertNever(outcome);
-  }
-}
-function RadioArchiveScreen({
+export function RadioArchiveScreen({
   onPlay,
   onQueue,
   currentTrackId,
@@ -152,10 +152,7 @@ function RadioArchiveScreen({
     async (summary: RadioShowSummary) => {
       const options = radioShowQueryOptions(summary.id, repository);
       const loaded = await queryClient.fetchQuery(options);
-      const details =
-        loaded.series || !summary.series
-          ? loaded
-          : { ...loaded, series: summary.series };
+      const details = mergeRadioShowSeries(loaded, summary);
       if (details !== loaded) {
         queryClient.setQueryData(options.queryKey, details);
       }
@@ -175,7 +172,7 @@ function RadioArchiveScreen({
         if (action === "play") onPlay(track);
         else onQueue(track);
       } catch (cause) {
-        setActionError(String(cause).replace(/^Error:\s*/, ""));
+        setActionError(formatErrorMessage(cause));
       } finally {
         setBusy(undefined);
       }
@@ -190,9 +187,7 @@ function RadioArchiveScreen({
         setActionError("Bandcamp returned an invalid Radio show ID");
         return;
       }
-      const returnScrollTop =
-        document.querySelector<HTMLElement>("[data-coda-library-scroll]")
-          ?.scrollTop ?? 0;
+      const returnScrollTop = libraryScrollRoot()?.scrollTop ?? 0;
       setActionError("");
       try {
         const outcome = await onOpenShow({
@@ -201,21 +196,19 @@ function RadioArchiveScreen({
           showId: parsedShowId,
           sourceTrigger,
         });
-        const failureCopy = radioShowNavigationFailureCopy(outcome);
-        if (failureCopy) setActionError(failureCopy);
+        const message = routeCommitFailureCopy(
+          outcome,
+          "Radio show navigation",
+        );
+        if (message) setActionError(message);
       } catch (cause) {
-        setActionError(String(cause).replace(/^Error:\s*/, ""));
+        setActionError(formatErrorMessage(cause));
       }
     },
     [onOpenShow],
   );
 
-  const openItem = useCallback((url: string) => {
-    setActionError("");
-    void openExternal(url).catch((cause) => {
-      setActionError(String(cause).replace(/^Error:\s*/, ""));
-    });
-  }, [openExternal]);
+  const openItem = useOpenExternalBandcampItem(openExternal, setActionError);
 
   const actionFor = (show: RadioShowSummary) =>
     busy?.id === show.id ? busy.action : undefined;
@@ -282,74 +275,55 @@ function RadioArchiveScreen({
 
   if (showsQuery.isPending) {
     return (
-      <section className="min-h-full pb-2.5">
-        {seriesNavigation}
-        <div className="flex min-h-108 flex-col items-center justify-center text-center text-[#6e726d]">
-          <Spinner
-            className="size-7 motion-reduce:animate-none"
-            aria-label={`Tuning ${BANDCAMP_RADIO_PROVIDER}`}
-          />
-          <strong className="mt-3 text-base text-[#cac9c3]">
-            Tuning {BANDCAMP_RADIO_PROVIDER}…
-          </strong>
-          <span className="mt-1.5 max-w-md text-xs/normal text-coda-subtle-foreground">
-            Loading the latest artist interviews and curated shows.
-          </span>
-        </div>
-      </section>
+      <RadioArchiveFeedShell seriesNavigation={seriesNavigation}>
+        <RadioFeedStatus
+          icon={
+            <Spinner
+              className="size-7 motion-reduce:animate-none"
+              aria-label={`Tuning ${BANDCAMP_RADIO_PROVIDER}`}
+            />
+          }
+          title={`Tuning ${BANDCAMP_RADIO_PROVIDER}…`}
+          detail="Loading the latest artist interviews and curated shows."
+        />
+      </RadioArchiveFeedShell>
     );
   }
 
   if (showsQuery.isError) {
     return (
-      <section className="min-h-full pb-2.5">
-        {seriesNavigation}
-        <div className="flex min-h-108 flex-col items-center justify-center text-center text-[#6e726d]">
-          <Radio size={30} />
-          <strong className="mt-3 text-base text-[#cac9c3]">
-            {BANDCAMP_RADIO_PROVIDER} is off the air
-          </strong>
-          <span className="mt-1.5 max-w-md text-xs/normal text-coda-subtle-foreground">
-            {String(showsQuery.error).replace(/^Error:\s*/, "")}
-          </span>
-          <Button
-            variant="secondary"
-            size="compact"
-            className="mt-4 text-xs text-[#dd8973]"
-            onClick={() => void showsQuery.refetch()}
-            disabled={showsQuery.isFetching}
-          >
-            {showsQuery.isFetching ? (
-              <Spinner
-                aria-hidden="true"
-                className="size-3.5 text-current motion-reduce:animate-none"
-              />
-            ) : (
-              <RefreshCw size={14} />
-            )}
-            {showsQuery.isFetching ? "Tuning again…" : "Try again"}
-          </Button>
-        </div>
-      </section>
+      <RadioArchiveFeedShell seriesNavigation={seriesNavigation}>
+        <RadioFeedStatus
+          action={
+            <RetryButton
+              busy={showsQuery.isFetching}
+              busyLabel="Tuning again…"
+              className="mt-4 text-xs text-[#dd8973]"
+              label="Try again"
+              onClick={() => void showsQuery.refetch()}
+            />
+          }
+          detail={formatErrorMessage(showsQuery.error)}
+          icon={<Radio size={30} />}
+          title={`${BANDCAMP_RADIO_PROVIDER} is off the air`}
+        />
+      </RadioArchiveFeedShell>
     );
   }
 
   if (!featured) {
     return (
-      <section className="min-h-full pb-2.5">
-        {seriesNavigation}
-        <div className="flex min-h-108 flex-col items-center justify-center text-center text-[#6e726d]">
-          <Radio size={30} />
-          <strong className="mt-3 text-base text-[#cac9c3]">
-            No episodes found
-          </strong>
-          <span className="mt-1.5 max-w-md text-xs/normal text-coda-subtle-foreground">
-            {selectedSeries
+      <RadioArchiveFeedShell seriesNavigation={seriesNavigation}>
+        <RadioFeedStatus
+          detail={
+            selectedSeries
               ? `Bandcamp did not return any ${selectedSeries.title} episodes.`
-              : "Bandcamp did not return any Radio episodes."}
-          </span>
-        </div>
-      </section>
+              : "Bandcamp did not return any Radio episodes."
+          }
+          icon={<Radio size={30} />}
+          title="No episodes found"
+        />
+      </RadioArchiveFeedShell>
     );
   }
 
@@ -622,22 +596,4 @@ function RadioArchiveScreen({
       </p>
     </section>
   );
-}
-
-export type RadioIndexScreenProps = Omit<RadioArchiveScreenProps, "seriesId">;
-
-export function RadioIndexScreen(props: RadioIndexScreenProps) {
-  return <RadioArchiveScreen {...props} />;
-}
-
-export type RadioSeriesScreenProps = Omit<RadioArchiveScreenProps, "seriesId"> &
-  Readonly<{
-    seriesId: RadioSeriesId;
-  }>;
-
-export function RadioSeriesScreen({
-  seriesId,
-  ...props
-}: RadioSeriesScreenProps) {
-  return <RadioArchiveScreen {...props} seriesId={seriesId} />;
 }

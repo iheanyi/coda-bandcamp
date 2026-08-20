@@ -1,8 +1,7 @@
 export {
-  awaitRouterBackAfterRender,
-  useDailyRouteNavigationAdapter,
-  usePlaylistRouteNavigationAdapter,
-  useRadioRouteNavigationAdapter,
+  DAILY_ROUTE_SPEC,
+  PLAYLIST_ROUTE_SPEC,
+  RADIO_ROUTE_SPEC,
   useRouteNavigationAdapter,
 } from "./routeNavigationAdapters";
 export {
@@ -16,7 +15,6 @@ export {
   type NowPlayingNavigationRequest,
 } from "./useDetailNavigation";
 export {
-  detailDestinationKey,
   useRouteDestination,
   type CodaDetailDestination,
   type CodaRouteDestination,

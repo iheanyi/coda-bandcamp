@@ -258,7 +258,16 @@ describe("useLibraryRouteRuntimeAdapter", () => {
 
   it("validates artist route identity and derives active shuffle state", () => {
     const options = createOptions();
-    const { result } = renderRuntime(options);
+    const { result } = renderRuntime({
+      ...options,
+      screens: {
+        ...options.screens,
+        releaseResultsModel: {
+          ...releaseResultsModel,
+          title: "Releases",
+        },
+      },
+    });
     const artistId = parseArtistKeyParam("signal garden");
 
     expect(

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterContextProvider } from "@tanstack/react-router";
 import type { InvokeArgs } from "@tauri-apps/api/core";
@@ -17,7 +18,7 @@ import {
   tauriString,
 } from "@/test/tauriInvoke";
 import type { DiscoverFilters, DiscoverPage, Track } from "@/types";
-import DiscoverView, { DiscoverScreen } from "./DiscoverView";
+import { DiscoverScreen } from "./DiscoverView";
 
 const mocks = {
   fetchDiscover:
@@ -96,6 +97,22 @@ function renderDiscover(
   ]);
   const onTogglePlayback = playback.onTogglePlayback ?? vi.fn();
   const onPlay = playback.onPlay ?? vi.fn();
+  function DiscoverHarness() {
+    const [filters, setFilters] = useState<DiscoverFilters>(initialFilters);
+    return (
+      <DiscoverScreen
+        filters={filters}
+        onFiltersChange={setFilters}
+        onPlay={onPlay}
+        onQueue={onQueue}
+        currentTrackId={playback.currentTrackId}
+        playing={playback.playing ?? false}
+        onTogglePlayback={onTogglePlayback}
+        onOpenRelease={playback.onOpenRelease ?? vi.fn()}
+        onOpenArtist={playback.onOpenArtist ?? vi.fn()}
+      />
+    );
+  }
   return {
     client,
     onPlay,
@@ -105,15 +122,7 @@ function renderDiscover(
       <QueryClientProvider client={client}>
         <RouterContextProvider router={router}>
           <div data-coda-library-scroll>
-            <DiscoverView
-              onPlay={onPlay}
-              onQueue={onQueue}
-              currentTrackId={playback.currentTrackId}
-              playing={playback.playing ?? false}
-              onTogglePlayback={onTogglePlayback}
-              onOpenRelease={playback.onOpenRelease ?? vi.fn()}
-              onOpenArtist={playback.onOpenArtist ?? vi.fn()}
-            />
+            <DiscoverHarness />
           </div>
         </RouterContextProvider>
       </QueryClientProvider>,

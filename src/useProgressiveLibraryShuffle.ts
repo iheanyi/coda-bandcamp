@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  tracksForArtistGroupAlbum,
+  tracksForScopeAlbum,
   type ArtistGroup,
 } from "./libraryBrowse";
 import { MAX_PERSISTED_QUEUE_LENGTH } from "./playerState";
@@ -172,13 +172,11 @@ export function useProgressiveLibraryShuffle({
           if (recoveredAlbum !== album) {
             session.recoveredCovers.set(album.id, recoveredAlbum);
           }
-          const scopedTracks = session.artistScope
-            ? tracksForArtistGroupAlbum(
-                session.artistScope,
-                album.id,
-                tracks,
-              )
-            : tracks;
+          const scopedTracks = tracksForScopeAlbum(
+            session.artistScope,
+            album.id,
+            tracks,
+          );
           recordProgressiveShuffleSourceResult(
             materialization,
             album.id,

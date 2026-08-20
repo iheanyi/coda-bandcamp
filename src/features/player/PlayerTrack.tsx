@@ -14,6 +14,10 @@ import type { PlaybackClock } from "@/playbackClock";
 import { normalizedReleaseTitle } from "@/playerState";
 import type { RadioChapter, Track } from "@/types";
 import { CoverArt } from "@/features/artwork/CoverArt";
+import {
+  coverArtAlbumFromTrack,
+  coverArtFallbackFromTrack,
+} from "@/features/artwork/coverArtAlbum";
 import { handleCodaLinkActivation } from "@/routing/linkActivation";
 import { useCurrentRadioChapter } from "./playbackClockHooks";
 import { TrackAlbumLink, TrackArtistLink } from "./TrackRouteLinks";
@@ -50,27 +54,28 @@ export const PlayerTrack = memo(function PlayerTrack({
   const radioAiring = useCurrentRadioChapter(playbackClock, radioTimeline);
   const activeChapter = radioAiring.current;
   const releaseTitle = track ? normalizedReleaseTitle(track.album) : "";
-  const favoriteControl = track && onToggleFavorite ? (
-    <Button
-      className={cn(
-        "size-7 shrink-0",
-        favorite &&
-          "rounded-full bg-primary/10 text-coda-favorite ring-1 ring-primary/20 ring-inset hover:bg-primary/[0.18] hover:text-coda-favorite",
-      )}
-      onClick={onToggleFavorite}
-      size="icon-compact"
-      title={favorite ? "Remove from favorites" : "Add to favorites"}
-      aria-label={
-        favorite
-          ? `Remove ${track.title} from favorites`
-          : `Add ${track.title} to favorites`
-      }
-      aria-pressed={favorite}
-      variant="ghost"
-    >
-      <Heart size={17} fill={favorite ? "currentColor" : "none"} />
-    </Button>
-  ) : null;
+  const favoriteControl =
+    track && onToggleFavorite ? (
+      <Button
+        className={cn(
+          "size-7 shrink-0",
+          favorite &&
+            "rounded-full bg-primary/10 text-coda-favorite ring-1 ring-primary/20 ring-inset hover:bg-primary/[0.18] hover:text-coda-favorite",
+        )}
+        onClick={onToggleFavorite}
+        size="icon-compact"
+        title={favorite ? "Remove from favorites" : "Add to favorites"}
+        aria-label={
+          favorite
+            ? `Remove ${track.title} from favorites`
+            : `Add ${track.title} to favorites`
+        }
+        aria-pressed={favorite}
+        variant="ghost"
+      >
+        <Heart size={17} fill={favorite ? "currentColor" : "none"} />
+      </Button>
+    ) : null;
 
   return (
     <div
@@ -91,17 +96,11 @@ export const PlayerTrack = memo(function PlayerTrack({
           >
             <CoverArt
               size="small"
-              album={{
-                id: track.albumId,
-                title: activeChapter?.title ?? track.album,
-                artist: activeChapter?.artist ?? track.artist,
-                coverArt: track.coverArt,
-                artworkUrl: activeChapter?.artworkUrl ?? track.artworkUrl,
-                palette: track.palette,
-              }}
-              fallbackArtworkUrl={
-                activeChapter?.artworkUrl ? track.artworkUrl : undefined
-              }
+              album={coverArtAlbumFromTrack(track, activeChapter)}
+              fallbackArtworkUrl={coverArtFallbackFromTrack(
+                track,
+                activeChapter,
+              )}
               animateChanges={Boolean(track.radioChapters?.length)}
             />
           </Link>

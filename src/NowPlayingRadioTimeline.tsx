@@ -1,15 +1,14 @@
 import {
   memo,
   startTransition,
-  useCallback,
   useEffect,
   useState,
-  useSyncExternalStore,
 } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { countLabel } from "@/countLabel";
+import { useCurrentRadioChapter } from "@/features/player/playbackClockHooks";
 import { formatTime } from "@/lib";
 import { cn } from "@/lib/utils";
 import type { PlaybackClock } from "@/playbackClock";
@@ -19,27 +18,10 @@ import {
   type RadioChapterLocalLinks,
 } from "@/RadioChapterMetadata";
 import { BANDCAMP_RADIO_PROVIDER } from "@/radioIdentity";
-import { radioAiringIndexesAt } from "@/radioPlayback";
 import type { RadioChapter } from "@/types";
 
 const RADIO_TIMELINE_INITIAL_LIMIT = 6;
 const RADIO_TIMELINE_BATCH_SIZE = 12;
-
-function useCurrentRadioIndex(
-  playbackClock: PlaybackClock,
-  timeline: readonly RadioChapter[],
-): number {
-  const getCurrentIndex = useCallback(
-    () =>
-      radioAiringIndexesAt(timeline, playbackClock.getSnapshot()).currentIndex,
-    [playbackClock, timeline],
-  );
-  return useSyncExternalStore(
-    playbackClock.subscribe,
-    getCurrentIndex,
-    getCurrentIndex,
-  );
-}
 
 export const NowPlayingRadioSummary = memo(function NowPlayingRadioSummary({
   playbackClock,
@@ -52,10 +34,7 @@ export const NowPlayingRadioSummary = memo(function NowPlayingRadioSummary({
   onOpen: (url: string) => void;
   getLocalLinks?: (chapter: RadioChapter) => RadioChapterLocalLinks;
 }) {
-  const currentIndex = useCurrentRadioIndex(playbackClock, timeline);
-  const current = currentIndex >= 0 ? timeline[currentIndex] : undefined;
-  const next =
-    currentIndex + 1 < timeline.length ? timeline[currentIndex + 1] : undefined;
+  const { current, next } = useCurrentRadioChapter(playbackClock, timeline);
 
   if (current) {
     return (
@@ -110,8 +89,10 @@ export const NowPlayingRadioTimeline = memo(function NowPlayingRadioTimeline({
   onOpen: (url: string) => void;
   getLocalLinks?: (chapter: RadioChapter) => RadioChapterLocalLinks;
 }) {
-  const currentIndex = useCurrentRadioIndex(playbackClock, timeline);
-  const nextIndex = currentIndex + 1 < timeline.length ? currentIndex + 1 : -1;
+  const { currentIndex, nextIndex } = useCurrentRadioChapter(
+    playbackClock,
+    timeline,
+  );
   const [renderedCount, setRenderedCount] = useState(() =>
     Math.min(RADIO_TIMELINE_INITIAL_LIMIT, timeline.length),
   );

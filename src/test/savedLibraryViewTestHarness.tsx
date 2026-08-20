@@ -15,8 +15,10 @@ import type { AppUpdaterController } from "@/appUpdaterController";
 import { clearCoverArtRendererState } from "@/coverArtSource";
 import { resetDetailNavigation } from "@/detailNavigation";
 import { createLibrarySessionController } from "@/features/library-session";
-import type { SavedLibraryRuntimeValue } from "@/features/saved-library";
-import { SavedLibraryRuntimeProvider } from "@/features/saved-library";
+import {
+  SavedLibraryRuntimeContext,
+  type SavedLibraryRuntimeValue,
+} from "@/features/saved-library/SavedLibraryRuntimeContext";
 import { AddToPlaylistDialog } from "@/features/saved-library/AddToPlaylistDialog";
 import { PersistentAppOverlays } from "@/features/settings/PersistentAppOverlays";
 import { usePersistentOverlaysController } from "@/features/settings/usePersistentOverlaysController";
@@ -66,9 +68,7 @@ function takeCoverOrderingReceipt() {
   return { sequence: sequence.toString() };
 }
 
-function isPlaylistUpdatePayload(
-  value: OwnDataValue,
-): value is OwnDataRecord {
+function isPlaylistUpdatePayload(value: OwnDataValue): value is OwnDataRecord {
   return value !== null && Object(value) === value && !Array.isArray(value);
 }
 
@@ -490,14 +490,14 @@ export function renderSavedLibraryRoute({
   const routeTree = (runtime: SavedLibraryRuntimeValue) => (
     <CodaMotionProvider>
       <QueryClientProvider client={queryClient}>
-        <SavedLibraryRuntimeProvider value={runtime}>
+        <SavedLibraryRuntimeContext.Provider value={runtime}>
           <div
             data-coda-library-scroll
             style={{ height: 600, overflowY: "auto" }}
           >
             <RouterProvider router={router} />
           </div>
-        </SavedLibraryRuntimeProvider>
+        </SavedLibraryRuntimeContext.Provider>
       </QueryClientProvider>
     </CodaMotionProvider>
   );

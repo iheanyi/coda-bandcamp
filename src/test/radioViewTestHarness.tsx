@@ -8,7 +8,7 @@ import {
   codaViewTransitionClass,
   type CodaViewTransitionKind,
 } from "../detailTransitionDescriptors";
-import { RadioIndexScreen, RadioSeriesScreen } from "../features/radio/RadioArchiveScreen";
+import { RadioArchiveScreen } from "../features/radio/RadioArchiveScreen";
 import { RadioRouteNavigationProvider, type RadioRouteNavigationAdapter } from "../features/radio/RadioRouteNavigationContext";
 import { useRadioRouteNavigation } from "../features/radio/RadioRouteNavigationState";
 import type { RadioPlaybackProps } from "../features/radio/radioScreenTypes";
@@ -158,10 +158,8 @@ function CanonicalRadioScreen({
     repository,
     seriesTravelSteps: navigation.seriesTravelSteps,
   };
-  return seriesId === undefined ? (
-    <RadioIndexScreen {...archiveProps} />
-  ) : (
-    <RadioSeriesScreen {...archiveProps} seriesId={seriesId} />
+  return (
+    <RadioArchiveScreen {...archiveProps} seriesId={seriesId} />
   );
 }
 
