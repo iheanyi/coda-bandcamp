@@ -3,7 +3,10 @@ import {
   connectBandcamp as connectBandcampNative,
   type LibrarySyncProgress,
 } from "./data-bridge/library";
-import { clearRuntimeCaches as clearNativeRuntimeCaches } from "./data-bridge/runtimeData";
+import {
+  clearConnectionMediaCaches,
+  clearRuntimeCaches as clearNativeRuntimeCaches,
+} from "./data-bridge/runtimeData";
 import type { Album, ConnectionInput } from "./types";
 
 export {
@@ -81,11 +84,16 @@ export {
 } from "./data-bridge/playerState";
 export { formatTime, initials } from "./formatting";
 
+// Connecting clears native signed-URL caches and renderer cover state together
+// so a new account cannot reuse the previous session's media. The data-bridge
+// connectBandcamp stays a pure invoke because it must not import renderer
+// cover state.
 export async function connectBandcamp(
   input: ConnectionInput,
   onPage?: (progress: LibrarySyncProgress) => void,
 ): Promise<Album[]> {
   const albums = await connectBandcampNative(input, onPage);
+  clearConnectionMediaCaches();
   clearCoverArtRendererState();
   return albums;
 }

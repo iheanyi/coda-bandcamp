@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import type { MouseEvent, ReactNode } from "react";
 import { Button } from "@/components/ui/button";
+import { libraryArtistRouteSearch } from "@/features/library/libraryLinkSearch";
 import type { ArtistNavigationHandler } from "@/features/library/types";
 import { ArtistTransitionName } from "@/features/navigation/ArtistTransitionName";
 import { artistKey } from "@/libraryBrowse";
@@ -25,10 +26,6 @@ type NavigationLinkProps = Readonly<{
   ariaLabel?: string;
   title?: string;
 }>;
-
-type ArtistRouteLinkSearch = ReturnType<typeof validateCollectionSearch> & {
-  albumId?: ReturnType<typeof parseAlbumIdParam>;
-};
 
 type TrackAlbumLinkProps = NavigationLinkProps &
   Readonly<{
@@ -221,18 +218,9 @@ export function TrackArtistLink({
           );
         }}
         params={{ artistKey: destination.artistKey }}
-        search={(previous) => {
-          const search: ArtistRouteLinkSearch = {
-            ...validateCollectionSearch(previous),
-            genre: "All",
-            mode: "artists",
-            q: "",
-          };
-          if (destination.sourceAlbumId) {
-            search.albumId = destination.sourceAlbumId;
-          }
-          return search;
-        }}
+        search={(previous) =>
+          libraryArtistRouteSearch(previous, destination.sourceAlbumId)
+        }
         title={title}
         to="/collection/artists/$artistKey"
       >
@@ -344,9 +332,6 @@ export function LibraryArtistLink({
   title,
 }: LibraryArtistLinkProps) {
   const artistRouteKey = parseArtistKeyParam(artistKey(artist));
-  const parsedSourceAlbumId = sourceAlbumId
-    ? parseAlbumIdParam(sourceAlbumId)
-    : undefined;
   return (
     <Link
       aria-label={ariaLabel}
@@ -361,16 +346,9 @@ export function LibraryArtistLink({
         );
       }}
       params={{ artistKey: artistRouteKey }}
-      search={(previous) => {
-        const search: ArtistRouteLinkSearch = {
-          ...validateCollectionSearch(previous),
-          genre: "All",
-          mode: "artists",
-          q: "",
-        };
-        if (parsedSourceAlbumId) search.albumId = parsedSourceAlbumId;
-        return search;
-      }}
+      search={(previous) =>
+        libraryArtistRouteSearch(previous, sourceAlbumId)
+      }
       title={title}
       to="/collection/artists/$artistKey"
     >

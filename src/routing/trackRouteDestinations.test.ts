@@ -3,6 +3,7 @@ import type { Track } from "@/types";
 import {
   trackAlbumDestination,
   trackArtistDestination,
+  trackSourceFamily,
 } from "./trackRouteDestinations";
 
 const libraryTrack: Track = {
@@ -49,6 +50,7 @@ describe("track route destinations", () => {
     });
     expect(trackArtistDestination(track)).toEqual({
       kind: "discover-external-artist",
+      release: track.discoverRelease,
     });
   });
 
@@ -111,6 +113,7 @@ describe("track route destinations", () => {
     });
     expect(trackArtistDestination(track)).toEqual({
       kind: "daily-external-artist",
+      artistUrl: dailySource.artistUrl,
     });
     expect(
       trackAlbumDestination({
@@ -120,9 +123,25 @@ describe("track route destinations", () => {
     ).toBeUndefined();
   });
 
+  it("classifies each source family from the track id prefix", () => {
+    expect(trackSourceFamily(libraryTrack)).toBe("library");
+    expect(
+      trackSourceFamily({ ...libraryTrack, id: "discover:release-1:preview" }),
+    ).toBe("discover");
+    expect(
+      trackSourceFamily({ ...libraryTrack, id: "daily:lists:a42:7" }),
+    ).toBe("daily");
+    expect(trackSourceFamily({ ...libraryTrack, id: "radio:979" })).toBe(
+      "radio",
+    );
+  });
+
   it("refuses malformed internal identities", () => {
     expect(
-      trackAlbumDestination({ ...libraryTrack, albumId: "https://example.com" }),
+      trackAlbumDestination({
+        ...libraryTrack,
+        albumId: "https://example.com",
+      }),
     ).toBeUndefined();
     expect(
       trackArtistDestination({ ...libraryTrack, artist: "" }),

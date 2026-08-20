@@ -125,10 +125,8 @@ export function PlaylistsController(props: PlaylistsControllerProps) {
         onNotify(formatErrorMessage(recoveryCause), "bad");
         return;
       }
-      if (outcome === "failed" || outcome === "timeout") {
-        const message = routeCommitFailureCopy(outcome, "Playlist navigation");
-        if (message) onNotify(message, "bad");
-      }
+      const message = routeCommitFailureCopy(outcome, "Playlist navigation");
+      if (message) onNotify(message, "bad");
     } catch (cause) {
       if (recover) {
         try {

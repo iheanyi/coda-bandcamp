@@ -31,6 +31,7 @@ import type { CodaPrimaryView } from "@/routing/routeMeta";
 import {
   trackAlbumDestination,
   trackArtistDestination,
+  trackSourceFamily,
 } from "@/routing/trackRouteDestinations";
 import type {
   Album,
@@ -151,13 +152,18 @@ function isTrackedAppPath(path: string): boolean {
 }
 
 function trackAlbumUnavailableMessage(track: Track): string {
-  if (track.id.startsWith("daily:")) {
-    return `Could not open ${track.album} on Bandcamp`;
+  const family = trackSourceFamily(track);
+  switch (family) {
+    case "daily":
+      return `Could not open ${track.album} on Bandcamp`;
+    case "discover":
+      return `Could not open ${track.album} from Discover`;
+    case "radio":
+    case "library":
+      return `Could not find ${track.album} in this library`;
+    default:
+      return assertNever(family);
   }
-  if (track.id.startsWith("discover:")) {
-    return `Could not open ${track.album} from Discover`;
-  }
-  return `Could not find ${track.album} in this library`;
 }
 
 export type CodaNavigationControllerOptions = Readonly<{
@@ -496,24 +502,12 @@ export function useCodaNavigationControllerWithRuntime(
           : undefined;
       if (artistDestination) {
         switch (artistDestination.kind) {
-          case "daily-external-artist": {
-            const artistUrl = sourceTrack?.dailySource?.artistUrl;
-            if (!artistUrl) {
-              notify(`Could not open ${artist} on Bandcamp`, "bad");
-              return;
-            }
-            openExternal(artistUrl);
+          case "daily-external-artist":
+            openExternal(artistDestination.artistUrl);
             return;
-          }
-          case "discover-external-artist": {
-            const release = sourceTrack?.discoverRelease;
-            if (!release || release.id !== sourceTrack?.albumId) {
-              notify(`Could not open ${artist} on Bandcamp`, "bad");
-              return;
-            }
-            openDiscoverArtist(release);
+          case "discover-external-artist":
+            openDiscoverArtist(artistDestination.release);
             return;
-          }
           case "radio-series":
             setSelectedArtistFallbackSnapshot(undefined);
             openRadio({ kind: "series", seriesId: artistDestination.seriesId });

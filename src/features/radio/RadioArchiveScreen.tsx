@@ -196,13 +196,11 @@ export function RadioArchiveScreen({
           showId: parsedShowId,
           sourceTrigger,
         });
-        if (outcome === "failed" || outcome === "timeout") {
-          const message = routeCommitFailureCopy(
-            outcome,
-            "Radio show navigation",
-          );
-          if (message) setActionError(message);
-        }
+        const message = routeCommitFailureCopy(
+          outcome,
+          "Radio show navigation",
+        );
+        if (message) setActionError(message);
       } catch (cause) {
         setActionError(formatErrorMessage(cause));
       }

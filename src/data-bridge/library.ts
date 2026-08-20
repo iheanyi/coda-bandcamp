@@ -21,7 +21,6 @@ import {
   nativeChannel,
   type NativeValue,
 } from "./native";
-import { clearConnectionMediaCaches } from "./runtimeData";
 
 const MAX_LIBRARY_ALBUMS = 5_000;
 const MAX_ALBUM_TRACKS = 25_000;
@@ -375,14 +374,7 @@ export async function connectBandcamp(
   input: ConnectionInput,
   onPage?: (progress: LibrarySyncProgress) => void,
 ): Promise<Album[]> {
-  const albums = await invokeLibrarySync(
-    "connect",
-    { input },
-    "connect progress",
-    onPage,
-  );
-  clearConnectionMediaCaches();
-  return albums;
+  return invokeLibrarySync("connect", { input }, "connect progress", onPage);
 }
 
 export async function disconnect(): Promise<string | undefined> {
