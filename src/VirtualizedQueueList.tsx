@@ -181,10 +181,22 @@ export function VirtualizedQueueList<Item>({
     [accessibleItemLabel, items.length, onMove, startIndex],
   );
 
+  // A drop target only becomes valid once a dragover is cancelled, and the
+  // first dragover waits on a pointer move. Windows renders that gap as a
+  // not-allowed cursor flash at drag start, so claim the target and advertise
+  // "move" as soon as an active queue drag enters. Drags that did not start
+  // in this list (for example OS file drags) are deliberately left unclaimed.
+  const handleDragEnter = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (draggedIndexRef.current === undefined) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+  }, []);
+
   const handleDragOver = useCallback(
     (event: DragEvent<HTMLDivElement>) => {
       if (draggedIndexRef.current === undefined) return;
       event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
 
       const scrollElement = scrollRef.current;
       const itemIndex = eventItemIndex(event);
@@ -315,6 +327,7 @@ export function VirtualizedQueueList<Item>({
       aria-label={ariaLabel}
       className={className}
       data-virtualized={virtualized}
+      onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDrop={handleDrop}
       ref={scrollRef}

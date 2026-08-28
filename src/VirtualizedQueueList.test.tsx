@@ -218,6 +218,43 @@ describe("VirtualizedQueueList", () => {
     );
   });
 
+  it("claims the drop target with a move effect as soon as a queue drag enters", () => {
+    render(<Queue items={[item(0), item(1)]} onMove={vi.fn()} />);
+
+    const region = screen.getByRole("region", { name: "Upcoming tracks" });
+    const row = within(region)
+      .getByRole("button", { name: "Queue track 0 at 0" })
+      .closest<HTMLElement>('[role="listitem"]');
+    if (!row) throw new Error("Expected a draggable queue row");
+
+    // A drag that did not start in the queue (for example an OS file drag)
+    // must stay unclaimed.
+    const foreignDataTransfer = { dropEffect: "none", effectAllowed: "all" };
+    expect(
+      fireEvent.dragEnter(region, { dataTransfer: foreignDataTransfer }),
+    ).toBe(true);
+    expect(foreignDataTransfer.dropEffect).toBe("none");
+
+    fireEvent.dragStart(row, {
+      dataTransfer: { dropEffect: "none", effectAllowed: "none" },
+    });
+
+    // Windows shows a not-allowed cursor until the target is claimed, so
+    // dragenter must be cancelled and advertise "move" without waiting for
+    // the first dragover.
+    const enterDataTransfer = { dropEffect: "none", effectAllowed: "move" };
+    expect(
+      fireEvent.dragEnter(region, { dataTransfer: enterDataTransfer }),
+    ).toBe(false);
+    expect(enterDataTransfer.dropEffect).toBe("move");
+
+    const overDataTransfer = { dropEffect: "none", effectAllowed: "move" };
+    expect(fireEvent.dragOver(row, { dataTransfer: overDataTransfer })).toBe(
+      false,
+    );
+    expect(overDataTransfer.dropEffect).toBe("move");
+  });
+
   it("offers keyboard-operable move controls with bounded destinations", async () => {
     const onMove = vi.fn();
     const user = userEvent.setup();
