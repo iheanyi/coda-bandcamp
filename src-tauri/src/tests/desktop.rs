@@ -40,6 +40,27 @@ fn main_window_keeps_native_chrome_enabled() {
     );
 }
 
+// Tauri's built-in drag-drop handler and HTML5 drag-and-drop are mutually
+// exclusive on Windows (WebView2 intercepts OLE drags before DOM dragstart/
+// dragover/drop can fire). Coda never consumes native file drops, so the
+// handler must stay disabled or queue drag-to-reorder silently breaks on
+// Windows while continuing to work on macOS.
+#[test]
+fn main_window_disables_native_drag_drop_so_html5_queue_reorder_works() {
+    let config: Value =
+        serde_json::from_str(include_str!("../../tauri.conf.json")).expect("valid Tauri config");
+    let main_window = config["app"]["windows"]
+        .as_array()
+        .and_then(|windows| {
+            windows
+                .iter()
+                .find(|window| window["label"].as_str() == Some("main"))
+        })
+        .expect("main window config");
+
+    assert_eq!(main_window["dragDropEnabled"], Value::Bool(false));
+}
+
 #[cfg(desktop)]
 #[test]
 fn window_state_plugin_registration_precedes_user_setup() {

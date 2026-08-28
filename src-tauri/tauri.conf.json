@@ -34,6 +34,7 @@
         "visible": true,
         "backgroundColor": "#111315",
         "backgroundThrottling": "disabled",
+        "dragDropEnabled": false,
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,HardwareMediaKeyHandling",
         "devtools": false
       },
