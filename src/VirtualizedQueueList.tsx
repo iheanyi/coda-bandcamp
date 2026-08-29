@@ -289,6 +289,13 @@ export function VirtualizedQueueList<Item>({
         })}
         {onMove ? (
           <div
+            aria-hidden="true"
+            data-queue-drop-marker=""
+            data-visible={isDropTarget || undefined}
+          />
+        ) : null}
+        {onMove ? (
+          <div
             aria-label={`Reorder ${itemLabel}`}
             className="pointer-events-none absolute top-1/2 right-8 z-10 flex -translate-y-1/2 gap-0.5 rounded-sm border border-white/10 bg-coda-queue p-0.5 opacity-0 shadow-md transition-opacity group-hover/queue-row:pointer-events-auto group-hover/queue-row:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100"
             data-queue-reorder-controls=""

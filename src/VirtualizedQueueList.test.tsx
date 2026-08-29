@@ -218,6 +218,69 @@ describe("VirtualizedQueueList", () => {
     );
   });
 
+  it("shows a landing marker on the drop target during dragover and clears it on drop", () => {
+    render(<Queue items={[item(0), item(1), item(2)]} onMove={vi.fn()} />);
+
+    const region = screen.getByRole("region", { name: "Upcoming tracks" });
+    const from = within(region)
+      .getByRole("button", { name: "Queue track 0 at 0" })
+      .closest<HTMLElement>('[role="listitem"]');
+    const to = within(region)
+      .getByRole("button", { name: "Queue track 2 at 2" })
+      .closest<HTMLElement>('[role="listitem"]');
+    if (!from || !to) throw new Error("Expected draggable queue rows");
+
+    fireEvent.dragStart(from, {
+      dataTransfer: { dropEffect: "none", effectAllowed: "none" },
+    });
+    fireEvent.dragOver(to, {
+      dataTransfer: { dropEffect: "none", effectAllowed: "move" },
+    });
+
+    expect(to).toHaveAttribute("data-drop-target", "true");
+    expect(
+      to.querySelector('[data-queue-drop-marker][data-visible="true"]'),
+    ).not.toBeNull();
+
+    fireEvent.drop(to);
+
+    expect(to).not.toHaveAttribute("data-drop-target");
+    expect(
+      region.querySelector('[data-queue-drop-marker][data-visible="true"]'),
+    ).toBeNull();
+  });
+
+  it("clears the landing marker when dragging ends without a drop", () => {
+    render(<Queue items={[item(0), item(1), item(2)]} onMove={vi.fn()} />);
+
+    const region = screen.getByRole("region", { name: "Upcoming tracks" });
+    const from = within(region)
+      .getByRole("button", { name: "Queue track 0 at 0" })
+      .closest<HTMLElement>('[role="listitem"]');
+    const to = within(region)
+      .getByRole("button", { name: "Queue track 1 at 1" })
+      .closest<HTMLElement>('[role="listitem"]');
+    if (!from || !to) throw new Error("Expected draggable queue rows");
+
+    fireEvent.dragStart(from, {
+      dataTransfer: { dropEffect: "none", effectAllowed: "none" },
+    });
+    fireEvent.dragOver(to, {
+      dataTransfer: { dropEffect: "none", effectAllowed: "move" },
+    });
+
+    expect(
+      to.querySelector('[data-queue-drop-marker][data-visible="true"]'),
+    ).not.toBeNull();
+
+    fireEvent.dragEnd(from);
+
+    expect(to).not.toHaveAttribute("data-drop-target");
+    expect(
+      region.querySelector('[data-queue-drop-marker][data-visible="true"]'),
+    ).toBeNull();
+  });
+
   it("claims the drop target with a move effect as soon as a queue drag enters", () => {
     render(<Queue items={[item(0), item(1)]} onMove={vi.fn()} />);
 
