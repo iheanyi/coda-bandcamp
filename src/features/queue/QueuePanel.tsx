@@ -431,9 +431,11 @@ export const QueuePanel = memo(function QueuePanel({
           getItemLabel={queueTrackLabel}
           items={upcoming}
           onMove={onMove}
-          renderItem={(track, { absoluteIndex, index: upcomingIndex }) => (
+          renderItem={(track, { absoluteIndex, dropTarget, index: upcomingIndex }) => (
             <m.div
               className="group grid min-h-15 grid-cols-[1rem_minmax(0,1fr)_auto_1.5rem] items-center gap-1 rounded-md p-1.5 transition-[background-color,translate] duration-(--duration-coda-standard) hover:translate-x-0.5 hover:bg-white/[0.035] max-lg:grid-cols-[0.75rem_minmax(0,1fr)_auto_1.5rem]"
+              data-drop-target={dropTarget || undefined}
+              data-queue-drop-slot=""
               initial={
                 upcomingIndex < 12
                   ? { opacity: 0, transform: "translateX(8px)" }
@@ -448,6 +450,11 @@ export const QueuePanel = memo(function QueuePanel({
                 },
               }}
             >
+              <span
+                aria-hidden="true"
+                data-queue-drop-marker=""
+                data-visible={dropTarget || undefined}
+              />
               <GripVertical
                 className="cursor-grab text-[#4e5250] opacity-0 transition-[color,opacity,transform] duration-(--duration-coda-standard) group-hover:translate-x-px group-hover:opacity-100"
                 size={15}

@@ -278,6 +278,29 @@
   transition-timing-function: var(--ease-coda-enter);
 }
 
+[data-queue-drop-slot] {
+  position: relative;
+}
+
+[data-queue-drop-marker] {
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  right: 6px;
+  left: 6px;
+  z-index: 2;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--primary);
+  opacity: 0;
+  transition: opacity var(--duration-coda-fast) var(--ease-coda-enter);
+}
+
+[data-drop-target="true"] > [data-queue-drop-marker],
+[data-queue-drop-marker][data-visible="true"] {
+  opacity: 1;
+}
+
 [data-coda-queue-plus],
 [data-coda-queue-check],
 [data-coda-queue-label] {
@@ -338,6 +361,7 @@
   [data-slot="row-playback-action"] [data-slot="playback-icon"],
   [data-slot="row-action-group"] > [data-slot="button"],
   [data-coda-discover-queue-action],
+  [data-queue-drop-marker],
   [data-coda-queue-plus],
   [data-coda-queue-check],
   [data-coda-queue-label] {
