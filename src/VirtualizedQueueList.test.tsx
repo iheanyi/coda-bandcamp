@@ -3,7 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   VirtualizedQueueList,
-  moveIndexForInsertBeforeDrop,
+  moveIndexForDropTarget,
+  queueDropTargetAtOffset,
   queueRelativeIndexAtOffset,
 } from "./VirtualizedQueueList";
 
@@ -81,6 +82,7 @@ function Queue({
           {onMove ? (
             <span
               aria-hidden="true"
+              data-insert={context.dropInsert}
               data-queue-drop-marker=""
               data-visible={context.dropTarget || undefined}
             />
@@ -239,6 +241,44 @@ describe("VirtualizedQueueList", () => {
     );
   });
 
+  it("reports the last absolute index from the final row after slot", () => {
+    const onMove = vi.fn();
+    render(
+      <Queue
+        items={[
+          item(0, "duplicate"),
+          item(1, "duplicate"),
+          item(2),
+          item(3),
+        ]}
+        onMove={onMove}
+        startIndex={7}
+      />,
+    );
+
+    const region = screen.getByRole("region", { name: "Upcoming tracks" });
+    const from = queueRow(region, "Queue track 1 at 8");
+    const to = queueRow(region, "Queue track 3 at 10");
+    fireEvent.dragStart(from, {
+      dataTransfer: { effectAllowed: "none" },
+    });
+    fireEvent.dragOver(to, { clientY: ROW_HEIGHT - 1 });
+
+    expect(to).toHaveAttribute("data-insert", "after");
+    expect(
+      to.querySelector(
+        '[data-queue-drop-marker][data-visible="true"][data-insert="after"]',
+      ),
+    ).not.toBeNull();
+
+    fireEvent.drop(to);
+
+    expect(onMove).toHaveBeenCalledWith(8, 10);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Moved Queue track 1 to position 4 of 4.",
+    );
+  });
+
   it("reports the hovered row index when an upward drop inserts before it", () => {
     const onMove = vi.fn();
     render(<Queue items={[item(0), item(1), item(2), item(3)]} onMove={onMove} />);
@@ -269,6 +309,22 @@ describe("VirtualizedQueueList", () => {
       dataTransfer: { effectAllowed: "none" },
     });
     fireEvent.dragOver(row);
+    fireEvent.drop(row);
+
+    expect(onMove).not.toHaveBeenCalled();
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+  });
+
+  it("does not dispatch when the last row is dropped on its own after slot", () => {
+    const onMove = vi.fn();
+    render(<Queue items={[item(0), item(1), item(2)]} onMove={onMove} />);
+
+    const region = screen.getByRole("region", { name: "Upcoming tracks" });
+    const row = queueRow(region, "Queue track 2 at 2");
+    fireEvent.dragStart(row, {
+      dataTransfer: { effectAllowed: "none" },
+    });
+    fireEvent.dragOver(row, { clientY: ROW_HEIGHT - 1 });
     fireEvent.drop(row);
 
     expect(onMove).not.toHaveBeenCalled();
@@ -478,11 +534,35 @@ describe("queueRelativeIndexAtOffset", () => {
   });
 });
 
-describe("moveIndexForInsertBeforeDrop", () => {
+describe("queueDropTargetAtOffset", () => {
+  it("uses the after slot only past the rendered list", () => {
+    expect(queueDropTargetAtOffset(149, 3, 50)).toEqual({
+      index: 2,
+      insert: "before",
+    });
+    expect(queueDropTargetAtOffset(150, 3, 50)).toEqual({
+      index: 2,
+      insert: "after",
+    });
+  });
+});
+
+describe("moveIndexForDropTarget", () => {
   it("maps row drop targets to final move indexes", () => {
-    expect(moveIndexForInsertBeforeDrop(1, 3)).toBe(2);
-    expect(moveIndexForInsertBeforeDrop(3, 1)).toBe(1);
-    expect(moveIndexForInsertBeforeDrop(2, 2)).toBe(2);
-    expect(moveIndexForInsertBeforeDrop(1, 2)).toBe(1);
+    expect(moveIndexForDropTarget(1, { index: 3, insert: "before" })).toBe(
+      2,
+    );
+    expect(moveIndexForDropTarget(3, { index: 1, insert: "before" })).toBe(
+      1,
+    );
+    expect(moveIndexForDropTarget(2, { index: 2, insert: "before" })).toBe(
+      2,
+    );
+    expect(moveIndexForDropTarget(1, { index: 2, insert: "before" })).toBe(
+      1,
+    );
+    expect(moveIndexForDropTarget(1, { index: 3, insert: "after" })).toBe(
+      3,
+    );
   });
 });

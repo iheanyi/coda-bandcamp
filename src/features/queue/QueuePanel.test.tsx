@@ -340,6 +340,17 @@ describe("QueuePanel recommendations", () => {
       .getByRole("button", { name: "Last Train" })
       .closest<HTMLElement>('[role="listitem"]');
     if (!from || !to) throw new Error("Expected draggable queue rows");
+    vi.spyOn(to, "getBoundingClientRect").mockReturnValue({
+      bottom: 60,
+      height: 60,
+      left: 0,
+      right: 320,
+      top: 0,
+      width: 320,
+      x: 0,
+      y: 0,
+      toJSON: () => undefined,
+    });
 
     fireEvent.dragStart(from, {
       dataTransfer: { dropEffect: "none", effectAllowed: "none" },
@@ -355,6 +366,114 @@ describe("QueuePanel recommendations", () => {
         expect.stringContaining("Night Bus"),
         expect.stringContaining("Streetlight"),
         expect.stringContaining("Last Train"),
+      ]);
+    });
+  });
+
+  it("moves a row to the last queue position from the final row after slot", async () => {
+    const noOp = vi.fn();
+    const router = createCodaMemoryRouter(new QueryClient(), ["/collection"]);
+    await router.load();
+
+    function StatefulQueuePanel() {
+      const [queue, setQueue] = useState([
+        currentTrack,
+        queuedTrack,
+        laterQueuedTrack,
+        finalQueuedTrack,
+      ]);
+
+      return (
+        <RouterContextProvider router={router}>
+          <CodaMotionProvider>
+            <Drawer modal={false} open swipeDirection="right">
+              <QueuePanel
+                open
+                panelRef={createRef<HTMLDivElement>()}
+                finalFocus={createRef<HTMLButtonElement>()}
+                queue={queue}
+                currentIndex={0}
+                currentTrack={currentTrack}
+                hasDeferredTracks={false}
+                radioTimeline={[]}
+                playbackClock={createPlaybackClock(currentTrack.duration)}
+                playing
+                onPlay={noOp}
+                onRemove={noOp}
+                onClear={noOp}
+                onShuffle={noOp}
+                onMove={(from, to) =>
+                  setQueue((currentQueue) => moveItem(currentQueue, from, to))
+                }
+                onArtist={noOp}
+                onAlbum={noOp}
+                onNowPlaying={noOp}
+                onOpenRadioItem={noOp}
+                getRadioChapterLocalLinks={() => ({})}
+                onSeek={noOp}
+                recommendationLoading={false}
+                recommendationQueueLoading={false}
+                onQueueRecommendation={noOp}
+                onPlayRecommendation={noOp}
+                onAnotherRecommendation={noOp}
+                playerVisible
+              />
+            </Drawer>
+          </CodaMotionProvider>
+        </RouterContextProvider>
+      );
+    }
+
+    render(<StatefulQueuePanel />);
+
+    const queueDialog = await screen.findByRole("dialog", { name: "Queue" });
+    const upcomingRegion = within(queueDialog).getByRole("region", {
+      name: "Upcoming tracks",
+    });
+    await within(upcomingRegion).findByText("Last Train");
+    const from = within(upcomingRegion)
+      .getByRole("button", { name: "Streetlight" })
+      .closest<HTMLElement>('[role="listitem"]');
+    const to = within(upcomingRegion)
+      .getByRole("button", { name: "Last Train" })
+      .closest<HTMLElement>('[role="listitem"]');
+    if (!from || !to) throw new Error("Expected draggable queue rows");
+    vi.spyOn(to, "getBoundingClientRect").mockReturnValue({
+      bottom: 60,
+      height: 60,
+      left: 0,
+      right: 320,
+      top: 0,
+      width: 320,
+      x: 0,
+      y: 0,
+      toJSON: () => undefined,
+    });
+
+    fireEvent.dragStart(from, {
+      dataTransfer: { dropEffect: "none", effectAllowed: "none" },
+    });
+    fireEvent.dragOver(to, {
+      clientY: 59,
+      dataTransfer: { dropEffect: "none", effectAllowed: "move" },
+    });
+
+    const dropSlot = to.querySelector("[data-queue-drop-slot]");
+    expect(dropSlot).toHaveAttribute("data-insert", "after");
+    expect(
+      dropSlot?.querySelector(
+        '[data-queue-drop-marker][data-visible="true"][data-insert="after"]',
+      ),
+    ).not.toBeNull();
+
+    fireEvent.drop(to);
+
+    await waitFor(() => {
+      const rows = within(upcomingRegion).getAllByRole("listitem");
+      expect(rows.map((row) => row.textContent)).toEqual([
+        expect.stringContaining("Night Bus"),
+        expect.stringContaining("Last Train"),
+        expect.stringContaining("Streetlight"),
       ]);
     });
   });

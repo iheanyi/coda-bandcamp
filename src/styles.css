@@ -296,6 +296,11 @@
   transition: opacity var(--duration-coda-fast) var(--ease-coda-enter);
 }
 
+[data-queue-drop-marker][data-insert="after"] {
+  top: auto;
+  bottom: 0;
+}
+
 [data-drop-target="true"] > [data-queue-drop-marker],
 [data-queue-drop-marker][data-visible="true"] {
   opacity: 1;
