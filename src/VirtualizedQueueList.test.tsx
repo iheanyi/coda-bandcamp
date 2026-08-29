@@ -73,9 +73,18 @@ function Queue({
       items={items}
       onMove={onMove}
       renderItem={(queueItem, context) => (
-        <button type="button">
-          {queueItem.title} at {context.absoluteIndex}
-        </button>
+        <>
+          <button type="button">
+            {queueItem.title} at {context.absoluteIndex}
+          </button>
+          {onMove ? (
+            <span
+              aria-hidden="true"
+              data-queue-drop-marker=""
+              data-visible={context.dropTarget || undefined}
+            />
+          ) : null}
+        </>
       )}
       startIndex={startIndex}
       style={{ height: VIEWPORT_HEIGHT, overflowY: "auto" }}

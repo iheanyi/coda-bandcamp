@@ -278,11 +278,21 @@
   transition-timing-function: var(--ease-coda-enter);
 }
 
+[data-queue-drop-slot] {
+  isolation: isolate;
+  position: relative;
+}
+
+[data-queue-drop-slot] > :not([data-queue-drop-marker]) {
+  position: relative;
+  z-index: 1;
+}
+
 [data-queue-drop-marker] {
   pointer-events: none;
   position: absolute;
   inset: 0.125rem 0.25rem;
-  z-index: 5;
+  z-index: 0;
   border-radius: var(--radius-md);
   opacity: 0;
   transform: scaleY(0.92);
@@ -291,7 +301,8 @@
     transform var(--duration-coda-fast) var(--ease-coda-enter);
 }
 
-[data-drop-target="true"] > [data-queue-drop-marker] {
+[data-drop-target="true"] > [data-queue-drop-marker],
+[data-queue-drop-marker][data-visible="true"] {
   background: linear-gradient(
     90deg,
     rgba(221, 101, 73, 0.18),

@@ -38,6 +38,14 @@ const queuedTrack: Track = {
   albumId: "city-limits",
 };
 
+const laterQueuedTrack: Track = {
+  ...currentTrack,
+  id: "later-queued-track",
+  title: "Night Bus",
+  album: "Late Routes",
+  albumId: "late-routes",
+};
+
 const recommendation: Album = {
   id: "next-album",
   title: "After Hours",
@@ -179,5 +187,79 @@ describe("QueuePanel recommendations", () => {
     expect(
       queueDialog.querySelector("a button, button a"),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows a drop slot on the destination queue row while dragging", async () => {
+    const noOp = vi.fn();
+    const router = createCodaMemoryRouter(new QueryClient(), ["/collection"]);
+    await router.load();
+
+    render(
+      <RouterContextProvider router={router}>
+        <CodaMotionProvider>
+          <Drawer modal={false} open swipeDirection="right">
+            <QueuePanel
+              open
+              panelRef={createRef<HTMLDivElement>()}
+              finalFocus={createRef<HTMLButtonElement>()}
+              queue={[currentTrack, queuedTrack, laterQueuedTrack]}
+              currentIndex={0}
+              currentTrack={currentTrack}
+              hasDeferredTracks={false}
+              radioTimeline={[]}
+              playbackClock={createPlaybackClock(currentTrack.duration)}
+              playing
+              onPlay={noOp}
+              onRemove={noOp}
+              onClear={noOp}
+              onShuffle={noOp}
+              onMove={noOp}
+              onArtist={noOp}
+              onAlbum={noOp}
+              onNowPlaying={noOp}
+              onOpenRadioItem={noOp}
+              getRadioChapterLocalLinks={() => ({})}
+              onSeek={noOp}
+              recommendationLoading={false}
+              recommendationQueueLoading={false}
+              onQueueRecommendation={noOp}
+              onPlayRecommendation={noOp}
+              onAnotherRecommendation={noOp}
+              playerVisible
+            />
+          </Drawer>
+        </CodaMotionProvider>
+      </RouterContextProvider>,
+    );
+
+    const queueDialog = await screen.findByRole("dialog", { name: "Queue" });
+    await within(queueDialog).findByText("Streetlight");
+    const from = within(queueDialog)
+      .getByRole("button", { name: "Streetlight" })
+      .closest<HTMLElement>('[role="listitem"]');
+    const to = within(queueDialog)
+      .getByRole("button", { name: "Night Bus" })
+      .closest<HTMLElement>('[role="listitem"]');
+    if (!from || !to) throw new Error("Expected draggable queue rows");
+
+    fireEvent.dragStart(from, {
+      dataTransfer: { dropEffect: "none", effectAllowed: "none" },
+    });
+    fireEvent.dragOver(to, {
+      dataTransfer: { dropEffect: "none", effectAllowed: "move" },
+    });
+
+    const dropSlot = to.querySelector("[data-queue-drop-slot]");
+    expect(dropSlot).toHaveAttribute("data-drop-target", "true");
+    expect(
+      dropSlot?.querySelector('[data-queue-drop-marker][data-visible="true"]'),
+    ).not.toBeNull();
+
+    fireEvent.dragEnd(from);
+
+    expect(dropSlot).not.toHaveAttribute("data-drop-target");
+    expect(
+      queueDialog.querySelector('[data-queue-drop-marker][data-visible="true"]'),
+    ).toBeNull();
   });
 });
