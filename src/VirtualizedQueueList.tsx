@@ -19,9 +19,17 @@ export const DEFAULT_QUEUE_OVERSCAN = 6;
 export const DEFAULT_QUEUE_VIRTUALIZATION_THRESHOLD = 100;
 const INITIAL_QUEUE_VIEWPORT_HEIGHT = 600;
 
+export type QueueDropInsert = "before" | "after";
+
+export type QueueDropTarget = {
+  index: number;
+  insert: QueueDropInsert;
+};
+
 export type QueueListItemContext = {
   absoluteIndex: number;
   dragging: boolean;
+  dropInsert: QueueDropInsert | undefined;
   dropTarget: boolean;
   index: number;
   virtualized: boolean;
@@ -54,13 +62,46 @@ export function queueRelativeIndexAtOffset(
   return Math.min(itemCount - 1, Math.max(0, Math.floor(offset / safeSize)));
 }
 
-function eventItemIndex(event: DragEvent<HTMLElement>): number | undefined {
+export function queueDropTargetAtOffset(
+  offset: number,
+  itemCount: number,
+  estimatedItemSize: number,
+): QueueDropTarget | undefined {
+  const index = queueRelativeIndexAtOffset(offset, itemCount, estimatedItemSize);
+  if (index === undefined) return undefined;
+  const safeSize = Math.max(1, estimatedItemSize);
+  return {
+    index,
+    insert: offset >= itemCount * safeSize ? "after" : "before",
+  };
+}
+
+export function moveIndexForDropTarget(
+  fromIndex: number,
+  dropTarget: QueueDropTarget,
+): number {
+  if (dropTarget.insert === "after") return dropTarget.index;
+  return fromIndex < dropTarget.index ? dropTarget.index - 1 : dropTarget.index;
+}
+
+function eventDropTarget(
+  event: DragEvent<HTMLElement>,
+  itemCount: number,
+): QueueDropTarget | undefined {
   const target = event.target;
   if (!(target instanceof Element)) return undefined;
   const item = target.closest<HTMLElement>("[data-queue-relative-index]");
   if (!item || !event.currentTarget.contains(item)) return undefined;
   const value = Number(item.dataset.queueRelativeIndex);
-  return Number.isInteger(value) ? value : undefined;
+  if (!Number.isInteger(value)) return undefined;
+  const bounds = item.getBoundingClientRect();
+  const insert =
+    value === itemCount - 1 &&
+    bounds.height > 0 &&
+    event.clientY >= bounds.top + bounds.height / 2
+      ? "after"
+      : "before";
+  return { index: value, insert };
 }
 
 /**
@@ -88,9 +129,9 @@ export function VirtualizedQueueList<Item>({
 }: VirtualizedQueueListProps<Item>) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const draggedIndexRef = useRef<number | undefined>(undefined);
-  const dropIndexRef = useRef<number | undefined>(undefined);
+  const dropTargetRef = useRef<QueueDropTarget | undefined>(undefined);
   const [draggedIndex, setDraggedIndex] = useState<number>();
-  const [dropIndex, setDropIndex] = useState<number>();
+  const [dropTarget, setDropTarget] = useState<QueueDropTarget>();
   const [focusedIndex, setFocusedIndex] = useState<number>();
   const [moveAnnouncement, setMoveAnnouncement] = useState("");
   const virtualized = items.length > Math.max(0, virtualizationThreshold);
@@ -139,16 +180,16 @@ export function VirtualizedQueueList<Item>({
     }
   }, [focusedIndex, items.length]);
 
-  const updateDropIndex = useCallback((nextIndex: number | undefined) => {
-    dropIndexRef.current = nextIndex;
-    setDropIndex(nextIndex);
+  const updateDropTarget = useCallback((nextTarget: QueueDropTarget | undefined) => {
+    dropTargetRef.current = nextTarget;
+    setDropTarget(nextTarget);
   }, []);
 
   const clearDrag = useCallback(() => {
     draggedIndexRef.current = undefined;
-    dropIndexRef.current = undefined;
+    dropTargetRef.current = undefined;
     setDraggedIndex(undefined);
-    setDropIndex(undefined);
+    setDropTarget(undefined);
   }, []);
 
   const accessibleItemLabel = useCallback(
@@ -199,14 +240,14 @@ export function VirtualizedQueueList<Item>({
       if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
 
       const scrollElement = scrollRef.current;
-      const itemIndex = eventItemIndex(event);
-      if (itemIndex !== undefined) {
-        updateDropIndex(itemIndex);
+      const nextDropTarget = eventDropTarget(event, items.length);
+      if (nextDropTarget !== undefined) {
+        updateDropTarget(nextDropTarget);
       } else if (scrollElement) {
         const bounds = scrollElement.getBoundingClientRect();
         const offset = scrollElement.scrollTop + event.clientY - bounds.top;
-        updateDropIndex(
-          queueRelativeIndexAtOffset(offset, items.length, estimateSize),
+        updateDropTarget(
+          queueDropTargetAtOffset(offset, items.length, estimateSize),
         );
       }
 
@@ -220,7 +261,7 @@ export function VirtualizedQueueList<Item>({
         scrollElement.scrollTop += estimateSize;
       }
     },
-    [estimateSize, items.length, updateDropIndex, virtualized],
+    [estimateSize, items.length, updateDropTarget, virtualized],
   );
 
   const handleDrop = useCallback(
@@ -228,9 +269,9 @@ export function VirtualizedQueueList<Item>({
       if (draggedIndexRef.current === undefined) return;
       event.preventDefault();
       const from = draggedIndexRef.current;
-      const to = dropIndexRef.current;
-      if (to !== undefined && from !== to) {
-        commitMove(from, to);
+      const to = dropTargetRef.current;
+      if (to !== undefined && from !== to.index) {
+        commitMove(from, moveIndexForDropTarget(from, to));
       }
       clearDrag();
     },
@@ -245,7 +286,8 @@ export function VirtualizedQueueList<Item>({
   ) => {
     const absoluteIndex = startIndex + index;
     const isDragging = draggedIndex === index;
-    const isDropTarget = dropIndex === index;
+    const isDropTarget = dropTarget?.index === index;
+    const dropInsert = isDropTarget ? dropTarget.insert : undefined;
     const itemLabel = accessibleItemLabel(index);
     return (
       <div
@@ -256,6 +298,7 @@ export function VirtualizedQueueList<Item>({
         data-queue-absolute-index={absoluteIndex}
         data-dragging={isDragging || undefined}
         data-drop-target={isDropTarget || undefined}
+        data-insert={dropInsert}
         data-index={index}
         draggable={Boolean(onMove)}
         className="group/queue-row relative"
@@ -273,7 +316,7 @@ export function VirtualizedQueueList<Item>({
         onDragStart={(event) => {
           draggedIndexRef.current = index;
           setDraggedIndex(index);
-          updateDropIndex(index);
+          updateDropTarget({ index, insert: "before" });
           if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
         }}
         onFocusCapture={() => setFocusedIndex(index)}
@@ -283,6 +326,7 @@ export function VirtualizedQueueList<Item>({
         {renderItem(item, {
           absoluteIndex,
           dragging: isDragging,
+          dropInsert,
           dropTarget: isDropTarget,
           index,
           virtualized,
