@@ -1,6 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
 import { RouterContextProvider } from "@tanstack/react-router";
-import { createRef } from "react";
+import { createRef, useState } from "react";
 import { AnimatePresence } from "motion/react";
 import {
   act,
@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CodaMotionProvider } from "@/MotionProvider";
 import { Drawer } from "@/components/ui/drawer";
 import { createPlaybackClock } from "@/playbackClock";
+import { moveItem } from "@/queue";
 import { createCodaMemoryRouter } from "@/router";
 import type { Album, Track } from "@/types";
 import { QueuePanel } from "./QueuePanel";
@@ -44,6 +45,14 @@ const laterQueuedTrack: Track = {
   title: "Night Bus",
   album: "Late Routes",
   albumId: "late-routes",
+};
+
+const finalQueuedTrack: Track = {
+  ...currentTrack,
+  id: "final-queued-track",
+  title: "Last Train",
+  album: "Terminal",
+  albumId: "terminal",
 };
 
 const recommendation: Album = {
@@ -261,5 +270,92 @@ describe("QueuePanel recommendations", () => {
     expect(
       queueDialog.querySelector('[data-queue-drop-marker][data-visible="true"]'),
     ).toBeNull();
+  });
+
+  it("inserts a downward row drop before the visible queue target", async () => {
+    const noOp = vi.fn();
+    const router = createCodaMemoryRouter(new QueryClient(), ["/collection"]);
+    await router.load();
+
+    function StatefulQueuePanel() {
+      const [queue, setQueue] = useState([
+        currentTrack,
+        queuedTrack,
+        laterQueuedTrack,
+        finalQueuedTrack,
+      ]);
+
+      return (
+        <RouterContextProvider router={router}>
+          <CodaMotionProvider>
+            <Drawer modal={false} open swipeDirection="right">
+              <QueuePanel
+                open
+                panelRef={createRef<HTMLDivElement>()}
+                finalFocus={createRef<HTMLButtonElement>()}
+                queue={queue}
+                currentIndex={0}
+                currentTrack={currentTrack}
+                hasDeferredTracks={false}
+                radioTimeline={[]}
+                playbackClock={createPlaybackClock(currentTrack.duration)}
+                playing
+                onPlay={noOp}
+                onRemove={noOp}
+                onClear={noOp}
+                onShuffle={noOp}
+                onMove={(from, to) =>
+                  setQueue((currentQueue) => moveItem(currentQueue, from, to))
+                }
+                onArtist={noOp}
+                onAlbum={noOp}
+                onNowPlaying={noOp}
+                onOpenRadioItem={noOp}
+                getRadioChapterLocalLinks={() => ({})}
+                onSeek={noOp}
+                recommendationLoading={false}
+                recommendationQueueLoading={false}
+                onQueueRecommendation={noOp}
+                onPlayRecommendation={noOp}
+                onAnotherRecommendation={noOp}
+                playerVisible
+              />
+            </Drawer>
+          </CodaMotionProvider>
+        </RouterContextProvider>
+      );
+    }
+
+    render(<StatefulQueuePanel />);
+
+    const queueDialog = await screen.findByRole("dialog", { name: "Queue" });
+    const upcomingRegion = within(queueDialog).getByRole("region", {
+      name: "Upcoming tracks",
+    });
+    await within(upcomingRegion).findByText("Last Train");
+    const from = within(upcomingRegion)
+      .getByRole("button", { name: "Streetlight" })
+      .closest<HTMLElement>('[role="listitem"]');
+    const to = within(upcomingRegion)
+      .getByRole("button", { name: "Last Train" })
+      .closest<HTMLElement>('[role="listitem"]');
+    if (!from || !to) throw new Error("Expected draggable queue rows");
+
+    fireEvent.dragStart(from, {
+      dataTransfer: { dropEffect: "none", effectAllowed: "none" },
+    });
+    fireEvent.dragOver(to, {
+      dataTransfer: { dropEffect: "none", effectAllowed: "move" },
+    });
+    fireEvent.drop(to);
+
+    await waitFor(() => {
+      const rows = within(upcomingRegion).getAllByRole("listitem");
+      expect(rows.map((row) => row.textContent)).toEqual([
+        expect.stringContaining("Night Bus"),
+        expect.stringContaining("Streetlight"),
+        expect.stringContaining("Last Train"),
+      ]);
+    });
   });
 });

@@ -54,6 +54,13 @@ export function queueRelativeIndexAtOffset(
   return Math.min(itemCount - 1, Math.max(0, Math.floor(offset / safeSize)));
 }
 
+export function moveIndexForInsertBeforeDrop(
+  fromIndex: number,
+  dropIndex: number,
+): number {
+  return fromIndex < dropIndex ? dropIndex - 1 : dropIndex;
+}
+
 function eventItemIndex(event: DragEvent<HTMLElement>): number | undefined {
   const target = event.target;
   if (!(target instanceof Element)) return undefined;
@@ -230,7 +237,7 @@ export function VirtualizedQueueList<Item>({
       const from = draggedIndexRef.current;
       const to = dropIndexRef.current;
       if (to !== undefined && from !== to) {
-        commitMove(from, to);
+        commitMove(from, moveIndexForInsertBeforeDrop(from, to));
       }
       clearDrag();
     },

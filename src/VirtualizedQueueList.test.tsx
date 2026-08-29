@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   VirtualizedQueueList,
+  moveIndexForInsertBeforeDrop,
   queueRelativeIndexAtOffset,
 } from "./VirtualizedQueueList";
 
@@ -197,24 +198,35 @@ describe("VirtualizedQueueList", () => {
     expect(screen.queryByText("Queue track 999 at 999")).not.toBeInTheDocument();
   });
 
-  it("reports absolute indexes when duplicate tracks are reordered", () => {
+  function queueRow(
+    region: HTMLElement,
+    name: string,
+  ): HTMLElement {
+    const row = within(region)
+      .getByRole("button", { name })
+      .closest<HTMLElement>('[role="listitem"]');
+    if (!row) throw new Error(`Expected draggable queue row for ${name}`);
+    return row;
+  }
+
+  it("reports final absolute indexes for insert-before row drops", () => {
     const onMove = vi.fn();
     render(
       <Queue
-        items={[item(0, "duplicate"), item(1, "duplicate"), item(2)]}
+        items={[
+          item(0, "duplicate"),
+          item(1, "duplicate"),
+          item(2),
+          item(3),
+        ]}
         onMove={onMove}
         startIndex={7}
       />,
     );
 
     const region = screen.getByRole("region", { name: "Upcoming tracks" });
-    const from = within(region)
-      .getByRole("button", { name: "Queue track 1 at 8" })
-      .closest<HTMLElement>('[role="listitem"]');
-    const to = within(region)
-      .getByRole("button", { name: "Queue track 2 at 9" })
-      .closest<HTMLElement>('[role="listitem"]');
-    if (!from || !to) throw new Error("Expected draggable queue rows");
+    const from = queueRow(region, "Queue track 1 at 8");
+    const to = queueRow(region, "Queue track 3 at 10");
     fireEvent.dragStart(from, {
       dataTransfer: { effectAllowed: "none" },
     });
@@ -223,8 +235,61 @@ describe("VirtualizedQueueList", () => {
 
     expect(onMove).toHaveBeenCalledWith(8, 9);
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Moved Queue track 1 to position 3 of 3.",
+      "Moved Queue track 1 to position 3 of 4.",
     );
+  });
+
+  it("reports the hovered row index when an upward drop inserts before it", () => {
+    const onMove = vi.fn();
+    render(<Queue items={[item(0), item(1), item(2), item(3)]} onMove={onMove} />);
+
+    const region = screen.getByRole("region", { name: "Upcoming tracks" });
+    const from = queueRow(region, "Queue track 3 at 3");
+    const to = queueRow(region, "Queue track 0 at 0");
+    fireEvent.dragStart(from, {
+      dataTransfer: { effectAllowed: "none" },
+    });
+    fireEvent.dragOver(to);
+    fireEvent.drop(to);
+
+    expect(onMove).toHaveBeenCalledOnce();
+    expect(onMove).toHaveBeenCalledWith(3, 0);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Moved Queue track 3 to position 1 of 4.",
+    );
+  });
+
+  it("does not dispatch when a row is dropped before itself", () => {
+    const onMove = vi.fn();
+    render(<Queue items={[item(0), item(1), item(2)]} onMove={onMove} />);
+
+    const region = screen.getByRole("region", { name: "Upcoming tracks" });
+    const row = queueRow(region, "Queue track 1 at 1");
+    fireEvent.dragStart(row, {
+      dataTransfer: { effectAllowed: "none" },
+    });
+    fireEvent.dragOver(row);
+    fireEvent.drop(row);
+
+    expect(onMove).not.toHaveBeenCalled();
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+  });
+
+  it("does not dispatch when a row is already before the hovered next row", () => {
+    const onMove = vi.fn();
+    render(<Queue items={[item(0), item(1), item(2)]} onMove={onMove} />);
+
+    const region = screen.getByRole("region", { name: "Upcoming tracks" });
+    const from = queueRow(region, "Queue track 1 at 1");
+    const to = queueRow(region, "Queue track 2 at 2");
+    fireEvent.dragStart(from, {
+      dataTransfer: { effectAllowed: "none" },
+    });
+    fireEvent.dragOver(to);
+    fireEvent.drop(to);
+
+    expect(onMove).not.toHaveBeenCalled();
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
   });
 
   it("shows a landing marker on the drop target during dragover and clears it on drop", () => {
@@ -410,5 +475,14 @@ describe("queueRelativeIndexAtOffset", () => {
     expect(queueRelativeIndexAtOffset(149, 10, 50)).toBe(2);
     expect(queueRelativeIndexAtOffset(50_000, 10, 50)).toBe(9);
     expect(queueRelativeIndexAtOffset(0, 0, 50)).toBeUndefined();
+  });
+});
+
+describe("moveIndexForInsertBeforeDrop", () => {
+  it("maps row drop targets to final move indexes", () => {
+    expect(moveIndexForInsertBeforeDrop(1, 3)).toBe(2);
+    expect(moveIndexForInsertBeforeDrop(3, 1)).toBe(1);
+    expect(moveIndexForInsertBeforeDrop(2, 2)).toBe(2);
+    expect(moveIndexForInsertBeforeDrop(1, 2)).toBe(1);
   });
 });
