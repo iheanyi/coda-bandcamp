@@ -1,4 +1,11 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  createEvent,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -262,7 +269,9 @@ describe("VirtualizedQueueList", () => {
     fireEvent.dragStart(from, {
       dataTransfer: { effectAllowed: "none" },
     });
-    fireEvent.dragOver(to, { clientY: ROW_HEIGHT - 1 });
+    const dragOver = createEvent.dragOver(to);
+    Object.defineProperty(dragOver, "clientY", { value: ROW_HEIGHT - 1 });
+    fireEvent(to, dragOver);
 
     expect(to).toHaveAttribute("data-insert", "after");
     expect(
@@ -324,7 +333,9 @@ describe("VirtualizedQueueList", () => {
     fireEvent.dragStart(row, {
       dataTransfer: { effectAllowed: "none" },
     });
-    fireEvent.dragOver(row, { clientY: ROW_HEIGHT - 1 });
+    const dragOver = createEvent.dragOver(row);
+    Object.defineProperty(dragOver, "clientY", { value: ROW_HEIGHT - 1 });
+    fireEvent(row, dragOver);
     fireEvent.drop(row);
 
     expect(onMove).not.toHaveBeenCalled();

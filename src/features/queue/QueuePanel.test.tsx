@@ -4,6 +4,7 @@ import { createRef, useState } from "react";
 import { AnimatePresence } from "motion/react";
 import {
   act,
+  createEvent,
   fireEvent,
   render,
   screen,
@@ -453,10 +454,11 @@ describe("QueuePanel recommendations", () => {
     fireEvent.dragStart(from, {
       dataTransfer: { dropEffect: "none", effectAllowed: "none" },
     });
-    fireEvent.dragOver(to, {
-      clientY: 59,
+    const dragOver = createEvent.dragOver(to, {
       dataTransfer: { dropEffect: "none", effectAllowed: "move" },
     });
+    Object.defineProperty(dragOver, "clientY", { value: 59 });
+    fireEvent(to, dragOver);
 
     const dropSlot = to.querySelector("[data-queue-drop-slot]");
     expect(dropSlot).toHaveAttribute("data-insert", "after");
