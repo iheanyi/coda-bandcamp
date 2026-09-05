@@ -558,29 +558,35 @@ async fn revalidate_cover(app: AppHandle, cover_art_id: String) {
     let _ = release_key_lock(&state.key_locks, &key, &lock);
 }
 
-fn read_authorized_cached_cover(
+async fn read_authorized_cached_cover(
     state: Arc<CoverCacheInner>,
     cover_art_id: &str,
     generation: u64,
 ) -> Result<Option<(ResolvedCoverArt, bool, String)>, String> {
-    let Some((entry, stale)) = cached_entry(&state, cover_art_id, generation)? else {
-        return Ok(None);
-    };
-    match read_cached_bytes(state.clone(), &entry) {
-        Ok(bytes) => Ok(Some((
-            ResolvedCoverArt {
-                bytes,
-                media_type: entry.media_type,
-                revision: entry.revision,
-            },
-            stale,
-            entry.key,
-        ))),
-        Err(_) => {
-            let _ = invalidate_entry_ordered(&state, cover_art_id, generation);
-            Ok(None)
+    let cover_art_id = cover_art_id.to_string();
+    // Disk reads and invalid-file cleanup must not occupy an async worker.
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some((entry, stale)) = cached_entry(&state, &cover_art_id, generation)? else {
+            return Ok(None);
+        };
+        match read_cached_bytes(state.clone(), &entry) {
+            Ok(bytes) => Ok(Some((
+                ResolvedCoverArt {
+                    bytes,
+                    media_type: entry.media_type,
+                    revision: entry.revision,
+                },
+                stale,
+                entry.key,
+            ))),
+            Err(_) => {
+                let _ = invalidate_entry_ordered(&state, &cover_art_id, generation);
+                Ok(None)
+            }
         }
-    }
+    })
+    .await
+    .map_err(|error| format!("Could not read cached cover artwork: {error}"))?
 }
 
 pub(crate) async fn resolve_cover_art_from_state<Fetch, FetchFuture>(
@@ -596,7 +602,7 @@ where
     ensure_authorized(&state, cover_art_id, generation)?;
     let key = cover_cache_key(cover_art_id)?;
     if let Some((resolved, stale, entry_key)) =
-        read_authorized_cached_cover(state.clone(), cover_art_id, generation)?
+        read_authorized_cached_cover(state.clone(), cover_art_id, generation).await?
     {
         record_access(state.clone(), &entry_key).await;
         return Ok((resolved, stale));
@@ -607,7 +613,7 @@ where
     let lock = key_lock(&state, &key)?;
     let guard = lock.lock().await;
     let result = if let Some((resolved, stale, entry_key)) =
-        read_authorized_cached_cover(state.clone(), cover_art_id, generation)?
+        read_authorized_cached_cover(state.clone(), cover_art_id, generation).await?
     {
         record_access(state.clone(), &entry_key).await;
         Ok((resolved, stale))
@@ -696,4 +702,62 @@ pub(crate) async fn invalidate_cover_art(
     drop(guard);
     let _ = release_key_lock(&state.key_locks, &key, &lock);
     result
+}
+
+#[cfg(test)]
+mod scheduling_tests {
+    use super::read_authorized_cached_cover;
+    use crate::cover_cache::{cover_cache_state_for_test, CoverCacheIndex};
+    use crate::subsonic::current_connection_generation;
+    use std::collections::HashSet;
+    use std::future::Future;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    #[test]
+    fn cached_cover_lookup_allows_other_async_work_while_waiting_for_storage() {
+        let _generation_guard = crate::tests::ALBUM_CACHE_GENERATION_TEST_LOCK
+            .lock()
+            .unwrap();
+        let generation = current_connection_generation();
+        let state = cover_cache_state_for_test(
+            std::env::temp_dir(),
+            std::env::temp_dir().join("unused-cover-marker"),
+            generation,
+            HashSet::from(["cached-cover".into()]),
+            CoverCacheIndex::default(),
+        );
+        let (locked_tx, locked_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let locked_state = state.clone();
+        let storage = std::thread::spawn(move || {
+            let _guard = locked_state.runtime.lock().unwrap();
+            locked_tx.send(()).unwrap();
+            // A watchdog makes a scheduler regression fail instead of deadlocking the suite.
+            release_rx.recv_timeout(Duration::from_secs(5)).is_ok()
+        });
+        locked_rx.recv().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let mut lookup = Box::pin(read_authorized_cached_cover(
+                state,
+                "cached-cover",
+                generation,
+            ));
+            std::future::poll_fn(|context| {
+                assert!(lookup.as_mut().poll(context).is_pending());
+                std::task::Poll::Ready(())
+            })
+            .await;
+            // The current-thread executor regains control before storage is released.
+            assert!(release_tx.send(()).is_ok());
+            assert!(lookup.await.unwrap().is_none());
+        });
+        assert!(
+            storage.join().unwrap(),
+            "cached lookup blocked the async scheduler"
+        );
+    }
 }

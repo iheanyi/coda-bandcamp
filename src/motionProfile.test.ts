@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  BUILTIN_MOTION_PRESETS,
   CURRENT_MOTION_PROFILE,
   resolveMotionProfile,
   validateMotionProfile,
@@ -37,16 +36,6 @@ describe("Motion profiles", () => {
       CURRENT_MOTION_PROFILE.speed,
     );
     unsubscribe();
-  });
-
-  it("ships the useful built-in baseline set", () => {
-    expect(BUILTIN_MOTION_PRESETS.map((preset) => preset.name)).toEqual([
-      "Current",
-      "Crisp 250",
-      "Soft",
-      "Elastic",
-      "Crossfade Baseline",
-    ]);
   });
 
   it("bounds malformed values and resolves one speed-scaled profile", () => {

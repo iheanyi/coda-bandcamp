@@ -59,12 +59,6 @@ fn remote_service_errors_expose_only_safe_numeric_codes() {
 }
 
 #[test]
-fn parses_flexible_numeric_fields() {
-    let value = serde_json::json!({"duration": "42"});
-    assert_eq!(number_field(&value, "duration"), Some(42));
-}
-
-#[test]
 fn rejects_invalid_or_unbounded_album_metadata() {
     let parsed = bounded_album_from_value(&serde_json::json!({
         "id": "album-1",

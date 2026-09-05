@@ -12,8 +12,19 @@ afterEach(() => cleanup());
 // unhandled "window is not defined" ReferenceError. Components are already
 // unmounted here, so waiting out the debounce lets it fire as a no-op while
 // the window still exists.
+// Only files that dispatch a scroll can leave this debounce pending. Pure
+// utility and unrelated component tests should not pay a fixed teardown delay.
+let observedScroll = false;
+function recordScroll() {
+  observedScroll = true;
+}
+window.addEventListener("scroll", recordScroll, true);
+
 afterAll(async () => {
-  await new Promise((resolve) => setTimeout(resolve, 175));
+  window.removeEventListener("scroll", recordScroll, true);
+  if (observedScroll) {
+    await new Promise((resolve) => setTimeout(resolve, 175));
+  }
 });
 
 // Coverage instrumentation can push otherwise immediate React effects beyond

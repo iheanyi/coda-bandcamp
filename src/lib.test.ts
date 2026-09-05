@@ -1,25 +1,11 @@
 import { clearMocks } from "@tauri-apps/api/mocks";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as coverArtSource from "./coverArtSource";
-import { fetchDiscover } from "./data-bridge/discover";
 import { hydrateAlbum } from "./data-bridge/hydration";
-import { getLastFmStatus } from "./data-bridge/lastfm";
 import * as libraryBridge from "./data-bridge/library";
 import { readLibraryCache } from "./data-bridge/libraryCache";
-import { fetchRadioShow } from "./data-bridge/radio";
 import * as runtimeData from "./data-bridge/runtimeData";
-import { updateSystemMediaPlayback } from "./data-bridge/systemMedia";
-import { coverCacheDiagnostics as coverCacheDiagnosticsFromModule } from "./data-bridge/coverCache";
-import { openBandcampUrl as openBandcampUrlFromDesktop } from "./data-bridge/desktop";
-import {
-  connectBandcamp,
-  coverCacheDiagnostics,
-  fetchDiscover as fetchDiscoverFromBarrel,
-  fetchRadioShow as fetchRadioShowFromBarrel,
-  getLastFmStatus as getLastFmStatusFromBarrel,
-  openBandcampUrl,
-  updateSystemMediaPlayback as updateSystemMediaPlaybackFromBarrel,
-} from "./lib";
+import { connectBandcamp, openBandcampUrl } from "./lib";
 
 const originalWindow = globalThis.window;
 
@@ -187,22 +173,10 @@ describe("library metadata cache", () => {
 });
 
 describe("public barrel helpers", () => {
-  it("re-exports domain commands from the focused data-bridge modules", () => {
-    expect(fetchDiscoverFromBarrel).toBe(fetchDiscover);
-    expect(fetchRadioShowFromBarrel).toBe(fetchRadioShow);
-    expect(getLastFmStatusFromBarrel).toBe(getLastFmStatus);
-    expect(updateSystemMediaPlaybackFromBarrel).toBe(updateSystemMediaPlayback);
-    expect(coverCacheDiagnostics).toBe(coverCacheDiagnosticsFromModule);
-    expect(openBandcampUrl).toBe(openBandcampUrlFromDesktop);
-  });
-
   it("clears native media caches and renderer cover state after connect", async () => {
     vi.spyOn(libraryBridge, "connectBandcamp").mockResolvedValue([]);
     const clearMedia = vi.spyOn(runtimeData, "clearConnectionMediaCaches");
-    const clearCover = vi.spyOn(
-      coverArtSource,
-      "clearCoverArtRendererState",
-    );
+    const clearCover = vi.spyOn(coverArtSource, "clearCoverArtRendererState");
 
     await expect(
       connectBandcamp({ username: "listener", password: "token" }),

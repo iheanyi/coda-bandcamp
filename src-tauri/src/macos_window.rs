@@ -104,28 +104,6 @@ define_class!(
     }
 );
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SystemTitleVisibility {
-    Visible,
-    Hidden,
-}
-
-fn system_title_visibility(centered_title_installed: bool) -> SystemTitleVisibility {
-    if centered_title_installed {
-        SystemTitleVisibility::Hidden
-    } else {
-        SystemTitleVisibility::Visible
-    }
-}
-
-fn centered_title_text(window_title: &str) -> &str {
-    window_title
-}
-
-fn centered_title_binding_key_path() -> &'static str {
-    "title"
-}
-
 pub(crate) fn install_centered_title(window: &tauri::WebviewWindow) -> Result<(), String> {
     let marker = MainThreadMarker::new()
         .ok_or_else(|| "the native title must be installed on the macOS main thread".to_string())?;
@@ -150,11 +128,7 @@ pub(crate) fn install_centered_title(window: &tauri::WebviewWindow) -> Result<()
         .standardWindowButton(NSWindowButton::CloseButton)
         .ok_or_else(|| "the main NSWindow has no native close button".to_string())?;
 
-    let semantic_title = native_window.title().to_string();
-    let title = NSTextField::labelWithString(
-        &NSString::from_str(centered_title_text(&semantic_title)),
-        marker,
-    );
+    let title = NSTextField::labelWithString(&native_window.title(), marker);
     // SAFETY: `CodaTitleTextField` is an NSTextField subclass with no ivars, so
     // the label instance keeps the same layout while gaining native title-bar
     // double-click handling.
@@ -180,7 +154,7 @@ pub(crate) fn install_centered_title(window: &tauri::WebviewWindow) -> Result<()
         title.bind_toObject_withKeyPath_options(
             value_binding,
             native_window,
-            &NSString::from_str(centered_title_binding_key_path()),
+            &NSString::from_str("title"),
             None,
         );
     }
@@ -199,37 +173,14 @@ pub(crate) fn install_centered_title(window: &tauri::WebviewWindow) -> Result<()
     ]);
     NSLayoutConstraint::activateConstraints(&constraints);
 
-    match system_title_visibility(true) {
-        SystemTitleVisibility::Visible => {
-            native_window.setTitleVisibility(NSWindowTitleVisibility::Visible)
-        }
-        SystemTitleVisibility::Hidden => {
-            native_window.setTitleVisibility(NSWindowTitleVisibility::Hidden)
-        }
-    }
+    // Hide the system label only after the replacement and its live binding exist.
+    native_window.setTitleVisibility(NSWindowTitleVisibility::Hidden);
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn system_title_is_hidden_only_after_centered_title_installation() {
-        assert_eq!(
-            system_title_visibility(false),
-            SystemTitleVisibility::Visible
-        );
-        assert_eq!(system_title_visibility(true), SystemTitleVisibility::Hidden);
-    }
-
-    #[test]
-    fn centered_title_preserves_and_observes_the_live_window_title() {
-        let current_title = "SUDDEN DEATH — Coda";
-
-        assert_eq!(centered_title_text(current_title), current_title);
-        assert_eq!(centered_title_binding_key_path(), "title");
-    }
 
     #[test]
     fn title_double_click_action_matches_macos_preference() {

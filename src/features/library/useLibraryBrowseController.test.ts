@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { renderHook } from "@testing-library/react";
 import type { Album, Track } from "@/types";
 import {
   deriveLibraryBrowseController,
+  useLibraryBrowseController,
   type LibraryBrowseControllerInput,
 } from "./useLibraryBrowseController";
 
@@ -169,6 +171,51 @@ describe("library browse controller", () => {
       trackFilterAlbumId: "compilation",
       trackFilterArtistKey: "guest voice",
     });
+  });
+
+  it("keeps catalog totals through filtering and refreshes them when albums change", () => {
+    const albums = [
+      album("ambient", "Alpha", 2, { genre: "Ambient" }),
+      album("rock", "Beta", 1, { genre: "Rock" }),
+    ];
+    const input: LibraryBrowseControllerInput = {
+      albums,
+      browseMode: "releases",
+      deferredQuery: "",
+      fallbackAlbumCandidateTracks: [],
+      genre: "All",
+      ignoreDeferredArtistQuery: false,
+      sort: "title",
+      view: "library",
+    };
+    const { result, rerender } = renderHook(useLibraryBrowseController, {
+      initialProps: input,
+    });
+    const initialCounts = result.current.counts;
+    const initialGenres = result.current.orderedGenreTabs;
+
+    rerender({ ...input, genre: "  AMBIENT  ", deferredQuery: "ambient" });
+    expect(result.current.visibleAlbums.map(({ id }) => id)).toEqual([
+      "ambient",
+    ]);
+    expect(result.current.counts).toBe(initialCounts);
+    expect(result.current.orderedGenreTabs).toBe(initialGenres);
+
+    rerender({
+      ...input,
+      albums: [...albums, album("jazz", "Gamma", 3, { genre: "Jazz" })],
+    });
+    expect(result.current.counts).toEqual({
+      albums: 2,
+      artists: 3,
+      singles: 1,
+    });
+    expect(result.current.orderedGenreTabs).toEqual([
+      "Ambient",
+      "Jazz",
+      "Rock",
+    ]);
+    expect(result.current.visibleAlbums).toHaveLength(3);
   });
 
   it("groups only the selected artist instead of the full catalog", () => {

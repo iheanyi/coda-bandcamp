@@ -48,11 +48,13 @@ describe("Playback runtime", () => {
     });
     expect(controllerFrom(current).queue.currentTrack?.id).toBe("track-2");
     expect(controllerFrom(current).queue.currentIndex).toBe(1);
+    const currentBeforeClear = controllerFrom(current).queue.currentTrack;
 
     act(() => controllerFrom(current).queueCommands.clearQueue());
     expect(
       controllerFrom(current).queue.queue.map((track) => track.id),
     ).toEqual(["track-2"]);
+    expect(controllerFrom(current).queue.currentTrack).toBe(currentBeforeClear);
     expect(controllerFrom(current).transport.playing).toBe(true);
 
     act(() => controllerFrom(current).queueCommands.playTrack(tracks[0]));

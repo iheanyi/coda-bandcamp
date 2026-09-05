@@ -45,7 +45,7 @@ import type {
   ProgressivePlaybackShuffleOptions,
   PlaybackNotify,
 } from "./types";
-import { publicPlaybackQueueTrack } from "./publicQueue";
+import { createPublicPlaybackQueueProjector } from "./publicQueue";
 
 const disconnectedShuffleOptions: ProgressivePlaybackShuffleOptions = {
   connected: false,
@@ -140,6 +140,7 @@ export function usePlaybackCoreController({
   recordPlayRequest: () => void;
 }): PlaybackCoreController {
   const [playbackClock] = useState(createPlaybackClock);
+  const [projectPublicTrack] = useState(createPublicPlaybackQueueProjector);
   const [snapshot, setSnapshot] = useState(initialCoreSnapshot);
   const snapshotRef = useRef(snapshot);
   const pendingPosition = useRef<PlaybackPendingPosition | undefined>(
@@ -658,8 +659,8 @@ export function usePlaybackCoreController({
     ],
   );
   const publicQueue = useMemo(
-    () => snapshot.queue.map(publicPlaybackQueueTrack),
-    [snapshot.queue],
+    () => snapshot.queue.map(projectPublicTrack),
+    [projectPublicTrack, snapshot.queue],
   );
   const publicCurrentTrack = publicQueue[snapshot.currentIndex];
   const publicCurrentRadioTimeline = useMemo(

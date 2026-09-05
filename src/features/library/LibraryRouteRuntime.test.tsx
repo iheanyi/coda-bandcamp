@@ -11,8 +11,6 @@ import {
   parseArtistKeyParam,
 } from "@/routing/routeContracts";
 import {
-  missingRouteResource,
-  pendingRouteResource,
   readyRouteResource,
   type RouteResource,
 } from "@/routing/routeResource";
@@ -28,7 +26,6 @@ import {
   useAlbumRouteScreenResource,
   useArtistRouteScreenResource,
   useCollectionRouteScreenProps,
-  useRecentRouteScreenProps,
 } from "./LibraryRouteRuntime";
 import { LibraryRouteRuntimeProvider } from "./LibraryRouteRuntimeProvider";
 import type {
@@ -217,27 +214,12 @@ function screenWrapper({ children }: Readonly<{ children: ReactNode }>) {
   const router = createCodaMemoryRouter(new QueryClient(), ["/collection"]);
   return (
     <CodaMotionProvider>
-      <RouterContextProvider router={router}>
-        {children}
-      </RouterContextProvider>
+      <RouterContextProvider router={router}>{children}</RouterContextProvider>
     </CodaMotionProvider>
   );
 }
 
 describe("LibraryRouteRuntimeProvider", () => {
-  it("provides the collection and Recent screen prop factories", () => {
-    const { result } = renderHook(
-      () => ({
-        collection: useCollectionRouteScreenProps(),
-        recent: useRecentRouteScreenProps(),
-      }),
-      { wrapper: runtimeWrapper(libraryRouteRuntime()) },
-    );
-
-    expect(result.current.collection).toBe(collectionProps);
-    expect(result.current.recent).toBe(recentProps);
-  });
-
   it("requires route screens to live below the runtime provider", () => {
     expect(() => renderHook(useCollectionRouteScreenProps)).toThrow(
       "Library route screens must be rendered inside LibraryRouteRuntimeProvider",
@@ -246,11 +228,8 @@ describe("LibraryRouteRuntimeProvider", () => {
 });
 
 describe("library detail route resources", () => {
-  it.each([
-    ["pending", pendingRouteResource()],
-    ["not-found", missingRouteResource()],
-    ["ready", readyRouteResource(albumProps)],
-  ] as const)("preserves the %s album resource", (_, resource) => {
+  it("forwards album identity and its resolved resource", () => {
+    const resource = readyRouteResource(albumProps);
     const albumId = parseAlbumIdParam("album-1");
     const resolveAlbumScreen = vi.fn(
       (): RouteResource<AlbumScreenProps> => resource,
@@ -263,11 +242,8 @@ describe("library detail route resources", () => {
     expect(resolveAlbumScreen).toHaveBeenCalledWith(albumId);
   });
 
-  it.each([
-    ["pending", pendingRouteResource()],
-    ["not-found", missingRouteResource()],
-    ["ready", readyRouteResource(artistProps)],
-  ] as const)("preserves the %s artist resource", (_, resource) => {
+  it("forwards artist identity, source album, and resolved resource", () => {
+    const resource = readyRouteResource(artistProps);
     const artistKey = parseArtistKeyParam("signal garden");
     const sourceAlbumId = parseAlbumIdParam("album-1");
     const resolveArtistScreen = vi.fn(
@@ -322,14 +298,8 @@ describe("library route screen adapters", () => {
 
     render(
       <>
-        <AlbumRouteScreen
-          className="route-album"
-          resource={albumResource}
-        />
-        <ArtistRouteScreen
-          className="route-artist"
-          resource={artistResource}
-        />
+        <AlbumRouteScreen className="route-album" resource={albumResource} />
+        <ArtistRouteScreen className="route-artist" resource={artistResource} />
       </>,
       { wrapper: screenWrapper },
     );

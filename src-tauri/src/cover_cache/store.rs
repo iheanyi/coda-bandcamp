@@ -514,6 +514,9 @@ pub(crate) fn select_evictions(
         count += 1;
     }
     bytes = bytes.saturating_add(incoming_bytes);
+    if count <= MAX_COVER_CACHE_ENTRIES && bytes <= MAX_COVER_CACHE_BYTES {
+        return Some(Vec::new());
+    }
     let mut candidates = runtime
         .index
         .entries

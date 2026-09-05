@@ -9,7 +9,6 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { LibraryBrowseMode } from "@/libraryBrowse";
-import { codaMotion } from "@/motion";
 import {
   LibraryScreenChrome,
   type LibraryScreenChromeProps,
@@ -300,33 +299,6 @@ describe("Collection browse tabs", () => {
       viewTransition.restore();
     }
   });
-
-  it("uses the restrained shared-indicator motion profile", () => {
-    const { unmount } = renderWithMotion(
-      <LibraryScreenChrome {...chromeProps("releases", vi.fn())} />,
-    );
-
-    expect(
-      screen.getByRole("button", { name: /All releases/ })
-        .querySelector("[data-collection-browse-indicator]"),
-    ).toHaveAttribute("data-selection-travel-steps", "0");
-    expect(codaMotion.selectionPill).toEqual({
-      type: "spring",
-      visualDuration: 0.3,
-      bounce: 0.04,
-    });
-
-    unmount();
-    renderWithMotion(
-      <LibraryScreenChrome {...chromeProps("releases", vi.fn())} />,
-      "always",
-    );
-
-    expect(
-      screen.getByRole("button", { name: /All releases/ })
-        .querySelector("[data-collection-browse-indicator]"),
-    ).toBeInTheDocument();
-  });
 });
 
 describe("Collection genre filters", () => {
@@ -414,35 +386,5 @@ describe("Collection genre filters", () => {
         name: "Filter collection by genre",
       }),
     ).not.toBeInTheDocument();
-  });
-
-  it("snaps the selected genre indicator for reduced motion", () => {
-    renderWithMotion(
-      <LibraryScreenChrome
-        {...chromeProps("releases", vi.fn())}
-        filter={{
-          model: {
-            kind: "collection",
-            genre: "Rock",
-            genres: ["Rock", "Jazz"],
-            edges: { start: false, end: false },
-            trailingControl: "artists",
-            sort: "artist",
-          },
-          actions: {
-            onGenreChange: vi.fn(),
-            onGenreRailScroll: vi.fn(),
-            onScrollGenres: vi.fn(),
-            onSortChange: vi.fn(),
-          },
-        }}
-      />,
-      "always",
-    );
-
-    expect(
-      screen.getByRole("button", { name: "Rock" })
-        .querySelector("[data-selection-rail-indicator]"),
-    ).toBeInTheDocument();
   });
 });

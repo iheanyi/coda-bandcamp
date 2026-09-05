@@ -62,8 +62,12 @@ function matchingAlbums({
   sort: SortMode;
   view: CodaPrimaryView;
 }>): Album[] {
+  const selectedGenreKey = genre === "All" ? undefined : genreKey(genre);
   const filtered = albums.filter((album) => {
-    if (genre !== "All" && genreKey(album.genre) !== genreKey(genre)) {
+    if (
+      selectedGenreKey !== undefined &&
+      genreKey(album.genre) !== selectedGenreKey
+    ) {
       return false;
     }
     if (
@@ -83,14 +87,14 @@ function matchingAlbums({
   }
   if (sort === "year") return sortAlbumsByNewestRelease(filtered);
   if (sort === "recent") return sortAlbumsByNewestAdded(filtered);
-  return [...filtered].sort((left, right) =>
+  return filtered.sort((left, right) =>
     sort === "artist"
       ? LIBRARY_COLLATOR.compare(left.artist, right.artist)
       : LIBRARY_COLLATOR.compare(left.title, right.title),
   );
 }
 
-export function deriveLibraryBrowseController({
+function deriveLibraryBrowseView({
   albums,
   browseMode,
   deferredQuery,
@@ -101,7 +105,10 @@ export function deriveLibraryBrowseController({
   selectedArtistFallback,
   sort,
   view,
-}: LibraryBrowseControllerInput): LibraryBrowseController {
+}: LibraryBrowseControllerInput): Omit<
+  LibraryBrowseController,
+  "counts" | "orderedGenreTabs"
+> {
   const effectiveBrowseMode = view === "library" ? browseMode : "releases";
   const matches = matchingAlbums({
     albums,
@@ -133,7 +140,6 @@ export function deriveLibraryBrowseController({
     effectiveBrowseMode === "artists" && selectedArtist
       ? artistScopeAlbums
       : matches;
-  const catalog = summarizeLibraryCatalog(albums);
 
   return {
     activeArtist: resolveActiveArtist({
@@ -144,10 +150,17 @@ export function deriveLibraryBrowseController({
       selectedArtistFallback,
     }),
     artistGroups,
-    counts: catalog.counts,
     effectiveBrowseMode,
-    orderedGenreTabs: catalog.orderedGenreTabs,
     visibleAlbums,
+  };
+}
+
+export function deriveLibraryBrowseController(
+  input: LibraryBrowseControllerInput,
+): LibraryBrowseController {
+  return {
+    ...deriveLibraryBrowseView(input),
+    ...summarizeLibraryCatalog(input.albums),
   };
 }
 
@@ -166,9 +179,11 @@ export function useLibraryBrowseController(
     sort,
     view,
   } = input;
-  return useMemo(
+  // Counts and genre tabs depend only on the catalog, not the active search or sort.
+  const catalog = useMemo(() => summarizeLibraryCatalog(albums), [albums]);
+  const browseView = useMemo(
     () =>
-      deriveLibraryBrowseController({
+      deriveLibraryBrowseView({
         albums,
         browseMode,
         deferredQuery,
@@ -193,4 +208,5 @@ export function useLibraryBrowseController(
       view,
     ],
   );
+  return useMemo(() => ({ ...browseView, ...catalog }), [browseView, catalog]);
 }

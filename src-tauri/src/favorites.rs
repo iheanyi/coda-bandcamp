@@ -13,6 +13,7 @@ use crate::subsonic::{
 use futures_util::{stream, StreamExt};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
+use std::future::Future;
 use std::time::Instant;
 
 pub(super) const MAX_FAVORITE_ALBUMS: usize = 5_000;
@@ -250,6 +251,68 @@ pub(super) fn reconcile_album_tracks(
     }
 }
 
+// Consume complete albums as they arrive: only requested Favorites survive into
+// the accumulator, rather than retaining every fetched album until the last reply.
+pub(super) async fn reconcile_favorite_albums<Fetch, FetchResult, IsCurrent>(
+    albums: BTreeMap<String, BTreeSet<String>>,
+    fetch_album: Fetch,
+    connection_is_current: IsCurrent,
+) -> Result<FavoriteTrackReconciliation, String>
+where
+    Fetch: Fn(String) -> FetchResult,
+    FetchResult: Future<Output = Result<Vec<Track>, String>>,
+    IsCurrent: Fn() -> bool,
+{
+    let connection_changed =
+        || "The Bandcamp connection changed before Favorites refresh completed.".to_string();
+    if !connection_is_current() {
+        return Err(connection_changed());
+    }
+    let requests = stream::iter(albums)
+        .map(|(album_id, requested_ids)| {
+            let fetch_album = &fetch_album;
+            let connection_is_current = &connection_is_current;
+            async move {
+                let request_started = Instant::now();
+                let result = if connection_is_current() {
+                    fetch_album(album_id).await
+                } else {
+                    Err(connection_changed())
+                };
+                tracing::debug!(
+                    target: "coda::favorites",
+                    operation = "get_album_reconciliation",
+                    status = if result.is_ok() { "ok" } else { "unavailable" },
+                    track_count = requested_ids.len(),
+                    elapsed_ms = request_started.elapsed().as_millis(),
+                );
+                (requested_ids, result)
+            }
+        })
+        .buffer_unordered(FAVORITE_RECONCILIATION_CONCURRENCY);
+    futures_util::pin_mut!(requests);
+    let mut reconciliation = FavoriteTrackReconciliation {
+        tracks: Vec::new(),
+        unstarred_ids: Vec::new(),
+        unavailable_track_count: 0,
+    };
+    while let Some((requested_ids, result)) = requests.next().await {
+        if !connection_is_current() {
+            return Err(connection_changed());
+        }
+        match result {
+            Ok(album_tracks) => {
+                let album = reconcile_album_tracks(&requested_ids, album_tracks);
+                reconciliation.tracks.extend(album.tracks);
+                reconciliation.unstarred_ids.extend(album.unstarred_ids);
+                reconciliation.unavailable_track_count += album.unavailable_track_count;
+            }
+            Err(_) => reconciliation.unavailable_track_count += requested_ids.len(),
+        }
+    }
+    Ok(reconciliation)
+}
+
 #[tauri::command]
 pub(super) async fn reconcile_favorite_tracks(
     tracks: Vec<FavoriteTrackLocator>,
@@ -283,42 +346,15 @@ pub(super) async fn reconcile_favorite_tracks(
     let album_count = albums.len();
     let track_count = albums.values().map(BTreeSet::len).sum::<usize>();
     let credentials = load_credentials_async().await?;
-    let results = stream::iter(albums)
-        .map(|(album_id, requested_ids)| {
-            let credentials = credentials.clone();
-            async move {
-                let request_started = Instant::now();
-                let result = fetch_album_from_bandcamp(&album_id, &credentials).await;
-                tracing::debug!(
-                    target: "coda::favorites",
-                    operation = "get_album_reconciliation",
-                    status = if result.is_ok() { "ok" } else { "unavailable" },
-                    track_count = requested_ids.len(),
-                    elapsed_ms = request_started.elapsed().as_millis(),
-                );
-                (requested_ids, result)
-            }
-        })
-        .buffer_unordered(FAVORITE_RECONCILIATION_CONCURRENCY)
-        .collect::<Vec<_>>()
-        .await;
-
-    let mut reconciliation = FavoriteTrackReconciliation {
-        tracks: Vec::new(),
-        unstarred_ids: Vec::new(),
-        unavailable_track_count: 0,
-    };
-    for (requested_ids, result) in results {
-        match result {
-            Ok(album_tracks) => {
-                let album = reconcile_album_tracks(&requested_ids, album_tracks);
-                reconciliation.tracks.extend(album.tracks);
-                reconciliation.unstarred_ids.extend(album.unstarred_ids);
-                reconciliation.unavailable_track_count += album.unavailable_track_count;
-            }
-            Err(_) => reconciliation.unavailable_track_count += requested_ids.len(),
-        }
-    }
+    let reconciliation = reconcile_favorite_albums(
+        albums,
+        |album_id| {
+            let credentials = &credentials;
+            async move { fetch_album_from_bandcamp(&album_id, credentials).await }
+        },
+        || current_connection_generation() == generation,
+    )
+    .await?;
     tracing::info!(
         target: "coda::favorites",
         operation = "favorite_track_reconciliation",

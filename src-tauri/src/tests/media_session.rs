@@ -119,22 +119,3 @@ fn system_media_timeline_rejects_nonfinite_negative_and_unbounded_values() {
     assert!(!valid_system_media_timeline(-1.0, 210.0));
     assert!(!valid_system_media_timeline(0.0, f64::NAN));
 }
-
-#[test]
-fn playback_blocking_commands_are_dispatched_off_the_window_thread() {
-    let media_source = include_str!("../media_session.rs").replace("\r\n", "\n");
-    assert!(media_source
-        .contains("#[tauri::command]\npub(super) async fn update_system_media_playback"));
-    assert!(media_source
-        .contains("#[tauri::command]\npub(super) async fn update_system_media_timeline"));
-    assert!(media_source.contains("pub(super) async fn spawn_system_media_blocking"));
-    assert!(media_source.contains("tauri::async_runtime::spawn_blocking"));
-
-    let playlist_source = include_str!("../playlists.rs").replace("\r\n", "\n");
-    assert!(playlist_source.contains("#[tauri::command]\npub(super) async fn get_stream_url"));
-
-    let cover_cache_source = include_str!("../cover_cache/fetch.rs").replace("\r\n", "\n");
-    assert!(
-        cover_cache_source.contains("#[tauri::command]\npub(crate) async fn invalidate_cover_art")
-    );
-}

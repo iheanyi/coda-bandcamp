@@ -24,6 +24,55 @@ import {
 import { AddToPlaylistDialog } from "./AddToPlaylistDialog";
 
 describe("Add to playlist dialog", () => {
+  it("finds playlists by name, recovers from no matches, and adds to the filtered target", async () => {
+    const user = userEvent.setup();
+    const otherPlaylist = { ...summary, id: "morning", name: "Morning coffee" };
+    mocks.fetchPlaylists.mockResolvedValueOnce([summary, otherPlaylist]);
+    withQueryClient(
+      <AddToPlaylistDialog
+        tracks={[track]}
+        onClose={vi.fn()}
+        onNotify={vi.fn()}
+      />,
+    );
+
+    const search = await screen.findByRole("textbox", {
+      name: "Find a playlist",
+    });
+    await user.type(search, "missing");
+    expect(
+      screen.getByText("No matching playlists. Try a different name."),
+    ).toBeVisible();
+    expect(screen.getByRole("status")).toHaveTextContent("0 playlists found");
+    expect(
+      screen.queryByRole("button", { name: /Night drive/ }),
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "Clear playlist search" }),
+    );
+    expect(search).toHaveFocus();
+    expect(screen.getByRole("button", { name: /Night drive/ })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: /Morning coffee/ }),
+    ).toBeVisible();
+
+    await user.type(search, "  COFFEE  ");
+    expect(screen.getByRole("status")).toHaveTextContent("1 playlist found");
+    expect(
+      screen.queryByRole("button", { name: /Night drive/ }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Morning coffee/ }));
+    await waitFor(() =>
+      expect(mocks.updatePlaylist).toHaveBeenCalledWith({
+        playlistId: "morning",
+        songIdsToAdd: [track.id],
+        songIndexesToRemove: [],
+      }),
+    );
+    expect(mocks.fetchPlaylists).toHaveBeenCalledTimes(1);
+  });
+
   it("creates a playlist with selected tracks", async () => {
     const onClose = vi.fn();
     const onNotify = vi.fn();
@@ -258,6 +307,29 @@ describe("Add to playlist dialog", () => {
         "aria-setsize",
         "5000",
       );
+
+      const scroller = list.parentElement;
+      if (!scroller) throw new Error("Playlist scroller is missing");
+      scroller.scrollTop = 5_000;
+      fireEvent.scroll(scroller);
+      fireEvent.change(screen.getByLabelText("Find a playlist"), {
+        target: { value: "playlist 4999" },
+      });
+      expect(scroller.scrollTop).toBe(0);
+      expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+      await waitFor(() =>
+        expect(
+          within(list).getByRole("button", { name: /Dialog playlist 4999/ }),
+        ).toBeVisible(),
+      );
+      fireEvent.click(
+        screen.getByRole("button", { name: "Clear playlist search" }),
+      );
+      await waitFor(() => {
+        const rows = within(list).getAllByRole("listitem");
+        expect(rows.length).toBeLessThan(40);
+        expect(rows[0]).toHaveTextContent("Dialog playlist 0");
+      });
 
       const target = within(within(list).getAllByRole("listitem")[0]).getByRole(
         "button",

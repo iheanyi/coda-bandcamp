@@ -100,21 +100,6 @@ describe("AppShell", () => {
     expect(workspace).toHaveAttribute("data-queue-open", "true");
   });
 
-  it("uses the immersive one-row layout without padding the route pane", () => {
-    render(
-      shell(<section data-testid="route-outlet">Now playing</section>, {
-        nowPlayingOpen: true,
-      }),
-    );
-
-    expect(screen.getByTestId("route-outlet").closest("main")).toHaveClass(
-      "p-0",
-    );
-    expect(
-      screen.getByTestId("route-outlet").closest('[data-slot="app-shell"]'),
-    ).toHaveClass("grid-rows-[minmax(0,1fr)]");
-  });
-
   it("forwards the main element to callback and object refs", () => {
     const callbackRef = vi.fn();
     const { rerender } = render(

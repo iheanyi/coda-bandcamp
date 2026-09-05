@@ -178,6 +178,50 @@ fn deterministic_lru_uses_key_order_for_equal_access_times_and_skips_leases() {
 }
 
 #[test]
+fn eviction_selection_preserves_capacity_boundaries_for_inserts_and_replacements() {
+    let mut runtime = CoverCacheRuntime {
+        generation: 0,
+        ordering_sequence: 0,
+        authorized_ids: HashSet::new(),
+        index: CoverCacheIndex::default(),
+        leases: HashMap::new(),
+        dirty_touches: 0,
+        hit_count: 0,
+        miss_count: 0,
+        stale_count: 0,
+        cleanup_pending: false,
+    };
+    for index in 0..MAX_COVER_CACHE_ENTRIES {
+        let key = format!("{index:064x}");
+        runtime.index.entries.insert(
+            key.clone(),
+            cache_entry(&key, &hash('a'), 1, index as u64 + 1),
+        );
+    }
+    let first = format!("{:064x}", 0);
+    let incoming = hash('f');
+    assert_eq!(select_evictions(&runtime, &first, 1), Some(vec![]));
+    assert_eq!(
+        select_evictions(&runtime, &incoming, 1),
+        Some(vec![first.clone()])
+    );
+
+    runtime.index.entries.retain(|key, _| key == &first);
+    runtime.leases.insert(first.clone(), 1);
+    runtime.index.entries.get_mut(&first).unwrap().byte_length = MAX_COVER_CACHE_BYTES - 1;
+    assert_eq!(select_evictions(&runtime, &incoming, 1), Some(vec![]));
+    assert_eq!(select_evictions(&runtime, &incoming, 2), None);
+    assert_eq!(
+        select_evictions(&runtime, &first, MAX_COVER_CACHE_BYTES),
+        Some(vec![])
+    );
+    assert_eq!(
+        select_evictions(&runtime, &first, MAX_COVER_CACHE_BYTES + 1),
+        None
+    );
+}
+
+#[test]
 fn authorization_is_scoped_to_the_exact_connection_generation_and_cleanup_state() {
     let mut runtime = CoverCacheRuntime {
         generation: 7,

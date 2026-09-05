@@ -188,3 +188,106 @@ fn routes_album_and_song_favorite_mutations_to_protocol_parameters() {
         ("unstar", "id", "track-1".to_string())
     );
 }
+
+#[test]
+fn favorite_album_refresh_preserves_partial_results_without_unrequested_tracks() {
+    let albums = BTreeMap::from([
+        (
+            "album-1".into(),
+            BTreeSet::from(["starred".into(), "unstarred".into(), "missing".into()]),
+        ),
+        ("album-2".into(), BTreeSet::from(["unavailable".into()])),
+    ]);
+    let result = tauri::async_runtime::block_on(reconcile_favorite_albums(
+        albums,
+        |album_id| async move {
+            if album_id == "album-2" {
+                return Err("Unavailable".into());
+            }
+            let mut starred = sample_track("starred");
+            starred.starred_at = Some("2026-08-12T18:01:00Z".into());
+            Ok(vec![
+                starred,
+                sample_track("unstarred"),
+                sample_track("not-requested"),
+            ])
+        },
+        || true,
+    ))
+    .unwrap();
+    assert_eq!(
+        result
+            .tracks
+            .iter()
+            .map(|track| track.id.as_str())
+            .collect::<Vec<_>>(),
+        ["starred"]
+    );
+    assert_eq!(result.unstarred_ids, ["unstarred"]);
+    assert_eq!(result.unavailable_track_count, 2);
+}
+
+#[test]
+fn favorite_album_refresh_stops_queued_work_when_connection_changes() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let current = AtomicBool::new(true);
+    let started = AtomicUsize::new(0);
+    let albums = (0..100)
+        .map(|index| (format!("album-{index}"), BTreeSet::new()))
+        .collect();
+    let result = tauri::async_runtime::block_on(reconcile_favorite_albums(
+        albums,
+        |_| {
+            started.fetch_add(1, Ordering::SeqCst);
+            current.store(false, Ordering::SeqCst);
+            std::future::ready(Ok(Vec::new()))
+        },
+        || current.load(Ordering::SeqCst),
+    ));
+    assert!(result.unwrap_err().contains("connection changed"));
+    assert_eq!(started.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn favorite_album_refresh_keeps_six_requests_in_flight_and_drops_them_on_disconnect() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::task::Poll;
+    let current = AtomicBool::new(true);
+    let started = AtomicUsize::new(0);
+    let active = AtomicUsize::new(0);
+    struct ActiveRequest<'a>(&'a AtomicUsize);
+    impl Drop for ActiveRequest<'_> {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+    let albums = (0..100)
+        .map(|index| (format!("album-{index}"), BTreeSet::new()))
+        .collect();
+    let result = tauri::async_runtime::block_on(reconcile_favorite_albums(
+        albums,
+        |_| {
+            started.fetch_add(1, Ordering::SeqCst);
+            active.fetch_add(1, Ordering::SeqCst);
+            let request = ActiveRequest(&active);
+            let current = &current;
+            let active = &active;
+            async move {
+                let _request = request;
+                std::future::poll_fn(|_| {
+                    if active.load(Ordering::SeqCst) == 6 {
+                        current.store(false, Ordering::SeqCst);
+                        Poll::Ready(Ok(Vec::new()))
+                    } else {
+                        Poll::Pending
+                    }
+                })
+                .await
+            }
+        },
+        || current.load(Ordering::SeqCst),
+    ));
+    assert!(result.unwrap_err().contains("connection changed"));
+    assert_eq!(started.load(Ordering::SeqCst), 6);
+    assert_eq!(active.load(Ordering::SeqCst), 0);
+}

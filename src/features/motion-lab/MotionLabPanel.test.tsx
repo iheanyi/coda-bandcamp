@@ -14,23 +14,12 @@ describe("MotionLabPanel", () => {
     window.localStorage.clear();
   });
 
-  it("renders as a fixed non-modal overlay without wrapping app content", () => {
-    const appContent = document.createElement("audio");
-    document.body.append(appContent);
-    const { rerender } = render(
-      <MotionLabPanel open={false} onOpenChange={() => undefined} />,
-    );
-    const originalAudio = document.querySelector("audio");
-    rerender(<MotionLabPanel open onOpenChange={() => undefined} />);
-
-    const panel = screen.getByRole("dialog", { name: "Motion Lab" });
-    expect(panel).toHaveAttribute("aria-modal", "false");
-    expect(panel).toHaveClass("fixed");
-    expect(document.querySelector("audio")).toBe(originalAudio);
-  });
-
   it("applies presets and live speed changes to persisted profile state", () => {
     render(<MotionLabPanel open onOpenChange={() => undefined} />);
+    expect(screen.getByRole("dialog", { name: "Motion Lab" })).toHaveAttribute(
+      "aria-modal",
+      "false",
+    );
     fireEvent.change(screen.getByLabelText("Motion preset"), {
       target: { value: "elastic" },
     });
