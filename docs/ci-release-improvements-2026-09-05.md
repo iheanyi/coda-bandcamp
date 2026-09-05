@@ -3,8 +3,8 @@
 ## Measured baseline
 
 Timings below come from GitHub job/step timestamps for two completed main CI runs
-and their releases. They predate the local workflow changes; they are not an
-observed before/after speedup.
+and their releases. They predate the workflow changes; they are historical context rather than a
+controlled before/after comparison.
 
 | Run                                                                                               | Overall elapsed |      Slowest job | Frontend/static work on that native job |
 | ------------------------------------------------------------------------------------------------- | --------------: | ---------------: | --------------------------------------: |
@@ -96,3 +96,37 @@ scroll simulation. No release was dispatched. Actual elapsed time, queue delay
 and runner cost are measured from the landing run's GitHub job timestamps and
 reported separately from the projections above. No application code changed in
 this pass.
+
+## Observed landing result
+
+The [landing run for b76ee15](https://github.com/iheanyi/coda-bandcamp/actions/runs/33988897159)
+passed all eight jobs. Compared with the immediately preceding successful
+[main run for e7c9a6c](https://github.com/iheanyi/coda-bandcamp/actions/runs/33987798328):
+
+| Measurement                              |  Before |   After |       Reduction |
+| ---------------------------------------- | ------: | ------: | --------------: |
+| Workflow creation to last job completion | 24m 54s | 18m 35s |  6m 19s (25.4%) |
+| Sum of job durations                     | 56m 04s | 40m 37s | 15m 27s (27.6%) |
+| Intel cache warming job                  |  2m 02s |     32s |  1m 30s (73.8%) |
+
+Summed job durations are raw runner time, not billing-weighted cost. Workflow
+elapsed includes initial queue/setup delay. GitHub's final workflow bookkeeping
+can add another second beyond the last job completion.
+
+The new frontend jobs completed in 5m 09s on Windows, 3m 51s on Linux, and 2m 24s
+on macOS. Native jobs completed in 18m 20s, 5m 24s, and 4m 48s respectively.
+The selection job took 9s. Every frontend/native check remained required.
+
+The structural improvement is that frontend validation runs alongside native
+compilation. Windows packaging itself took 524s versus 529s before, so the gain
+is not a faster Rust release build. The previous Windows native job spent 327s on frontend tests,
+automation tests, lint, TypeScript, and Rust formatting that now run elsewhere.
+Intel warming also demonstrably skipped its compilation step on an exact cache
+hit; that step took 94s in the preceding run.
+
+This pair is not a controlled benchmark: Linux/macOS Rust cache behavior improved
+substantially, and Windows compilation was slower than the historical August
+runs. The new run is therefore still slower than those older 12–13 minute runs.
+The observed 25.4% improvement applies to the immediately preceding September 5
+run, not to every future build. Release preparation savings remain unmeasured
+end to end because no release was dispatched.

@@ -1,4 +1,4 @@
-import { Airplay, ListMusic, ListPlus, Volume2, VolumeX } from "lucide-react";
+import { ListMusic, ListPlus, Volume2, VolumeX } from "lucide-react";
 import type { RefObject } from "react";
 import { Button } from "@/components/ui/button";
 import { DrawerClose, DrawerTrigger } from "@/components/ui/drawer";
@@ -14,6 +14,7 @@ import type { PlaybackClock } from "@/playbackClock";
 import type { RadioChapter, RepeatMode, Track } from "@/types";
 import { DEFAULT_VOLUME } from "@/features/player/constants";
 import type { ArtistNavigationHandler } from "@/features/library/types";
+import { AirPlayButton } from "./AirPlayButton";
 import { PlayerTrack } from "./PlayerTrack";
 import { PlayerTransport } from "./PlayerTransport";
 
@@ -153,22 +154,7 @@ export function PlayerDock({
           onValueChange={([nextVolume]) => onVolume(nextVolume)}
         />
         {airPlayAvailable ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  onClick={onAirPlay}
-                  disabled={!track}
-                  aria-label="Choose AirPlay device"
-                  size="icon"
-                  variant="ghost"
-                />
-              }
-            >
-              <Airplay size={18} />
-            </TooltipTrigger>
-            <TooltipContent>Choose AirPlay device</TooltipContent>
-          </Tooltip>
+          <AirPlayButton onClick={onAirPlay} disabled={!track} compact />
         ) : null}
         {mode === "full" && track && onAddToPlaylist ? (
           <Tooltip>

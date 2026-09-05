@@ -1,5 +1,4 @@
 import {
-  Airplay,
   ArrowLeft,
   Clock3,
   ExternalLink,
@@ -35,6 +34,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { AirPlayButton } from "@/features/player/AirPlayButton";
 import { DEFAULT_VOLUME } from "@/features/player/constants";
 import { usePlaybackPosition } from "@/features/player/playbackClockHooks";
 import {
@@ -687,19 +687,7 @@ function NowPlayingViewComponent({
                 value={[volume]}
                 onValueChange={(values) => onVolume(values[0] ?? 0)}
               />
-              {airPlayAvailable ? (
-                <Button
-                  variant="secondary"
-                  size="compact"
-                  className="h-auto px-2 py-1.5 text-xs text-muted-foreground"
-                  onClick={onAirPlay}
-                  title="Choose AirPlay device"
-                  aria-label="Choose AirPlay device"
-                >
-                  <Airplay size={17} />
-                  AirPlay
-                </Button>
-              ) : null}
+              {airPlayAvailable ? <AirPlayButton onClick={onAirPlay} /> : null}
             </div>
           </div>
         </section>
