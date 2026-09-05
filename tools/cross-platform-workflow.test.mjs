@@ -274,6 +274,79 @@ test("main produces the caches that tag releases restore", () => {
   }
 });
 
+test("npm cache consumers share main's download cache and always install the lockfile", () => {
+  const jobs = [
+    ["frontend", workflow],
+    ["test-and-build", workflow],
+    ["build-release", releaseWorkflow],
+  ].map(([name, contents]) => {
+    const block = contents.match(
+      new RegExp(`\\n {2}${name}:[\\s\\S]*?(?=\\n {2}[\\w-]+:\\n|$)`),
+    )?.[0];
+    assert.ok(block, `missing ${name} job`);
+    return { name, block, steps: block.split(/\n {6}- /).slice(1) };
+  });
+  const expectedPrefix =
+    "node-cache-${{ runner.os }}-${{ steps.npm-cache-path.outputs.arch }}-npm-";
+
+  for (const { name, block, steps } of jobs) {
+    const setup = steps.find((step) => step.includes("actions/setup-node@"));
+    assert.ok(setup, `${name} needs Node`);
+    assert.match(setup, /package-manager-cache: false/);
+    assert.doesNotMatch(setup, /cache: npm/);
+
+    const pathStep = steps.find((step) => step.includes("id: npm-cache-path"));
+    assert.ok(pathStep, `${name} must resolve npm's cache directory`);
+    assert.match(pathStep, /npm config get cache/);
+    assert.match(pathStep, /node -p process\.arch/);
+
+    const restore = steps.find((step) => step.includes("id: npm-cache\n"));
+    assert.ok(restore, `${name} must restore npm downloads`);
+    assert.match(restore, /uses: actions\/cache\/restore@/);
+    assert.match(
+      restore,
+      /path: \$\{\{ steps\.npm-cache-path\.outputs\.path \}\}/,
+    );
+    assert.equal(
+      restore.match(/\n +key: (.+)/)?.[1],
+      `${expectedPrefix}\${{ hashFiles('package-lock.json') }}`,
+      `${name} must use the same OS, architecture and lockfile key`,
+    );
+    assert.equal(
+      restore.match(/restore-keys: (?:\|\n +)?(.+)/)?.[1],
+      expectedPrefix,
+      `${name} must recover downloads after a version-only lockfile change`,
+    );
+
+    const installIndex = steps.findIndex((step) =>
+      /^run: npm ci(?:\n|$)/.test(step),
+    );
+    assert.ok(installIndex >= 0, `${name} must install from the lockfile`);
+    assert.doesNotMatch(steps[installIndex], /\n +if:/);
+    const saves = steps.filter((step) => step.includes("actions/cache/save@"));
+    if (name === "frontend") {
+      assert.equal(saves.length, 1, "frontend is the sole npm cache writer");
+      assert.match(saves[0], /github\.ref == 'refs\/heads\/main'/);
+      assert.match(saves[0], /steps\.npm-cache\.outputs\.cache-hit != 'true'/);
+      assert.match(
+        saves[0],
+        /key: \$\{\{ steps\.npm-cache\.outputs\.cache-primary-key \}\}/,
+      );
+      assert.match(
+        saves[0],
+        /path: \$\{\{ steps\.npm-cache-path\.outputs\.path \}\}/,
+      );
+      assert.ok(
+        steps.indexOf(saves[0]) > installIndex,
+        "save only after npm ci succeeds",
+      );
+    } else {
+      assert.equal(saves.length, 0, `${name} must remain restore-only`);
+    }
+    assert.doesNotMatch(block, /path:.*node_modules/);
+  }
+});
+
 test("coverage floors run once while every platform runs the suite", () => {
   const frontend = workflow.match(
     /\n {2}frontend:[\s\S]*?(?=\n {2}[\w-]+:\n)/,

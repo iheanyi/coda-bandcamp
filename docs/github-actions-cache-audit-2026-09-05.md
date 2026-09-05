@@ -1,6 +1,14 @@
 # GitHub Actions cache audit — 2026-09-05
 
-Audit findings; cache configuration was not changed. All three workflows inspected: cross-platform.yml, release.yml, pages.yml. Live API inventory and usage/retention/storage limits fetched. Pinned Swatinem/rust-cache v2.9.2 and actions/setup-node v7 source inspected.
+Initial audit findings, followed by the npm cache fix documented below. All three workflows inspected: cross-platform.yml, release.yml, pages.yml. Live API inventory and usage/retention/storage limits fetched. Pinned Swatinem/rust-cache v2.9.2 and actions/setup-node v7 source inspected.
+
+## Implemented: npm cache reuse across release bumps
+
+Desktop CI and release builds now restore npm downloads using the existing `node-cache-<OS>-<Node architecture>-npm-<lockfile hash>` key, with a same-OS/architecture prefix fallback. A version-only lockfile change can therefore reuse the preceding version's downloads. Node's lowercase `process.arch` preserves compatibility with existing setup-node caches. Every build still runs `npm ci`, which installs and verifies the locked packages; `node_modules` is not cached.
+
+Only the frontend job on main saves npm downloads, immediately after successful installation and only when the exact key was absent. Native CI and release jobs restore without saving, removing their duplicate uploads and disposable tag copies. Setup-node's implicit npm caching is disabled in these three jobs. Pages has its own website lockfile and remains unchanged, as do Rust and other tool caches.
+
+Validation: an isolated copy of package.json and package-lock.json was bumped from 0.9.0 to 0.9.1, then `npm ci --offline --no-audit --no-fund` installed all 525 packages from the existing download cache in 4.738 seconds. This proves the version bump does not require new package downloads; it is not a before/after CI timing or a build-script validation. Previous Windows observations were 26 seconds cold versus 23 seconds warm for npm ci, plus one losing cache upload/compression step of 20 seconds. Actual savings from this workflow change remain unmeasured until GitHub runs it across a version bump.
 
 ## Live inventory
 
