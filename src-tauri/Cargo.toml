@@ -8,7 +8,9 @@ license = "MIT"
 
 [lib]
 name = "coda_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# Desktop binaries link the Rust library; mobile-only shared/static outputs
+# add optimization and linking work without being included in our installers.
+crate-type = ["rlib"]
 
 [build-dependencies]
 dotenvy = "0.15.7"

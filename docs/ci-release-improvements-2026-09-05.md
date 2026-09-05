@@ -130,3 +130,51 @@ runs. The new run is therefore still slower than those older 12–13 minute runs
 The observed 25.4% improvement applies to the immediately preceding September 5
 run, not to every future build. Release preparation savings remain unmeasured
 end to end because no release was dispatched.
+
+## Warm-cache baseline and desktop-only build outputs
+
+The next [successful run, c80f8f5](https://github.com/iheanyi/coda-bandcamp/actions/runs/33989955840),
+restored the Windows Rust cache and compiled only Coda. Windows release
+compilation fell from 8m08s to 3m17s; the installer step fell from 8m44s to 3m44s.
+Whole CI took 7m07s. This is the effect of populated caches, not a subsequent
+compiler-settings change. Warm macOS ARM compilation took 2m39s and Linux 1m40s.
+
+Coda's Cargo manifest also requested `staticlib`, `cdylib`, and `rlib` outputs.
+Desktop `main.rs` uses the Rust library; the additional system-library outputs
+serve mobile integrations and are not shipped in desktop installers. The
+manifest now requests only `rlib`. The executable remains a normal desktop
+binary, with unchanged ThinLTO, size optimization, one codegen unit, stripping,
+and panic policy. Mobile builds would require restoring their platform-specific
+library outputs; this repository currently ships Windows, macOS, and Linux.
+
+A local macOS comparison used an isolated archive of c80f8f5, identical prebuilt
+frontend assets, no local `.env`, the same compiler/profile, and no concurrent
+benchmark builds. Run `cargo build --release --offline --timings` in each
+configuration, then touch only `src/lib.rs` and repeat after dependency artifacts
+are populated. Changing crate types itself invalidates some dependency artifacts,
+so the first build of the new configuration is not the warm comparison.
+
+| Local warm rebuild | Original three library outputs | Rust library only |
+| ------------------ | -----------------------------: | ----------------: |
+| Cargo wall time    |                        94.793s |           75.976s |
+| Executable bytes   |                     10,062,496 |        10,053,424 |
+
+This single matched pair is **18.817s / 19.9% faster**. Binary size changes by
+only **9,072 bytes / 0.09%**; the improvement is less build work, not a meaningful
+shipped-size reduction. The omitted local static library was 231,362,232 bytes
+and the shared library 1,036,768 bytes; these were intermediate outputs, never
+installer payloads. These are local macOS measurements, not a measured
+Windows improvement. The baseline cold build took 177.375s and is deliberately
+excluded from the warm comparison.
+
+Cargo timing reports attribute the original warm library build to 61.88s and
+executable build to 32.02s. The first Rust-library-only build spent 42.72s on the
+library and 33.44s on the executable; normal Cargo timings do not isolate pure
+linker time. Swatinem's pinned cache action hashes crate types, so the new
+artifact shape automatically gets a new cache generation without changing the
+shared CI/release/Intel key family.
+
+The [complete cache/platform audit](github-actions-cache-audit-2026-09-05.md)
+records remaining npm save/restore opportunities and potential dependency-size
+work. No TLS provider, certificate verification, updater behavior, cache policy,
+or runtime optimization was changed by the library-output fix.
