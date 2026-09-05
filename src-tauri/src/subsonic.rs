@@ -3,6 +3,7 @@ use crate::bandcamp_http::{
     http_client, read_bounded_response, send_bandcamp_request, BandcampRetryPolicy,
     MAX_JSON_RESPONSE_BYTES,
 };
+use crate::credential_session::CredentialSession;
 use crate::models::{
     Album, ConnectionInput, ItemDate, PlaylistDetail, PlaylistSummary, PlaylistUpdateInput, Track,
 };
@@ -30,6 +31,8 @@ pub(super) const MAX_PLAYLIST_MUTATION_ITEMS: usize = 5_000;
 const MAX_PLAYLIST_NAME_LENGTH: usize = 256;
 const MAX_PLAYLIST_COMMENT_LENGTH: usize = 4_096;
 pub(super) const MAX_SUBSONIC_DURATION_SECONDS: u64 = 10 * 365 * 24 * 60 * 60;
+
+static CREDENTIAL_SESSION: CredentialSession<ConnectionInput> = CredentialSession::new();
 
 static CONNECTION_GENERATION: AtomicU64 = AtomicU64::new(0);
 
@@ -150,6 +153,10 @@ pub(super) fn validate_playlist_update(input: &PlaylistUpdateInput) -> Result<()
 }
 
 pub(super) fn load_credentials() -> Result<ConnectionInput, String> {
+    CREDENTIAL_SESSION.read(read_credentials_from_keyring)
+}
+
+fn read_credentials_from_keyring() -> Result<ConnectionInput, String> {
     let serialized = credential_entry()?
         .get_password()
         .map_err(|_| "Bandcamp is not connected yet.".to_string())?;
@@ -164,11 +171,22 @@ pub(super) fn store_credentials(input: &ConnectionInput) -> Result<(), String> {
     validate_credentials(input)?;
     let serialized = serde_json::to_string(input)
         .map_err(|error| format!("Could not prepare credentials for secure storage: {error}"))?;
-    credential_entry()?
-        .set_password(&serialized)
-        .map_err(|error| {
-            format!("Could not save credentials in the system credential store: {error}")
-        })
+    // Invalidate only after the vault accepts the write. connect then performs
+    // a genuine read-back through load_credentials before authorizing the account.
+    CREDENTIAL_SESSION.mutate(|| {
+        credential_entry()?
+            .set_password(&serialized)
+            .map_err(|error| {
+                format!("Could not save credentials in the system credential store: {error}")
+            })
+    })
+}
+
+pub(super) fn delete_credentials() -> Result<(), String> {
+    CREDENTIAL_SESSION.mutate(|| match credential_entry()?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(format!("Could not remove credentials: {error}")),
+    })
 }
 
 pub(super) async fn load_credentials_async() -> Result<ConnectionInput, String> {

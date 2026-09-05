@@ -112,6 +112,11 @@ test(
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.codesignLog, /--sign -/u);
     assert.doesNotMatch(result.codesignLog, /certificate leaf/u);
+    assert.match(
+      result.stderr,
+      /Keychain approval.*again after native rebuilds/u,
+    );
+    assert.match(result.stderr, /CODA_DEV_CODESIGN_IDENTITY/u);
   },
 );
 

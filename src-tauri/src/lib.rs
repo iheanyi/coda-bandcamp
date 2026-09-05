@@ -9,6 +9,7 @@ mod app_identity;
 mod bandcamp_http;
 mod cover_cache;
 mod cover_ordering;
+mod credential_session;
 mod daily;
 mod desktop;
 mod discover;

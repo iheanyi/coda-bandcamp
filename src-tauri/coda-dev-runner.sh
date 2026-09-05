@@ -74,6 +74,9 @@ resolve_signing_identity() {
   else
     signing_identity="-"
     code_requirement="=identifier \"$signing_identifier\""
+    printf '%s\n' \
+      'Coda Dev is using ad-hoc signing. macOS may request Keychain approval for saved Bandcamp and Last.fm credentials again after native rebuilds.' \
+      'To keep a stable app identity, optionally install a "Coda Local Development" code-signing identity or set CODA_DEV_CODESIGN_IDENTITY to another installed identity.' >&2
   fi
 }
 

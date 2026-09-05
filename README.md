@@ -58,6 +58,19 @@ reloading. No local signing certificate is required: Coda uses the optional
 `Coda Local Development` identity when it exists and otherwise signs the app
 ad hoc.
 
+Bandcamp credentials and the Last.fm session are read from Keychain once after a
+successful unlock, then reused in Rust memory for that app session. Concurrent
+artwork or playback requests share the same read instead of opening another
+approval prompt. A successful credential write or disconnect invalidates the
+in-memory value; Bandcamp connection still verifies a real vault read-back.
+Failed reads remain retryable. Changes made directly in Keychain or another Coda
+process are picked up after restarting this process.
+
+This does not bypass macOS's initial consent: **Allow** grants access for that
+read, while **Always Allow** can remember the stable signed Coda Dev identity.
+Ad-hoc builds can require approval again after a native rebuild; the runner now
+warns when it uses that fallback. Credentials remain persisted only in Keychain.
+
 ### Unattended macOS native testing
 
 Maintainers can build an optimized, packaged app for local automation without

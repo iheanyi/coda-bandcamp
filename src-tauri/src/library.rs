@@ -15,8 +15,8 @@ use crate::library_cache::{
 use crate::models::{Album, ConnectionInput, LibraryCacheSnapshot, LibrarySyncEvent, Track};
 use crate::storage::{run_blocking, timestamp_ms};
 use crate::subsonic::{
-    bounded_album_from_value, bounded_track_from_value, credential_entry,
-    current_connection_generation, load_credentials, load_credentials_async, request_json,
+    bounded_album_from_value, bounded_track_from_value, current_connection_generation,
+    delete_credentials, load_credentials, load_credentials_async, request_json,
     store_credentials_async, validate_credentials, validate_identifier, MAX_PLAYLIST_TRACKS,
 };
 use chrono::DateTime;
@@ -180,22 +180,17 @@ pub(super) async fn has_connection() -> bool {
 }
 
 fn disconnect_blocking_with_guard(app: &tauri::AppHandle) -> Result<Option<String>, String> {
-    match credential_entry()?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => {
-            advance_library_sync_generation();
-            cancel_pending_album_cache_writes();
-            let library_result = clear_library_cache_file(app);
-            let album_result = reset_album_metadata_cache(app);
-            let cover_result = reset_cover_art_cache(app);
-            let warning =
-                finish_disconnect_cache_cleanup(library_result, album_result, cover_result);
-            if let Some(warning) = &warning {
-                eprintln!("Could not finish disconnect cleanup: {warning}");
-            }
-            Ok(warning.map(str::to_string))
-        }
-        Err(error) => Err(format!("Could not remove credentials: {error}")),
+    delete_credentials()?;
+    advance_library_sync_generation();
+    cancel_pending_album_cache_writes();
+    let library_result = clear_library_cache_file(app);
+    let album_result = reset_album_metadata_cache(app);
+    let cover_result = reset_cover_art_cache(app);
+    let warning = finish_disconnect_cache_cleanup(library_result, album_result, cover_result);
+    if let Some(warning) = &warning {
+        eprintln!("Could not finish disconnect cleanup: {warning}");
     }
+    Ok(warning.map(str::to_string))
 }
 
 fn disconnect_blocking(app: tauri::AppHandle) -> Result<Option<String>, String> {

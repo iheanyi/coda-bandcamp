@@ -2,6 +2,7 @@ use crate::bandcamp_http::{
     bandcamp_retry_delay, is_retryable_bandcamp_status, read_bounded_response,
     redacted_request_error, BANDCAMP_RETRY_JITTER_MS,
 };
+use crate::credential_session::CredentialSession;
 use crate::models::{
     LastFmAuthorization, LastFmScrobbleInput, LastFmSession, LastFmStatus, LastFmTrackInput,
 };
@@ -47,6 +48,8 @@ pub(super) enum LastFmRetryPolicy {
     IdempotentWrite,
 }
 
+static LASTFM_SESSION: CredentialSession<Option<LastFmSession>> = CredentialSession::new();
+
 static LASTFM_HTTP_CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
 
 pub(super) fn lastfm_session_entry() -> Result<Entry, String> {
@@ -83,6 +86,10 @@ pub(super) fn lastfm_status_value() -> LastFmStatus {
 }
 
 pub(super) fn load_lastfm_session() -> Result<Option<LastFmSession>, String> {
+    LASTFM_SESSION.read(read_lastfm_session_from_keyring)
+}
+
+fn read_lastfm_session_from_keyring() -> Result<Option<LastFmSession>, String> {
     let serialized = match lastfm_session_entry()?.get_password() {
         Ok(value) => value,
         Err(keyring::Error::NoEntry) => return Ok(None),
@@ -113,9 +120,11 @@ pub(super) fn store_lastfm_session(session: &LastFmSession) -> Result<(), String
     validate_lastfm_session(session)?;
     let serialized = serde_json::to_string(session)
         .map_err(|error| format!("Could not prepare the Last.fm session: {error}"))?;
-    lastfm_session_entry()?
-        .set_password(&serialized)
-        .map_err(|error| format!("Could not save the Last.fm session: {error}"))
+    LASTFM_SESSION.mutate(|| {
+        lastfm_session_entry()?
+            .set_password(&serialized)
+            .map_err(|error| format!("Could not save the Last.fm session: {error}"))
+    })
 }
 
 pub(super) fn require_lastfm_configuration() -> Result<(), String> {
@@ -494,17 +503,17 @@ pub(super) async fn lastfm_complete_auth(token: String) -> Result<LastFmStatus, 
 
 #[tauri::command]
 pub(super) async fn lastfm_disconnect() -> Result<LastFmStatus, String> {
-    run_blocking(
-        "Could not finish disconnecting Last.fm",
-        || match lastfm_session_entry()?.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(LastFmStatus {
-                configured: lastfm_configured(),
-                connected: false,
-                username: None,
-            }),
+    run_blocking("Could not finish disconnecting Last.fm", || {
+        LASTFM_SESSION.mutate(|| match lastfm_session_entry()?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(error) => Err(format!("Could not remove the Last.fm session: {error}")),
-        },
-    )
+        })?;
+        Ok(LastFmStatus {
+            configured: lastfm_configured(),
+            connected: false,
+            username: None,
+        })
+    })
     .await
 }
 
