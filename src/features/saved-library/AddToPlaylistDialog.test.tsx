@@ -312,10 +312,19 @@ describe("Add to playlist dialog", () => {
       if (!scroller) throw new Error("Playlist scroller is missing");
       scroller.scrollTop = 5_000;
       fireEvent.scroll(scroller);
+      await waitFor(() =>
+        expect(
+          within(list).queryByRole("button", {
+            name: /^Dialog playlist 0\s*0 tracks$/,
+          }),
+        ).not.toBeInTheDocument(),
+      );
       fireEvent.change(screen.getByLabelText("Find a playlist"), {
         target: { value: "playlist 4999" },
       });
       expect(scroller.scrollTop).toBe(0);
+      // jsdom does not emit the browser's scroll event when scrollTop changes.
+      fireEvent.scroll(scroller);
       expect(within(list).getAllByRole("listitem")).toHaveLength(1);
       await waitFor(() =>
         expect(
@@ -325,16 +334,18 @@ describe("Add to playlist dialog", () => {
       fireEvent.click(
         screen.getByRole("button", { name: "Clear playlist search" }),
       );
+      expect(scroller.scrollTop).toBe(0);
+      fireEvent.scroll(scroller);
       await waitFor(() => {
         const rows = within(list).getAllByRole("listitem");
         expect(rows.length).toBeLessThan(40);
         expect(rows[0]).toHaveTextContent("Dialog playlist 0");
       });
 
-      const target = within(within(list).getAllByRole("listitem")[0]).getByRole(
-        "button",
-      );
-      target.focus();
+      const target = await within(list).findByRole("button", {
+        name: /^Dialog playlist 0\s*0 tracks$/,
+      });
+      act(() => target.focus());
       expect(target).toHaveFocus();
       fireEvent.click(target);
       await waitFor(() => expect(target).toBeDisabled());

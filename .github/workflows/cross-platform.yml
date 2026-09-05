@@ -8,22 +8,87 @@ on:
       - "**"
   pull_request:
 
-# A branch push and its open PR trigger two full matrix runs for the same
-# head commit. Key both by the branch-head SHA (a PR run's github.sha is the
-# synthetic merge commit, so it must use pull_request.head.sha) and let the
-# newer run supersede the older. Main runs take a run-unique group instead:
-# they save the release caches and produce the release gate's required
-# checks, so they must never be cancelled, queued behind, or joined by any
-# other run.
+# Supersede old revisions within one branch/event, never across push and PR.
+# Main runs remain unique and uncancellable because they provide release gates
+# and warm the caches consumed by tag builds.
 concurrency:
-  group: cross-platform-${{ github.ref == 'refs/heads/main' && github.run_id || github.event.pull_request.head.sha || github.sha }}
+  group: cross-platform-${{ github.ref == 'refs/heads/main' && github.run_id || format('{0}-{1}', github.event_name, github.event.pull_request.number || github.ref) }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
 
 jobs:
+  select-ci:
+    name: Select CI work
+    runs-on: ubuntu-22.04
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    outputs:
+      run-matrix: ${{ steps.select.outputs.run-matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select push or PR validation
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tools/select-ci.mjs
+
+  # Keep the complete frontend suite on every supported OS, but run it
+  # independently so native compilation and packaging can start immediately.
+  frontend:
+    needs: select-ci
+    if: needs.select-ci.outputs.run-matrix == 'true'
+    name: Frontend ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ubuntu-22.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        if: matrix.platform == 'ubuntu-22.04'
+        with:
+          components: rustfmt
+
+      - run: npm ci
+      # Static source checks are platform-independent. Native compilation
+      # and the complete frontend/automation suites still run on all three.
+      - run: npm run lint
+        if: matrix.platform == 'ubuntu-22.04'
+      - run: npm run lint:anti-slop
+        if: matrix.platform == 'ubuntu-22.04'
+      - run: npm run typecheck
+        if: matrix.platform == 'ubuntu-22.04'
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+        if: matrix.platform == 'ubuntu-22.04'
+      - run: npm run test:automation-build
+      # Instrument once for coverage floors; retain the same behavioral
+      # tests without instrumentation on Windows and macOS.
+      - run: npm run test:coverage
+        if: matrix.platform == 'ubuntu-22.04'
+      - run: npx vitest run --dir src
+        if: matrix.platform != 'ubuntu-22.04'
+
   test-and-build:
+    needs: select-ci
+    if: needs.select-ci.outputs.run-matrix == 'true'
     name: ${{ matrix.platform }}
     strategy:
       fail-fast: false
@@ -57,13 +122,17 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
-          components: rustfmt, clippy
+          components: clippy
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: ./src-tauri -> target
           shared-key: coda-${{ matrix.target }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Resolve Tauri bundler cache key
+        id: bundler-cache
+        run: node tools/tauri-bundler-cache-key.mjs
 
       # Keeps NSIS/WiX warm on main so tag-triggered release builds can
       # restore them; caches saved on one tag are unreachable from the next.
@@ -72,8 +141,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/AppData/Local/tauri
-          key: tauri-bundler-tools-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-          restore-keys: tauri-bundler-tools-${{ runner.os }}-
+          key: tauri-bundler-tools-${{ runner.os }}-${{ steps.bundler-cache.outputs.revision }}
 
       # Same role for AppImage tooling (linuxdeploy): the appimage bundle
       # above populates ~/.cache/tauri, and main-branch saves are the only
@@ -83,8 +151,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/tauri
-          key: tauri-bundler-tools-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
-          restore-keys: tauri-bundler-tools-${{ runner.os }}-
+          key: tauri-bundler-tools-${{ runner.os }}-${{ steps.bundler-cache.outputs.revision }}
 
       # First-party apt download cache in a runner-owned staging directory.
       # apt hash-verifies every cached .deb against the live index, so a stale
@@ -157,21 +224,6 @@ jobs:
           sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/apt-archives"
 
       - run: npm ci
-      - run: npm run lint
-      - run: npm run lint:anti-slop
-      - run: npm run test:automation-build
-      # Coverage floors are platform-independent, so instrument once on Linux;
-      # Windows and macOS run the identical suite uninstrumented (~25% cheaper
-      # measured locally, ~60-90 s on the Windows critical path).
-      - run: npm run test:coverage
-        if: matrix.platform == 'ubuntu-22.04'
-      - run: npx vitest run --dir src
-        if: matrix.platform != 'ubuntu-22.04'
-      # The single vite build happens inside tauri-action's beforeBuildCommand
-      # (tauri.ci.conf.json); this step keeps only the typecheck gate that the
-      # release flow's green-CI check relies on.
-      - run: npm run typecheck
-      - run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
       - run: cargo test --manifest-path src-tauri/Cargo.toml
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
@@ -186,9 +238,8 @@ jobs:
   # No job on main otherwise compiles x86_64-apple-darwin, so tag-triggered
   # release Intel builds started cold or from stale-lockfile prefix matches
   # (tag-ref cache saves are unreachable from the next tag). Main-push only:
-  # zero cost on branch pushes and pull requests, and the release gate
-  # ignores this check because it requires exactly the three matrix job
-  # names above.
+  # zero cost on branch pushes and pull requests. This cache-only job is
+  # deliberately outside the release gate's frontend and native checks.
   warm-intel-rust-cache:
     name: Warm macOS Intel Rust cache
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -207,12 +258,16 @@ jobs:
       # Same shared-key family as release.yml's Intel matrix leg, so the
       # release build's primary cache key matches this main-saved entry.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        id: intel-rust-cache
         with:
           workspaces: ./src-tauri -> target
           shared-key: coda-x86_64-apple-darwin
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Compile release dependencies for the Intel target
+        # An exact hit already contains the dependency graph. Workspace
+        # outputs are pruned before saving, so rebuilding them buys nothing.
+        if: steps.intel-rust-cache.outputs.cache-hit != 'true'
         run: |
           # tauri-build only checks that frontendDist exists, and rust-cache
           # prunes workspace-crate artifacts before saving, so an empty stub

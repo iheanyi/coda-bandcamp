@@ -16,7 +16,7 @@
     "preview": "vite preview",
     "test": "npm run test:anti-slop && vitest run --dir src && npm run test:automation-build",
     "test:anti-slop": "vitest run tools/oxlint/anti-slop/anti-slop.test.ts",
-    "test:automation-build": "node --test tools/build-macos-automation.test.mjs tools/coda-dev-runner.test.mjs tools/cross-platform-workflow.test.mjs",
+    "test:automation-build": "node --test tools/build-macos-automation.test.mjs tools/coda-dev-runner.test.mjs tools/cross-platform-workflow.test.mjs tools/verify-version-only-bump.test.mjs tools/require-green-ci.test.mjs tools/ci-selection.test.mjs",
     "test:coverage": "npm run test:anti-slop && vitest run --coverage --dir src",
     "typecheck": "npm run typecheck:anti-slop && tsc --noEmit",
     "typecheck:anti-slop": "tsc -p tools/oxlint/tsconfig.json",

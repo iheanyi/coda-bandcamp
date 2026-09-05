@@ -1,15 +1,10 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { requiredChecks } from "./require-green-ci.mjs";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = new URL("..", import.meta.url);
@@ -108,7 +103,7 @@ test("release tagging and publishing are gated on green cross-platform CI", () =
   )?.[0];
   assert.ok(prepareJob, "Release workflow is missing its prepare job");
 
-  const gateIndex = prepareJob.indexOf("check-runs?filter=latest");
+  const gateIndex = prepareJob.indexOf("tools/require-green-ci.mjs");
   const tagCreationIndex = prepareJob.indexOf("tools/prepare-release.mjs");
   assert.ok(gateIndex > -1, "prepare job must assert CI check-run results");
   assert.ok(
@@ -119,6 +114,12 @@ test("release tagging and publishing are gated on green cross-platform CI", () =
     prepareJob,
     /permissions:\n {6}checks: read/,
     "prepare job needs checks: read to query check runs",
+  );
+
+  assert.match(
+    prepareJob,
+    /node tools\/require-green-ci\.mjs/,
+    "release must use the tested CI gate before preparing the version",
   );
 
   assert.doesNotMatch(
@@ -132,9 +133,6 @@ test("release tagging and publishing are gated on green cross-platform CI", () =
     "the release gate must stay dependency-free and fast",
   );
 
-  const requiredChecks = releaseWorkflow
-    .match(/required_checks=\(([^)]+)\)/)?.[1]
-    ?.split(/\s+/);
   const ciPlatforms = [...workflow.matchAll(/platform: ([\w.-]+)/g)].map(
     (match) => match[1],
   );
@@ -142,11 +140,13 @@ test("release tagging and publishing are gated on green cross-platform CI", () =
   assert.ok(ciPlatforms.length, "branch CI must declare matrix platforms");
   assert.deepEqual(
     [...requiredChecks].sort(),
-    [...new Set(ciPlatforms)].sort(),
-    "gate's required checks must match cross-platform CI job names exactly",
+    [...new Set(ciPlatforms)]
+      .flatMap((platform) => [platform, `Frontend ${platform}`])
+      .sort(),
+    "release must require native builds and frontend checks on every platform",
   );
 
-  for (const job of ["prepare-draft", "build-release", "publish-release"]) {
+  for (const job of ["build-release", "publish-release"]) {
     const jobBlock = releaseWorkflow.match(
       new RegExp(`\\n {2}${job}:[\\s\\S]*?(?=\\n {2}[\\w-]+:\\n|$)`),
     )?.[0];
@@ -229,6 +229,12 @@ test("main produces the caches that tag releases restore", () => {
     "the Intel warm job must cost nothing on branch pushes and pull requests",
   );
   assert.match(warmJob, /shared-key: coda-x86_64-apple-darwin\n/);
+  assert.match(warmJob, /id: intel-rust-cache/);
+  assert.match(
+    warmJob,
+    /if: steps\.intel-rust-cache\.outputs\.cache-hit != 'true'/,
+    "Intel dependency warming must skip only exact cache hits",
+  );
   assert.match(
     warmJob,
     /cargo build --release --manifest-path src-tauri\/Cargo\.toml --target x86_64-apple-darwin/,
@@ -269,6 +275,28 @@ test("main produces the caches that tag releases restore", () => {
 });
 
 test("coverage floors run once while every platform runs the suite", () => {
+  const frontend = workflow.match(
+    /\n {2}frontend:[\s\S]*?(?=\n {2}[\w-]+:\n)/,
+  )?.[0];
+  const native = workflow.match(
+    /\n {2}test-and-build:[\s\S]*?(?=\n {2}[\w-]+:\n)/,
+  )?.[0];
+  assert.ok(frontend, "frontend checks must have an independent job");
+  assert.ok(native, "native builds must retain their job");
+  assert.match(
+    frontend,
+    /\n {4}needs: select-ci\n/,
+    "frontend waits only for event selection, not native builds",
+  );
+  assert.match(
+    native,
+    /\n {4}needs: select-ci\n/,
+    "native builds wait only for event selection, not frontend tests",
+  );
+  assert.match(frontend, /name: Frontend \$\{\{ matrix\.platform \}\}/);
+  assert.doesNotMatch(native, /npm run (?:test:coverage|typecheck)|npx vitest/);
+  assert.match(native, /cargo test --manifest-path src-tauri\/Cargo\.toml/);
+  assert.match(native, /cargo clippy --manifest-path src-tauri\/Cargo\.toml/);
   const coverageCondition = workflow.match(
     /- run: npm run test:coverage\n\s+if: (.+)\n/,
   )?.[1];
@@ -291,8 +319,7 @@ test("release draft verification accepts only matching text metadata", async () 
   await withTemporaryDirectory("coda-release-draft-", async (directory) => {
     const releasePath = join(directory, "release.json");
     const marker =
-      `<!-- coda-release-run:123 ` +
-      `coda-release-commit:${releaseCommit} -->`;
+      `<!-- coda-release-run:123 ` + `coda-release-commit:${releaseCommit} -->`;
     await writeFile(
       releasePath,
       JSON.stringify({
@@ -397,9 +424,10 @@ test("every workflow job declares an execution timeout", () => {
   ]) {
     const jobsStart = contents.indexOf("\njobs:\n");
     assert.ok(jobsStart >= 0, `${name} workflow is missing a jobs section`);
-    const jobBlocks = contents
-      .slice(jobsStart + "\njobs:\n".length)
-      .split(/\n(?=  [\w-]+:\n)/);
+    const jobBlocks =
+      contents
+        .slice(jobsStart + "\njobs:\n".length)
+        .match(/^ {2}[\w-]+:\n[\s\S]*?(?=^ {2}[\w-]+:\n|(?![\s\S]))/gm) ?? [];
     assert.ok(jobBlocks.length > 0);
     for (const block of jobBlocks) {
       const jobName = block.match(/^ {2}([\w-]+):\n/)?.[1];
@@ -506,7 +534,7 @@ test("publish installs minisign from the baked index with a guarded fallback", (
   );
 });
 
-test("same-head push and PR runs deduplicate without ever touching main", () => {
+test("branch revisions cancel without push runs cancelling PR or main validation", () => {
   const concurrency = workflow.match(/\nconcurrency:\n(?: {2}.+\n)+/)?.[0];
   assert.ok(
     concurrency,
@@ -517,8 +545,8 @@ test("same-head push and PR runs deduplicate without ever touching main", () => 
   assert.ok(group, "concurrency must declare a group");
   assert.match(
     group,
-    /github\.event\.pull_request\.head\.sha \|\| github\.sha/,
-    "push and PR runs must share one group keyed by the branch-head SHA",
+    /github\.event_name/,
+    "push and PR runs must use separate cancellation groups",
   );
   assert.match(
     group,
@@ -554,7 +582,9 @@ test("workflow probes survive CRLF checkouts", () => {
   const normalizedWorkflow = normalizeLineEndings(crlfWorkflow);
   const normalizedRelease = normalizeLineEndings(crlfRelease);
   assert.ok(
-    normalizedRelease.match(/\n {2}prepare-release:[\s\S]*?(?=\n {2}[\w-]+:\n)/),
+    normalizedRelease.match(
+      /\n {2}prepare-release:[\s\S]*?(?=\n {2}[\w-]+:\n)/,
+    ),
     "normalization must restore the prepare-release job probe",
   );
   assert.match(normalizedWorkflow, /- run: npm run typecheck\n/);
