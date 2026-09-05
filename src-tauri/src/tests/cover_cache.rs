@@ -60,7 +60,7 @@ fn response_from_server_with_status(
         let _ = stream.write_all(&body);
     });
     let response = tauri::async_runtime::block_on(async move {
-        reqwest::Client::builder()
+        crate::network::client_builder()
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .unwrap()

@@ -21,6 +21,7 @@ mod library_cache;
 mod macos_window;
 mod media_session;
 mod models;
+mod network;
 mod player_state;
 mod playlists;
 mod radio;
@@ -85,6 +86,7 @@ fn with_window_state_plugin<R: tauri::Runtime>(builder: tauri::Builder<R>) -> ta
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    network::initialize_crypto_provider();
     #[cfg(debug_assertions)]
     let _ = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)

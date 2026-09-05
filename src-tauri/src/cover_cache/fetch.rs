@@ -71,7 +71,7 @@ struct CoverPublication {
 fn cover_http_client() -> Result<&'static Client, String> {
     COVER_HTTP_CLIENT
         .get_or_init(|| {
-            Client::builder()
+            crate::network::client_builder()
                 .https_only(true)
                 .connect_timeout(Duration::from_secs(8))
                 .timeout(Duration::from_secs(25))

@@ -157,7 +157,7 @@ fn lastfm_transient_retries_are_bounded_and_scoped_to_idempotent_writes() {
 #[test]
 fn classifies_local_connection_failures_as_transient_lastfm_transport_errors() {
     let error = tauri::async_runtime::block_on(async {
-        reqwest::Client::builder()
+        crate::network::client_builder()
             .connect_timeout(Duration::from_millis(100))
             .timeout(Duration::from_millis(250))
             .build()

@@ -108,7 +108,7 @@ fn bandcamp_read_retries_only_transient_statuses() {
 fn request_errors_do_not_expose_request_urls_or_query_secrets() {
     let secret = "generated-auth-token";
     let error = tauri::async_runtime::block_on(async {
-        reqwest::Client::builder()
+        crate::network::client_builder()
             .connect_timeout(Duration::from_millis(100))
             .timeout(Duration::from_millis(250))
             .build()

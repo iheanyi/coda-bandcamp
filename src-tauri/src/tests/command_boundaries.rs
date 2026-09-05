@@ -216,7 +216,9 @@ fn chunked_responses_are_rejected_as_soon_as_the_bound_is_crossed() {
     });
 
     let result = tauri::async_runtime::block_on(async move {
-        let response = reqwest::Client::new()
+        let response = crate::network::client_builder()
+            .build()
+            .unwrap()
             .get(format!("http://{address}"))
             .send()
             .await
