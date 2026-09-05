@@ -98,7 +98,9 @@ tauri = { version = "2", default-features = false, features = ["test"] }
 
 [profile.release]
 panic = "abort"
-codegen-units = 1
+# Parallelize LLVM work while retaining thin LTO and size optimization.
+# Measurements and tradeoffs: docs/build-profile-benchmark-2026-09-05.md.
+codegen-units = 8
 lto = "thin"
 opt-level = "s"
 strip = true
